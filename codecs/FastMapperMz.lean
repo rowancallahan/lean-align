@@ -1,5 +1,6 @@
 import FastMapper
 import MzIndex
+import MzCheckFast
 import ParMap
 
 /-!
@@ -21,7 +22,8 @@ answers identical to the hashed index and the prototype):
     minimizer k=22 B=22   140.7 MB     170k–199k    313k reads/s
     minimizer k=23 B=24   223.4 MB     204k
 
-`Mz.check` 27–34 s, `Mz.build` 33–39 s.
+`Mz.check2` (= `Mz.check`, rolling completeness pass, `codecs/MzCheckFast.lean`) 17 s
+(`Mz.check` 27–34 s), `Mz.build` 33–39 s.
 
     GenomeBytes gbs g → Encodes R read → checkAllMz idxs gbs = true →
       mapFastMz gbs idxs R = mapSpec sc0 (-12) g read                        (mapFastMz_eq_mapSpec)
@@ -224,7 +226,7 @@ theorem acgt_mz (b : UInt8) (h : acgt b = true) : Mz.acgt b = true := by
 def mzL : Look Mz.MzIdx := ⟨mzLook, mzSize⟩
 
 def checkAllMz (idxs : Array Mz.MzIdx) (gbs : Array ByteArray) : Bool :=
-  (List.range gbs.size).all fun c => Mz.check idxs[c]! gbs[c]!
+  (List.range gbs.size).all fun c => Mz.check2 idxs[c]! gbs[c]!
 
 def mapFastMz (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (R : ByteArray) : Option (Window × Int) :=
   mapFastG mzL gbs idxs R
@@ -267,7 +269,7 @@ theorem mapFastMz_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteAr
   intro c hc R' j hj
   unfold checkAllMz at hchk
   simp only [List.all_eq_true, List.mem_range] at hchk
-  exact mzLook_ok _ _ _ _ hj (hchk c hc)
+  exact mzLook_ok _ _ _ _ hj (by rw [← Mz.check2_eq]; exact hchk c hc)
 
 /-- `n` tasks. -/
 def mapFastMzPar (n : Nat) (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (Rs : Array ByteArray) :
