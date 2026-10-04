@@ -26,6 +26,44 @@ structure InvP (P : Nat) (cw : Window → Nat) (S : Window → Prop) (b : Best) 
   hit : b.pen ≤ P → cw b.win = b.pen
   amb : b.pen ≤ P → (b.amb = true ↔ ∃ w, S w ∧ w ≠ b.win ∧ cw w = b.pen)
 
+theorem inv_congrP (P : Nat) (cw : Window → Nat) (S S' : Window → Prop) (b : Best) (h : InvP P cw S b)
+    (e : ∀ w, S w ↔ S' w) : InvP P cw S' b := by
+  have : S = S' := funext fun w => propext (e w)
+  subst this; exact h
+
+/-- Folding adds: each element `a` adds the windows `X a`. -/
+theorem foldl_invP {α : Type} (P : Nat) (cw : Window → Nat) (f : Best → α → Best) (X : α → Window → Prop)
+    (hstep : ∀ a S b, InvP P cw S b → InvP P cw (fun w => S w ∨ X a w) (f b a)) :
+    ∀ (l : List α) S b, InvP P cw S b →
+      InvP P cw (fun w => S w ∨ ∃ a ∈ l, X a w) (l.foldl f b) := by
+  intro l
+  induction l with
+  | nil => intro S b h; exact inv_congrP P cw _ _ b h (fun w => by simp)
+  | cons a l ih =>
+    intro S b h
+    have := ih _ _ (hstep a S b h)
+    exact inv_congrP P cw _ _ _ this (fun w => by
+      simp only [List.mem_cons, exists_eq_or_imp]; exact or_assoc)
+
+/-- Folding adds, the step known on the members only. -/
+theorem foldl_invP_mem {α : Type} (P : Nat) (cw : Window → Nat) (f : Best → α → Best) (X : α → Window → Prop)
+    (l : List α) (hstep : ∀ a ∈ l, ∀ S b, InvP P cw S b → InvP P cw (fun w => S w ∨ X a w) (f b a)) :
+    ∀ S b, InvP P cw S b → InvP P cw (fun w => S w ∨ ∃ a ∈ l, X a w) (l.foldl f b) := by
+  induction l with
+  | nil => intro S b h; exact inv_congrP P cw _ _ b h (fun w => by simp)
+  | cons a l ih =>
+    intro S b h
+    have := ih (fun a' ha' => hstep a' (List.mem_cons_of_mem _ ha')) _ _ (hstep a List.mem_cons_self S b h)
+    exact inv_congrP P cw _ _ _ this (fun w => by
+      simp only [List.mem_cons, exists_eq_or_imp]; exact or_assoc)
+
+theorem foldl_pen {α : Type} (f : Best → α → Best) (hf : ∀ b a, (f b a).pen ≤ b.pen) :
+    ∀ (l : List α) b, (l.foldl f b).pen ≤ b.pen := by
+  intro l
+  induction l with
+  | nil => intro b; exact Nat.le_refl _
+  | cons a l ih => intro b; exact Nat.le_trans (ih _) (hf b a)
+
 section
 variable (P : Nat) (cw : Window → Nat) (hc : ∀ w, cw w ≤ P + 1)
 

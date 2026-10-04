@@ -1,5 +1,6 @@
 import PairMapper
 import PairJoint
+import PairInterleave
 import ParMap
 
 /-!
@@ -8,7 +9,8 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
 
     lake exe pair_bench <genome.fa> <mate1.reads.txt> <mate2.reads.txt> [dump.tsv]
     env: PAIR_MIN (100), PAIR_MAX (1000), PAIR_TASKS (1), PAIR_JOINT (shared-best strand search, pairFastJ),
-    PAIR_MZ=k [PAIR_MZ_B=B] [PAIR_MZ_C=c] [PAIR_MZ_W=bytes] [PAIR_MZ_T=t] (minimizer index, with PAIR_JOINT: pairFastJ_mz_eq_pairSpec)
+    PAIR_INTERLEAVE (strands interleaved one lookup at a time, pairFastI),
+    PAIR_MZ=k [PAIR_MZ_B=B] [PAIR_MZ_C=c] [PAIR_MZ_W=bytes] [PAIR_MZ_T=t] (minimizer index, with PAIR_JOINT / PAIR_INTERLEAVE: pairFastJ/I_mz_eq_pairSpec)
 
 Dump format = `bench/pair_ref.py` / `PROTO_PAIR` (name, then both hits or none).
 -/
@@ -29,15 +31,34 @@ def lines (raw : ByteArray) : Array ByteArray := Id.run do
     i := j + 1
   return out
 
+/-- The sequences of a FASTA file, read in 16 MB chunks (peak memory: the genome plus a
+chunk, not the file and its lines as well). -/
 def readFasta (path : String) : IO (Array ByteArray) := do
+  let total := (← System.FilePath.metadata path).byteSize.toNat
+  let h ← IO.FS.Handle.mk path .read
   let mut seqs : Array ByteArray := #[]
-  for l in lines (← IO.FS.readBinFile path) do
-    if l.size > 0 && l.get! 0 == 62 then seqs := seqs.push ByteArray.empty
-    else
-      assert! seqs.size > 0
-      seqs := seqs.modify (seqs.size - 1) (· ++ l)
-  assert! seqs.size > 0
-  return seqs
+  let mut cur := ByteArray.empty
+  let mut started := false
+  let mut header := false
+  let mut seen := 0
+  repeat
+    let chunk ← h.read 16777216
+    if chunk.isEmpty then break
+    for b in chunk do
+      seen := seen + 1
+      if header then
+        if b == 10 then header := false
+      else if b == 62 then  -- '>'
+        if started then
+          seqs := seqs.push cur
+        -- untouched capacity is not resident
+        cur := ByteArray.emptyWithCapacity (total - seen)
+        started := true
+        header := true
+      else if b != 10 && b != 13 then
+        cur := cur.push b
+  assert! started
+  return seqs.push cur
 
 def readReads (path : String) : IO (Array String × Array ByteArray) := do
   let rl := (lines (← IO.FS.readBinFile path)).filter (·.size > 0)
@@ -62,16 +83,18 @@ def main (args : List String) : IO UInt32 := do
   let tasks := ((← IO.getEnv "PAIR_TASKS").getD "1").toNat!
   let ps := (Array.range r1.size).map fun i => (r1[i]!, r2[i]!)
   let joint := (← IO.getEnv "PAIR_JOINT").isSome
+  let inter := (← IO.getEnv "PAIR_INTERLEAVE").isSome
   let mz := ((← IO.getEnv "PAIR_MZ").getD "0").toNat!
   let f : ByteArray × ByteArray → Option ((Placement × Int) × (Placement × Int)) ← if mz == 0 then do
       let idxs := gbs.map Fast.buildIdx
       let ok := Fast.checkAll idxs gbs
       IO.println s!"index check: {ok}  index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.ent.size + ix.odd.foldl (· + ·.size) 0) 0}"
       assert! ok
-      pure fun p => if joint then Fast.pairFastJ Fast.hLook lo hi gbs idxs p.1 p.2
+      pure fun p => if inter then Fast.pairFastI Fast.hLook lo hi gbs idxs p.1 p.2
+        else if joint then Fast.pairFastJ Fast.hLook lo hi gbs idxs p.1 p.2
         else Fast.pairFast Fast.hLook lo hi gbs idxs p.1 p.2
     else do
-      assert! joint
+      assert! joint || inter
       let B := ((← IO.getEnv "PAIR_MZ_B").getD "24").toNat!
       let C := ((← IO.getEnv "PAIR_MZ_C").getD (toString (25 - mz))).toNat!   -- context letters per side
       let W := ((← IO.getEnv "PAIR_MZ_W").getD "8").toNat!   -- bytes per slot (4, 5, 6, 8)
@@ -80,7 +103,8 @@ def main (args : List String) : IO UInt32 := do
       let ok := Fast.checkAllMz idxs gbs
       IO.println s!"index check: {ok}  minimizer k={mz} B={B} C={C} W={W} T={T} kf={idxs.toList.map (·.kf)} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.sl.size + 8 * ix.runs.size) 0}"
       assert! ok
-      pure fun p => Fast.pairFastJ Fast.mzL lo hi gbs idxs p.1 p.2
+      pure fun p => if inter then Fast.pairFastI Fast.mzL lo hi gbs idxs p.1 p.2
+        else Fast.pairFastJ Fast.mzL lo hi gbs idxs p.1 p.2
   let t0 ← IO.monoNanosNow
   let out ← (← IO.mkRef (if t0 == 1 then #[] else if tasks ≤ 1 then ps.map f else ParMap.parMap tasks f ps)).get
   let t1 ← IO.monoNanosNow

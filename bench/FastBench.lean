@@ -1,5 +1,6 @@
 import FastMapperPar
 import FastMapperMz
+import FastGenAlgo
 
 /-!
 Fast mapper benchmark (IO only, unproved).
@@ -66,6 +67,8 @@ def bothOf (f r : Fast.Best) : Option (Window × Int × Bool) :=
   let one (b : Fast.Best) (rv : Bool) := if b.pen ≤ 12 && !b.amb then some (⟨b.chr, b.st, b.len⟩, -(b.pen : Int), rv) else none
   if f.pen < r.pen then one f false else if r.pen < f.pen then one r true else none
 
+def say (s : String) : IO Unit := do IO.println s; (← IO.getStdout).flush
+
 def secs (t0 t1 : Nat) : Float := Float.ofNat (t1 - t0) / 1e9
 
 /-- Runs `f` after reading the clock; `f` gets the time so it cannot be hoisted. -/
@@ -73,7 +76,7 @@ def timed (label : String) (f : Nat → α) : IO α := do
   let t0 ← IO.monoNanosNow
   let r ← IO.mkRef (f t0)
   let t1 ← IO.monoNanosNow
-  IO.println s!"{label}_s: {secs t0 t1}"
+  say s!"{label}_s: {secs t0 t1}"
   r.get
 
 def main (args : List String) : IO UInt32 := do
@@ -96,7 +99,26 @@ def main (args : List String) : IO UInt32 := do
       IO.println s!"index check: {ok}"
       assert! ok
       let best R := Fast.mapChroms Fast.hLook R gbs idxs
-      pure fun rs => if both then par (fun R => bothOf (best R) (best (revComp R))) rs
+      let tP : Option Nat := (← IO.getEnv "FAST_T").map String.toNat!
+      if let some P := tP then
+        if let some k := (← IO.getEnv "FAST_SLOWCHECK") then
+          let k := k.toNat!
+          -- reference: the proved banded mapper over a CSR index certified by checkIndex
+          -- (bandMapper_eq_mapSpec, checkIndex_complete); any 0 < l0 ≤ seed length works
+          let T : Int := -(P : Int)
+          let gb : ByteGenome := gbs.map fun b => ⟨"", b⟩
+          let g := decodeGenome gb
+          let l0 := 12
+          let csr ← timed "csr" fun t => buildCsr l0 (if t == 1 then #[] else gb)
+          let okc ← timed "csr_check" fun t => checkIndex csr (if t == 1 then #[] else gb)
+          assert! okc
+          let ref R := bandMapper csr.lookup l0 sc0 T g gbs (decodeBytes R) R
+          let t0 ← IO.monoNanosNow
+          let bad := (reads.extract 0 k).foldl (fun n R => if Fast.mapFastTG P gbs idxs R == ref R then n else n + 1) 0
+          say s!"reference check (bandMapper) on {min k reads.size} reads at T = -{P}: {bad} differ ({secs t0 (← IO.monoNanosNow)} s)"
+          assert! bad == 0
+      pure fun rs => if let some P := tP then par (fun R => (Fast.mapFastTG P gbs idxs R).map fun (w, s) => (w, s, false)) rs
+        else if both then par (fun R => bothOf (best R) (best (revComp R))) rs
         else (if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs).map
           (·.map fun (w, s) => (w, s, false))
     else do
@@ -115,7 +137,12 @@ def main (args : List String) : IO UInt32 := do
           (·.map fun (w, s) => (w, s, false))
   let fast := reads.foldl (fun k r => if Fast.fastOk r then k + 1 else k) 0
   IO.println s!"fast-path reads: {fast}"
-  assert! fast == reads.size   -- other read lengths take the proved slow fallback
+  if let some ps := (← IO.getEnv "FAST_T") then
+    let gen := reads.foldl (fun k r => if Fast.fastT ps.toNat! r then k + 1 else k) 0
+    say s!"general fast-path reads: {gen}"
+    assert! gen == reads.size
+  else
+    assert! fast == reads.size   -- other read lengths take the proved slow fallback
   let reps := ((← IO.getEnv "FAST_REPS").getD "1").toNat!   -- repeat the mapping (timing only)
   let t0 ← IO.monoNanosNow
   let mut res := #[]
