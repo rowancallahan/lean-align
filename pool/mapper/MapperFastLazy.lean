@@ -595,20 +595,14 @@ theorem lazyLoop_cons {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (ps : 
       else lazyLoop R G c lk ix ps rest (k + 1) (lzStep R G c lk ix ps j k as looked b).1 (looked + pow2 j)
         (lzStep R G c lk ix ps j k as looked b).2 := rfl
 
-/-- **One lookup** (`lzStep`) keeps the loop state. -/
-theorem lzStep_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
-    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (lk.prep ix (seedHash R j))))
-    (j J : Nat) (as : Array Nat) (b : Best) (S : Window → Prop)
-    (hs : LoopState cw R G c J (pop4 J) as b S) (hj4 : j < 4) (hj0 : bit J j = 0) :
-    ∃ S2, LoopState cw R G c (J + 2 ^ j) (pop4 J + 1)
-        (lzStep R G c lk ix (prepAll lk ix (seedHashes R)) j (pop4 J) as J b).1
-        (lzStep R G c lk ix (prepAll lk ix (seedHashes R)) j (pop4 J) as J b).2 S2 ∧ (∀ w, S w → S2 w) := by
+/-- **One lookup** with its anchors `a` given (`lzStepA`) keeps the loop state. -/
+theorem lzStepA_inv (j J : Nat) (a : Array Nat) (hl : LookOk G R j a) (as : Array Nat) (b : Best)
+    (S : Window → Prop) (hs : LoopState cw R G c J (pop4 J) as b S) (hj4 : j < 4) (hj0 : bit J j = 0) :
+    ∃ S2, LoopState cw R G c (J + 2 ^ j) (pop4 J + 1) (lzStepA R G c a (pop4 J) as (J + 2 ^ j) b).1
+        (lzStepA R G c a (pop4 J) as (J + 2 ^ j) b).2 S2 ∧ (∀ w, S w → S2 w) := by
     obtain ⟨hpop, hJ'⟩ := pop4_add J hs.hJ j hj4 hj0
-    unfold lzStep
+    unfold lzStepA
     simp only []
-    rw [look_eq cw hc13 R G c hcw hn lk ix j hj4, pow2_eq j hj4]
-    have hl := hlk j hj4
-    generalize lk.look ix G R j (lk.prep ix (seedHash R j)) = a at hl
     -- the new anchors
     obtain ⟨s1, r1, m1⟩ := single_spec a G R j (by
       rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide)
@@ -692,6 +686,17 @@ theorem lzStep_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
     have hst : LoopState cw R G c (J + 2 ^ j) (pop4 J + 1) (merge as (a) 0 0 #[]) b2 S2 :=
       ⟨h2, ha', hJ', hpop, fun st hm => hS12 _ (same1 st hm), hgap2⟩
     exact ⟨S2, hst, fun w hw => hS12 w (hSS1 w hw)⟩
+
+/-- **One lookup** (`lzStep`) keeps the loop state. -/
+theorem lzStep_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
+    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (lk.prep ix (seedHash R j))))
+    (j J : Nat) (as : Array Nat) (b : Best) (S : Window → Prop)
+    (hs : LoopState cw R G c J (pop4 J) as b S) (hj4 : j < 4) (hj0 : bit J j = 0) :
+    ∃ S2, LoopState cw R G c (J + 2 ^ j) (pop4 J + 1)
+        (lzStep R G c lk ix (prepAll lk ix (seedHashes R)) j (pop4 J) as J b).1
+        (lzStep R G c lk ix (prepAll lk ix (seedHashes R)) j (pop4 J) as J b).2 S2 ∧ (∀ w, S w → S2 w) := by
+  rw [lzStep_eq_A, look_eq cw hc13 R G c hcw hn lk ix j hj4, pow2_eq j hj4]
+  exact lzStepA_inv cw hc13 R G c hcw hn j J _ (hlk j hj4) as b S hs hj4 hj0
 
 /-- **The lazy loop.** -/
 theorem lazyLoop_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
