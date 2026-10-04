@@ -79,6 +79,9 @@ minibwa is the only comparison so far. Before claiming "faster than the fastest"
 - Multi-mappers / low MAPQ can be dropped (goal is genotyping), already what `mapSpec` does on ties.
 - Kernel: plain banded DP (Smith-Waterman/Gotoh-style loop) may compile better than WFA in Lean; low-error Hamming fast path already removes most DP.
 
+## Read lengths (Rowan, 2026-10-04)
+Must work for reads up to ~250 bp. Fast path today: 100–103 letters only (`fastOk`), others take the slow proved path. In progress on `speed/fast-proved`: m = ⌊n/25⌋ disjoint 25-letter seeds (≥ m − 3 clean), multi-word Hamming. Spec question for Rowan: T = −12 is fixed regardless of length, so 250 bp reads still allow only ~3 mismatches; a length-scaled threshold would change the seed bound.
+
 ## Specs Rowan plans to write
 - FASTQ input spec, SAM output spec (CIGAR for the chosen window), CLI with filter options; later SAM→BAM with BAM checked as the inverse of SAM (fuzzing over BAM instead of a full BAM spec).
 
