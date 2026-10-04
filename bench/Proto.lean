@@ -217,7 +217,8 @@ def supAt (r g : ByteArray) (q A : Nat) : Nat := Id.run do
     if p + q ≤ g.size && eqRun g r p (j * q) (p + q) then c := c + 1
   return c
 
-/-- Best window over the anchors of the seeds whose bucket holds ≤ K entries;
+/-- Best window over the anchors of the seeds whose bucket holds ≤ K entries
+(`bigK`, default 32: bigger buckets are looked up only when needed);
 also returns B = how many seeds were skipped.  Exact when B = 0 or the result's
 penalty is < 4·(4 - B): a window none of whose clean seeds was looked up has
 m ≥ 4 - B - (seeds spoiled by its gap) mismatches; with one gap of length L
@@ -261,10 +262,7 @@ def mapK (idx : Idx) (g r : ByteArray) (vs sizes : Array Nat) (K : Nat) : Best �
           b := b.add (A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
   return (b, nB)
 
-/-- Seeds with more than `bigK` bucket entries are looked up only when needed. -/
-def bigK : Nat := 32
-
-def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
+def mapRead (idx : Idx) (g r : ByteArray) (bigK : Nat) : Option (Nat × Nat × Nat) := Id.run do
   let q := idx.q
   assert! r.size / 4 == q && r.size + 3 ≤ BIAS
   let vs := #[(seedCode r 0 0 q 0 0).toNat, (seedCode r q 0 q 0 0).toNat,
@@ -292,11 +290,12 @@ def main (args : List String) : IO UInt32 := do
   assert! l0 == 25
   IO.println s!"index entries: {idx.ent.size / 2}"
   let t1 ← IO.monoNanosNow
+  let bigK := ((← IO.getEnv "PROTO_BIGK").getD "32").toNat!   -- small values test the lazy path
   let reps := ((← IO.getEnv "PROTO_REPS").getD "1").toNat!   -- for profiling
   let mut res : Array (Option (Nat × Nat × Nat)) := #[]
   for _ in [0:reps] do
     res := #[]
-    for r in reads do res := res.push (mapRead idx g r)
+    for r in reads do res := res.push (mapRead idx g r bigK)
   let mapped := (res.filter (·.isSome)).size
   IO.println s!"mapped: {mapped}"
   let t2 ← IO.monoNanosNow
