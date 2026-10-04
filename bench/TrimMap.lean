@@ -1,4 +1,4 @@
-import PairGen
+import FastGenPair
 import ReadTrim
 
 /-!
@@ -8,7 +8,8 @@ Trimmed paired FASTQ → proved trimmer → proved pair mapper → ordered TSV (
     env: TM_TASKS (1) mapping tasks, TM_CHUNK (4096) pairs per chunk, TM_MZ=k (minimizer index,
     else hashed), TM_MIN/TM_MAX (100/1000) insert range, TM_T (12) penalty bound, TM_MINLEN (30),
     TM_FQ=prefix (also write the trimmed, non-empty pairs as prefix_1.fq / prefix_2.fq),
-    TM_MODE = pipe (default) | prep (read + prep only) | map (prep everything first, then time mapping alone)
+    TM_MODE = pipe (default) | prep (read + prep only) | map (prep everything first, then time mapping alone),
+    TM_RUNS=mode:tasks:P,... (several runs after one startup; out.tsv gets suffix .<mode><tasks>_T<P>)
 
 Stages, pipelined (prep of chunk i+1 and writing of chunk i−1 overlap mapping of chunk i):
   read  (main thread): exactly TM_CHUNK records from each file;
@@ -16,7 +17,8 @@ Stages, pipelined (prep of chunk i+1 and writing of chunk i−1 overlap mapping 
         windows are A/C/G/T only), flag pairs trimmed away (`unmapped: trimmed`) or not taken by the
         mapper (`unmapped: length`);
   map   (≤ TM_TASKS tasks at once): the per-pair mapper, a parameter (`PairMapper`); here
-        `pairFastGJ` (pairFastGJ_hashed/mz_eq_pairSpec, any length with `fastT`);
+        `pairFastGB` over one concatenated index (pairFastGB_hashed/mz_eq_pairSpec); mates the
+        general fast path does not take (`fastT`: too few 25-letter seeds) are `unmapped: length`;
   write (one task chain, in chunk order).
 The written text is `formatAll fmt (pairs.map (map ∘ prep))` (ParMap.chunks_text, stages_text).
 -/
@@ -203,37 +205,12 @@ def peakRssMB : IO Nat := do
 def getEnvNat (k : String) (d : Nat) : IO Nat := do
   return ((← IO.getEnv k).getD (toString d)).toNat!
 
-def main (args : List String) : IO UInt32 := do
-  let gpath :: p1 :: p2 :: rest := args
-    | throw (IO.userError "usage: trim_map <genome.fa> <R1.fq> <R2.fq> [out.tsv]")
-  let tasks ← getEnvNat "TM_TASKS" 1
-  let chunk ← getEnvNat "TM_CHUNK" 4096
-  let mz ← getEnvNat "TM_MZ" 0
-  let lo ← getEnvNat "TM_MIN" 100
-  let hi ← getEnvNat "TM_MAX" 1000
-  let P ← getEnvNat "TM_T" 12
-  let minLen ← getEnvNat "TM_MINLEN" 30
-  let mode := (← IO.getEnv "TM_MODE").getD "pipe"
-  let fqp ← IO.getEnv "TM_FQ"
-  assert! tasks ≥ 1 && chunk ≥ 1
-  let t0 ← IO.monoNanosNow
-  let gbs ← readFasta gpath
-  let multi := gbs.size > 1
-  let m : PairMapper ← if mz == 0 then do
-      let idxs := gbs.map buildIdx
-      assert! checkAll idxs gbs
-      IO.eprintln s!"hashed indexes: checkAll ok"
-      pure ⟨fastT P, pairFastGJ P lo hi gbs idxs⟩
-    else do
-      let idxs := gbs.map fun g => Mz.buildW g mz 24 (25 - mz) 8 mz
-      assert! checkAllMz idxs gbs
-      IO.eprintln s!"minimizer indexes k={mz}: checkAllMz ok"
-      pure ⟨fastT P, pairFastGJ P lo hi gbs idxs⟩
-  let t1 ← IO.monoNanosNow
-  IO.eprintln s!"startup (genome {gbs.size} chromosomes, index build + check): {secs (t1 - t0)} s"
+/-- One run over the two FASTQ files (startup done). -/
+def run (mode : String) (tasks P chunk minLen : Nat) (m : PairMapper) (multi : Bool) (p1 p2 outPath : String)
+    (fqp : Option String) : IO Unit := do
   let h1 ← IO.FS.Handle.mk p1 .read
   let h2 ← IO.FS.Handle.mk p2 .read
-  let out ← IO.FS.Handle.mk (rest.headD "/dev/null") .write
+  let out ← IO.FS.Handle.mk outPath .write
   let fqh ← match fqp with
     | some p => pure (some (← IO.FS.Handle.mk (p ++ "_1.fq") .write, ← IO.FS.Handle.mk (p ++ "_2.fq") .write))
     | none => pure none
@@ -262,7 +239,7 @@ def main (args : List String) : IO UInt32 := do
     if writes.size ≥ tasks + 2 then
       let _ ← IO.ofExcept (← IO.wait writes[writes.size - (tasks + 2)]!)
     let pt ← IO.asTask (prio := .dedicated) (prepTask minLen m.ok fqh.isSome c1 c2)
-    let prevW : Task (Except IO.Error Unit) ← if t == 0 then IO.asTask (pure ()) else pure writes[t - 1]!
+    let prevW : Task (Except IO.Error Unit) ← if t == 0 || mode == "map" then IO.asTask (pure ()) else pure writes[t - 1]!
     if mode == "prep" then
       let w ← IO.bindTask prevW fun pw => IO.mapTask (prio := .dedicated) (fun r => do
         let _ ← IO.ofExcept pw
@@ -323,5 +300,46 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"prep (task time):   {secs s.prepNs} s  ({n / secs s.prepNs} pairs/s per core)"
   IO.println s!"map (task time):    {secs s.mapNs} s  ({n / secs s.mapNs} pairs/s per core)"
   IO.println s!"write (task time):  {secs s.writeNs} s"
-  IO.println s!"overall: {secs (tEnd - tStart)} s wall  {n / secs (tEnd - tStart)} pairs/s (startup {secs (t1 - t0)} s excluded)  peak RSS {← peakRssMB} MB"
+  IO.println s!"overall: {secs (tEnd - tStart)} s wall  {n / secs (tEnd - tStart)} pairs/s (startup excluded)  peak RSS {← peakRssMB} MB"
+
+def main (args : List String) : IO UInt32 := do
+  let gpath :: p1 :: p2 :: rest := args
+    | throw (IO.userError "usage: trim_map <genome.fa> <R1.fq> <R2.fq> [out.tsv]")
+  let tasks0 ← getEnvNat "TM_TASKS" 1
+  let chunk ← getEnvNat "TM_CHUNK" 4096
+  let mz ← getEnvNat "TM_MZ" 0
+  let lo ← getEnvNat "TM_MIN" 100
+  let hi ← getEnvNat "TM_MAX" 1000
+  let P0 ← getEnvNat "TM_T" 12
+  let minLen ← getEnvNat "TM_MINLEN" 30
+  let mode0 := (← IO.getEnv "TM_MODE").getD "pipe"
+  -- TM_RUNS=mode:tasks:P,... : several runs after one startup
+  let runs := ((← IO.getEnv "TM_RUNS").getD s!"{mode0}:{tasks0}:{P0}").splitOn "," |>.map fun r =>
+    match r.splitOn ":" with
+    | [a, b, c] => (a, b.toNat!, c.toNat!)
+    | _ => panic! s!"bad TM_RUNS entry {r}"
+  let fqp ← IO.getEnv "TM_FQ"
+  assert! chunk ≥ 1 && runs.all (·.2.1 ≥ 1)
+  let t0 ← IO.monoNanosNow
+  let gbs ← readFasta gpath
+  let multi := gbs.size > 1
+  let G := gbs.foldl (· ++ ·) ByteArray.empty
+  let offs := (gbs.foldl (fun (o, n) g => (o.push n, n + g.size)) ((#[] : Array Nat), 0)).1
+  assert! catOk G offs gbs
+  let mk : Nat → PairMapper ← if mz == 0 then do
+      let ix := buildIdx G
+      assert! checkAll #[ix] #[G]
+      IO.eprintln s!"hashed index over the concatenated genome: catOk, checkAll ok"
+      pure fun P => ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
+    else do
+      let ix := Mz.buildW G mz 24 (25 - mz) 8 mz
+      assert! checkAllMz #[ix] #[G]
+      IO.eprintln s!"minimizer index k={mz} over the concatenated genome: catOk, checkAllMz ok"
+      pure fun P => ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
+  let t1 ← IO.monoNanosNow
+  IO.eprintln s!"startup (genome {gbs.size} chromosomes, index build + check): {secs (t1 - t0)} s"
+  let outPath := rest.headD "/dev/null"
+  for (k, (mode, tasks, P)) in runs.zipIdx.map (fun (r, k) => (k, r)) do
+    let o := if runs.length > 1 && outPath != "/dev/null" then s!"{outPath}.{mode}{tasks}_T{P}" else outPath
+    run mode tasks P chunk minLen (mk P) multi p1 p2 o (if k == 0 then fqp else none)
   return 0
