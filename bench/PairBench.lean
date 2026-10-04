@@ -2,6 +2,7 @@ import PairMapper
 import PairJoint
 import PairInterleave
 import PairConcat
+import PairUnique
 import ParMap
 
 /-!
@@ -13,6 +14,8 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
     PAIR_INTERLEAVE (strands interleaved one lookup at a time, pairFastI),
     PAIR_MZ=k [PAIR_MZ_B=B] [PAIR_MZ_C=c] [PAIR_MZ_W=bytes] [PAIR_MZ_T=t] (minimizer index, with PAIR_JOINT / PAIR_INTERLEAVE: pairFastJ/I_mz_eq_pairSpec),
     PAIR_CONCAT (with PAIR_INTERLEAVE: one index over the concatenated chromosomes, pairFastC),
+    PAIR_UNIQ (with PAIR_CONCAT: pair-level uniqueness, pairFastU_eq_pairSpecU against the DRAFT pairSpecU),
+    PAIR_HITS=<file> (with PAIR_UNIQ: every hit of every mate, for bench/pair_uniq_ref.py),
     PAIR_DIAG (per-read counts of lookups, anchors, windows scored; pairFastI only)
     With several chromosomes the dump has the chromosome index before each hit.
 
@@ -184,6 +187,27 @@ def report (st : St) (pairs : Nat) : IO Unit := do
 
 end Diag
 
+/-- Every hit of each mate (`hitsL … 12`, proved = all placements of penalty ≤ 12):
+`name  mate  chr:start:len:pen:strand ...`. -/
+def dumpHits {L P : Type} [Inhabited P] (lk : Fast.Look L P) (ix : L) (G : ByteArray) (offs : Array Nat) (gbs : Array ByteArray)
+    (names : Array String) (ps : Array (ByteArray × ByteArray)) (path : String) : IO Unit := do
+  let one (nm : String) (m : Nat) (R : ByteArray) : String :=
+    s!"{nm}\t{m}" ++ String.join ((Fast.hitsL lk ix G offs gbs R 12).map fun (p, k) =>
+      s!"\t{p.1.chr}:{p.1.start}:{p.1.len}:{k}:{if p.2 == Strand.rev then "-" else "+"}") ++ "\n"
+  IO.FS.writeFile path (String.join ((names.zip ps).toList.map fun (nm, p) => one nm 1 p.1 ++ one nm 2 p.2))
+
+/-- Pairs that reach the fallback of `pairFastU` (same tests, untimed). -/
+def slowCount {L P : Type} [Inhabited P] (lk : Fast.Look L P) (lo hi : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (ps : Array (ByteArray × ByteArray)) : Nat :=
+  ps.foldl (fun n p => Id.run do
+    let b1 := Fast.mapChromsC lk ix G offs gbs p.1 false
+    if 12 < b1.pen then return n
+    let b2 := Fast.mapChromsC lk ix G offs gbs p.2 (decide (b1.chr < gbs.size))
+    if 12 < b2.pen then return n
+    match Fast.decodeJ gbs.size b1, Fast.decodeJ gbs.size b2 with
+    | some a, some b => return if properPair lo hi a.1 b.1 then n else n + 1
+    | _, _ => return n + 1) 0
+
 def secs (t0 t1 : Nat) : Float := Float.ofNat (t1 - t0) / 1e9
 
 def main (args : List String) : IO UInt32 := do
@@ -202,6 +226,9 @@ def main (args : List String) : IO UInt32 := do
   let mz := ((← IO.getEnv "PAIR_MZ").getD "0").toNat!
   let diag := (← IO.getEnv "PAIR_DIAG").isSome
   let cat := (← IO.getEnv "PAIR_CONCAT").isSome
+  let uniq := (← IO.getEnv "PAIR_UNIQ").isSome
+  let hitsPath := (← IO.getEnv "PAIR_HITS")
+  assert! cat || !uniq
   let f : ByteArray × ByteArray → Option ((Placement × Int) × (Placement × Int)) ← if cat then do
       assert! inter
       let G := gbs.foldl (· ++ ·) ByteArray.empty
@@ -213,7 +240,11 @@ def main (args : List String) : IO UInt32 := do
         let ok := Fast.checkIdx ix G
         IO.println s!"index check: {ok}  index_bytes: {ix.offs.size + ix.ent.size + ix.odd.foldl (· + ·.size) 0}"
         assert! ok
-        pure fun p => Fast.pairFastC Fast.hLook lo hi ix G offs gbs p.1 p.2
+        if uniq then
+          IO.println s!"fallback pairs: {slowCount Fast.hLook lo hi ix G offs gbs ps}"
+          if let some hp := hitsPath then dumpHits Fast.hLook ix G offs gbs names ps hp
+          pure fun p => Fast.pairFastU Fast.hLook lo hi ix G offs gbs p.1 p.2
+        else pure fun p => Fast.pairFastC Fast.hLook lo hi ix G offs gbs p.1 p.2
       else
         let B := ((← IO.getEnv "PAIR_MZ_B").getD "24").toNat!
         let C := ((← IO.getEnv "PAIR_MZ_C").getD (toString (25 - mz))).toNat!
@@ -223,7 +254,11 @@ def main (args : List String) : IO UInt32 := do
         let ok := Mz.check2 ix G
         IO.println s!"index check: {ok}  minimizer k={mz} B={B} C={C} W={W} T={T} kf={ix.kf} index_bytes: {ix.offs.size + ix.sl.size + 8 * ix.runs.size}"
         assert! ok
-        pure fun p => Fast.pairFastC Fast.mzL lo hi ix G offs gbs p.1 p.2
+        if uniq then
+          IO.println s!"fallback pairs: {slowCount Fast.mzL lo hi ix G offs gbs ps}"
+          if let some hp := hitsPath then dumpHits Fast.mzL ix G offs gbs names ps hp
+          pure fun p => Fast.pairFastU Fast.mzL lo hi ix G offs gbs p.1 p.2
+        else pure fun p => Fast.pairFastC Fast.mzL lo hi ix G offs gbs p.1 p.2
     else if mz == 0 then do
       let idxs := gbs.map Fast.buildIdx
       let ok := Fast.checkAll idxs gbs

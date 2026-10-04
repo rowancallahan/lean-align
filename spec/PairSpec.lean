@@ -66,6 +66,27 @@ def pairSpec (sc : Scoring) (T : Int) (lo hi : Nat) (g : Genome) (mate1 mate2 : 
   | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
   | _, _ => none
 
+/-! ## Pair-level uniqueness (second DRAFT, for Rowan to review; `pairSpec` above is kept)
+
+`pairSpec` asks each mate to map uniquely on its own.  `pairSpecU` instead looks at
+every proper pair `(a, b)` with `a` a hit of mate 1 and `b` a hit of mate 2 (each
+over both strands, score `≥ T`) and keeps the pair whose summed score beats every
+other proper pair; a tie between different pairs (even pairs sharing one mate) is
+unmapped.  A per-mate tie that only one proper pair can resolve is then mapped. -/
+
+/-- The proper pair of hits (`a` from `h1`, `b` from `h2`) whose summed score beats
+every other proper pair at different placements, if there is one. -/
+def bestPair (lo hi : Nat) (h1 h2 : List (Placement × Int)) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  let ps := h1.flatMap fun a => (h2.filter fun b => properPair lo hi a.1 b.1).map fun b => (a, b)
+  ps.find? fun p => ps.all fun p' =>
+    decide (p'.1.2 + p'.2.2 < p.1.2 + p.2.2) || decide (p'.1.1 = p.1.1 ∧ p'.2.1 = p.2.1)
+
+/-- DRAFT: where a pair maps under pair-level uniqueness; `none` = not reported. -/
+def pairSpecU (sc : Scoring) (T : Int) (lo hi : Nat) (g : Genome) (mate1 mate2 : List Char) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  bestPair lo hi (hitsBoth sc T g mate1) (hitsBoth sc T g mate2)
+
 /-- `selectUnique` is the `Window` instance of `selectUniqueBy`. -/
 theorem selectUnique_eq_by (hits : List (Window × Int)) : selectUnique hits = selectUniqueBy hits := rfl
 
