@@ -240,7 +240,7 @@ def main (args : List String) : IO UInt32 := do
   let mut o1 := 0
   let mut o2 := 0
   let mut writes : Array (Task (Except IO.Error Unit)) := #[]
-  let mut maps : Array (Task (Except IO.Error (ByteArray × Array (String × Out) × Nat))) := #[]
+  let mut maps : Array (Task (Except IO.Error (ByteArray × Array (String × Out) × Nat × Option (ByteArray × ByteArray)))) := #[]
   let mut preps : Array (Array Prep) := #[]
   repeat
     let r0 ← IO.monoNanosNow
@@ -279,14 +279,15 @@ def main (args : List String) : IO UInt32 := do
       let mt ← IO.bindTask pt fun r => IO.bindTask prev fun _ => IO.asTask (prio := .dedicated) do
         let (ps, f, ns) ← IO.ofExcept r
         st.modify fun s => { s with prepNs := s.prepNs + ns }
-        if let (some (a, b), some (fa, fb)) := (f, fqh) then fa.write a; fb.write b
-        mapTask m multi ps
+        let (txt, outs, mns) ← mapTask m multi ps
+        return (txt, outs, mns, f)
       maps := maps.push mt
       let w ← IO.bindTask prevW fun pw => IO.mapTask (prio := .dedicated) (fun r => do
         let _ ← IO.ofExcept pw
-        let (txt, outs, ns) ← IO.ofExcept r
+        let (txt, outs, ns, f) ← IO.ofExcept r
         let w0 ← IO.monoNanosNow
         out.write txt
+        if let (some (a, b), some (fa, fb)) := (f, fqh) then fa.write a; fb.write b
         let w1 ← IO.monoNanosNow
         st.modify fun s => count outs { s with mapNs := s.mapNs + ns, writeNs := s.writeNs + (w1 - w0) }) mt
       writes := writes.push w
