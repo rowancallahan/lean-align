@@ -1,4 +1,5 @@
 import FastGenMz
+import FastGenCoverW
 import PairJoint
 
 /-!
@@ -11,7 +12,7 @@ complement (genome array doubled, `gbs ++ gbs`: same byte arrays, no copy).
 The search is exact in any order (`rf`: reverse strand first).  Mate 1 searches
 its forward strand first; mate 2 the strand opposite to mate 1's hit, so the
 second strand stops early once the first has a good hit.  Coverage per step is
-`chromG_coverW` (codecs/FastGenProof.lean): windows of penalty ≤ min(best, P)
+`chromG_coverW` (codecs/FastGenCoverW.lean): windows of penalty ≤ min(best, P)
 are added, the rest cannot change the result.
 
     GenomeBytes gbs g → Encodes R read → LookAllG gbs idxs → fastT P R →
