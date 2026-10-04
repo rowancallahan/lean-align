@@ -80,60 +80,81 @@ def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
 /-- Anchors are stored biased by `BIAS` (≥ n) so they are `Nat`s. -/
 def BIAS : Nat := 128
 
-/-- Push `p + BIAS - shift` for every start p with g[p, p+q) = r[o, o+q). -/
-def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Nat) (shift : Nat) : Array Nat := Id.run do
-  let q := idx.q
-  let mut x : UInt64 := 0
-  let mut plain := true
-  for i in [0:q] do
-    let c := code (r.get! (o + i))
-    assert! r.get! (o + i) != 78
-    if c == 4 then plain := false
-    x := (x <<< 2) ||| (c &&& 3)
-  let mut acc := acc
-  if plain then
-    let y := mix x
-    let b := (y >>> (50 - BBITS)).toNat
-    let key := (y &&& KMASK).toUInt32
-    for t in [idx.offs[b]!.toNat:idx.offs[b + 1]!.toNat] do
-      if idx.ent[2 * t + 1]! == key then acc := acc.push (idx.ent[2 * t]!.toNat + BIAS - shift)
-  else
-    for p in idx.odd do
-      let mut ok := true
-      for u in [0:q] do
-        if g.get! (p + u) != r.get! (o + u) then ok := false; break
-      if ok then acc := acc.push (p + BIAS - shift)
-  return acc
+/-- 2-bit code of r[o+i, o+stop) appended to `x` (letters must be ACGT). -/
+def seedCode (r : ByteArray) (o i stop : Nat) (x : UInt64) : UInt64 :=
+  if h : i < stop then seedCode r o (i + 1) stop ((x <<< 2) ||| code (r.get! (o + i))) else x
+termination_by stop - i
 
-/-- Mismatches of `r` against `g[a ..]`, stopping once above `lim`. -/
-def hamming (r g : ByteArray) (a lim : Nat) : Nat := Id.run do
-  let mut m := 0
-  for i in [0:r.size] do
+/-- r[o, o+q) is all ACGT. -/
+def plainAt (r : ByteArray) (o i stop : Nat) : Bool :=
+  if h : i < stop then code (r.get! (o + i)) < 4 && plainAt r o (i + 1) stop else true
+termination_by stop - i
+
+/-- r[o+i, o+stop) contains N (reads with N are refused: N-words are not indexed). -/
+def hasN (r : ByteArray) (o i stop : Nat) : Bool :=
+  if h : i < stop then r.get! (o + i) == 78 || hasN r o (i + 1) stop else false
+termination_by stop - i
+
+/-- a[i, stop) = b[j, j + stop - i). -/
+def eqRun (a b : ByteArray) (i j stop : Nat) : Bool :=
+  if h : i < stop then a.get! i == b.get! j && eqRun a b (i + 1) (j + 1) stop else true
+termination_by stop - i
+
+/-- Push `p + BIAS - shift` for entries t ∈ [t, hi) of the bucket with this key. -/
+def scanBucket (ent : Array UInt32) (key : UInt32) (t hi shift : Nat) (acc : Array Nat) : Array Nat :=
+  if h : t < hi then
+    scanBucket ent key (t + 1) hi shift
+      (if ent[2 * t + 1]! == key then acc.push (ent[2 * t]!.toNat + BIAS - shift) else acc)
+  else acc
+termination_by hi - t
+
+/-- Push `p + BIAS - shift` for every start p with g[p, p+q) = r[o, o+q). -/
+def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Nat) (shift : Nat) : Array Nat :=
+  let q := idx.q
+  assert! !hasN r o 0 q
+  if plainAt r o 0 q then
+    let y := mix (seedCode r o 0 q 0)
+    let b := (y >>> (50 - BBITS)).toNat
+    scanBucket idx.ent (y &&& KMASK).toUInt32 idx.offs[b]!.toNat idx.offs[b + 1]!.toNat shift acc
+  else
+    idx.odd.foldl (init := acc) fun acc p => if eqRun g r p o (p + q) then acc.push (p + BIAS - shift) else acc
+
+/-- Mismatches of r[i ..] against g[a + i ..] plus `m`, stopping once above `lim`. -/
+def hamming (r g : ByteArray) (a i lim m : Nat) : Nat :=
+  if h : i < r.size then
     if r.get! i != g.get! (a + i) then
-      m := m + 1
-      if m > lim then return m
-  return m
+      if m + 1 > lim then m + 1 else hamming r g a (i + 1) lim (m + 1)
+    else hamming r g a (i + 1) lim m
+  else m
+termination_by r.size - i
+
+/-- Mismatches of r[k, stop) against g[d + k ..] (d may be negative: g[k + d1 - d0]). -/
+def misCount (r g : ByteArray) (d1 d0 k stop m : Nat) : Nat :=
+  if h : k < stop then misCount r g d1 d0 (k + 1) stop (if r.get! k != g.get! (k + d1 - d0) then m + 1 else m)
+  else m
+termination_by stop - k
+
+/-- min over gap positions i ∈ [i, stop) of pre + suf, see `gappedPen`. -/
+def gapScan (r g : ByteArray) (st len skip mmax i stop pre suf best : Nat) : Nat :=
+  if h : i < stop then
+    let pre := if r.get! i != g.get! (st + i) then pre + 1 else pre
+    if pre > mmax then best else
+    let suf := if r.get! (i + skip) != g.get! (st + len + i + skip - r.size) then suf - 1 else suf
+    gapScan r g st len skip mmax (i + 1) stop pre suf (min best (pre + suf))
+  else best
+termination_by stop - i
 
 /-- Penalty of window (st, len), len ≠ n, |len - n| ≤ 3, if ≤ `lim`; else lim + 1. -/
-def gappedPen (r g : ByteArray) (st len lim : Nat) : Nat := Id.run do
+def gappedPen (r g : ByteArray) (st len lim : Nat) : Nat :=
   let n := r.size
   let L := if len > n then len - n else n - len
-  if lim < 6 + 2 * L then return lim + 1
+  if lim < 6 + 2 * L then lim + 1 else
   let mmax := (lim - 6 - 2 * L) / 4
   let skip := if len < n then L else 0
   -- read k < i ↔ g[st + k];  read k ≥ i + skip ↔ g[st + k + len - n]
-  let mut suf := 0
-  for k in [skip:n] do
-    if r.get! k != g.get! (st + len + k - n) then suf := suf + 1
-  let mut pre := 0
-  let mut best := pre + suf
-  for i in [0:n - skip] do
-    if r.get! i != g.get! (st + i) then pre := pre + 1
-    if pre > mmax then break
-    if r.get! (i + skip) != g.get! (st + len + i + skip - n) then suf := suf - 1
-    best := min best (pre + suf)
-  if best > mmax then return lim + 1
-  return 6 + 2 * L + 4 * best
+  let suf := misCount r g (st + len) n skip n 0
+  let best := gapScan r g st len skip mmax 0 (n - skip) 0 suf suf
+  if best > mmax then lim + 1 else 6 + 2 * L + 4 * best
 
 structure Best where
   pen : Nat := cap + 1
@@ -173,7 +194,7 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
       for e in as do
         let A := e / 8
         if e % 8 == sup && A ≥ BIAS && A - BIAS + n ≤ g.size then
-          let m := hamming r g (A - BIAS) (min 3 (b.pen / 4))
+          let m := hamming r g (A - BIAS) 0 (min 3 (b.pen / 4)) 0
           if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
   -- gapped windows cost ≥ 8; their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9)
   if b.pen ≥ 8 then
