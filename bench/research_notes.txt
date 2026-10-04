@@ -16,10 +16,12 @@ Setup used for every number below
 
 Headline measurements (single thread unless stated, chr21, mapping time only)
 -------------------------------------------------------------------------------
-  minibwa map -t 1          44 k reads/s  (2.26 s for 100k; 2.86 s incl. 0.6 s index load)
+  minibwa map -t 1          54-62 k reads/s mapping only (best/median of 10 runs:
+                            1.61-1.85 s for 100k; first cold run 2.26 s = 44 k);
+                            ~35-40 k reads/s including the 0.6 s index load
   minibwa map -t 4         139 k reads/s including index load (0.72 s wall)
   bench/Proto.lean          0.74-1.1 k reads/s (banded capped Gotoh, boxed Nat arrays)
-  bench/Proto2.lean         58-63 k reads/s on sim, 36.5 k reads/s on stress
+  bench/Proto2.lean         57-65 k reads/s on sim (1.53-1.76 s, 5 runs), 33-36 k on stress
   Proto2 vs Proto answers   0 disagreements on 99,999 sim + 19,999 stress reads
                             (`proto2 ... check` runs Proto's mapper on every read and
                             asserts equality; same 93,114 mapped, 92,989 at the true
@@ -33,7 +35,8 @@ Ablations of Proto2 on sim (100k reads):
   closed form with byte scans (before packed scans) 34-42 k reads/s
   4 Lean tasks (Task.spawn)                       55-58 k reads/s (1 task: 33 k; see Q5)
 
-So the unproved prototype already beats the "within 3x of minibwa per thread"
+Run-to-run noise on this machine is +-10%, so Proto2 and minibwa are equal
+within noise on chr21.  The unproved prototype already meets the "within 3x of minibwa per thread"
 target on chr21.  The work left is proving the pieces, and the whole-genome index.
 
 
@@ -247,6 +250,137 @@ Findings from the generated C:
   overlaps the misses).
 
 
+Q6. How much of minibwa's speed is SIMD/prefetch vs algorithm (measured)
+------------------------------------------------------------------------
+Three local builds of the same source, same reads; all give byte-identical
+SAM (same md5).  Mapping time for 100k reads, 10 runs each, min / median:
+  default (-msse4.2 -mpopcnt, SSE4.1 ksw2, prefetch)  1.61-1.76 / 1.85 s
+  SSE2 only (no SSE4.1 ksw2 path, software popcount)  1.57 / 1.75 s
+  prefetch removed (-D'__builtin_prefetch(...)=')     1.70 / 1.75 s
+  (objdump: the SSE2 build has 0 popcnt and 0 pblendvb/pmaxsb; the no-prefetch
+  build has 0 prefetch instructions)
+=> On chr21 single-thread, SSE4.1 vs SSE2, hardware popcount, and software
+   prefetch are each below the +-10% run-to-run noise.  The 93 MB chr21
+   FM-index is small enough that prefetch matters little.  dev.md reports
+   2.5x on SMEM from batching+prefetch, presumably on the whole genome
+   (3 GB index, every step a DRAM miss).  Expect prefetch to matter there.
+- The SIMD DP itself cannot be switched off: ksw2 has no scalar path, and
+  SSE2 is the x86-64 baseline.  gprof puts ksw_extd2_sse + ksw_extz2_sse at
+  ~10% of mapping time, with 0.78 DP calls per read.  A 16-lane kernel
+  replaced by scalar code costing ~8-16x more would add 70-150% to the run.
+  Estimate: SIMD is worth ~1.7-2.5x on this workload, all of it in the DP.
+- The rest is algorithmic: the ungapped shortcut avoids DP for most reads;
+  the 10-mer interval cache removes the first 10 of ~25+ LF steps per seed;
+  chaining is cheap.  Seeding is the dominant cost (Q1).
+
+Q7. What holds Lean-compiled code back vs C here, and what proved code can avoid
+-------------------------------------------------------------------------------
+Measured context: the old banded DP costs ~15-50 ns/cell in Lean (bench/Proto
+and the other session's ~50 ns); scalar C is ~1 ns, SIMD ~0.1 ns.  Item by
+item (avoidable = can be avoided in code that is still proved, without
+@[extern]/unsafe/implemented_by):
+  boxed objects       Nat/Int and Array elements are lean_object*.  Avoidable:
+                      UInt64/UInt32/USize locals and arguments are unboxed C
+                      values; ByteArray (and FloatArray) are the only unboxed
+                      arrays.  Array UInt64 elements are heap boxes; use a
+                      ByteArray with 8-byte decode (clang merges the loads).
+  reference counting  lean_inc/lean_dec on every object passed or projected.
+                      Mostly avoidable: @& (borrowed) parameters for the
+                      genome/index, scalars instead of objects in hot loops.
+                      Atomic RC on objects shared with tasks may explain the
+                      unresolved 1-task slowdown (Q5).
+  bounds checks       get!/set!/[i]! check and keep a panic path.  Avoidable:
+                      uget/a[i]'h with a proof, often by one range check per
+                      window (`if h : i + 8 <= a.size`) plus a small lemma.
+  Nat arithmetic      lean_nat_add/mul with overflow checks and a lean_dec per
+                      op; Int is worse.  Avoidable: USize/UInt64 with proofs
+                      relating .toNat; keep Nat in specs and lemmas only.
+  closures in loops   for/while in do-notation compile to specialised loop
+                      functions.  State with several `mut` vars or a while
+                      loop's state is passed boxed (repeatM_erased takes
+                      lean_object*), so a UInt64 there is heap-allocated each
+                      iteration.  Avoidable: explicit tail recursion with
+                      scalar arguments and a Nat fuel or termination proof.
+                      40 k -> 58-60 k reads/s in Proto2.
+  copy-on-write       Array.set! copies when the array is shared (RC > 1).
+                      Avoidable: keep DP rows/accumulators uniquely referenced
+                      (no second live binding, no capture in a closure), or
+                      allocate once per read and reuse.  Proto.lean allocates
+                      3 arrays per DP row: avoidable.
+  allocation/iter     tuples, Option, structures and boxed UInt64 allocate.
+                      Avoidable: pack into UInt64, @[inline] small helpers
+                      (pair return 10 ns vs packed 3.7 ns).
+  library traps       UInt64.log2 is a loop in lean.h; String.splitOn plus UTF-8
+                      validation on FASTA input.  Avoidable: popcount-based
+                      ctz/msb, readBinFile + byte parsing.
+  no SIMD/prefetch    Not avoidable without @[extern].  64-bit SWAR (2-bit
+                      letters, 32 per word) recovers much of it for exact and
+                      Hamming work: 21 ns per 100-letter compare.
+Net: with these rules the hot path is plain scalar C (checked in
+.lake/build/ir/*.c and objdump).  Only SIMD and prefetch stay out of reach.
+For this problem the closed form removes the DP, so the missing SIMD costs
+little.
+
+Q8. Near-exact reads (0-2 differences, as in the user's trimmed reads)
+---------------------------------------------------------------------
+minibwa: always runs full SMEM seeding, SA lookup and chaining.  Only the
+DP is skipped: equal-length query/target with <= 3 mismatches (or no gapped
+alignment can beat it) is scored ungapped; extensions with <= 1 mismatch
+too.  The mismatch count narrows the DP band otherwise.  So near-exact reads
+still pay the dominant seeding cost.
+Ours (exact, all provable):
+- penalty 0: the rarest-seed shortcut (1 bucket, verify, stop at 2 copies)
+  decides the read; no other seed, no scan.
+- penalty 4 (1 mismatch): any competitor with penalty <= 4 has <= 1 event and
+  no gap (a gap costs >= 8), so it is an equal-length window with Hamming
+  <= 1 on a diagonal of one of the 2 rarest seeds.  Hamming checks only,
+  4 XOR/popcount words each.
+- penalty 8 (2 mismatches or one 1-bp gap): 3 rarest seeds.  Equal-length
+  windows by Hamming, plus the 1-bp gap cases (a0 + b0 >= n checks) on
+  d +- 1 only.
+- penalty 12: all 4 seeds, full closed form.
+This is the plan the other session describes ("<= 1 mismatch needs only
+Hamming").  The general rule is in Q9.
+
+Q9. Seed strategies asked about: two-pass 2x50 / 4x25, order + early stop, learned order
+-------------------------------------------------------------------------------------
+Early stop (best penalty P so far => only floor(P/4)+1 seeds):
+  Correct, exact.  Every event costs >= 4 (mismatch 4, gap >= 8), so a window
+  with penalty <= P has <= floor(P/4) events.  Each event spoils at most one
+  of the 4 disjoint seeds, so any floor(P/4)+1 seeds contain an unspoiled
+  one.  Competitors at penalty = P must be found too (a tie makes the read
+  unmapped), and they are covered by the same bound.  Procedure: read the 4
+  bucket sizes first (offsets only), take seeds in increasing size, keep the
+  best P, and stop once the number of seeds examined exceeds floor(P/4).
+  P = 0 -> 1 seed, 4 -> 2, 8 -> 3, 12 -> 4.  Gapped windows need checking
+  only when P >= 8.
+  Proof: medium.  "Seeds spoiled <= events <= floor(P/4)" (the existing
+  MapperWalk lemma generalised from 1 untouched seed to 4 - E untouched),
+  plus "the windows found so far are all hits with penalty <= P".
+Seed order (rarest first, by bucket size, or a learned order):
+  Any order is exact: the proof quantifies over the set of seeds examined,
+  never their order, so an order picked by a learned table, by bucket
+  sizes, or at random needs no extra proof.  Exact bucket sizes cost one
+  offset read per seed and are the best per-read signal.  A learned
+  per-seed-pair order can only help when bucket sizes tie or when offset
+  reads themselves are the cost.  Expect little over rarest-first.
+  Proof: trivial (take the seed set as a parameter).
+Two-pass 2x50 then 4x25:
+  2 x 50: one 50-mer is exact when there is <= 1 event (P <= 7: 0 or 1
+  mismatch).  Its advantage is selectivity in repeats (a 50-mer has fewer
+  copies than a 25-mer).  Its cost: a separate 50-mer index costs a second
+  full position table (chr21: +152 MB; whole genome: +11.8 GB unsampled,
+  +3-6 GB sampled).  You get the same selectivity with no new memory by
+  looking up the 25-mer half of each 50-mer in the existing index and
+  verifying the other 25 letters from the stored extension/fingerprint or
+  the packed genome.  Pass 1 = rarest 25-mer, then extend to 50 before the
+  candidate is accepted.  With the early-stop rule above, pass 1 is just the
+  P <= 7 tier.  I would not build a second index.
+  Proof: easy-medium (the pigeonhole for 2 halves is the same lemma with 2
+  seeds; the extension check is a filter whose soundness is equality of
+  letters).
+
+
 RANKED LIST OF CHANGES
 ======================
 (speedup = measured on chr21/100k reads unless marked "est."; the proof is what
@@ -320,16 +454,24 @@ remains to do; "exact" = why the answer equals mapSpec)
    with real prefetch; we only get out-of-order overlap).
    Proof: trivial (reordering pure maps); costs code complexity.
 
-9. Tiered seeds for non-exact reads: after finding the best penalty p (or a
-   tie at p), only the E(p)+1 rarest seeds can hold better windows.
-   Speedup: est. 10-30% on chr21, more in whole-genome repeats.
-   Proof: medium (seeds spoiled <= events, pigeonhole over rarest seeds).
+9. Seed order + early stop for non-exact reads (Q9): rarest seed first by
+   bucket size; with best penalty P so far, stop after floor(P/4)+1 seeds;
+   gapped checks only when P >= 8 (Q8).  50-mer selectivity, if wanted, via
+   25-mer lookup + extension check, not a second index.
+   Speedup: est. 10-30% on chr21, more for well-trimmed reads (most have
+   P <= 4) and in whole-genome repeats.
+   Proof: medium (seeds spoiled <= events <= floor(P/4); seed order needs
+   no proof).
 
 10. Correct non-ACGT handling: leave N-words out of the index, mask non-ACGT
     genome letters as mismatches, fallback for reads with non-ACGT letters.
     Speedup: avoids an 8.6 M-entry poly-A bucket on chr21 (Proto.lean codes
     N as A).  Required for exactness on real data anyway.
     Proof: small.
+
+Proof difficulty in one line (easiest first): 7, 8 trivial; 5, 10 easy/small;
+2 easy-medium; 3, 4, 6, 9 medium; 1 medium-hard.  All ten are exact, and
+none needs @[extern], unsafe or implemented_by.
 
 Not recommended: FM-index/suffix array (large proof, 25+ dependent misses per
 seed; its one advantage, counting repeats, is covered by 2 and 9);
