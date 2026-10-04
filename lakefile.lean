@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -169,7 +169,3 @@ lean_exe proto0 where                 -- first speed prototype, kept for compari
 lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
   srcDir := "bench"
   root := `PairBench
-
-lean_lib Wip where                    -- proof skeletons with `sorry` (not default, not in check.sh)
-  srcDir := "wip"
-  roots := #[`JointSkeleton]

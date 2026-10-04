@@ -1,4 +1,5 @@
 import PairMapper
+import PairJoint
 import ParMap
 
 /-!
@@ -6,7 +7,7 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
 (codecs/PairMapper.lean, `pairFast_eq_pairSpec`) over mate files.
 
     lake exe pair_bench <genome.fa> <mate1.reads.txt> <mate2.reads.txt> [dump.tsv]
-    env: PAIR_MIN (100), PAIR_MAX (1000), PAIR_TASKS (1)
+    env: PAIR_MIN (100), PAIR_MAX (1000), PAIR_TASKS (1), PAIR_JOINT (shared-best strand search, pairFastJ)
 
 Dump format = `bench/pair_ref.py` / `PROTO_PAIR` (name, then both hits or none).
 -/
@@ -63,7 +64,9 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"index check: {ok}"
   assert! ok
   let ps := (Array.range r1.size).map fun i => (r1[i]!, r2[i]!)
-  let f (p : ByteArray × ByteArray) := Fast.pairFast Fast.hLook lo hi gbs idxs p.1 p.2
+  let joint := (← IO.getEnv "PAIR_JOINT").isSome
+  let f (p : ByteArray × ByteArray) := if joint then Fast.pairFastJ Fast.hLook lo hi gbs idxs p.1 p.2
+    else Fast.pairFast Fast.hLook lo hi gbs idxs p.1 p.2
   let t0 ← IO.monoNanosNow
   let out ← (← IO.mkRef (if t0 == 1 then #[] else if tasks ≤ 1 then ps.map f else ParMap.parMap tasks f ps)).get
   let t1 ← IO.monoNanosNow
