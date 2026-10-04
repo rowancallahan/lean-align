@@ -302,7 +302,7 @@ theorem bit_pow : ∀ j, j < 4 → ∀ i, i < 4 → bit (2 ^ j) i = 1 → i = j 
 theorem seedHashes_get (R : ByteArray) (j : Nat) (hj : j < 4) : (seedHashes R)[j]! = seedHash R j := by
   rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> rfl
 
-theorem insKey_perm (key : Nat → Nat) (x : Nat) (l : List Nat) : (insKey key x l).Perm (x :: l) := by
+theorem insKey_perm (key : Array Nat) (x : Nat) (l : List Nat) : (insKey key x l).Perm (x :: l) := by
   induction l with
   | nil => simp [insKey]
   | cons y ys ih =>
@@ -311,12 +311,11 @@ theorem insKey_perm (key : Nat → Nat) (x : Nat) (l : List Nat) : (insKey key x
     · exact List.Perm.refl _
     · exact (ih.cons y).trans (List.Perm.swap x y ys)
 
-theorem seedOrder_spec {L : Type} (lk : Look L) (ix : L) (hs : Array (Option UInt64)) :
+theorem seedOrder_spec {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (hs : Array P) :
     (seedOrder lk ix hs).Nodup ∧ (∀ j ∈ seedOrder lk ix hs, j < 4) ∧ (seedOrder lk ix hs).length = 4 := by
   unfold seedOrder
   simp only []
-  generalize (fun j => if j = 0 then lk.size ix hs[0]! else if j = 1 then lk.size ix hs[1]! else
-    if j = 2 then lk.size ix hs[2]! else lk.size ix hs[3]!) = key
+  generalize #[lk.size ix hs[0]!, lk.size ix hs[1]!, lk.size ix hs[2]!, lk.size ix hs[3]!] = key
   have hp : (insKey key 3 (insKey key 2 (insKey key 1 [0]))).Perm [3, 2, 1, 0] :=
     (insKey_perm key 3 _).trans (((insKey_perm key 2 _).trans ((insKey_perm key 1 _).cons 2)).cons 3)
   refine ⟨hp.nodup_iff.mpr (by decide), fun j hj => ?_, by rw [hp.length_eq]; rfl⟩
@@ -583,17 +582,18 @@ theorem finish (J K : Nat) (as : Array Nat) (b : Best) (S : Window → Prop) (hs
     · exact Or.inl hS
     · exact Or.inr ⟨rfl, hw, hS⟩
 
-theorem look_eq {L : Type} (lk : Look L) (ix : L) (j : Nat) (hj : j < 4) :
-    lk.look ix G R j (seedHashes R)[j]! = lk.look ix G R j (seedHash R j) := by
-  rw [seedHashes_get R j hj]
+theorem look_eq {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (j : Nat) (hj : j < 4) :
+    lk.look ix G R j (prepAll lk ix (seedHashes R))[j]! = lk.look ix G R j (lk.prep ix (seedHash R j)) := by
+  rw [← seedHashes_get R j hj]
+  rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> rfl
 
 /-- **The lazy loop.** -/
-theorem lazyLoop_inv {L : Type} (lk : Look L) (ix : L)
-    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (seedHash R j))) :
+theorem lazyLoop_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
+    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (lk.prep ix (seedHash R j)))) :
     ∀ (ord : List Nat) (J : Nat) (as : Array Nat) (b : Best) (S : Window → Prop),
       LoopState cw R G c J (pop4 J) as b S → ord.Nodup → (∀ j ∈ ord, j < 4 ∧ bit J j = 0) →
       pop4 J + ord.length = 4 →
-      ∃ S', Inv cw S' (lazyLoop R G c lk ix (seedHashes R) ord (pop4 J) as J b) ∧ (∀ w, S w → S' w) ∧
+      ∃ S', Inv cw S' (lazyLoop R G c lk ix (prepAll lk ix (seedHashes R)) ord (pop4 J) as J b) ∧ (∀ w, S w → S' w) ∧
         ∀ st len, cw ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩ := by
   intro ord
   induction ord with
@@ -609,7 +609,7 @@ theorem lazyLoop_inv {L : Type} (lk : Look L) (ix : L)
     simp only []
     rw [look_eq cw hc13 R G c hcw hn lk ix j hj4, pow2_eq j hj4]
     have hl := hlk j hj4
-    generalize lk.look ix G R j (seedHash R j) = a at hl
+    generalize lk.look ix G R j (lk.prep ix (seedHash R j)) = a at hl
     -- the new anchors
     obtain ⟨s1, r1, m1⟩ := single_spec a G R j (by
       rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide)
@@ -706,13 +706,13 @@ theorem lazyLoop_inv {L : Type} (lk : Look L) (ix : L)
       exact ⟨S', h', fun w hw => hS' w (hS12 w (hSS1 w hw)), hc'⟩
 
 /-- **One chromosome.**  `mapChrom2` keeps the invariant and looks at every hit of chromosome `c`. -/
-theorem mapChrom2_inv {L : Type} (lk : Look L) (ix : L)
-    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (seedHash R j))) (S : Window → Prop) (b : Best)
-    (h : Inv cw S b) : ∃ S', Inv cw S' (mapChrom2 lk R G c ix b) ∧ (∀ w, S w → S' w) ∧
+theorem mapChrom2_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
+    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (lk.prep ix (seedHash R j)))) (S : Window → Prop) (b : Best)
+    (h : Inv cw S b) : ∃ S', Inv cw S' (mapChrom2 lk R G c ix (seedHashes R) b) ∧ (∀ w, S w → S' w) ∧
       (∀ st len, cw ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩) := by
   unfold mapChrom2
-  obtain ⟨hnd, hlt, hl⟩ := seedOrder_spec lk ix (seedHashes R)
-  have := lazyLoop_inv cw hc13 R G c hcw hn lk ix hlk (seedOrder lk ix (seedHashes R)) 0 #[] b S
+  obtain ⟨hnd, hlt, hl⟩ := seedOrder_spec lk ix (prepAll lk ix (seedHashes R))
+  have := lazyLoop_inv cw hc13 R G c hcw hn lk ix hlk (seedOrder lk ix (prepAll lk ix (seedHashes R))) 0 #[] b S
     ⟨h, anchorsM_init G R, by omega, rfl, fun st hm => by simp [maskJ] at hm, fun h3 => by simp [pop4] at h3⟩
     hnd (fun j hj => ⟨hlt j hj, by simp [bit]⟩) (by rw [hl]; rfl)
   exact this
@@ -720,12 +720,12 @@ theorem mapChrom2_inv {L : Type} (lk : Look L) (ix : L)
 end chrom
 
 /-- **All chromosomes.**  `mapChroms` ends with the invariant over a set containing every hit. -/
-theorem mapChroms_inv {L : Type} [Inhabited L] (lk : Look L) (R : ByteArray) (gbs : Array ByteArray)
+theorem mapChroms_inv {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (R : ByteArray) (gbs : Array ByteArray)
     (idxs : Array L) (hn : 100 ≤ R.size)
-    (hlk : ∀ c, c < gbs.size → ∀ j, j < 4 → LookOk gbs[c]! R j (lk.look idxs[c]! gbs[c]! R j (seedHash R j))) :
+    (hlk : ∀ c, c < gbs.size → ∀ j, j < 4 → LookOk gbs[c]! R j (lk.look idxs[c]! gbs[c]! R j (lk.prep idxs[c]! (seedHash R j)))) :
     ∃ S, Inv (cwG R gbs) S (mapChroms lk R gbs idxs) ∧ ∀ w, cwG R gbs w ≤ 12 → S w := by
   have step : ∀ (l : List Nat) S b, (∀ c ∈ l, c < gbs.size) → Inv (cwG R gbs) S b →
-      ∃ S', Inv (cwG R gbs) S' (l.foldl (fun b c => mapChrom2 lk R gbs[c]! c idxs[c]! b) b) ∧
+      ∃ S', Inv (cwG R gbs) S' (l.foldl (fun b c => mapChrom2 lk R gbs[c]! c idxs[c]! (seedHashes R) b) b) ∧
         (∀ w, S w → S' w) ∧ ∀ c ∈ l, ∀ st len, cwG R gbs ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩ := by
     intro l
     induction l with
