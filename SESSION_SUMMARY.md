@@ -29,20 +29,65 @@ Working notes for picking the work up in another session. Not a README.
 
 Every mapped read is at its true position. Slow because everything is `List Char` and each seed hit scores (2k+1)² = 169 windows.
 
-## Speed work in progress (branches, each must prove `= mapSpec` and pass `scripts/check.sh`)
-- `speed/arrays` — array-backed genome, integer-hash index (collisions allowed; only `LookupComplete` needed). New file `codecs/SeedMapperArray.lean`, theorem `mapReadsArray … = reads.map (mapSpec …)`.
-- `speed/bounds` — fewer seeds and windows using affine gap costs (separate bounds for spoiled seeds and for shift/length). New `pool/mapper/MapperWalk2.lean`, `codecs/SeedMapper2.lean`.
-- `speed/dedup-parallel` — score each window once, drop out-of-bounds windows before scoring; `mapReadsPar` with `Task.spawn`, theorem `= reads.map f`.
-See the branch tips' commit messages for what is finished on each.
+## Speed work, session of 2026-10-04 (branch `claude/upbeat-goldberg-kizkfd`)
+Merged here and passing `scripts/check.sh` (not yet on `main`):
+- `codecs/SeedMapper2.lean` (+ `pool/mapper/MapperWalk2.lean`): 4 seeds, 19 windows per seed hit, optional full-seed filter; `mapWithK_eq_mapSpec`, `mapWith2_eq_mapSpec`, `mapWith2V_eq_mapSpec`.
+- `codecs/BandScore.lean` (+ `pool/mapper/MapperBand*.lean`): `ScoreFaithful` (exact at scores ≥ T), banded capped score-only kernel over ByteArray, `bandMapper_eq_mapSpec`.
+- `codecs/CsrIndex.lean` (+ `pool/mapper/MapperBytes.lean`): byte genome, CSR 2-bit index, runtime `checkIndex … = true → LookupComplete` (a saved/loaded index needs no trust), `mapWithCsr_eq_mapSpec`.
+- `codecs/LowErrorMapper.lean` (+ `pool/mapper/MapperGapless.lean`, `MapperOneIndel.lean`): exact gapless (Hamming) fast path with fallback, `mapLowError_eq_mapSpec`, `mapReadsLowError_eq_mapSpec`; gap lower bounds, single-1-letter-indel structure.
+- `codecs/ParMap.lean`, `codecs/ParStream.lean`: read-batch parallel map `parMap_eq_map`, `mapReadsParArray_eq_mapSpec`; streamed batches for an overlapped writer `streamTasks_text` (joined batch texts = format of the whole result) and `streamTasks_text_mapSpec`. Writer driver: `bench/StreamBench.lean` (1M items, 4 threads: 5.3 s / 46 MB vs 7.1 s / 538 MB map-then-write).
+- `codecs/EarlyStopMapper.lean` (+ `pool/mapper/MapperSeedsAmong.lean`): seeds looked up in any order, stop after seedBound(best)+1 seeds, `mapEarly_eq_mapSpec`.
+- `codecs/PreFilterMapper.lean`: location filters applied before scoring give the same filtered output (`mapPreFiltered_eq`, `mapWithPreFiltered_eq`); paired-end version only sketched in a comment (no paired spec yet).
+- `codecs/RepeatMask.lean`: a window with an exact copy is never reported (`mapSpec_ne_of_duplicate`); masking is safe under `DupSound` + `MaskCover` (`mapMasked_eq_mapSpec`); no index-level masked lookup proved yet.
+- `codecs/ParGroup.lean`: sort reads into bins / dedup identical reads / parallel bins / restore order, all proved = `reads.map mapSpec` (`sortMap_eq_mapSpec`, `dedupMap_eq_mapSpec`, `pipelineTasks_bytes_mapSpec`). Measured: dedup and sorting do NOT pay at ~25 µs/read (distinct+table+lookup ~2.3 µs/read, in-chunk dedup misses spread duplicates); oversubscription 8 vs 4 tasks ≈ 5–10% at best. Keep as options, off by default.
+- **`codecs/FastMapper.lean` (+ `pool/mapper/MapperFast*.lean`): `mapFast_eq_mapSpec` — the fast mapper (design of the tuned prototype) equals `mapSpec` for scoring (0,−4,−6,−2), T = −12, given byte-encoded genome/read and an index that passes the runtime checker `checkAll` (no trust in the builder). Reads of 100–103 letters take the fast path, others a slow proved path. chr21, 100k reads, 1 thread, this box: 152–171k reads/s vs minibwa ~31k (≈ 5×; prototype 228–238k); answers byte-identical to the prototype on all 100k reads. Index as little-endian ByteArrays (half the memory); rolling index check 12–13 s, one-time.**
+- `codecs/MzIndex.lean` (+ `MapperMzWords`): minimizer index of 25-letter seeds with proved runtime checker (`lookupSeed_mem`, `mapWithMz_eq_mapSpec`).
+- `codecs/SketchMapper.lean` (+ `MapperSketch`): generic sketch theorem (`mapWithSketch_eq_mapSpec`) — k-mers, minimizers (any order), closed syncmers (`closedSyncmer_hits`), variable-length keys; analysis in `bench/seed_schemes_notes.txt`: (19,7)/(17,9) minimizers + stored context = 20–25% of the every-25-mer index (≈ 4.5–5.6 GB whole genome vs ≈ 22 GB) at 85–90% of the speed.
+- Prototype (`speed/proto-tune`, unproved), other box: ~300k reads/s 1 thread, ~620k 4 tasks, 750–930k 16 tasks; reverse strand too: ~153k 1 thread. ByteArray index removes a 3.3 s Lean `lean_mark_mt` walk when tasks share the index. Dedup is a net loss; learned seed order / 2×50 pass save ~nothing (1.54 lookups/read vs 1.53 minimum).
+Still on branches: `speed/fast-proved` (proving the tuned prototype end to end), `speed/index-layout` (index memory/compression/locality), `speed/proto-tune` (unproved prototype), `speed/research` (`bench/research_notes.txt`: minibwa, SIMD, Lean vs C). Old WIP branches `speed/arrays`, `speed/bounds`, `speed/dedup-parallel` are superseded.
+
+Data (not in repo; NCBI/UCSC blocked, GCS works): chr21 cut from the hg38 FASTA on `storage.googleapis.com/gcp-public-data--broad-references` by byte range; reads from `scripts/sim_reads.py` (forward strand, Illumina-like errors). Lean installs from the GitHub release tarball + `elan toolchain link` (release.lean-lang.org is blocked).
+
+Measured on full chr21, 100k reads, idle 4-core box, index build excluded:
+| | 1 thread | 4 threads |
+|---|---|---|
+| minibwa (both strands, SAM output) | ~32k reads/s (~34k excluding index load) | ~88k |
+| `bench/Proto.lean` first prototype (unproved) | 512 | 1.9k |
+| `speed/proto-tune` prototype (unproved, forward only, no output) | 145–155k | not measured yet |
+Tuned prototype answers = first prototype answers on all 100k reads. Repeats are kept (no masking).
+Stringency: wgsim reads mapped by minibwa, fraction within T = −12 (our scoring): 99.9% at 0.2% error, 99.5% at 0.5%, 97.2% at 1%.
+
+## Baselines still to benchmark (Rowan, 2026-10-04)
+minibwa is the only comparison so far. Before claiming "faster than the fastest", also run, same reads, same thread counts, idle box, index build excluded: URMAP (Edgar), BWA-MEM3 (check the name; bwa-mem2 is the known successor of bwa-mem), strobealign, minimap2 `-x sr`, Bowtie2, SNAP. Needs network access to fetch them (GitHub clones worked from the cloud environment). strobealign does not give the same guarantees (heuristic) — speed reference only, not like for like. For an exact/full-sensitivity comparison, research suggests Yara or RazerS 3. "BWA-MEM3" not known to the research session (bwa-mem2 or minibwa?). Compare only numbers taken on the same machine: on the research session's box minibwa maps 54–62k reads/s single-thread vs ~31k on this one. Online research on all of these is planned with Rowan; no downloads until then.
+
+## Speed ideas not yet tried (Rowan, 2026-10-04)
+- Reverse strand: map the reverse complement too (~2× cost); needs `MapSpec` strand support.
+- Repeats / whole genome: masking exact duplicates is provable (a window in an exact copy ties → unmapped), but the mapper must still see the masked hit; diverged repeats (Alu, L1) are not multi-mappers under the spec and need a spec decision. Whole-genome 25-mer index memory (~8 bytes per position, ~25 GB) needs sampling/minimizers or a compact layout.
+- Read grouping: bucket reads by their first ~10 bases (parallel sort in ~100k chunks, bins of ~1000 reads per thread) so identical or trimmed-but-identical reads share work (identical read ⇒ identical answer; a prefix-trimmed read can reuse the anchors of its untrimmed twin).
+- Output: one extra writer thread collects finished batches from a queue and writes them, in input order, while worker threads keep mapping (small startup cost; fine unless disk bandwidth limits). Proof boundary: chunk → map each chunk (parallel) → de-chunk is proved equal to mapping the whole input, and the byte stream equal to format of the whole result; only the file writes are outside the proofs.
+- Index (built once, cost not counted in mapping time, so spend computation there): whole genome ~30 GB at 8 bytes/position — try bit-packing positions (32-bit or fewer bits per entry, implicit bucket bits), compression that keeps lookups cheap, smaller layouts that improve cache hits; sort/lay out the index for locality.
+- Seed order + early stop: with best gapless penalty P found so far, any tie-or-better window has ≤ P/4 errors, so it shows up in the hits of any P/4 + 1 seeds: stop after that many lookups (P = 0 → 1 seed). Try likely seeds first (smallest bucket, or a learned table of which seed of a pair usually hits; remember where reads map) — order is free for correctness, only the stop rule needs proof.
+- Two-pass seeding: a second index of 50-letter seeds (2 per read; a read with ≤ 1 error has a clean half) settles most reads with few hits even in repeats; unsettled reads fall back to 4 × 25. Costs extra index memory.
+- Seed schemes (branch `speed/seed-schemes`): minimizers, syncmers (context-free, easier proofs), skipmers, variable-length seeds (short where information-dense, long in low complexity), all behind one abstract property "exact match of length ≥ L ⇒ shared key at a computable offset" so the mapper's completeness proof only uses that property.
+- Rust via Aeneas (Rust → Lean translation, proofs about the Rust code): possible 1.5–2× from no RC/boxing and bounds-check elision; parallelism and IO would sit in a trusted Rust CLI. Rowan would write the Rust CLI.
+- Cache locality from read sorting: sort reads into buckets by seed code so each core works on a region of the index (fewer cache misses); optionally order the index to match.
+- Threads: oversubscribe (more tasks than cores) to overlap memory stalls; batch size tuning; better multi-core scaling.
+- Pre-filter by downstream flags: users filter afterwards (proper pair, MAPQ, …); a CLI filter option skips reads that cannot pass. Exact because the final position is always among the seed candidates (`LookupComplete`): if no (read-1 candidate, read-2 candidate) combination has proper-pair orientation/distance, the pair cannot be proper → drop both before any alignment. Same pattern for any filter decided by location; for multi-mapper/MAPQ filters, stop as soon as a tie between different windows is proved. Needs a paired-end spec; theorem: filtered output with pre-filter = filtered output without it.
+- Two-pass (tentative): map repeat-prone / likely multi-mapping regions in a second pass.
+- Multi-mappers / low MAPQ can be dropped (goal is genotyping), already what `mapSpec` does on ties.
+- Kernel: plain banded DP (Smith-Waterman/Gotoh-style loop) may compile better than WFA in Lean; low-error Hamming fast path already removes most DP.
+
+## Specs Rowan plans to write
+- FASTQ input spec, SAM output spec (CIGAR for the chosen window), CLI with filter options; later SAM→BAM with BAM checked as the inverse of SAM (fuzzing over BAM instead of a full BAM spec).
 
 ## Rules for all work here
+- Every proof must close. If something is not provable as written, rewrite the code into a form that can be proved correct, even if slower; correctness by proof beats raw speed.
 - No `sorry`, `native_decide`, `axiom`, `@[extern]`, `unsafe`, `partial`, `implemented_by` in `codecs/`, `pool/`, `spec/`.
 - Do not edit `spec/AlignmentSpec.lean` (frozen) or weaken existing theorem statements.
 - Do not write READMEs. New work goes on a branch; merge to `main` only when `scripts/check.sh` passes.
 
 ## Next steps
-1. Finish and merge the three speed branches; re-measure.
-2. Grow the test genome toward human chromosome 1; the index layout will need a compact form at that scale.
-3. Wire genome + reads → partial SAM through `Main.lean` (`LeanAlign/Mapper.lean` has the parser and `partialSamLine`); produce the CIGAR for the chosen window.
-4. Compare with minibwa.
-5. Rowan: rewrite `spec/MapSpec.lean`; decide whether overlapping windows tying for best count as one locus.
+1. Merge `speed/fast-proved`, `speed/low-error`, `speed/parallel` when they pass `scripts/check.sh`; re-measure proved speed on chr21 vs minibwa at equal thread counts.
+2. Grow the test genome toward chr1 / whole genome; compact index layout.
+3. Wire genome + reads → SAM through `Main.lean` (`LeanAlign/Mapper.lean` has the parser and `partialSamLine`); produce the CIGAR for the chosen window.
+4. Rowan: rewrite `spec/MapSpec.lean` (strand, repeats, paired-end); decide whether overlapping windows tying for best count as one locus.
