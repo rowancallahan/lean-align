@@ -670,7 +670,7 @@ def main (args : List String) : IO UInt32 := do
         let ok ← IO.lazyPure fun _ => MapSpec.Mz.check ix g
         IO.println s!"check {ok}  check_seconds {secs tc (← IO.monoNanosNow)}"
         if !ok then throw (IO.userError "index check failed")
-      pure (zLk ix, ix.offs.size + 8 * ix.sl.size + 8 * (ix.odd.foldl (· + ·.size) 0), ix.sl.size)
+      pure (zLk ix, ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size, ix.sl.size)
     else if spec.startsWith "n," then do
       let [_, B] := spec.splitOn "," | throw (IO.userError "spec")
       let ix := buildPk g 25 1 B.toNat! 0 true

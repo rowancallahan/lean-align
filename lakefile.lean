@@ -121,3 +121,7 @@ lean_exe csr_bench where              -- CSR index build/save/load/check timing 
 lean_exe layout where                 -- index layout bench (unproved)
   srcDir := "bench"
   root := `Layout
+
+lean_exe mz_test where                -- randomized test: proved MzIndex lookup vs naive scan
+  srcDir := "bench"
+  root := `MzTest

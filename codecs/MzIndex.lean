@@ -5,9 +5,10 @@ import MapperMzWords              -- pool: word codes, hash bijection, loops
 # Codec `MzIndex`: minimizer index of 25-letter seeds, certified by a checker
 
 Memory: only the *minimizer place* of each ACGT 25-letter window is indexed
-(about 1/3 of the places for `k = 21`), one unboxed `Nat` slot (8 bytes)
-per indexed place, holding the place and a tag; so ~3 bytes per genome
-letter instead of 8–16.  A lookup reads one bucket and never the genome
+(0.34 / 0.41 / 0.51 of the places for `k = 21 / 22 / 23` on chr1 and chr21),
+one 8-byte slot per indexed place (place and tag, kept as the bits of a
+`Float` in a `FloatArray`), so 2.7–4.1 bytes per letter plus the bucket
+offsets, instead of 8–16.  A lookup reads one bucket and never the genome
 (except near non-ACGT letters).
 
 * Seed code `v = wc R s 25`.  `mini ix v` = leftmost offset `o < w`
@@ -23,12 +24,14 @@ letter instead of 8–16.  A lookup reads one bucket and never the genome
   last `o` letters of `bef` equal the seed's first `o` letters and whose
   first `w-1-o` letters of `aft` equal the seed's last ones; flagged
   entries are compared with the genome instead.  A seed with another
-  letter is looked up through the places of that letter (`odd`).
+  letter is looked up through the maximal runs of non-ACGT letters (`runs`):
+  its first such letter, if not its first letter, is where a run starts;
+  else its first ACGT letter is where a run ends; else it lies in a run.
 
 Nothing about the index is trusted.  `check ix G` verifies the parameters,
 every entry against the genome (`checkSound`), that every ACGT window's
-minimizer place is indexed (`checkComp`), and the `odd` lists
-(`checkOddPos`, `increasing`).  Then (`lookupSeed_mem`, `lookupSeed_sorted`)
+minimizer place is indexed (`checkComp`), and the runs (`checkRuns`,
+`checkCover`).  Then (`lookupSeed_mem`, `lookupSeed_sorted`)
 
     p ∈ lookupSeed ix G R s  ↔  p + 25 ≤ G.size ∧ ∀ i < 25, G[p+i] = R[s+i]
 
@@ -72,8 +75,8 @@ structure MzIdx where
   (`FloatArray`: unboxed 8 bytes, and unlike an `Array` it is not walked
   element by element when shared with a `Task`) -/
   sl : FloatArray
-  /-- `odd[v]`: places of byte `v` (not ACGT), increasing -/
-  odd : Array (Array Nat)
+  /-- the maximal runs `[runs[2i], runs[2i+1])` of non-ACGT bytes, increasing -/
+  runs : Array Nat
 deriving Inhabited
 
 namespace MzIdx
@@ -82,6 +85,9 @@ variable (ix : MzIdx)
 
 /-- Slot of entry `t` (nothing is assumed about how the bits got there). -/
 @[inline] def slot (t : Nat) : Nat := (ix.sl.get! t).toBits.toNat
+@[inline] def ra (i : Nat) : Nat := ix.runs[2 * i]!
+@[inline] def rb (i : Nat) : Nat := ix.runs[2 * i + 1]!
+@[inline] def nr : Nat := ix.runs.size / 2
 @[inline] def loB (b : Nat) : Nat := getU32 ix.offs b
 @[inline] def hiB (b : Nat) : Nat := getU32 ix.offs (b + 1)
 @[inline] def posOf (e : Nat) : Nat := e >>> ix.T
@@ -130,16 +136,32 @@ def scan (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 hi : Nat) (t : Nat
   else acc
 termination_by hi - t
 
-/-- Place `ps[t] - o` is where the seed `R[s, s+q)` occurs. -/
-@[inline] def okOdd (G R : ByteArray) (ps : Array Nat) (o s t : Nat) : Bool :=
-  decide (o ≤ ps[t]!) && decide (ps[t]! - o + q ≤ G.size) && eqRun G R (ps[t]! - o) s q
+/-- Run end `x = runs[2i + side]`: the seed `R[s, s+q)` occurs at `x - d`. -/
+@[inline] def okEdge (ix : MzIdx) (G R : ByteArray) (side d s i : Nat) : Bool :=
+  let x := ix.runs[2 * i + side]!
+  decide (d ≤ x) && decide (x - d + q ≤ G.size) && eqRun G R (x - d) s q
 
-/-- Places `x - o` (`x ∈ ps[t ..]`) where the seed `R[s, s+q)` occurs. -/
-def scanOdd (G R : ByteArray) (ps : Array Nat) (o s : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
-  if t < ps.size then
-    scanOdd G R ps o s (t + 1) (if okOdd G R ps o s t then acc.push (ps[t]! - o) else acc)
+/-- Places `runs[2i + side] - d` (`i ∈ [i, nr)`) where the seed occurs. -/
+def scanEdge (ix : MzIdx) (G R : ByteArray) (side d s : Nat) (i : Nat) (acc : Array Nat) :
+    Array Nat :=
+  if i < ix.nr then
+    scanEdge ix G R side d s (i + 1)
+      (if okEdge ix G R side d s i then acc.push (ix.runs[2 * i + side]! - d) else acc)
   else acc
-termination_by ps.size - t
+termination_by ix.nr - i
+
+@[inline] def okIn (G R : ByteArray) (s p : Nat) : Bool := decide (p + q ≤ G.size) && eqRun G R p s q
+
+/-- Places `p ∈ [p, stop)` where the seed occurs. -/
+def scanRange (G R : ByteArray) (s stop : Nat) (p : Nat) (acc : Array Nat) : Array Nat :=
+  if p < stop then scanRange G R s stop (p + 1) (if okIn G R s p then acc.push p else acc) else acc
+termination_by stop - p
+
+/-- Places inside the runs `i, i+1, …` where the seed occurs. -/
+def scanInside (ix : MzIdx) (G R : ByteArray) (s : Nat) (i : Nat) (acc : Array Nat) : Array Nat :=
+  if i < ix.nr then scanInside ix G R s (i + 1) (scanRange G R s (ix.rb i + 1 - q) (ix.ra i) acc)
+  else acc
+termination_by ix.nr - i
 
 /-- Lookup of an ACGT seed `R[s, s+q)` whose code `v = wc R s q` the caller
 already has (`lookupSeed_eq_lookupCode`). -/
@@ -154,7 +176,11 @@ def lookupCode (ix : MzIdx) (G R : ByteArray) (s v : Nat) : Array Nat :=
 def lookupSeed (ix : MzIdx) (G R : ByteArray) (s : Nat) : Array Nat :=
   let u := firstOdd R s (s + q)
   if u = s + q then lookupCode ix G R s (wcGo R s (s + q) 0)
-  else scanOdd G R ix.odd[(R.get! u).toNat]! (u - s) s 0 #[]
+  else if s < u then scanEdge ix G R 0 (u - s) s 0 #[]
+  else
+    let u2 := firstAcgt R s (s + q)
+    if u2 < s + q then scanEdge ix G R 1 (u2 - s) s 0 #[]
+    else scanInside ix G R s 0 #[]
 
 /-! ## Checker -/
 
@@ -209,26 +235,37 @@ def checkComp (ix : MzIdx) (G : ByteArray) (fill : ByteArray) (last : Nat) : (n 
           checkComp ix G (setU32 fill b (t + 1)) (pm + 1) n (p + 1)
     else checkComp ix G fill last n (p + 1)
 
-/-- Every place `p, p+1, …` (`n` of them) holding a byte `v` other than ACGT is
-`odd[v][cur[v]]` (`cur` is only a hint). -/
-def checkOddPos (ix : MzIdx) (G : ByteArray) (cur : Array Nat) : (n p : Nat) → Bool
-  | 0, _ => true
-  | n + 1, p =>
-    let v := (G.get! p).toNat
-    if acgt (G.get! p) then checkOddPos ix G cur n (p + 1)
-    else ix.odd[v]![cur[v]!]! == p && decide (cur[v]! < ix.odd[v]!.size) &&
-      checkOddPos ix G (cur.set! v (cur[v]! + 1)) n (p + 1)
+/-- Run `i` is a maximal run of non-ACGT bytes, before run `i + 1`. -/
+def runOk (ix : MzIdx) (G : ByteArray) (i : Nat) : Bool :=
+  let a := ix.ra i
+  let b := ix.rb i
+  decide (a < b) && decide (b ≤ G.size) && allNot G a b &&
+    (decide (b = G.size) || acgt (G.get! b)) && (decide (a = 0) || acgt (G.get! (a - 1))) &&
+    (decide (ix.nr ≤ i + 1) || decide (b < ix.ra (i + 1)))
 
-def increasing (a : Array Nat) : (n i : Nat) → Bool
+def checkRuns (ix : MzIdx) (G : ByteArray) : (n i : Nat) → Bool
   | 0, _ => true
-  | n + 1, i => decide (a[i]! < a[i + 1]!) && increasing a n (i + 1)
+  | n + 1, i => runOk ix G i && checkRuns ix G n (i + 1)
+
+/-- Skip the runs ending at or before `x` (a hint for `checkCover`). -/
+def advance (ix : MzIdx) (x : Nat) : (fuel c : Nat) → Nat
+  | 0, c => c
+  | fuel + 1, c => if c < ix.nr && ix.rb c ≤ x then advance ix x fuel (c + 1) else c
+
+/-- Every non-ACGT place `x, x+1, …` (`n` of them) lies in a run. -/
+def checkCover (ix : MzIdx) (G : ByteArray) (c : Nat) : (n x : Nat) → Bool
+  | 0, _ => true
+  | n + 1, x =>
+    if acgt (G.get! x) then checkCover ix G c n (x + 1)
+    else
+      let c := advance ix x ix.nr c
+      decide (c < ix.nr) && decide (ix.ra c ≤ x) && decide (x < ix.rb c) && checkCover ix G c n (x + 1)
 
 /-- The runtime checker. -/
 def check (ix : MzIdx) (G : ByteArray) : Bool :=
   checkParams ix && checkSound ix G (2 ^ ix.B) 0 &&
     checkComp ix G ix.offs 0 (G.size + 1 - q) 0 &&
-    checkOddPos ix G (Array.replicate 256 0) G.size 0 &&
-    (List.range 256).all fun v => increasing ix.odd[v]! (ix.odd[v]!.size - 1) 0
+    checkRuns ix G ix.nr 0 && checkCover ix G 0 G.size 0
 
 /-! ## Builder (fast; not trusted — `check` certifies its output) -/
 
@@ -246,7 +283,7 @@ def mkIdx (k B : Nat) : MzIdx :=
     fM := 2 ^ (2 * (w - 1)) - 1, tM := 2 ^ T - 1,
     pm := (Array.range (w + 1)).map fun i => 2 ^ (2 * i) - 1,
     ash := kb + 2 * (w - 1), fsh := kb + 4 * (w - 1),
-    offs := .empty, sl := .empty, odd := #[] }
+    offs := .empty, sl := .empty, runs := #[] }
 
 /-- Slot of minimizer place `pm` (with k-word hash `h`). -/
 def slotAt (ix : MzIdx) (G : ByteArray) (pm h : Nat) : Nat :=
@@ -278,6 +315,8 @@ once) with the hash of their k-word; rolling window code. -/
         acc := f acc pm (ix0.hsh (ix0.sub x o))
   return acc
 
+/-- The slots `pos · 2^T + tag` must stay below `2^63`: choose `B` with
+`log2 G.size + T ≤ 63`, `T = 2k - B + 4(25 - k) + 1` (else `check` fails). -/
 def build (G : ByteArray) (k B : Nat) : MzIdx := Id.run do
   let ix0 := mkIdx k B
   let nb := 2 ^ B
@@ -292,10 +331,12 @@ def build (G : ByteArray) (k B : Nat) : MzIdx := Id.run do
     let b := h >>> ix0.kb
     let t := getU32 fill b
     (setU32 fill b (t + 1), sl.set! t (Float.ofBits (slotAt ix0 G pm h).toUInt64))
-  let mut odd : Array (Array Nat) := Array.replicate 256 #[]
+  let mut runs : Array Nat := #[]
   for p in [0:G.size] do
-    if !acgt (G.get! p) then odd := odd.modify (G.get! p).toNat (·.push p)
-  return { ix0 with offs := cnt, sl, odd }
+    let odd := !acgt (G.get! p)
+    if odd && (p == 0 || acgt (G.get! (p - 1))) then runs := runs.push p
+    if odd && (p + 1 == G.size || acgt (G.get! (p + 1))) then runs := runs.push (p + 1)
+  return { ix0 with offs := cnt, sl, runs }
 
 end MapSpec.Mz
 
@@ -486,38 +527,55 @@ theorem checkComp_spec (ix : MzIdx) (G : ByteArray) :
       · subst hp; exact absurd ((allA_iff G q p').mpr hA) hall
       · exact ih (p + 1) fill last h hl p' (by omega) (by omega) hA
 
-theorem checkOddPos_spec (ix : MzIdx) (G : ByteArray) :
-    ∀ n p cur, checkOddPos ix G cur n p = true → ∀ x, p ≤ x → x < p + n → acgt (G.get! x) = false →
-      ∃ t, t < (ix.odd[(G.get! x).toNat]!).size ∧ (ix.odd[(G.get! x).toNat]!)[t]! = x := by
-  intro n
-  induction n with
-  | zero => intro p _ _ x h1 h2; omega
-  | succ n ih =>
-    intro p cur h x h1 h2 hx
-    rw [checkOddPos] at h
-    split at h
-    · next ha =>
-      by_cases hp : x = p
-      · subst hp; rw [hx] at ha; exact absurd ha (by simp)
-      · exact ih (p + 1) cur h x (by omega) (by omega) hx
-    · next ha =>
-      simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
-      obtain ⟨⟨h3, h4⟩, h5⟩ := h
-      by_cases hp : x = p
-      · subst hp; exact ⟨_, h4, h3⟩
-      · exact ih (p + 1) _ h5 x (by omega) (by omega) hx
+/-- What `runOk` says about run `i`. -/
+theorem runOk_spec {ix : MzIdx} {G : ByteArray} {i : Nat} (h : runOk ix G i = true) :
+    ix.ra i < ix.rb i ∧ ix.rb i ≤ G.size ∧
+    (∀ x, ix.ra i ≤ x → x < ix.rb i → acgt (G.get! x) = false) ∧
+    (ix.rb i = G.size ∨ acgt (G.get! (ix.rb i)) = true) ∧
+    (ix.ra i = 0 ∨ acgt (G.get! (ix.ra i - 1)) = true) ∧
+    (i + 1 < ix.nr → ix.rb i < ix.ra (i + 1)) := by
+  unfold runOk at h
+  simp only [Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, and_assoc] at h
+  obtain ⟨h1, h2, h3, h4, h5, h6⟩ := h
+  have h3' := allNot_spec G (ix.rb i - ix.ra i) (ix.ra i)
+    (by rw [show ix.ra i + (ix.rb i - ix.ra i) = ix.rb i by omega]; exact h3)
+  refine ⟨h1, h2, fun x hx1 hx2 => h3' x hx1 (by omega), h4, h5, fun hi => ?_⟩
+  rcases h6 with h6 | h6
+  · omega
+  · exact h6
 
-theorem increasing_spec (a : Array Nat) :
-    ∀ n i, increasing a n i = true → ∀ j, i ≤ j → j < i + n → a[j]! < a[j + 1]! := by
+theorem checkRuns_spec (ix : MzIdx) (G : ByteArray) :
+    ∀ n i, checkRuns ix G n i = true → ∀ j, i ≤ j → j < i + n → runOk ix G j = true := by
   intro n
   induction n with
   | zero => intro i _ j h1 h2; omega
   | succ n ih =>
     intro i h j h1 h2
-    rw [increasing, Bool.and_eq_true, decide_eq_true_eq] at h
+    rw [checkRuns, Bool.and_eq_true] at h
     by_cases hj : j = i
     · subst hj; exact h.1
     · exact ih (i + 1) h.2 j (by omega) (by omega)
+
+theorem checkCover_spec (ix : MzIdx) (G : ByteArray) :
+    ∀ n x c, checkCover ix G c n x = true → ∀ y, x ≤ y → y < x + n → acgt (G.get! y) = false →
+      ∃ i, i < ix.nr ∧ ix.ra i ≤ y ∧ y < ix.rb i := by
+  intro n
+  induction n with
+  | zero => intro x _ _ y h1 h2; omega
+  | succ n ih =>
+    intro x c h y h1 h2 hy
+    rw [checkCover] at h
+    split at h
+    · next ha =>
+      by_cases hx : y = x
+      · subst hx; rw [hy] at ha; cases ha
+      · exact ih (x + 1) c h y (by omega) (by omega) hy
+    · next ha =>
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+      obtain ⟨⟨⟨h3, h4⟩, h5⟩, h6⟩ := h
+      by_cases hx : y = x
+      · subst hx; exact ⟨_, h3, h4, h5⟩
+      · exact ih (x + 1) _ h6 y (by omega) (by omega) hy
 
 /-- Steps increasing on `[lo, hi)` ⇒ increasing. -/
 theorem lt_of_steps (f : Nat → Nat) (lo hi : Nat) (h : ∀ j, lo ≤ j → j + 1 < hi → f j < f (j + 1)) :
@@ -583,18 +641,46 @@ theorem scan_toList (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 hi : Na
     rw [scan, if_pos (by omega), ih (t + 1) _ (by omega), List.range'_succ, List.filterMap_cons]
     split <;> simp
 
-theorem scanOdd_toList (G R : ByteArray) (ps : Array Nat) (o s : Nat) :
-    ∀ n t acc, ps.size - t = n →
-      (scanOdd G R ps o s t acc).toList = acc.toList ++ (List.range' t n).filterMap
-        (fun t => if okOdd G R ps o s t then some (ps[t]! - o) else none) := by
+theorem scanEdge_toList (ix : MzIdx) (G R : ByteArray) (side d s : Nat) :
+    ∀ n i acc, ix.nr - i = n →
+      (scanEdge ix G R side d s i acc).toList = acc.toList ++ (List.range' i n).filterMap
+        (fun i => if okEdge ix G R side d s i then some (ix.runs[2 * i + side]! - d) else none) := by
   intro n
   induction n with
-  | zero => intro t acc hn; rw [scanOdd, if_neg (by omega)]; simp
+  | zero => intro i acc hn; rw [scanEdge, if_neg (by omega)]; simp
   | succ n ih =>
-    intro t acc hn
-    rw [scanOdd, if_pos (by omega), ih (t + 1) _ (by omega), List.range'_succ, List.filterMap_cons]
+    intro i acc hn
+    rw [scanEdge, if_pos (by omega), ih (i + 1) _ (by omega), List.range'_succ, List.filterMap_cons]
     split <;> simp
 
+theorem scanRange_toList (G R : ByteArray) (s stop : Nat) :
+    ∀ n p acc, stop - p = n →
+      (scanRange G R s stop p acc).toList = acc.toList ++ (List.range' p n).filterMap
+        (fun p => if okIn G R s p then some p else none) := by
+  intro n
+  induction n with
+  | zero => intro p acc hn; rw [scanRange, if_neg (by omega)]; simp
+  | succ n ih =>
+    intro p acc hn
+    rw [scanRange, if_pos (by omega), ih (p + 1) _ (by omega), List.range'_succ, List.filterMap_cons]
+    split <;> simp
+
+/-- Places tried inside run `i`. -/
+def inRun (ix : MzIdx) (G R : ByteArray) (s i : Nat) : List Nat :=
+  (List.range' (ix.ra i) (ix.rb i + 1 - q - ix.ra i)).filterMap
+    (fun p => if okIn G R s p then some p else none)
+
+theorem scanInside_toList (ix : MzIdx) (G R : ByteArray) (s : Nat) :
+    ∀ n i acc, ix.nr - i = n →
+      (scanInside ix G R s i acc).toList = acc.toList ++ (List.range' i n).flatMap (inRun ix G R s) := by
+  intro n
+  induction n with
+  | zero => intro i acc hn; rw [scanInside, if_neg (by omega)]; simp
+  | succ n ih =>
+    intro i acc hn
+    rw [scanInside, if_pos (by omega), ih (i + 1) _ (by omega), List.range'_succ, List.flatMap_cons,
+      scanRange_toList G R s _ _ _ _ rfl]
+    simp [inRun]
 
 /-! ### Entries -/
 
@@ -646,16 +732,69 @@ theorem comp_of_check (p : Nat) (hp : p + q ≤ G.size) (hA : ∀ i < q, acgt (G
   simp only [check, Bool.and_eq_true] at hc
   exact checkComp_spec ix G _ 0 _ 0 hc.1.1.2 (Or.inl rfl) p (by omega) (by omega) hA
 
-theorem odd_of_check (x : Nat) (hx : x < G.size) (ha : acgt (G.get! x) = false) :
-    ∃ t, t < (ix.odd[(G.get! x).toNat]!).size ∧ (ix.odd[(G.get! x).toNat]!)[t]! = x := by
+theorem run_of_check : ∀ i, i < ix.nr → runOk ix G i = true := by
   simp only [check, Bool.and_eq_true] at hc
-  exact checkOddPos_spec ix G _ 0 _ hc.1.2 x (by omega) (by omega) ha
+  intro i hi
+  exact checkRuns_spec ix G _ 0 hc.1.2 i (by omega) (by omega)
 
-theorem odd_increasing (v : Nat) (hv : v < 256) :
-    ∀ j, j + 1 < (ix.odd[v]!).size → (ix.odd[v]!)[j]! < (ix.odd[v]!)[j + 1]! := by
-  simp only [check, Bool.and_eq_true, List.all_eq_true, List.mem_range] at hc
-  intro j hj
-  exact increasing_spec _ _ 0 (hc.2 v hv) j (by omega) (by omega)
+theorem cover_of_check (y : Nat) (hy : y < G.size) (ha : acgt (G.get! y) = false) :
+    ∃ i, i < ix.nr ∧ ix.ra i ≤ y ∧ y < ix.rb i := by
+  simp only [check, Bool.and_eq_true] at hc
+  exact checkCover_spec ix G _ 0 0 hc.2 y (by omega) (by omega) ha
+
+/-- A non-ACGT place after an ACGT one starts a run. -/
+theorem run_start (x : Nat) (hx : x < G.size) (h0 : 0 < x) (ha : acgt (G.get! x) = false)
+    (hb : acgt (G.get! (x - 1)) = true) : ∃ i, i < ix.nr ∧ ix.ra i = x := by
+  obtain ⟨i, hi, h1, h2⟩ := cover_of_check hc x hx ha
+  obtain ⟨-, -, r3, -⟩ := runOk_spec (run_of_check hc i hi)
+  refine ⟨i, hi, ?_⟩
+  by_cases he : ix.ra i = x
+  · exact he
+  · have := r3 (x - 1) (by omega) (by omega); rw [hb] at this; cases this
+
+/-- An ACGT place after a non-ACGT one ends a run. -/
+theorem run_end (x : Nat) (hx : x < G.size) (h0 : 0 < x) (ha : acgt (G.get! x) = true)
+    (hb : acgt (G.get! (x - 1)) = false) : ∃ i, i < ix.nr ∧ ix.rb i = x := by
+  obtain ⟨i, hi, h1, h2⟩ := cover_of_check hc (x - 1) (by omega) hb
+  obtain ⟨-, -, r3, -⟩ := runOk_spec (run_of_check hc i hi)
+  refine ⟨i, hi, ?_⟩
+  by_cases he : ix.rb i = x
+  · exact he
+  · have := r3 x (by omega) (by omega); rw [ha] at this; cases this
+
+/-- A non-ACGT window lies in one run. -/
+theorem run_inside (p : Nat) (hp : p + q ≤ G.size) (ha : ∀ j < q, acgt (G.get! (p + j)) = false) :
+    ∃ i, i < ix.nr ∧ ix.ra i ≤ p ∧ p + q ≤ ix.rb i := by
+  obtain ⟨i, hi, h1, h2⟩ := cover_of_check hc p (by unfold q at hp; omega)
+    (by simpa using ha 0 (by decide))
+  obtain ⟨-, r2, -, r4, -⟩ := runOk_spec (run_of_check hc i hi)
+  refine ⟨i, hi, h1, ?_⟩
+  by_cases hlt : p + q ≤ ix.rb i
+  · exact hlt
+  · rcases r4 with r4 | r4
+    · omega
+    · have := ha (ix.rb i - p) (by omega)
+      rw [show p + (ix.rb i - p) = ix.rb i by omega, r4] at this; cases this
+
+theorem runs_increasing : ∀ i j, i < j → j < ix.nr → ix.ra i < ix.ra j ∧ ix.rb i < ix.ra j := by
+  have step : ∀ t, 0 ≤ t → t + 1 < ix.nr → ix.ra t < ix.ra (t + 1) := fun t _ ht => by
+    obtain ⟨r1, -, -, -, -, r6⟩ := runOk_spec (run_of_check hc t (by omega))
+    have := r6 ht; omega
+  intro i j hij hj
+  have hra := lt_of_steps ix.ra 0 ix.nr step (j - i - 1) i (by omega) (by omega)
+  rw [show i + (j - i - 1) + 1 = j by omega] at hra
+  obtain ⟨-, -, -, -, -, r6⟩ := runOk_spec (run_of_check hc i (by omega))
+  have h1 := r6 (by omega)
+  refine ⟨hra, ?_⟩
+  by_cases hj1 : j = i + 1
+  · subst hj1; exact h1
+  · have := lt_of_steps ix.ra 0 ix.nr step (j - i - 2) (i + 1) (by omega) (by omega)
+    rw [show i + 1 + (j - i - 2) + 1 = j by omega] at this; omega
+
+theorem rb_increasing (i j : Nat) (hij : i < j) (hj : j < ix.nr) : ix.rb i < ix.rb j := by
+  have := (runs_increasing hc i j hij hj).2
+  obtain ⟨r1, -⟩ := runOk_spec (run_of_check hc j hj)
+  omega
 
 /-- **Soundness of a bucket hit** (tag path or genome check). -/
 theorem okAt_occurs (R : ByteArray) (s : Nat) (hR : ∀ i < q, acgt (R.get! (s + i)) = true)
@@ -772,23 +911,85 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
   · next hu =>
     have hlt : firstOdd R s (s + q) < s + q := by omega
     have hodd := u4 hlt
-    generalize firstOdd R s (s + q) = u at hlt hodd u1 u2
-    rw [scanOdd_toList G R _ _ s _ 0 #[] rfl, Array.toList_empty, List.nil_append,
-      mem_filterMap_ite]
-    constructor
-    · rintro ⟨t, -, -, hok, rfl⟩
-      simp only [okOdd, Bool.and_eq_true, decide_eq_true_eq] at hok
-      exact ⟨hok.1.2, (eqRun_iff G R q _ _).mp hok.2⟩
-    · intro hocc
-      obtain ⟨hsz, heq⟩ := hocc
-      have hx := heq (u - s) (by omega)
-      rw [show s + (u - s) = u by omega] at hx
-      obtain ⟨t, h1, h2⟩ := odd_of_check hc (p + (u - s)) (by omega) (by rw [hx]; exact hodd)
-      rw [hx] at h1 h2
-      refine ⟨t, by omega, by omega, ?_, by omega⟩
-      simp only [okOdd, Bool.and_eq_true, decide_eq_true_eq, h2]
-      rw [show p + (u - s) - (u - s) = p by omega]
-      exact ⟨⟨by omega, hsz⟩, (eqRun_iff G R q p s).mpr heq⟩
+    generalize firstOdd R s (s + q) = u at hlt hodd u1 u2 u3 ⊢
+    split
+    · -- a run of non-ACGT letters starts at `p + (u - s)`
+      next hsu =>
+      rw [scanEdge_toList ix G R 0 (u - s) s _ 0 #[] rfl, Array.toList_empty, List.nil_append,
+        mem_filterMap_ite]
+      constructor
+      · rintro ⟨i, -, -, hok, rfl⟩
+        simp only [okEdge, Bool.and_eq_true, decide_eq_true_eq] at hok
+        exact ⟨hok.1.2, (eqRun_iff G R q _ _).mp hok.2⟩
+      · rintro ⟨hsz, heq⟩
+        have hx := heq (u - s) (by omega)
+        rw [show s + (u - s) = u by omega] at hx
+        have hx1 := heq (u - s - 1) (by omega)
+        rw [show s + (u - s - 1) = u - 1 by omega, show p + (u - s - 1) = p + (u - s) - 1 by omega] at hx1
+        have hb := u3 (u - 1) (by omega) (by omega)
+        obtain ⟨i, hi, hra⟩ := run_start hc (p + (u - s)) (by omega) (by omega)
+          (by rw [hx]; exact hodd) (by rw [hx1]; exact hb)
+        unfold MzIdx.ra at hra
+        refine ⟨i, by omega, by omega, ?_, ?_⟩
+        · simp only [okEdge, Bool.and_eq_true, decide_eq_true_eq, Nat.add_zero, hra]
+          rw [show p + (u - s) - (u - s) = p by omega]
+          exact ⟨⟨by omega, hsz⟩, (eqRun_iff G R q p s).mpr heq⟩
+        · simp only [Nat.add_zero, hra]; omega
+    · next hsu =>
+      have hus : u = s := by omega
+      subst hus
+      obtain ⟨v1, v2, v3, v4⟩ := firstAcgt_spec R q u
+      generalize firstAcgt R u (u + q) = u2 at v1 v2 v3 v4 ⊢
+      split
+      · -- a run of non-ACGT letters ends at `p + (u2 - u)`
+        next hv =>
+        have hA2 := v4 hv
+        have hs2 : u < u2 := by
+          by_cases h' : u2 = u
+          · subst h'; rw [hA2] at hodd; cases hodd
+          · omega
+        rw [scanEdge_toList ix G R 1 (u2 - u) u _ 0 #[] rfl, Array.toList_empty, List.nil_append,
+          mem_filterMap_ite]
+        constructor
+        · rintro ⟨i, -, -, hok, rfl⟩
+          simp only [okEdge, Bool.and_eq_true, decide_eq_true_eq] at hok
+          exact ⟨hok.1.2, (eqRun_iff G R q _ _).mp hok.2⟩
+        · rintro ⟨hsz, heq⟩
+          have hx := heq (u2 - u) (by omega)
+          rw [show u + (u2 - u) = u2 by omega] at hx
+          have hx1 := heq (u2 - u - 1) (by omega)
+          rw [show u + (u2 - u - 1) = u2 - 1 by omega,
+            show p + (u2 - u - 1) = p + (u2 - u) - 1 by omega] at hx1
+          have hb := v3 (u2 - 1) (by omega) (by omega)
+          obtain ⟨i, hi, hrb⟩ := run_end hc (p + (u2 - u)) (by omega) (by omega)
+            (by rw [hx]; exact hA2) (by rw [hx1]; exact hb)
+          unfold MzIdx.rb at hrb
+          refine ⟨i, by omega, by omega, ?_, ?_⟩
+          · simp only [okEdge, Bool.and_eq_true, decide_eq_true_eq, hrb]
+            rw [show p + (u2 - u) - (u2 - u) = p by omega]
+            exact ⟨⟨by omega, hsz⟩, (eqRun_iff G R q p u).mpr heq⟩
+          · simp only [hrb]; omega
+      · -- no ACGT letter: inside a run
+        next hv =>
+        have hall : ∀ j < q, acgt (R.get! (u + j)) = false := fun j hj => v3 (u + j) (by omega) (by omega)
+        rw [scanInside_toList ix G R u _ 0 #[] rfl, Array.toList_empty, List.nil_append,
+          List.mem_flatMap]
+        constructor
+        · rintro ⟨i, -, hp⟩
+          unfold inRun at hp
+          rw [mem_filterMap_ite] at hp
+          obtain ⟨p', -, -, hok, rfl⟩ := hp
+          simp only [okIn, Bool.and_eq_true, decide_eq_true_eq] at hok
+          exact ⟨hok.1, (eqRun_iff G R q _ _).mp hok.2⟩
+        · rintro ⟨hsz, heq⟩
+          have hG : ∀ j < q, acgt (G.get! (p + j)) = false := fun j hj => by rw [heq j hj]; exact hall j hj
+          obtain ⟨i, hi, h1, h2⟩ := run_inside hc p hsz hG
+          refine ⟨i, List.mem_range'_1.mpr ⟨by omega, by omega⟩, ?_⟩
+          unfold inRun
+          rw [mem_filterMap_ite]
+          refine ⟨p, h1, by omega, ?_, rfl⟩
+          simp only [okIn, Bool.and_eq_true, decide_eq_true_eq]
+          exact ⟨hsz, (eqRun_iff G R q p u).mpr heq⟩
 
 /-- **Order.**  The places come out strictly increasing. -/
 theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
@@ -807,14 +1008,35 @@ theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
       (j - i - 1) i hi (by omega)
     rw [show i + (j - i - 1) + 1 = j by omega] at hst
     omega
-  · rw [scanOdd_toList G R _ _ s _ 0 #[] rfl, Array.toList_empty, List.nil_append]
-    apply pairwise_filterMap_ite
-    intro i j hi hij hj ok1 _
-    simp only [okOdd, Bool.and_eq_true, decide_eq_true_eq] at ok1
-    have hst := lt_of_steps (fun t => ix.odd[(R.get! (firstOdd R s (s + q))).toNat]![t]!) 0 _
-      (fun j _ h2 => odd_increasing hc _ (UInt8.toNat_lt _) j h2) (j - i - 1) i (by omega) (by omega)
-    rw [show i + (j - i - 1) + 1 = j by omega] at hst
-    omega
+  · split
+    · rw [scanEdge_toList ix G R 0 _ s _ 0 #[] rfl, Array.toList_empty, List.nil_append]
+      apply pairwise_filterMap_ite
+      intro i j hi hij hj ok1 _
+      simp only [okEdge, Bool.and_eq_true, decide_eq_true_eq, Nat.add_zero] at ok1 ⊢
+      have := (runs_increasing hc i j hij (by omega)).1
+      unfold MzIdx.ra at this
+      omega
+    · split
+      · rw [scanEdge_toList ix G R 1 _ s _ 0 #[] rfl, Array.toList_empty, List.nil_append]
+        apply pairwise_filterMap_ite
+        intro i j hi hij hj ok1 _
+        simp only [okEdge, Bool.and_eq_true, decide_eq_true_eq] at ok1
+        have := rb_increasing hc i j hij (by omega)
+        unfold MzIdx.rb at this
+        omega
+      · rw [scanInside_toList ix G R s _ 0 #[] rfl, Array.toList_empty, List.nil_append,
+          List.pairwise_flatMap]
+        refine ⟨fun i _ => ?_, ?_⟩
+        · unfold inRun
+          exact pairwise_filterMap_ite _ _ _ _ fun _ _ _ hab _ _ _ => hab
+        · apply pairwise_range'
+          intro i j hi hij hj x hx y hy
+          unfold inRun at hx hy
+          rw [mem_filterMap_ite] at hx hy
+          obtain ⟨_, hx1, hx2, -, rfl⟩ := hx
+          obtain ⟨_, hy1, -, -, rfl⟩ := hy
+          have := (runs_increasing hc i j hij (by omega)).2
+          omega
 
 end
 

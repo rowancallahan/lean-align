@@ -179,6 +179,47 @@ theorem firstOdd_spec (B : ByteArray) (n : Nat) : ∀ i,
     · next ha =>
       refine ⟨by omega, by omega, fun x hx1 hx2 => by omega, fun _ => by simpa using ha⟩
 
+/-- First `i ∈ [i, stop)` with `B[i]` ACGT (`stop` if none). -/
+def firstAcgt (B : ByteArray) (i stop : Nat) : Nat :=
+  if i < stop then (if acgt (B.get! i) then i else firstAcgt B (i + 1) stop) else stop
+termination_by stop - i
+
+theorem firstAcgt_spec (B : ByteArray) (n : Nat) : ∀ i,
+    i ≤ firstAcgt B i (i + n) ∧ firstAcgt B i (i + n) ≤ i + n ∧
+    (∀ x, i ≤ x → x < firstAcgt B i (i + n) → acgt (B.get! x) = false) ∧
+    (firstAcgt B i (i + n) < i + n → acgt (B.get! (firstAcgt B i (i + n))) = true) := by
+  induction n with
+  | zero => intro i; rw [firstAcgt, if_neg (by omega)]; refine ⟨by omega, by omega, ?_, ?_⟩ <;> intros <;> omega
+  | succ n ih =>
+    intro i
+    rw [firstAcgt, if_pos (by omega)]
+    split
+    · next ha => exact ⟨by omega, by omega, fun x hx1 hx2 => by omega, fun _ => ha⟩
+    · next ha =>
+      have := ih (i + 1)
+      rw [show i + 1 + n = i + (n + 1) by omega] at this
+      obtain ⟨h1, h2, h3, h4⟩ := this
+      refine ⟨by omega, h2, fun x hx1 hx2 => ?_, h4⟩
+      by_cases hx : x = i
+      · subst hx; simpa using ha
+      · exact h3 x (by omega) hx2
+
+/-- No byte of `B[i, stop)` is A, C, G or T. -/
+def allNot (B : ByteArray) (i stop : Nat) : Bool :=
+  if i < stop then !acgt (B.get! i) && allNot B (i + 1) stop else true
+termination_by stop - i
+
+theorem allNot_spec (B : ByteArray) (n : Nat) :
+    ∀ i, allNot B i (i + n) = true → ∀ x, i ≤ x → x < i + n → acgt (B.get! x) = false := by
+  induction n with
+  | zero => intro i _ x h1 h2; omega
+  | succ n ih =>
+    intro i h x h1 h2
+    rw [allNot, if_pos (by omega), Bool.and_eq_true, Bool.not_eq_true'] at h
+    by_cases hx : x = i
+    · subst hx; exact h.1
+    · exact ih (i + 1) (by rw [show i + 1 + n = i + (n + 1) by omega]; exact h.2) x (by omega) (by omega)
+
 /-! ## Hash -/
 
 def HC : UInt64 := 0x9E3779B97F4A7C15
