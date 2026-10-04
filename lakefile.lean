@@ -117,3 +117,7 @@ lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark 
 lean_exe csr_bench where              -- CSR index build/save/load/check timing (unproved IO)
   srcDir := "bench"
   root := `CsrBench
+
+lean_exe layout where                 -- index layout bench (unproved)
+  srcDir := "bench"
+  root := `Layout
