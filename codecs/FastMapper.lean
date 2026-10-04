@@ -255,10 +255,10 @@ theorem mapFastG_eq_mapSpec {L : Type} [Inhabited L] (lk : Look L) (g : Genome) 
 
 theorem lookAll_hLook (gbs : Array ByteArray) (idxs : Array HIdx) (hchk : checkAll idxs gbs = true) :
     LookAll hLook gbs idxs := by
-  intro c hc R j _
+  intro c hc R j hj
   unfold checkAll at hchk
   simp only [List.all_eq_true, List.mem_range] at hchk
-  exact hLook_ok _ _ _ _ (hchk c hc)
+  exact hLook_ok _ _ _ _ hj (hchk c hc)
 
 /-- **Fast path.**  Under the hypotheses, `mapFast` is the specification's answer. -/
 theorem mapFast_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteArray) (idxs : Array HIdx)

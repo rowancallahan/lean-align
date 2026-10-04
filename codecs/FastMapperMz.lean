@@ -160,17 +160,63 @@ theorem lookupA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s base bit : Nat) :
       · conv => lhs; rw [e]
         rw [scanInsideA_eq _ _ _ _ _ _ _ _ _ rfl]
 
+theorem lookupCodeA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s v base bit : Nat) :
+    lookupCodeA ix G R s v base bit = (Mz.lookupCode ix G R s v).map (anc base bit) := by
+  have e : (#[] : Array Nat) = (#[] : Array Nat).map (anc base bit) := by simp
+  unfold lookupCodeA Mz.lookupCode
+  dsimp only
+  conv => lhs; rw [e]
+  rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
+
 end
 
-/-- Seed `j`'s packed anchors from a minimizer index. -/
-def mzLook (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (_ : Option UInt64) : Array Nat :=
-  lookupSeedA ix G R (j * q) (BIAS - j * q) (1 <<< j)
+/-- The seed code from its hash: `mix⁻¹ y = y·MIXINV mod 2^50`. -/
+@[inline] def unmix (y : UInt64) : Nat := ((y * MIXINV.toUInt64) &&& 0x3FFFFFFFFFFFF).toNat
+
+/-- Seed `j`'s packed anchors from a minimizer index; an ACGT seed (`h = some y`)
+reuses its code `unmix y` instead of reading its letters again. -/
+def mzLook (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (h : Option UInt64) : Array Nat :=
+  match h with
+  | some y => lookupCodeA ix G R (j * q) (unmix y) (BIAS - j * q) (pow2 j)
+  | none => lookupSeedA ix G R (j * q) (BIAS - j * q) (pow2 j)
+
+theorem unmix_mix (x : UInt64) (hx : x.toNat < 2 ^ 50) : unmix (mix x) = x.toNat := by
+  unfold unmix
+  rw [UInt64.toNat_and, UInt64.toNat_mul, mix_toNat, show (0x3FFFFFFFFFFFF : UInt64).toNat = 2 ^ 50 - 1 from rfl,
+    Nat.and_two_pow_sub_one_eq_mod, show MIXINV.toUInt64.toNat = MIXINV from rfl,
+    Nat.mod_mod_of_dvd _ (by decide : 2 ^ 50 ∣ 2 ^ 64), Nat.mod_mul_mod, Nat.mul_assoc, Nat.mul_mod,
+    show MIXC.toNat * MIXINV % 2 ^ 50 = 1 by decide, Nat.mul_one, Nat.mod_mod, Nat.mod_eq_of_lt hx]
+
+theorem c2N_eq (b : UInt8) : c2N b = byteCode b := by
+  unfold c2N byteCode codeNat
+  have e : ∀ c : UInt8, (b = c ↔ b.toNat = c.toNat) := fun c => by rw [UInt8.toNat_inj]
+  simp only [e]; rfl
+
+theorem wN_eq (B : ByteArray) : ∀ n i, wN B i n = Mz.wc B i n := by
+  intro n
+  induction n with
+  | zero => intro i; rfl
+  | succ n ih =>
+    intro i
+    rw [show n + 1 = 1 + n by omega, Mz.wc_add, show 1 + n = n + 1 by omega]
+    simp only [wN, Mz.wc, Nat.zero_mul, Nat.zero_add, Nat.add_zero, c2N_eq, ih]
+
+theorem acgt_mz (b : UInt8) (h : acgt b = true) : Mz.acgt b = true := by
+  unfold acgt at h
+  have := acgt_tab b.toNat (UInt8.toNat_lt b) (by simpa using h)
+  have e : ∀ n : Nat, n < 256 → (b = n.toUInt8 ↔ b.toNat = n) := fun n hn => by
+    constructor
+    · rintro rfl; simp; omega
+    · intro h; rw [← h]; simp
+  unfold Mz.acgt
+  rcases this with h | h | h | h <;>
+    simp [show b = _ from (e _ (by omega)).2 h]
 
 /-- Order hint: size of the bucket of the seed's minimizer (the seed code is
 `mix⁻¹ y = y·MIXINV mod 2^50`); 0 for a seed with a letter other than ACGT. -/
 @[inline] def mzSize (ix : Mz.MzIdx) : Option UInt64 → Nat
   | some y =>
-    let v := ((y * MIXINV.toUInt64) &&& 0x3FFFFFFFFFFFF).toNat
+    let v := unmix y
     let b := ix.hsh (ix.sub v (ix.mini v)) >>> ix.kb
     ix.hiB b - ix.loB b
   | none => 0
@@ -183,12 +229,25 @@ def checkAllMz (idxs : Array Mz.MzIdx) (gbs : Array ByteArray) : Bool :=
 def mapFastMz (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (R : ByteArray) : Option (Window × Int) :=
   mapFastG mzL gbs idxs R
 
-theorem mzLook_ok (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (h : Option UInt64)
-    (hc : Mz.check ix G = true) : LookOk G R j (mzLook ix G R j h) := by
-  have hf : anc (BIAS - j * q) (1 <<< j) = anchorOf j := funext fun p => by
-    unfold anc; rw [Nat.one_shiftLeft]; rfl
-  unfold mzLook LookOk
-  rw [lookupA_eq, hf, Array.toList_map]
+theorem mzLook_eq (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) :
+    mzLook ix G R j (seedHash R j) = (Mz.lookupSeed ix G R (j * q)).map (anc (BIAS - j * q) (pow2 j)) := by
+  rw [seedHash_spec]
+  split
+  · next ha =>
+    unfold mzLook hashAt
+    dsimp only
+    rw [unmix_mix _ (by rw [hashWord_toNat]; exact Nat.lt_of_lt_of_le (wN_lt R (j * q) q) (by decide)),
+      hashWord_toNat, wN_eq, lookupCodeA_eq, Mz.lookupSeed_eq_lookupCode ix G R (j * q)
+        (fun i hi => acgt_mz _ ((allACGT_word R (j * q)).1 ha i hi))]
+    rfl
+  · unfold mzLook; rw [lookupA_eq]
+
+theorem mzLook_ok (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (hj : j < 4)
+    (hc : Mz.check ix G = true) : LookOk G R j (mzLook ix G R j (seedHash R j)) := by
+  have hf : anc (BIAS - j * q) (pow2 j) = anchorOf j := funext fun p => by
+    unfold anc; rw [pow2_eq j hj]; rfl
+  unfold LookOk
+  rw [mzLook_eq, hf, Array.toList_map]
   refine ⟨List.Pairwise.map _ (fun (a b : Nat) (hab : a < b) => show anchorOf j a < anchorOf j b by
     unfold anchorOf; generalize 2 ^ j = w; omega) (Mz.lookupSeed_sorted hc R (j * q)), fun e => ?_⟩
   rw [List.mem_map]
@@ -205,10 +264,10 @@ theorem mapFastMz_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteAr
     (hchk : checkAllMz idxs gbs = true) :
     mapFastMz gbs idxs R = mapSpec sc0 (-12) g read := by
   apply mapFastG_eq_mapSpec mzL g read gbs idxs R hg hr
-  intro c hc R' j _
+  intro c hc R' j hj
   unfold checkAllMz at hchk
   simp only [List.all_eq_true, List.mem_range] at hchk
-  exact mzLook_ok _ _ _ _ (seedHash R' j) (hchk c hc)
+  exact mzLook_ok _ _ _ _ hj (hchk c hc)
 
 /-- `n` tasks. -/
 def mapFastMzPar (n : Nat) (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (Rs : Array ByteArray) :

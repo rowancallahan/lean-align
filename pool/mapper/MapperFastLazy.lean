@@ -607,7 +607,7 @@ theorem lazyLoop_inv {L : Type} (lk : Look L) (ix : L)
     obtain ⟨hpop, hJ'⟩ := pop4_add J hs.hJ j hj4 hj0
     unfold lazyLoop
     simp only []
-    rw [look_eq cw hc13 R G c hcw hn lk ix j hj4, Nat.one_shiftLeft]
+    rw [look_eq cw hc13 R G c hcw hn lk ix j hj4, pow2_eq j hj4]
     have hl := hlk j hj4
     generalize lk.look ix G R j (seedHash R j) = a at hl
     -- the new anchors
