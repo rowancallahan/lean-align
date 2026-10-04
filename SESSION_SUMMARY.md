@@ -79,6 +79,9 @@ minibwa is the only comparison so far. Before claiming "faster than the fastest"
 - Multi-mappers / low MAPQ can be dropped (goal is genotyping), already what `mapSpec` does on ties.
 - Kernel: plain banded DP (Smith-Waterman/Gotoh-style loop) may compile better than WFA in Lean; low-error Hamming fast path already removes most DP.
 
+## Merge status (2026-10-04, late)
+`claude/upbeat-goldberg-kizkfd` holds all verified work: every proof branch plus `speed/proto-tune` (bench/Proto.lean = tuned unproved prototype, Proto0 = first prototype, bench/check.sh, map_dump) and `speed/research` (bench/research_notes.txt, Proto2). `scripts/check.sh` passes; all lean_exe targets build. Proved mapper after `Look` class / shared per-seed prep (6653355), chr21 100k reads, 1 thread, this box: hashed 376k reads/s, Mz (k=22, 141 MB) 349k, answers identical to the prototype. Left out on purpose: `speed/arrays`, `speed/bounds`, `speed/dedup-parallel` (old WIP, superseded) and the last two `speed/csr-index` commits (parallel/low-memory CsrIndex checker; they change `MapperBytes.lean` on an old base and break MzIndex; CsrIndex itself is superseded by the fast mapper's checked index).
+
 ## Direction (Rowan, 2026-10-04)
 - Goal now: WGS with cheap paired-end short reads (≤ 250 bp), as fast as possible. Output users keep: uniquely mapped reads in proper pairs; algorithms may exploit that (proved pre-filter: `PreFilterMapper`), with fallbacks later.
 - Long run: guarantee that any placement whose surrogate-score errors are ≤ ~3% of the read length is found, so it extends to long reads. Several fast algorithms switched by read length are fine if they share the same/similar index. Note: 25-letter seeds give n/25 = 4%·n disjoint seeds, so ≤ 3%·n spoiling coordinates leave ≥ 1%·n clean seeds (≥ 1 for n ≥ 100) — the 25-mer index's pigeonhole guarantee holds up to ~4% errors at every length.
