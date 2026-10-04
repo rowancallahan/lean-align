@@ -99,7 +99,7 @@ def scoreLocus (r g : ByteArray) (a : Int) (B cap : Nat) (acc : Array (Nat × Na
         if pen ≤ cap && s.toNat + len ≤ g.size then acc := acc.push (s.toNat, len, pen)
   return acc
 
-def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
+def mapRead (maxHits : Nat) (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
   let n := r.size
   let nseed := 4
   let q := n / nseed
@@ -110,6 +110,7 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
     let h := wordCode r (j * q) idx.l0
     let lo := idx.offs[h.toNat]!.toNat
     let hi := idx.offs[h.toNat + 1]!.toNat
+    let hi := if hi - lo > maxHits then lo else hi   -- UNPROVED repeat mask
     for t in [lo:hi] do
       let p := idx.pos[t]!.toNat
       -- full seed check
@@ -147,9 +148,10 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"index entries: {idx.pos.size}"
   let t1 ← IO.monoNanosNow
   let nt := (rest.find? (·.startsWith "-t")).map (·.drop 2 |>.toString.toNat!) |>.getD 1
+  let maxHits := (rest.find? (·.startsWith "-m")).map (·.drop 2 |>.toString.toNat!) |>.getD 1000000000
   let chunk := (reads.size + nt - 1) / nt
   let tasks := (List.range nt).map fun t =>
-    Task.spawn (prio := .dedicated) fun _ => (reads.extract (t * chunk) ((t + 1) * chunk)).map (mapRead idx g)
+    Task.spawn (prio := .dedicated) fun _ => (reads.extract (t * chunk) ((t + 1) * chunk)).map (mapRead maxHits idx g)
   let res := (tasks.map Task.get).foldl (· ++ ·) #[]
   assert! res.size == reads.size
   let mapped := (res.filter (·.isSome)).size
@@ -157,7 +159,10 @@ def main (args : List String) : IO UInt32 := do
   let t2 ← IO.monoNanosNow
   let secs := Float.ofNat (t2 - t1) / 1e9
   IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat reads.size / secs}"
-  match rest.filter (!·.startsWith "-t") with
+  if let some o := rest.find? (·.startsWith "-o") then
+    IO.FS.writeFile (o.drop 2).toString (String.intercalate "\n" (res.toList.map fun
+      | some (s, l, p) => s!"{s}\t{l}\t{p}" | none => "*") ++ "\n")
+  match rest.filter (fun a => !a.startsWith "-t" && !a.startsWith "-m" && !a.startsWith "-o") with
   | tp :: _ =>
     let tl := ((← IO.FS.readFile tp).splitOn "\n").filter (· ≠ "") |>.drop 1
     let mut right := 0
