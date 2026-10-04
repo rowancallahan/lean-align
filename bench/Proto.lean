@@ -99,18 +99,22 @@ def scoreLocus (r g : ByteArray) (a : Int) (B cap : Nat) (acc : Array (Nat × Na
         if pen ≤ cap && s.toNat + len ≤ g.size then acc := acc.push (s.toNat, len, pen)
   return acc
 
-def mapRead (maxHits : Nat) (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
+def mapRead (stage maxHits : Nat) (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
   let n := r.size
   let nseed := 4
   let q := n / nseed
   let B := 3
   let cap := 12
+  if stage == 0 then return some (0, r.size, 0)
   let mut anchors : Array Int := #[]
+  let mut nh := 0
   for j in [0:nseed] do
     let h := wordCode r (j * q) idx.l0
     let lo := idx.offs[h.toNat]!.toNat
     let hi := idx.offs[h.toNat + 1]!.toNat
     let hi := if hi - lo > maxHits then lo else hi   -- UNPROVED repeat mask
+    nh := nh + (hi - lo)
+    if stage == 1 then continue
     for t in [lo:hi] do
       let p := idx.pos[t]!.toNat
       -- full seed check
@@ -121,6 +125,8 @@ def mapRead (maxHits : Nat) (idx : Idx) (g r : ByteArray) : Option (Nat × Nat �
       if ok then
         let a : Int := (p : Int) - (j * q : Nat)
         if !(anchors.contains a) then anchors := anchors.push a
+  if stage == 1 then return some (0, nh, 0)
+  if stage == 2 then return some (0, nh, anchors.size)
   let mut hits : Array (Nat × Nat × Nat) := #[]
   for a in anchors do hits := scoreLocus r g a B cap hits
   -- unique best (smallest penalty), duplicates of the same window allowed
@@ -149,12 +155,17 @@ def main (args : List String) : IO UInt32 := do
   let t1 ← IO.monoNanosNow
   let nt := (rest.find? (·.startsWith "-t")).map (·.drop 2 |>.toString.toNat!) |>.getD 1
   let maxHits := (rest.find? (·.startsWith "-m")).map (·.drop 2 |>.toString.toNat!) |>.getD 1000000000
+  let stage := (rest.find? (·.startsWith "-s")).map (·.drop 2 |>.toString.toNat!) |>.getD 3
   let chunk := (reads.size + nt - 1) / nt
   let tasks := (List.range nt).map fun t =>
-    Task.spawn (prio := .dedicated) fun _ => (reads.extract (t * chunk) ((t + 1) * chunk)).map (mapRead maxHits idx g)
+    Task.spawn (prio := .dedicated) fun _ => (reads.extract (t * chunk) ((t + 1) * chunk)).map (mapRead stage maxHits idx g)
   let res := (tasks.map Task.get).foldl (· ++ ·) #[]
   assert! res.size == reads.size
   let mapped := (res.filter (·.isSome)).size
+  if stage < 3 then
+    let sumH := res.foldl (fun a r => a + (r.map (·.2.1)).getD 0) 0
+    let sumA := res.foldl (fun a r => a + (r.map (·.2.2)).getD 0) 0
+    IO.println s!"stage {stage}: index hits/read {Float.ofNat sumH / Float.ofNat reads.size}  anchors/read {Float.ofNat sumA / Float.ofNat reads.size}"
   IO.println s!"mapped: {mapped}"
   let t2 ← IO.monoNanosNow
   let secs := Float.ofNat (t2 - t1) / 1e9
@@ -162,7 +173,7 @@ def main (args : List String) : IO UInt32 := do
   if let some o := rest.find? (·.startsWith "-o") then
     IO.FS.writeFile (o.drop 2).toString (String.intercalate "\n" (res.toList.map fun
       | some (s, l, p) => s!"{s}\t{l}\t{p}" | none => "*") ++ "\n")
-  match rest.filter (fun a => !a.startsWith "-t" && !a.startsWith "-m" && !a.startsWith "-o") with
+  match rest.filter (fun a => !a.startsWith "-t" && !a.startsWith "-m" && !a.startsWith "-o" && !a.startsWith "-s") with
   | tp :: _ =>
     let tl := ((← IO.FS.readFile tp).splitOn "\n").filter (· ≠ "") |>.drop 1
     let mut right := 0
