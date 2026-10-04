@@ -4,26 +4,29 @@ import MapperMzWords              -- pool: word codes, hash bijection, loops
 /-!
 # Codec `MzIndex`: minimizer index of 25-letter seeds, certified by a checker
 
-Memory: only the *minimizer place* of each ACGT 25-letter window is indexed
-(0.34 / 0.41 / 0.51 of the places for `k = 21 / 22 / 23` on chr1 and chr21),
-one 8-byte slot per indexed place (place and tag, kept as the bits of a
-`Float` in a `FloatArray`), so 2.7–4.1 bytes per letter plus the bucket
-offsets, instead of 8–16.  A lookup reads one bucket and never the genome
-(except near non-ACGT letters).
+Memory: only the *minimizer place* of each ACGT 25-letter window is indexed, one
+`sw`-byte slot (place and tag) per indexed place plus 4 bytes per bucket.  Plain
+minimizers (`t = k`) index 0.34 / 0.41 / 0.51 of the places for `k = 21 / 22 / 23`;
+mod-minimizers (`t ≡ k mod w`, `mini`) fewer (`k = 22, t = 6`: 0.29; `k = 17, t = 8`: 0.16).
+Measured (chr1, 249 M letters, `pair_bench`): `k = 22`, 8-byte slots with full context
+3.28 bytes/letter; `k = 22, t = 6`, 4-byte slots, `c = 0`: 1.20–1.34; `k = 17, t = 8`,
+4-byte slots: 0.74.  A lookup reads one bucket; it reads the genome for a candidate
+entry only where the stored context and key do not decide the seed.
 
-* Seed code `v = wc R s 25`.  `mini ix v` = leftmost offset `o < w`
-  (`w = 26 - k`) minimizing `hsh` (a bijection on `[0, 4^k)`) of the k-word
-  at `o` — a function of the seed's letters only.  Every place `p` where an
+* Seed code `v = wc R s 25`.  `mini ix v` = offset `o < w` (`w = 26 - k`)
+  of the minimizer: `x mod w` for the leftmost t-word at `x` of least hash
+  — a function of the seed's letters only.  Every place `p` where an
   ACGT seed occurs thus has its minimizer place `p + o` indexed (`checkComp`).
 * Buckets: CSR over `h >>> kb` (`2^B` buckets, `offs` = LE `UInt32`s),
-  `h = hsh (k-word)`, `kb = 2k - B`.  Slot = `pos · 2^T + tag`, tag fields:
-  `key = h mod 2^kb`, `bef`/`aft` = codes of the `w-1` letters before/after
-  the k-word, `flag` (0 when those letters are ACGT inside the chromosome).
+  `h = hsh (k-word)`, `kb = 2k - B`.  Slot = `pos · 2^T + tag` (`sw` LE bytes), tag
+  fields: `key = h mod 2^kf` (`kf ≤ kb`, as many bits as fit), `bef`/`aft` = codes
+  of the `c ≤ w-1` letters before/after the k-word, `flag` (0 when those letters
+  are ACGT inside the chromosome).
 * Lookup of an ACGT seed: entries of bucket `h >>> kb` whose key equals
-  `h mod 2^kb` (so the k-word equals the seed's, by the bijection), whose
-  last `o` letters of `bef` equal the seed's first `o` letters and whose
-  first `w-1-o` letters of `aft` equal the seed's last ones; flagged
-  entries are compared with the genome instead.  A seed with another
+  `h mod 2^kf` (when `kf = kb` the k-word equals the seed's, by the bijection),
+  whose stored context letters equal the seed's; flagged entries are compared
+  with the genome instead, and so are the seed letters the `c` context letters
+  do not cover, and the k-word itself when `kf < kb`.  A seed with another
   letter is looked up through the maximal runs of non-ACGT letters (`runs`):
   its first such letter, if not its first letter, is where a run starts;
   else its first ACGT letter is where a run ends; else it lies in a run.
@@ -57,36 +60,64 @@ structure MzIdx where
   c : Nat
   /-- key bits `2k - B` (checked) -/
   kb : Nat
-  /-- tag bits `kb + 4(w-1) + 1` (checked) -/
+  /-- key bits stored in a slot, `kf ≤ kb` (checked); when `kf < kb` the k-word of a
+  matching entry is compared with the genome -/
+  kf : Nat
+  /-- tag bits, `kf ≤ T` (checked; the builder uses `kf + 4c + 1`, or `kf` when `c = 0`) -/
   T : Nat
   /-- `4^k - 1` (checked) -/
   kmU : UInt64
-  /-- `2^kb - 1`, `4^(w-1) - 1`, `2^T - 1` (checked) -/
+  /-- length `t ≤ k` of the words that pick the minimizer (mod-minimizer: the least
+  t-word of the seed at `x` picks offset `x mod w`; `t = k` is the plain minimizer) and
+  `4^t - 1`; not checked (any choice is a function of the seed's letters) -/
+  t : Nat
+  tmU : UInt64
+  /-- `2^kf - 1`, `4^c - 1`, `2^T - 1` (checked) -/
   kbM : Nat
   fM : Nat
   tM : Nat
   /-- `pm[i] = 4^i - 1` for `i ≤ w` (checked) -/
   pm : Array Nat
-  /-- shifts of the `aft` and `flag` fields (`kb + 2(w-1)`, `kb + 4(w-1)`; any
+  /-- shifts of the `bef`, `aft` and `flag` fields (`kf`, `kf + 2c`, `kf + 4c`; any
   values work: the checker compares the fields with the genome) -/
+  bsh : Nat
   ash : Nat
   fsh : Nat
   /-- `2^B + 1` LE `UInt32` bucket offsets -/
   offs : ByteArray
-  /-- slot `pos · 2^T + tag` per entry, stored as the bits of a `Float`
-  (`FloatArray`: unboxed 8 bytes, and unlike an `Array` it is not walked
-  element by element when shared with a `Task`) -/
-  sl : FloatArray
+  /-- bytes per slot (the builder writes 4, 5, 6 or 8) -/
+  sw : Nat
+  /-- slot `pos · 2^T + tag` per entry, `sw` little-endian bytes (a `ByteArray` is
+  not walked element by element when shared with a `Task`) -/
+  sl : ByteArray
   /-- the maximal runs `[runs[2i], runs[2i+1])` of non-ACGT bytes, increasing -/
   runs : Array Nat
 deriving Inhabited
+
+/-- Byte `j` of `B` at bit `sh`. -/
+@[inline] def byteAt (B : ByteArray) (j : Nat) (sh : UInt64) : UInt64 := (B.get! j).toUInt64 <<< sh
+
+/-- Little-endian 4 bytes at byte `j` (one bounds check). -/
+@[inline] def rd4 (B : ByteArray) (j : Nat) : UInt64 :=
+  if h : j + 3 < B.size then
+    (B[j]'(by omega)).toUInt64 ||| ((B[j + 1]'(by omega)).toUInt64 <<< 8) |||
+      ((B[j + 2]'(by omega)).toUInt64 <<< 16) ||| ((B[j + 3]'h).toUInt64 <<< 24)
+  else 0
+
+/-- Slot `t` of a slot array with `sw` bytes per slot (4, 5, 6; any other width reads 8). -/
+@[inline] def rdSlot (B : ByteArray) (sw t : Nat) : Nat :=
+  let j := sw * t
+  (if sw = 4 then rd4 B j
+   else if sw = 5 then rd4 B j ||| byteAt B (j + 4) 32
+   else if sw = 6 then rd4 B j ||| byteAt B (j + 4) 32 ||| byteAt B (j + 5) 40
+   else rd4 B j ||| (rd4 B (j + 4) <<< 32)).toNat
 
 namespace MzIdx
 
 variable (ix : MzIdx)
 
 /-- Slot of entry `t` (nothing is assumed about how the bits got there). -/
-@[inline] def slot (t : Nat) : Nat := (ix.sl.get! t).toBits.toNat
+@[inline] def slot (t : Nat) : Nat := rdSlot ix.sl ix.sw t
 @[inline] def ra (i : Nat) : Nat := ix.runs[2 * i]!
 @[inline] def rb (i : Nat) : Nat := ix.runs[2 * i + 1]!
 @[inline] def nr : Nat := ix.runs.size / 2
@@ -95,7 +126,7 @@ variable (ix : MzIdx)
 @[inline] def posOf (e : Nat) : Nat := e >>> ix.T
 @[inline] def tagOf (e : Nat) : Nat := e &&& ix.tM
 @[inline] def keyF (tg : Nat) : Nat := tg &&& ix.kbM
-@[inline] def befF (tg : Nat) : Nat := (tg >>> ix.kb) &&& ix.fM
+@[inline] def befF (tg : Nat) : Nat := (tg >>> ix.bsh) &&& ix.fM
 @[inline] def aftF (tg : Nat) : Nat := (tg >>> ix.ash) &&& ix.fM
 @[inline] def flagF (tg : Nat) : Nat := tg >>> ix.fsh
 @[inline] def hsh (x : Nat) : Nat := hashU x ix.kmU
@@ -116,12 +147,15 @@ termination_by w - o
 namespace MzIdx
 variable (ix : MzIdx)
 
-/-- Minimizer offset of the q-word with code `v` (`miniGo`; any order works,
-correctness only needs it to be a function of the seed's letters). -/
+/-- Minimizer offset of the q-word with code `v`: the leftmost least t-word (`miniGo`
+over the `q + 1 - t` t-words) at `x` gives `x mod w` (mod-sampling, Groot Koerkamp and
+Pibiri 2024: density near `1/w` instead of `2/(w+1)` for `t ≡ k mod w`).  Any choice
+works; correctness only needs it to be a function of the seed's letters and `< w`. -/
 @[inline] def mini (v : Nat) : Nat :=
   let u := v.toUInt64
-  let sh := (2 * (q - ix.k)).toUInt64
-  miniGo u ix.kmU ix.w 1 0 (sh - 2) (((u >>> sh) &&& ix.kmU) * HC &&& ix.kmU)
+  let sh := (2 * (q - ix.t)).toUInt64
+  let x := miniGo u ix.tmU (q + 1 - ix.t) 1 0 (sh - 2) (((u >>> sh) &&& ix.tmU) * HC &&& ix.tmU)
+  if x < ix.w then x else x % ix.w
 
 end MzIdx
 
@@ -131,7 +165,7 @@ end MzIdx
 first `o` letters `bw`, last `w-1-o` letters `aw`). -/
 @[inline] def okAt (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 t : Nat) : Bool :=
   let e := (ix.slot t)
-  -- the key is the low `kb` bits of the slot: one mask for a non-matching entry
+  -- the key is the low `kf` bits of the slot: one mask for a non-matching entry
   (e &&& ix.kbM) == key &&
     (let pos := ix.posOf e
      let tg := ix.tagOf e
@@ -139,7 +173,9 @@ first `o` letters `bw`, last `w-1-o` letters `aw`). -/
       (if ix.flagF tg = 0 then (ix.befF tg &&& pmo) == bw && (ix.aftF tg >>> o2) == aw &&
          -- the seed letters the stored context does not cover: `n1` first, `n2` last
          decide (pos - o + q ≤ G.size) && eqRun G R (pos - o) s n1 &&
-         eqRun G R (pos + a2) (s + o + a2) n2
+         eqRun G R (pos + a2) (s + o + a2) n2 &&
+         -- a truncated key (`kf < kb`) does not determine the k-word: compare it too
+         (ix.kf == ix.kb || eqRun G R pos (s + o) ix.k)
        else decide (pos - o + q ≤ G.size) && eqRun G R (pos - o) s q))
 
 /-- Places `pos - o` of the matching entries `t ∈ [t, hi)`. -/
@@ -205,8 +241,8 @@ def lookupSeed (ix : MzIdx) (G R : ByteArray) (s : Nat) : Array Nat :=
 
 def checkParams (ix : MzIdx) : Bool :=
   decide (0 < ix.k) && decide (ix.k ≤ q) && decide (ix.k ≤ 31) && decide (ix.B ≤ 2 * ix.k) &&
-  ix.w == q + 1 - ix.k && ix.kb == 2 * ix.k - ix.B && ix.T == ix.kb + 4 * ix.c + 1 &&
-  ix.kmU.toNat == 2 ^ (2 * ix.k) - 1 && ix.kbM == 2 ^ ix.kb - 1 &&
+  ix.w == q + 1 - ix.k && ix.kb == 2 * ix.k - ix.B && decide (ix.kf ≤ ix.kb) && decide (ix.kf ≤ ix.T) &&
+  ix.kmU.toNat == 2 ^ (2 * ix.k) - 1 && ix.kbM == 2 ^ ix.kf - 1 &&
   ix.fM == 2 ^ (2 * ix.c) - 1 && ix.tM == 2 ^ ix.T - 1 && decide (ix.c + 1 ≤ ix.w) &&
   (List.range (ix.w + 1)).all (fun i => ix.pm[i]! == 2 ^ (2 * i) - 1)
 
@@ -291,21 +327,31 @@ def check (ix : MzIdx) (G : ByteArray) : Bool :=
 
 /-! ## Builder (fast; not trusted — `check` certifies its output) -/
 
-/-- `n` zero bytes, capacity `n`. -/
+/-- `n` zero bytes, capacity `n` (no copies: the builder's peak memory is the index). -/
 def zeros (n : Nat) : ByteArray := Id.run do
   let mut B := ByteArray.emptyWithCapacity n
   for _ in [0:n] do B := B.push 0
   return B
 
-def mkIdx (k B c : Nat) : MzIdx :=
+/-- Parameters for slots of `sw` bytes holding places `< 2^pb`: the stored key is the
+largest `kf ≤ kb` with `pb + kf + 4c (+1 flag bit when c > 0) ≤ 8·sw`. -/
+def mkIdx (k B c sw pb t : Nat) : MzIdx :=
   let w := q + 1 - k
   let kb := 2 * k - B
-  let T := kb + 4 * c + 1
-  { k, B, w, c, kb, T, kmU := (2 ^ (2 * k) - 1).toUInt64, kbM := 2 ^ kb - 1,
+  let fl := if c = 0 then 0 else 1
+  let kf := min kb (8 * sw - (pb + 4 * c + fl))
+  let T := kf + 4 * c + fl
+  { k, B, w, c, kb, kf, T, kmU := (2 ^ (2 * k) - 1).toUInt64, kbM := 2 ^ kf - 1,
+    t, tmU := (2 ^ (2 * t) - 1).toUInt64,
     fM := 2 ^ (2 * c) - 1, tM := 2 ^ T - 1,
     pm := (Array.range (w + 1)).map fun i => 2 ^ (2 * i) - 1,
-    ash := kb + 2 * c, fsh := kb + 4 * c,
+    bsh := kf, ash := kf + 2 * c, fsh := kf + 4 * c, sw,
     offs := .empty, sl := .empty, runs := #[] }
+
+/-- Write the low `n` bytes of `v` little-endian at byte `j`. -/
+def wrLE (B : ByteArray) (j : Nat) (v : UInt64) : (n : Nat) → ByteArray
+  | 0 => B
+  | n + 1 => wrLE (B.set! j v.toUInt8) (j + 1) (v >>> 8) n
 
 /-- Slot of minimizer place `pm` (with k-word hash `h`). -/
 def slotAt (ix : MzIdx) (G : ByteArray) (pm h : Nat) : UInt64 :=
@@ -315,7 +361,7 @@ def slotAt (ix : MzIdx) (G : ByteArray) (pm h : Nat) : UInt64 :=
   -- `UInt64` shifts (a `Nat` power or shift is an out-of-line GMP call)
   let key := (h &&& ix.kbM).toUInt64
   let tag := if good then
-      key ||| ((wcGo G (pm - c) pm 0).toUInt64 <<< ix.kb.toUInt64) |||
+      key ||| ((wcGo G (pm - c) pm 0).toUInt64 <<< ix.bsh.toUInt64) |||
         ((wcGo G (pm + ix.k) (pm + ix.k + c) 0).toUInt64 <<< ix.ash.toUInt64)
     else key ||| ((1 : UInt64) <<< ix.fsh.toUInt64)
   (pm.toUInt64 <<< ix.T.toUInt64) ||| tag
@@ -344,24 +390,33 @@ termination_by G.size - p
     (f : α → Nat → Nat → α) : α :=
   foldMinsGo ix0 G f 0 0 0 0 init
 
-/-- The slots `pos · 2^T + tag` must stay below `2^63`: choose `B` with
-`log2 G.size + T ≤ 63`, `T = 2k - B + 4c + 1` (else `check` fails).  `c ≤ 25 - k` context
-letters per side are stored; a seed whose minimizer offset they do not cover is checked
-against the genome. -/
-def buildC (G : ByteArray) (k B c : Nat) : MzIdx := Id.run do
-  let ix0 := mkIdx k B c
+/-- Index with `2^B` buckets, `c ≤ 25 - k` context letters per side, `sw`-byte slots
+(`sw ∈ {4, 5, 6, 8}`) and minimizers picked by t-words (`1 ≤ t ≤ k`, `t ≡ k mod w`, see
+`MzIdx.mini`; then the picked places never decrease along the genome, which the builder's
+one-pass bucket fill needs).  A seed letter the stored context does not cover is checked
+against the genome, and so is the k-word when the slot has no room for all `kb = 2k - B`
+key bits (`kf < kb`, see `mkIdx`).
+
+Limits: `B ≤ 2k` (the bucket is `B` bits of a `2k`-bit hash) and `B ≤ 32` (`4·2^B` bytes
+of offsets); a place needs `pb = log2 G.size + 1` bits plus 4c (+1) tag bits in `8·sw`
+bits (else positions are cut and `check` fails); at most `2^32 - 1` entries.  Other
+parameters give the empty index (which `check` rejects) and a panic message. -/
+def buildW (G : ByteArray) (k B c sw t : Nat) : MzIdx := Id.run do
+  let pb := G.size.log2 + 1
+  if 2 * k < B || 32 < B || k = 0 || q < k || q - k < c || t = 0 || k < t || (k - t) % (q + 1 - k) != 0 ||
+      !(sw = 4 || sw = 5 || sw = 6 || sw = 8) || 8 * sw < pb + 4 * c + 1 then
+    return panic! s!"Mz.buildW: unsupported k={k} B={B} c={c} sw={sw} t={t} (genome {G.size} letters)"
+  let ix0 := mkIdx k B c sw pb t
   let nb := 2 ^ B
   let mut cnt := foldMins ix0 G (zeros (4 * (nb + 1))) fun cnt _ h =>
     let b := h >>> ix0.kb
     setU32 cnt (b + 1) (getU32 cnt (b + 1) + 1)
   for b in [0:nb] do cnt := setU32 cnt (b + 1) (getU32 cnt (b + 1) + getU32 cnt b)
   let total := getU32 cnt nb
-  let mut sl0 := FloatArray.emptyWithCapacity total
-  for _ in [0:total] do sl0 := sl0.push 0
-  let (_, sl) := foldMins ix0 G (cnt, sl0) fun (fill, sl) pm h =>
+  let (_, sl) := foldMins ix0 G (cnt, zeros (sw * total)) fun (fill, sl) pm h =>
     let b := h >>> ix0.kb
     let t := getU32 fill b
-    (setU32 fill b (t + 1), sl.set! t (Float.ofBits (slotAt ix0 G pm h)))
+    (setU32 fill b (t + 1), wrLE sl (sw * t) (slotAt ix0 G pm h) sw)
   let mut runs : Array Nat := #[]
   for p in [0:G.size] do
     let odd := !acgt (G.get! p)
@@ -369,7 +424,11 @@ def buildC (G : ByteArray) (k B c : Nat) : MzIdx := Id.run do
     if odd && (p + 1 == G.size || acgt (G.get! (p + 1))) then runs := runs.push (p + 1)
   return { ix0 with offs := cnt, sl, runs }
 
-/-- Full context (`c = w - 1`): no genome access for ACGT seeds. -/
+/-- 8-byte slots. -/
+def buildC (G : ByteArray) (k B c : Nat) : MzIdx := buildW G k B c 8 k
+
+/-- Full context (`c = w - 1`), 8-byte slots: no genome access for ACGT seeds whose
+key fits. -/
 def build (G : ByteArray) (k B : Nat) : MzIdx := buildC G k B (q - k)
 
 end MapSpec.Mz
@@ -391,9 +450,10 @@ structure Good (ix : MzIdx) : Prop where
   w_eq : ix.w = q + 1 - ix.k
   kb_eq : ix.kb = 2 * ix.k - ix.B
   kmU_eq : ix.kmU.toNat = 2 ^ (2 * ix.k) - 1
-  kbM_eq : ix.kbM = 2 ^ ix.kb - 1
+  kbM_eq : ix.kbM = 2 ^ ix.kf - 1
   fM_eq : ix.fM = 2 ^ (2 * ix.c) - 1
-  T_eq : ix.T = ix.kb + 4 * ix.c + 1
+  kf_le : ix.kf ≤ ix.kb
+  kf_T : ix.kf ≤ ix.T
   tM_eq : ix.tM = 2 ^ ix.T - 1
   c_le : ix.c + 1 ≤ ix.w
   pm_eq : ∀ i, i ≤ ix.w → ix.pm[i]! = 2 ^ (2 * i) - 1
@@ -401,8 +461,8 @@ structure Good (ix : MzIdx) : Prop where
 theorem good_of_checkParams (ix : MzIdx) (h : checkParams ix = true) : Good ix := by
   simp only [checkParams, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.all_eq_true,
     List.mem_range, and_assoc] at h
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13⟩ := h
-  exact ⟨h1, h2, h3, h4, h5, h6, h8, h9, h10, h7, h11, h12, fun i hi => h13 i (by omega)⟩
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h7', h8, h9, h10, h11, h12, h13⟩ := h
+  exact ⟨h1, h2, h3, h4, h5, h6, h8, h9, h10, h7, h7', h11, h12, fun i hi => h13 i (by omega)⟩
 
 section
 variable {ix : MzIdx} (hg : Good ix)
@@ -428,11 +488,11 @@ theorem bucket_lt (x : Nat) : ix.hsh x >>> ix.kb < 2 ^ ix.B := by
     show ix.B + (2 * ix.k - ix.B) = 2 * ix.k by have := hg.B_le; omega]
   exact hsh_lt hg x
 
-/-- The key of a slot's tag is the slot's low `kb` bits. -/
+/-- The key of a slot's tag is the slot's low `kf` bits. -/
 theorem keyF_tagOf (e : Nat) : ix.keyF (ix.tagOf e) = e &&& ix.kbM := by
   unfold MzIdx.keyF MzIdx.tagOf
   rw [hg.kbM_eq, hg.tM_eq, and_mask_eq, and_mask_eq, and_mask_eq,
-    Nat.mod_mod_of_dvd _ (Nat.pow_dvd_pow 2 (by rw [hg.T_eq]; omega))]
+    Nat.mod_mod_of_dvd _ (Nat.pow_dvd_pow 2 hg.kf_T)]
 
 /-- The k-word at offset `o` of a seed's code is the code of the seed's k-word. -/
 theorem sub_wc (R : ByteArray) (s o : Nat) (ho : o + ix.k ≤ q) :
@@ -497,7 +557,11 @@ theorem miniGo_lt (v kmU : UInt64) (w : Nat) :
 
 theorem mini_lt {ix : MzIdx} (hg : Good ix) (v : Nat) : ix.mini v < ix.w := by
   have := hg.w_eq; have := hg.k_le
-  exact miniGo_lt _ _ _ _ 1 0 _ _ rfl (by omega)
+  unfold MzIdx.mini
+  dsimp only
+  split
+  · assumption
+  · exact Nat.mod_lt _ (by omega)
 
 
 /-! ### Checker loops -/
@@ -867,8 +931,8 @@ theorem okAt_occurs (R : ByteArray) (s : Nat) (hR : ∀ i < q, acgt (R.get! (s +
   obtain ⟨hkey, hop, hrest⟩ := hok
   split at hrest
   · next hf =>
-    simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hrest
-    obtain ⟨⟨⟨⟨hb, ha⟩, hsz⟩, hr1⟩, hr2⟩ := hrest
+    simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hrest
+    obtain ⟨⟨⟨⟨⟨hb, ha⟩, hsz⟩, hr1⟩, hr2⟩, hkw⟩ := hrest
     rw [eqRun_iff] at hr1 hr2
     generalize hm1 : min o ix.c = m1 at hb hr1
     generalize hm2 : min (ix.w - 1 - o) ix.c = m2 at ha hr2
@@ -877,16 +941,19 @@ theorem okAt_occurs (R : ByteArray) (s : Nat) (hR : ∀ i < q, acgt (R.get! (s +
     have hm2c : m2 ≤ ix.c := by omega
     have hm2o : m2 ≤ ix.w - 1 - o := by omega
     obtain ⟨f1, f2, f3, f4, f5, f6⟩ := e5 hf
-    -- the k-word
-    have hhash : ix.hsh (wc G pos ix.k) = h := by
-      have m1 : ix.hsh (wc G pos ix.k) % 2 ^ ix.kb = h % 2 ^ ix.kb := by
-        rw [← and_mask_eq, ← and_mask_eq, ← hg.kbM_eq, ← e4, hkey]
-      have m2 : ix.hsh (wc G pos ix.k) / 2 ^ ix.kb = h / 2 ^ ix.kb := by
-        rw [← shiftRight_eq, ← shiftRight_eq, e3]
-      rw [← Nat.div_add_mod (ix.hsh (wc G pos ix.k)) (2 ^ ix.kb), m1, m2, Nat.div_add_mod]
-    have hcode := hsh_inj hg _ _ (wc_lt G pos ix.k) (wc_lt R (s + o) ix.k) (hhash.trans hh.symm)
-    have hmid := eq_of_wc G R pos (s + o) ix.k e2
-      (fun i hi => by have := hR (o + i) (by omega); rwa [← Nat.add_assoc] at this) hcode
+    -- the k-word: from the full key and the bucket, or compared with the genome
+    have hmid : ∀ i < ix.k, G.get! (pos + i) = R.get! (s + o + i) := by
+      rcases hkw with hkf | hkw
+      · have hhash : ix.hsh (wc G pos ix.k) = h := by
+          have m1 : ix.hsh (wc G pos ix.k) % 2 ^ ix.kb = h % 2 ^ ix.kb := by
+            rw [← and_mask_eq, ← and_mask_eq, ← hkf, ← hg.kbM_eq, ← e4, hkey]
+          have m2 : ix.hsh (wc G pos ix.k) / 2 ^ ix.kb = h / 2 ^ ix.kb := by
+            rw [← shiftRight_eq, ← shiftRight_eq, e3]
+          rw [← Nat.div_add_mod (ix.hsh (wc G pos ix.k)) (2 ^ ix.kb), m1, m2, Nat.div_add_mod]
+        have hcode := hsh_inj hg _ _ (wc_lt G pos ix.k) (wc_lt R (s + o) ix.k) (hhash.trans hh.symm)
+        exact eq_of_wc G R pos (s + o) ix.k e2
+          (fun i hi => by have := hR (o + i) (by omega); rwa [← Nat.add_assoc] at this) hcode
+      · exact (eqRun_iff G R _ _ _).mp hkw
     -- the m1 stored letters before the k-word
     rw [f5, flank_bef hg G pos m1 hm1c f1, seed_bef hg R s o m1 hm1o (by omega) (by omega)] at hb
     have hbef := eq_of_wc G R (pos - m1) (s + o - m1) m1
@@ -968,15 +1035,16 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
       · next hf =>
         have hcw := hg.c_le
         obtain ⟨f1, f2, f3, f4, f5, f6⟩ := e5 hf
-        simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
+        simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq]
         rw [f5, f6, flank_bef hg G _ (min o ix.c) (Nat.min_le_right _ _) f1,
           flank_aft G ix.c _ ix.k (min (ix.w - 1 - o) ix.c) (Nat.min_le_right _ _),
           seed_bef hg R s o (min o ix.c) (Nat.min_le_left _ _) (by omega) (by omega),
           seed_aft hg R s o (min (ix.w - 1 - o) ix.c) (by omega) (by omega),
           show p + o - o = p from by omega]
-        refine ⟨⟨⟨⟨wc_congr G R _ _ _ fun i hi => ?_, wc_congr G R _ _ _ fun i hi => ?_⟩, hsz⟩,
+        refine ⟨⟨⟨⟨⟨wc_congr G R _ _ _ fun i hi => ?_, wc_congr G R _ _ _ fun i hi => ?_⟩, hsz⟩,
           (eqRun_iff G R _ _ _).mpr fun i hi => heq i (by omega)⟩,
-          (eqRun_iff G R _ _ _).mpr fun i hi => ?_⟩
+          (eqRun_iff G R _ _ _).mpr fun i hi => ?_⟩,
+          Or.inr ((eqRun_iff G R _ _ _).mpr fun i hi => ?_)⟩
         · have := heq (o - min o ix.c + i) (by omega)
           rwa [show p + (o - min o ix.c + i) = p + o - min o ix.c + i by omega,
             show s + (o - min o ix.c + i) = s + o - min o ix.c + i by omega] at this
@@ -985,6 +1053,8 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
         · have := heq (o + (ix.k + min (ix.w - 1 - o) ix.c) + i) (by omega)
           rwa [show p + (o + (ix.k + min (ix.w - 1 - o) ix.c) + i) = p + o + (ix.k + min (ix.w - 1 - o) ix.c) + i by omega,
             show s + (o + (ix.k + min (ix.w - 1 - o) ix.c) + i) = s + o + (ix.k + min (ix.w - 1 - o) ix.c) + i by omega] at this
+        · have := heq (o + i) (by omega)
+          rwa [← Nat.add_assoc, ← Nat.add_assoc] at this
       · simp only [Bool.and_eq_true, decide_eq_true_eq]
         rw [show p + o - o = p from by omega]
         exact ⟨hsz, (eqRun_iff G R q p s).mpr heq⟩

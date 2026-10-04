@@ -775,7 +775,7 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : j < 4) (hc
         rfl
 
 theorem hLook_ok (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : j < 4) (hchk : checkIdx ix G = true) :
-    LookOk G R j (hLook.look ix G R j (seedHash R j)) := lookupSeed_spec ix G R j hj hchk
+    LookOk G R j (hLook.look ix G R j (hLook.prep ix (seedHash R j))) := lookupSeed_spec ix G R j hj hchk
 
 end MapSpec.Fast
 

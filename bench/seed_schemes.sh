@@ -2,7 +2,8 @@
 # Benchmark only: seed schemes in bench/ProtoSketch.lean on chr21, 100k reads.
 # Entries are CTX,PICK,scheme (scheme 0:k every k-mer, 1:k:w minimizers,
 # 2:k:s closed syncmers, 3:k:s:t open syncmers — counting only, 4:k:w:thr
-# weighted minimizers: k-mers of buckets with > thr genome k-mers ordered last).  Each run's
+# weighted minimizers: k-mers of buckets with > thr genome k-mers ordered last, 5:k:w:t
+# mod-minimizer).  Each run's
 # per-read answers are compared with scheme 0:25 (every 25-mer).
 #   sh bench/seed_schemes.sh [entry ...]
 set -e

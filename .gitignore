@@ -1,3 +1,4 @@
 .lake/
 *.olean
 out/
+.claude/

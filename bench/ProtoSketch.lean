@@ -57,6 +57,7 @@ def Scheme.L (sc : Scheme) : Nat :=
   match sc.kind with
   | 1 => sc.w + sc.k - 1
   | 4 => sc.w + sc.k - 1
+  | 5 => sc.w + sc.k - 1
   | 2 => 2 * sc.k - sc.s - 1
   | _ => sc.k
 
@@ -165,6 +166,27 @@ deriving Inhabited
     if idx.amb.get! k != 0 then return false
   return true
 
+/-- Mod-minimizer (Groot Koerkamp & Pibiri 2024): in each window of L = w + k − 1
+letters, x = leftmost least-ordH t-mer, select the k-mer at window offset x mod w.
+A function of the window's letters only (a `windowSketch`). t is stored in sch.s. -/
+def modSelect (g : ByteArray) (sch : Scheme) : ByteArray := Id.run do
+  let t := sch.s
+  let L := sch.L
+  let tmask : UInt64 := (1 <<< (2 * t.toUInt64)) - 1
+  let mut sel := ByteArray.mk (Array.replicate g.size 0)
+  let mut x : UInt64 := 0
+  let mut good := 0
+  let mut ring : Array UInt64 := Array.replicate 64 0   -- ordH of the t-mer starting at j, at j % 64
+  for p in [0:g.size] do
+    let c := code (g.get! p)
+    if c < 4 then x := ((x <<< 2) ||| c) &&& tmask; good := good + 1 else good := 0
+    if good ≥ t then ring := ring.set! ((p + 1 - t) % 64) (ordH x)
+    if good ≥ L then
+      let i := p + 1 - L
+      let m := argminH (fun j => ring[j % 64]!) i (L - t + 1)
+      sel := sel.set! (i + (m - i) % sch.w) 1
+  return sel
+
 /-- Marks (1) the starts of the selected k-mers. -/
 def selectPositions (g : ByteArray) (sch : Scheme) (fr : ByteArray) : ByteArray := Id.run do
   let k := sch.k
@@ -186,12 +208,14 @@ def selectPositions (g : ByteArray) (sch : Scheme) (fr : ByteArray) : ByteArray 
           let m := argminH (fun d => ring[d % 64]!) (i + 1 - sch.w) sch.w
           sel := sel.set! m 1
       | 2 => if closedSync k sch.s x then sel := sel.set! i 1
+      | 5 => pure ()
       | 4 =>
         ring := ring.set! (i % 64) (ordW fr k x)
         if good ≥ sch.L then
           let m := argminH (fun d => ring[d % 64]!) (i + 1 - sch.w) sch.w
           sel := sel.set! m 1
       | _ => if openSync k sch.s sch.w x then sel := sel.set! i 1
+  if sch.kind == 5 then sel := modSelect g sch
   return sel
 
 def buildIdx (g : ByteArray) (q : Nat) (sch : Scheme) (useCtx : Bool) (pick : Nat) : Idx := Id.run do
@@ -352,6 +376,16 @@ def seedOffsets (sch : Scheme) (q : Nat) (v : UInt64) (fr : ByteArray) : Array N
       let sh := (2 * (q - k - i)).toUInt64
       let m := miniScan v km (sh - 2) (i + 1) (sch.w - 1) i (ordH ((v >>> sh) &&& km))
       if !ds.contains m then ds := ds.push m
+    return ds
+  | 5 =>
+    let t := sch.s
+    let tm : UInt64 := (1 <<< (2 * t.toUInt64)) - 1
+    let mut ds : Array Nat := #[]
+    for i in [0 : q - sch.L + 1] do
+      let sh := (2 * (q - t - i)).toUInt64
+      let m := miniScan v tm (sh - 2) (i + 1) (sch.L - t) i (ordH ((v >>> sh) &&& tm))
+      let d := i + (m - i) % sch.w
+      if !ds.contains d then ds := ds.push d
     return ds
   | 4 =>
     let mut ds : Array Nat := #[]
@@ -656,6 +690,7 @@ def parseScheme (s : String) : Scheme :=
   | [2, k, s] => { kind := 2, k, s }
   | [3, k, s, t] => { kind := 3, k, s, w := t }
   | [4, k, w, thr] => { kind := 4, k, w, s := thr }
+  | [5, k, w, t] => { kind := 5, k, w, s := t }
   | _ => panic! "scheme: 0:k | 1:k:w | 2:k:s | 3:k:s:t"
 
 def main (args : List String) : IO UInt32 := do

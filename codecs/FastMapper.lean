@@ -64,7 +64,7 @@ def slowMap (gbs : Array ByteArray) (R : ByteArray) : Option (Window × Int) :=
   mapWith (scanLookup g l0) (kernelScore sc0 read g) l0 (-12) (errBound sc0 (-12)) g read
 
 /-- Map one read through any seed lookup `lk` (index `idxs[c]` for chromosome `c`). -/
-@[specialize] def mapFastG {L : Type} [Inhabited L] (lk : Look L) (gbs : Array ByteArray) (idxs : Array L)
+@[specialize] def mapFastG {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (gbs : Array ByteArray) (idxs : Array L)
     (R : ByteArray) : Option (Window × Int) :=
   if fastOk R then
     match result (mapChroms lk R gbs idxs) with
@@ -77,8 +77,9 @@ def mapFast (gbs : Array ByteArray) (idxs : Array HIdx) (R : ByteArray) : Option
   mapFastG hLook gbs idxs R
 
 /-- What the generic mapper needs of a lookup: every chromosome's lookup is right. -/
-def LookAll {L : Type} [Inhabited L] (lk : Look L) (gbs : Array ByteArray) (idxs : Array L) : Prop :=
-  ∀ c, c < gbs.size → ∀ R j, j < 4 → LookOk gbs[c]! R j (lk.look idxs[c]! gbs[c]! R j (seedHash R j))
+def LookAll {L P : Type} [Inhabited L] (lk : Look L P) (gbs : Array ByteArray) (idxs : Array L) : Prop :=
+  ∀ c, c < gbs.size → ∀ R j, j < 4 →
+    LookOk gbs[c]! R j (lk.look idxs[c]! gbs[c]! R j (lk.prep idxs[c]! (seedHash R j)))
 
 def mapFastReads (gbs : Array ByteArray) (idxs : Array HIdx) (Rs : List ByteArray) :
     List (Option (Window × Int)) :=
@@ -203,7 +204,7 @@ theorem mapSpec_iff (g : Genome) (read : List Char) (w : Window) (s : Int) :
     exact h3 w' s' hb.2.1 hb.2.2
 
 /-- **Generic.**  Through any lookup satisfying `LookAll`, `mapFastG` is the specification's answer. -/
-theorem mapFastG_eq_mapSpec {L : Type} [Inhabited L] (lk : Look L) (g : Genome) (read : List Char)
+theorem mapFastG_eq_mapSpec {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (g : Genome) (read : List Char)
     (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read)
     (hlk : LookAll lk gbs idxs) :
     mapFastG lk gbs idxs R = mapSpec sc0 (-12) g read := by
