@@ -15,16 +15,17 @@ Read `R` of `n` letters, `m = n / 25` seeds of `Ls = n / m ≥ 25` letters (seed
 `D = p + n − j·Ls` (stored as `D·16`); a shape `(a, b)` gives the window
 `(D − n − a, n + a + b)`.
 
-Per chromosome (`chromG`), with `lim = min P 15`:
+Per chromosome (`chromG`), with `lim = min P 16`:
 
 1. `phase1`: seeds in `ord` (smallest bucket first); each anchor's same-length
-   window is scored by the kernel `kerG` (exact up to `lim`).  Stop once
+   window is scored by the kernel `kerH` (exact up to `lim`: `kerG` up to 15,
+   `ker16` at 16).  Stop once
    `seedBound sc0 (−min best P)` is below the number of seeds looked up: a
    window that ties or beats the best has a clean seed among them.
 2. `stageK`: when one gap fits (`gapBound > 0`), the windows of the shapes
    allowed at the best (`shapes`, without `(0, 0)`), kernel-scored, of the distinct
    anchor diagonals supported by enough seeds (as in stage 3, for `min lim best`).
-3. `stageB`: when the best is still above `lim` (`P ≥ 16` and nothing `≤ 15`
+3. `stageB`: when the best is still above `lim` (`P ≥ 17` and nothing `≤ 16`
    found; phase 1 then looks up every seed), the windows of the allowed shapes
    of the anchors supported by at least `#seeds − sbound P` seeds within
    `2·gapBound` diagonals, scored exactly by the banded kernel (`bandScore`),
@@ -47,12 +48,13 @@ open MapSpec AlignmentSpec
   | none => P + 1
 
 /-- The kernel capped at `17`: exact up to `15` by `kerG`; above, `16` for four
-mismatches at the same length, else `16` only when `filt16` passes, and then the
-banded kernel decides. -/
+mismatches at the same length or an exact two-gap walk (`twoGapB`), else `16`
+only when `filt16` passes, and then the banded kernel decides. -/
 @[inline] def ker16 (R : ByteArray) (gbs : Array ByteArray) (c st len : Nat) : Nat :=
   let k := kerG R gbs[c]! st len 15
   if k ≤ 15 then k
   else if st + len ≤ gbs[c]!.size ∧ len = R.size ∧ hamming R gbs[c]! st 4 0 R.size 0 = 4 then 16
+  else if st + len ≤ gbs[c]!.size ∧ twoGapB R gbs[c]! st len = true then 16
   else if filt16 R gbs[c]! st len then bandPen 16 R gbs ⟨c, st, len⟩ else 17
 
 /-- The kernel capped at `l + 1` (`l ≤ 16`). -/

@@ -123,8 +123,7 @@ theorem cwT_ker16 (P : Nat) (hP : 16 ≤ P) (read : List Char) (g : Genome) (gbs
   · rw [if_pos h15]; omega
   rw [if_neg h15]
   have hcw : 16 ≤ cwT P read g ⟨c, st, len⟩ := by omega
-  have hfitE : ∀ (h16 : cwT P read g ⟨c, st, len⟩ = 16 ∨ (st + len ≤ gbs[c]!.size ∧ len = R.size ∧
-      hamming R gbs[c]! st 4 0 R.size 0 = 4)),
+  have hfitE : ∀ (h16 : cwT P read g ⟨c, st, len⟩ = 16 ∨ st + len ≤ gbs[c]!.size),
       ∃ (hc' : c < g.length), st + len ≤ g[c].seq.length ∧ Encodes gbs[c]! g[c].seq ∧
         cwT P read g ⟨c, st, len⟩ = penQ P read ((g[c].seq.drop st).take len) := by
     intro h16
@@ -150,11 +149,16 @@ theorem cwT_ker16 (P : Nat) (hP : 16 ≤ P) (read : List Char) (g : Genome) (gbs
       · rw [he.1] at h16; omega
   split
   · next h4 =>
-    obtain ⟨hc', hfit, he, heq⟩ := hfitE (Or.inr h4)
+    obtain ⟨hc', hfit, he, heq⟩ := hfitE (Or.inr h4.1)
     obtain ⟨-, hl, hh⟩ := h4
     rw [hamming_spec _ _ st 4 R.size _ 0 0 rfl (Nat.zero_le _), Nat.zero_add] at hh
     subst hl
     have := pen_le_ham4 hr he P hP st hfit (by unfold preB; rw [Nat.sub_zero] at hh; omega)
+    omega
+  split
+  · next h2 =>
+    obtain ⟨hc', hfit, he, heq⟩ := hfitE (Or.inr h2.1)
+    have := twoGapB_pen hr he P hP st len hfit h2.2
     omega
   split
   · rw [bandPen_eq 16 read g gbs R hg hr, cwT_cap16 P hP]

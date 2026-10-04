@@ -168,6 +168,86 @@ theorem shape16 (path : List Step) (xs ys : List Char) (hw : IsMonotoneWalk path
     have : cnt .gapX path = l := by rw [he, cnt_shape _ _ (by decide)]; simp
     omega
 
+/-- Each column costs at most `8` (a mismatch `4`). -/
+theorem score_lb (path : List Step) (xs ys : List Char) (prev : Option Step) :
+    -4 * (mism path xs ys : Int) - 8 * ((cnt .gapX path + cnt .gapY path : Nat) : Int) ≤
+      scoreWalk sc0 path xs ys prev := by
+  induction path generalizing xs ys prev with
+  | nil => simp [scoreWalk, mism, cnt]
+  | cons s rest ih =>
+    cases s with
+    | diag =>
+      cases xs with
+      | nil => simp [scoreWalk, mism, cnt]; omega
+      | cons x xs =>
+        cases ys with
+        | nil => simp [scoreWalk, mism, cnt]; omega
+        | cons y ys =>
+          have := ih xs ys (some .diag)
+          simp only [sc0] at this
+          by_cases hxy : x = y <;> simp [scoreWalk, mism, cnt, hxy, sc0] <;> omega
+    | gapX =>
+      cases ys with
+      | nil => cases xs <;> simp [scoreWalk, mism, cnt] <;> omega
+      | cons y ys =>
+        have := ih xs ys (some .gapX)
+        simp only [sc0] at this
+        by_cases hp : prev = some .gapX <;> cases xs <;> simp [scoreWalk, mism, cnt, hp, sc0] <;> omega
+    | gapY =>
+      cases xs with
+      | nil => cases ys <;> simp [scoreWalk, mism, cnt] <;> omega
+      | cons x xs =>
+        have := ih xs ys (some .gapY)
+        simp only [sc0] at this
+        by_cases hp : prev = some .gapY <;> cases ys <;> simp [scoreWalk, mism, cnt, hp, sc0] <;> omega
+
+theorem mism_diags_of (i : Nat) (rest : List Step) (xs ys : List Char) (hx : i ≤ xs.length) (hy : i ≤ ys.length)
+    (h : ∀ t (h1 : t < i), xs[t]'(by omega) = ys[t]'(by omega)) :
+    mism (List.replicate i .diag ++ rest) xs ys = mism rest (xs.drop i) (ys.drop i) := by
+  induction i generalizing xs ys with
+  | zero => simp
+  | succ i ih =>
+    cases xs with
+    | nil => simp at hx
+    | cons x xs =>
+      cases ys with
+      | nil => simp at hy
+      | cons y ys =>
+        simp only [List.length_cons] at hx hy
+        have h0 : x = y := by simpa using h 0 (by omega)
+        simp only [List.replicate_succ, List.cons_append, mism, if_pos h0, Nat.zero_add, List.drop_succ_cons]
+        exact ih xs ys (by omega) (by omega) (fun t ht => by simpa using h (t + 1) (by omega))
+
+/-- **A two-gap walk with no mismatch scores `≥ −16`.** -/
+theorem walk2_score (xs ys : List Char) (g1 g2 : Step) (hg1 : g1 ≠ .diag) (hg2 : g2 ≠ .diag) (i j k : Nat)
+    (hx : i + xConsumed g1 + j + xConsumed g2 + k = xs.length)
+    (hy : i + yConsumed g1 + j + yConsumed g2 + k = ys.length)
+    (p1 : ∀ t (h : t < i), xs[t]'(by omega) = ys[t]'(by omega))
+    (p2 : ∀ t (h : t < j), xs[i + xConsumed g1 + t]'(by omega) = ys[i + yConsumed g1 + t]'(by omega))
+    (p3 : ∀ t (h : t < k), xs[i + xConsumed g1 + j + xConsumed g2 + t]'(by omega) =
+      ys[i + yConsumed g1 + j + yConsumed g2 + t]'(by omega)) :
+    ∃ path, IsMonotoneWalk path xs ys ∧ -16 ≤ walkScore sc0 xs ys path := by
+  refine ⟨List.replicate i .diag ++ g1 :: (List.replicate j .diag ++ g2 :: List.replicate k .diag), ?_, ?_⟩
+  · constructor <;> simp only [List.map_append, List.map_cons, List.sum_append, List.sum_cons,
+      sum_reps _ xConsumed rfl, sum_reps _ yConsumed rfl] <;> omega
+  · have hm : mism (List.replicate i .diag ++ g1 :: (List.replicate j .diag ++ g2 :: List.replicate k .diag)) xs ys = 0 := by
+      rw [mism_diags_of i _ xs ys (by omega) (by omega) p1,
+        mism_gap g1 hg1 _ _ _ (by simp; omega) (by simp; omega),
+        mism_diags_of j _ _ _ (by simp; omega) (by simp; omega) (fun t ht => by
+          simp only [List.getElem_drop, Nat.add_assoc]; have := p2 t ht; simpa [Nat.add_assoc] using this),
+        mism_gap g2 hg2 _ _ _ (by simp; omega) (by simp; omega),
+        ← List.append_nil (List.replicate k Step.diag),
+        mism_diags_of k [] _ _ (by simp; omega) (by simp; omega) (fun t ht => by
+          simp only [List.getElem_drop, Nat.add_assoc]; have := p3 t ht; simpa [Nat.add_assoc] using this)]
+      simp [mism]
+    have hc : cnt .gapX (List.replicate i .diag ++ g1 :: (List.replicate j .diag ++ g2 :: List.replicate k .diag)) +
+        cnt .gapY (List.replicate i .diag ++ g1 :: (List.replicate j .diag ++ g2 :: List.replicate k .diag)) = 2 := by
+      simp only [cnt_append, cnt, cnt_replicate]
+      cases g1 <;> cases g2 <;> simp_all
+    have := score_lb (List.replicate i .diag ++ g1 :: (List.replicate j .diag ++ g2 :: List.replicate k .diag)) xs ys none
+    rw [hm, hc] at this
+    unfold walkScore; omega
+
 /-- **Penalty `16`**: the cases. -/
 theorem penQ16 (Q : Nat) (hQ : 16 ≤ Q) (xs ys : List Char) (h : penQ Q xs ys = 16) :
     (xs.length = ys.length ∧ hamming xs ys = 4) ∨
@@ -197,7 +277,7 @@ end MapSpec
 
 namespace MapSpec.Fast
 
-open MapSpec
+open MapSpec AlignmentSpec
 
 /-- A necessary condition for penalty `16` when the formula `fB` is `≥ 16`: four
 mismatches (same length), at most two mismatches around one gap of length `≤ 5`,
@@ -222,6 +302,29 @@ theorem filt16_iff (R G : ByteArray) (st len : Nat) : filt16 R G st len = true �
       (hamming R G (st + 1) 0 (fwdMis R G st R.size 0 1 + 1) (bwdMis R G st len 0 R.size 1 - 1) 0 = 0 ∨ st = 0 ∨
         hamming R G (st - 1) 0 (fwdMis R G st R.size 0 1 + 1) (bwdMis R G st len 0 R.size 1 - 1) 0 = 0)) := by
   simp only [filt16, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, bne_iff_ne, ne_eq, decide_eq_true_eq, or_assoc, and_assoc]
+
+/-- A sufficient test for an exact two-gap walk (`x1`, `x2`: does the gap column
+take a window letter; `A`, `B`: first mismatch of the start diagonal, one past the
+last of the end diagonal): the longest exact prefix and suffix leave a middle that
+is exact one diagonal off. -/
+def twoGapAt (R G : ByteArray) (st len x1 x2 A B : Nat) : Bool :=
+  let n := R.size
+  let M := n - (1 - x1) - (1 - x2)
+  let i := min A M
+  let k := min (n - B) (M - i)
+  let j := M - i - k
+  decide (x1 ≤ 1 ∧ x2 ≤ 1 ∧ (1 - x1) + (1 - x2) ≤ n ∧ len + (1 - x1) + (1 - x2) = n + x1 + x2) &&
+  (j == 0 || if x1 = 1 then hamming R G (st + 1) 0 i (i + j) 0 == 0
+             else (decide (1 ≤ st) && hamming R G (st - 1) 0 (i + 1) (i + 1 + j) 0 == 0))
+
+/-- The two-gap test for the gap kinds the lengths allow. -/
+def twoGapB (R G : ByteArray) (st len : Nat) : Bool :=
+  let A := fwdMis R G st R.size 0 1
+  let B := bwdMis R G st len 0 R.size 1
+  if len = R.size + 2 then twoGapAt R G st len 1 1 A B
+  else if len + 2 = R.size then twoGapAt R G st len 0 0 A B
+  else if len = R.size then twoGapAt R G st len 1 0 A B || twoGapAt R G st len 0 1 A B
+  else false
 
 section
 variable {R G : ByteArray} {xs seq : List Char} (hr : Encodes R xs) (hg : Encodes G seq)
@@ -372,6 +475,103 @@ theorem filt16_of (Q : Nat) (hQ : 16 ≤ Q) (st len : Nat) (hfit : st + len ≤ 
           rw [this, hyk _ (by omega)]
           congr 1; omega))]
       rfl
+
+
+theorem eq_of_clean (u p : Nat) (hu : u < xs.length) (hp : p < seq.length) (h : (R.get! u != G.get! p) = false) :
+    xs[u] = seq[p] := by
+  rw [neq_bytes hr hg u p hu hp] at h; simpa using h
+
+/-- **The two-gap test is sound**: penalty at most `16`. -/
+theorem twoGapAt_pen (Q : Nat) (hQ : 16 ≤ Q) (st len x1 x2 : Nat) (hfit : st + len ≤ seq.length)
+    (h : twoGapAt R G st len x1 x2 (fwdMis R G st R.size 0 1) (bwdMis R G st len 0 R.size 1) = true) :
+    penQ Q xs ((seq.drop st).take len) ≤ 16 := by
+  have hn : R.size = xs.length := hr.1
+  generalize hys : (seq.drop st).take len = ys
+  have hyl : ys.length = len := by rw [← hys]; simp; omega
+  have hyk : ∀ k (h : k < ys.length), ys[k] = seq[st + k]'(by omega) := by
+    intro k h; subst hys; simp
+  obtain ⟨-, -, f1⟩ := fwdMis_spec R G st R.size _ 0 1 rfl (Nat.zero_le _) (Nat.le_refl _)
+  obtain ⟨-, hBn, e1⟩ := bwdMis_spec R G st len 0 _ R.size 1 rfl (Nat.zero_le _) (Nat.le_refl _)
+  unfold twoGapAt at h
+  generalize fwdMis R G st R.size 0 1 = A at *
+  generalize bwdMis R G st len 0 R.size 1 = B at *
+  simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨hx1, hx2, hr12, hlen⟩, hmid⟩ := h
+  generalize hM : R.size - (1 - x1) - (1 - x2) = M at hmid
+  generalize hi : min A M = i at hmid
+  generalize hk : min (R.size - B) (M - i) = k at hmid
+  obtain ⟨g1, hg1, e1', f1'⟩ : ∃ g, g ≠ Step.diag ∧ yConsumed g = x1 ∧ xConsumed g = 1 - x1 := by
+    rcases (by omega : x1 = 0 ∨ x1 = 1) with rfl | rfl
+    · exact ⟨.gapY, by decide, rfl, rfl⟩
+    · exact ⟨.gapX, by decide, rfl, rfl⟩
+  obtain ⟨g2, hg2, e2', f2'⟩ : ∃ g, g ≠ Step.diag ∧ yConsumed g = x2 ∧ xConsumed g = 1 - x2 := by
+    rcases (by omega : x2 = 0 ∨ x2 = 1) with rfl | rfl
+    · exact ⟨.gapY, by decide, rfl, rfl⟩
+    · exact ⟨.gapX, by decide, rfl, rfl⟩
+  -- prefix and suffix clean
+  have hpre : cntP (fun x => R.get! x != G.get! (st + x)) 0 (i - 0) = 0 := by
+    have := (f1 i (Nat.zero_le _) (by omega)).2 (by omega); omega
+  have hsuf : cntP (fun x => R.get! x != G.get! (st + len + x - R.size)) (R.size - k) (R.size - (R.size - k)) = 0 := by
+    have := (e1 (R.size - k) (Nat.zero_le _) (by omega)).2 (by omega); omega
+  obtain ⟨path, hw, hs⟩ := walk2_score xs ys g1 g2 hg1 hg2 i (M - i - k) k (by omega) (by omega)
+    (fun t ht => by
+      rw [hyk t (by omega)]
+      exact eq_of_clean hr hg t (st + t) (by omega) (by omega)
+        (cntP_eq_zero _ _ _ hpre t (by omega) (by omega)))
+    (fun t ht => by
+      rcases hmid with hj | hmid
+      · omega
+      by_cases h1 : x1 = 1
+      · rw [if_pos h1] at hmid
+        simp only [beq_iff_eq] at hmid
+        rw [hamming_spec R G (st + 1) 0 (i + (M - i - k)) _ i 0 rfl (Nat.le_refl _)] at hmid
+        have hc : cntP (fun k => R.get! k != G.get! (st + 1 + k)) i (i + (M - i - k) - i) = 0 := by omega
+        have := eq_of_clean hr hg (i + t) (st + 1 + (i + t)) (by omega) (by omega)
+          (cntP_eq_zero _ _ _ hc (i + t) (by omega) (by omega))
+        simp only [f1', e1', h1]
+        rw [hyk _ (by omega)]
+        simp only [Nat.sub_self, Nat.add_zero] at this ⊢
+        rw [this]; congr 1; omega
+      · rw [if_neg h1] at hmid
+        simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hmid
+        obtain ⟨hst, hmid⟩ := hmid
+        rw [hamming_spec R G (st - 1) 0 (i + 1 + (M - i - k)) _ (i + 1) 0 rfl (Nat.le_refl _)] at hmid
+        have hc : cntP (fun k => R.get! k != G.get! (st - 1 + k)) (i + 1) (i + 1 + (M - i - k) - (i + 1)) = 0 := by
+          omega
+        have hx0 : x1 = 0 := by omega
+        have := eq_of_clean hr hg (i + 1 + t) (st - 1 + (i + 1 + t)) (by omega) (by omega)
+          (cntP_eq_zero _ _ _ hc (i + 1 + t) (by omega) (by omega))
+        simp only [f1', e1', hx0]
+        rw [hyk _ (by omega)]
+        simp only [Nat.sub_zero] at this ⊢
+        rw [this]; congr 1; omega)
+    (fun t ht => by
+      rw [hyk _ (by omega)]
+      have := eq_of_clean hr hg _ (st + len + (R.size - k + t) - R.size) (by omega) (by omega)
+        (cntP_eq_zero _ _ _ hsuf (R.size - k + t) (by omega) (by omega))
+      simp only [f1', e1', f2', e2']
+      have ea : i + (1 - x1) + (M - i - k) + (1 - x2) + t = R.size - k + t := by omega
+      simp only [ea]
+      rw [this]; congr 1; omega)
+  obtain ⟨p0, bs, hb, -, -, hmax⟩ := best_facts xs ys
+  rw [penQ_of Q xs ys p0 bs hb]
+  have := hmax path hw
+  split <;> omega
+
+
+theorem twoGapB_pen (Q : Nat) (hQ : 16 ≤ Q) (st len : Nat) (hfit : st + len ≤ seq.length)
+    (h : twoGapB R G st len = true) : penQ Q xs ((seq.drop st).take len) ≤ 16 := by
+  unfold twoGapB at h
+  dsimp only at h
+  split at h
+  · exact twoGapAt_pen hr hg Q hQ st len 1 1 hfit h
+  split at h
+  · exact twoGapAt_pen hr hg Q hQ st len 0 0 hfit h
+  split at h
+  · rcases Bool.or_eq_true _ _ ▸ h with h | h
+    · exact twoGapAt_pen hr hg Q hQ st len 1 0 hfit h
+    · exact twoGapAt_pen hr hg Q hQ st len 0 1 hfit h
+  · cases h
 
 end
 
