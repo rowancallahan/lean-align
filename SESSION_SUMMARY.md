@@ -49,6 +49,9 @@ Measured on full chr21, 100k reads, idle 4-core box, index build excluded:
 Tuned prototype answers = first prototype answers on all 100k reads. Repeats are kept (no masking).
 Stringency: wgsim reads mapped by minibwa, fraction within T = −12 (our scoring): 99.9% at 0.2% error, 99.5% at 0.5%, 97.2% at 1%.
 
+## Baselines still to benchmark (Rowan, 2026-10-04)
+minibwa is the only comparison so far. Before claiming "faster than the fastest", also run, same reads, same thread counts, idle box, index build excluded: URMAP (Edgar), BWA-MEM3 (check the name; bwa-mem2 is the known successor of bwa-mem), strobealign, minimap2 `-x sr`, Bowtie2, SNAP. Needs network access to fetch them (GitHub clones worked from the cloud environment).
+
 ## Speed ideas not yet tried (Rowan, 2026-10-04)
 - Reverse strand: map the reverse complement too (~2× cost); needs `MapSpec` strand support.
 - Repeats / whole genome: masking exact duplicates is provable (a window in an exact copy ties → unmapped), but the mapper must still see the masked hit; diverged repeats (Alu, L1) are not multi-mappers under the spec and need a spec decision. Whole-genome 25-mer index memory (~8 bytes per position, ~25 GB) needs sampling/minimizers or a compact layout.
