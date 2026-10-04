@@ -36,7 +36,9 @@ Ablations of Proto2 on sim (100k reads):
   4 Lean tasks (Task.spawn)                       55-58 k reads/s (1 task: 33 k; see Q5)
 
 Run-to-run noise on this machine is +-10%, so Proto2 and minibwa are equal
-within noise on chr21.  The unproved prototype already meets the "within 3x of minibwa per thread"
+within noise on chr21.  The other session's tuned prototype
+(origin/speed/proto-tune, bench/Proto.lean) is ~5x faster than both:
+265-298 k reads/s on this machine (see "Cross-check" at the end).  The unproved prototype already meets the "within 3x of minibwa per thread"
 target on chr21.  The work left is proving the pieces, and the whole-genome index.
 
 
@@ -434,12 +436,11 @@ obligations, then equality with the Lean mapper, reusing the Lean proofs of
 items 1-2 above).  Cheaper route first: apply the Q7 rules, fix the
 Task slowdown in Lean, and only move to Rust if a measured gap remains.
 Note on the figures in the request ("~190k reads/s/thread vs minibwa ~34k"):
-they do not match my measurements on this machine and read set.  Here
-minibwa maps 54-62k reads/s single-thread excluding index load (35-40k
-including it) and Proto2 maps 57-65k.  The difference may be the
-prototype, the read set (error rate, fraction of exact reads), counting
-minibwa with load and SAM output, or the machine.  Compare on one machine,
-one read file, mapping time only, before using either ratio.
+confirmed in ratio on this machine with the tuned prototype on
+speed/proto-tune: ~5x minibwa (see "Cross-check" at the end).  My Proto2 is
+a different, slower prototype.  With the hot path already ~5x minibwa,
+Rust/Aeneas would buy a smaller share of the total; the case for it rests
+on thread scaling and on the whole-genome index, not on per-read compute.
 
 Q11. Is minibwa still among the fastest?  Other mappers (from memory only)
 ------------------------------------------------------------------------
@@ -593,3 +594,26 @@ seed; its one advantage, counting repeats, is covered by 2 and 9);
 bit-parallel Myers/BitPAl (not affine, not exact); SIMD or prefetch (needs
 @[extern], banned in codecs/pool/spec); minibwa's repeat down-weighting
 (heuristic, changes answers).
+
+
+Cross-check: tuned prototype (origin/speed/proto-tune) vs minibwa on this machine
+------------------------------------------------------------------------------
+Branch tip c506a49 ("proto: 2-bit packed genome, word compare + popcount ...");
+the other session quoted 96bc795, which this tip is newer than.  Built in a
+separate worktree with `lake build proto`.  Run as
+`proto chr21.fa sim.reads.txt 25 sim.truth.tsv out.tsv` on the same 100k reads
+(sim_reads.py seed 1) used for every number above.
+  tuned proto, map_seconds (5 runs)   0.335 0.338 0.339 0.347 0.377 s
+                                      = 265-298 k reads/s single thread
+  minibwa -t 1, mapping only (10 runs) 1.61-1.85 s = 54-62 k reads/s
+  ratio                               ~4.7-5.5x in favour of the tuned proto
+  other session's machine             187-204 k vs 31 k reads/s (~6x): same
+                                      conclusion, this machine is faster.
+Answers: 93,115 mapped, 92,990 at the true position.  Proto2 reports
+93,114 / 92,989 because it drops read r61235 (an IUPAC 'M' copied from the
+genome), which the tuned proto maps at 41829665 with penalty 4.  Counts are
+consistent.  I did not compare per read (Proto2 does not dump results).
+Consequence for the ranked list: the per-read compute target is met by a
+wide margin.  The remaining work is the proofs (items 1-4), the
+whole-genome index (item 6), threads (item 7), and index load time (minibwa
+loads a prebuilt index in 0.17-0.6 s; the prototypes rebuild it each run).
