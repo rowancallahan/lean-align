@@ -40,11 +40,11 @@ section
 
 @[inline] def anc (base bit p : Nat) : Nat := (p + base) * 16 + bit
 
-def scanA (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 hi base bit : Nat) (t : Nat)
+def scanA (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 : Nat) (full : Bool) (hi base bit : Nat) (t : Nat)
     (acc : Array Nat) : Array Nat :=
   if t < hi then
-    scanA ix G R s o key bw aw pmo o2 hi base bit (t + 1)
-      (if Mz.okAt ix G R s o key bw aw pmo o2 t then acc.push (anc base bit (ix.posOf (ix.slot t) - o)) else acc)
+    scanA ix G R s o key bw aw pmo o2 full hi base bit (t + 1)
+      (if Mz.okAt ix G R s o key bw aw pmo o2 full t then acc.push (anc base bit (ix.posOf (ix.slot t) - o)) else acc)
   else acc
 termination_by hi - t
 
@@ -71,7 +71,11 @@ def lookupCodeA (ix : Mz.MzIdx) (G R : ByteArray) (s v base bit : Nat) : Array N
   let o := ix.mini v
   let h := ix.hsh (ix.sub v o)
   let b := h >>> ix.kb
-  scanA ix G R s o (h &&& ix.kbM) (v >>> (2 * (Mz.q - o))) (v &&& ix.pm[ix.w - 1 - o]!) ix.pm[o]! (2 * o)
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  scanA ix G R s o (h &&& ix.kbM) ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+    ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+    (decide (o ≤ ix.c) && decide (ix.w - 1 - o ≤ ix.c))
     (ix.hiB b) base bit (ix.loB b) #[]
 
 def lookupSeedA (ix : Mz.MzIdx) (G R : ByteArray) (s base bit : Nat) : Array Nat :=
@@ -83,9 +87,9 @@ def lookupSeedA (ix : Mz.MzIdx) (G R : ByteArray) (s base bit : Nat) : Array Nat
     if u2 < s + Mz.q then scanEdgeA ix G R 1 (u2 - s) s base bit 0 #[]
     else scanInsideA ix G R s base bit 0 #[]
 
-theorem scanA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 hi base bit : Nat) :
-    ∀ d t acc, hi - t = d → scanA ix G R s o key bw aw pmo o2 hi base bit t (acc.map (anc base bit)) =
-      (Mz.scan ix G R s o key bw aw pmo o2 hi t acc).map (anc base bit) := by
+theorem scanA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 : Nat) (full : Bool) (hi base bit : Nat) :
+    ∀ d t acc, hi - t = d → scanA ix G R s o key bw aw pmo o2 full hi base bit t (acc.map (anc base bit)) =
+      (Mz.scan ix G R s o key bw aw pmo o2 full hi t acc).map (anc base bit) := by
   intro d; induction d with
   | zero =>
     intro t acc h
@@ -152,7 +156,7 @@ theorem lookupA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s base bit : Nat) :
   dsimp only
   split
   · conv => lhs; rw [e]
-    rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
+    rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
   · split
     · conv => lhs; rw [e]
       rw [scanEdgeA_eq _ _ _ _ _ _ _ _ _ _ _ rfl]
@@ -168,7 +172,7 @@ theorem lookupCodeA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s v base bit : Nat) :
   unfold lookupCodeA Mz.lookupCode
   dsimp only
   conv => lhs; rw [e]
-  rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
+  rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
 
 end
 

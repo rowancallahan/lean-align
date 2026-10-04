@@ -45,11 +45,13 @@ def main (args : List String) : IO UInt32 := do
     let n := 2000 + 997 * r
     let G := genome (r + 1) n
     let k := [19, 21, 22, 23][r % 4]!
-    -- slots must fit 63 bits: pos (< 2^15 here) · 2^T, T = 2k - B + 4(w-1) + 1
+    -- slots must fit 63 bits: pos (< 2^15 here) · 2^T, T = 2k - B + 4c + 1
     let B := [16, 17, 18][r % 3]!
-    let ix := build G k B
+    -- context letters per side: all of w - 1 = 25 - k, or fewer (genome-checked offsets)
+    let c := (25 - k) - (r / 4) % (26 - k)
+    let ix := buildC G k B c
     if !check ix G then
-      IO.eprintln s!"round {r}: check failed (k {k}, B {B}): params {checkParams ix} sound {checkSound ix G (2 ^ ix.B) 0} comp {checkComp ix G ix.offs 0 (G.size + 1 - q) 0} runs {checkRuns ix G ix.nr 0} cover {checkCover ix G 0 G.size 0} nr {ix.nr} runs {ix.runs.toList.take 12}"
+      IO.eprintln s!"round {r}: check failed (k {k}, B {B}, c {c}): params {checkParams ix} sound {checkSound ix G (2 ^ ix.B) 0} comp {checkComp ix G ix.offs 0 (G.size + 1 - q) 0} runs {checkRuns ix G ix.nr 0} cover {checkCover ix G 0 G.size 0} nr {ix.nr} runs {ix.runs.toList.take 12}"
       return 1
     let mut x := r + 7
     for p in [0:G.size + 1 - q] do
