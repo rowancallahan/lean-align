@@ -20,3 +20,12 @@ for s in $D/spec*.tsv; do
   $B/proto $D/$G.fa $D/$R.reads.txt $L - $D/out_spec.tsv > /dev/null
   k=$(wc -l < $s); head -n $k $D/out_spec.tsv | cmp - $s && echo "same as $(basename $s) ($k reads)"
 done
+# pairs: PROTO_PAIR against the brute reference (PROTO_BOTH per mate + bench/pair_ref.py),
+# including repeat-rich sets (synthetic repeats, chr21 fragments from duplicated 25-mers)
+for t in chr21.1l:pr100k rep:prep rep2:prep2 chr21.1l:phard chr21.1l:pdup; do
+  g=${t%%:*}; p=${t##*:}
+  for m in 1 2; do PROTO_BOTH=1 $B/proto $D/$g.fa $D/${p}_$m.reads.txt $L - $D/${p}_b$m.tsv > /dev/null; done
+  python3 $(dirname $0)/pair_ref.py $D/${p}_b1.tsv $D/${p}_b2.tsv > $D/${p}_ref.tsv
+  PROTO_TASKS=4 PROTO_PAIR=$D/${p}_2.reads.txt $B/proto $D/$g.fa $D/${p}_1.reads.txt $L - $D/${p}_out.tsv | grep pairs:
+  cmp $D/${p}_out.tsv $D/${p}_ref.tsv && echo "same pairs as brute reference ($p)"
+done

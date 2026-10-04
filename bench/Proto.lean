@@ -31,6 +31,16 @@ Why each step is exact:
   up costs ≥ 4k (`mapStreams`), so lookups stop once 4k > best; gapped windows
   (≥ 8) are only scored when best ≥ 8 and only near diagonals carrying ≥ 2
   clean seeds (≥ 3 when the bound is < 10).
+* Strands (PROTO_BOTH): the reverse complement is a second stream with the
+  same shared best; a window on the other strand is a different window.
+* Pairs (PROTO_PAIR): the answer is per-mate `mapSpec` over both strands,
+  then the proper-pair filter.  Pairing never prunes a mate's search: a
+  pairing window is reported only if it is the mate's unique best over the
+  whole genome and both strands, so every other window with penalty ≤ its
+  penalty must be ruled out (by the 4k bound above: P/4 + 1 seeds per strand)
+  — dropping far candidates would turn a tie into a false unique hit.  The
+  only shortcut is skipping mate 2 when mate 1 has no unique best (the filter
+  then rejects the pair whatever mate 2 gives).
 -/
 
 def cap : Nat := 12
