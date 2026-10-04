@@ -106,18 +106,22 @@ theorem gapAll2_le (R G : ByteArray) (c : Nat) (as : Array Nat) (looked : Nat) :
     exact Nat.le_trans (ih _ _) (Nat.le_trans (gapL2_le _ _ _ _ _ _ _ _ _ _)
       (Nat.le_trans (gapL2_le _ _ _ _ _ _ _ _ _ _) (gapL2_le _ _ _ _ _ _ _ _ _ _)))
 
-theorem lzStep_le {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (ix : L)
-    (ps : Array P) (j k : Nat) (as : Array Nat) (looked : Nat) (b : Best) :
-    (lzStep R G c lk ix ps j k as looked b).2.pen ≤ b.pen := by
+theorem lzStepA_le (R G : ByteArray) (c : Nat) (a : Array Nat) (k : Nat) (as : Array Nat) (looked : Nat)
+    (b : Best) : (lzStepA R G c a k as looked b).2.pen ≤ b.pen := by
   have hf : ∀ (l : List Nat) b, (l.foldl (sameStep2 R G c) b).pen ≤ b.pen := by
     intro l; induction l with
     | nil => intro b; exact Nat.le_refl _
     | cons e l ih => intro b; exact Nat.le_trans (ih _) (sameStep2_le R G c b e)
-  unfold lzStep; simp only []
+  unfold lzStepA; simp only []
   rw [← Array.foldl_toList]
   split
   · exact Nat.le_trans (gapAll2_le _ _ _ _ _ _ _ _) (hf _ _)
   · exact hf _ _
+
+theorem lzStep_le {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (ix : L)
+    (ps : Array P) (j k : Nat) (as : Array Nat) (looked : Nat) (b : Best) :
+    (lzStep R G c lk ix ps j k as looked b).2.pen ≤ b.pen := by
+  rw [lzStep_eq_A]; exact lzStepA_le _ _ _ _ _ _ _ _
 
 /-! ## Per-strand state -/
 
