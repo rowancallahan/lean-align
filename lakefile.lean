@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -117,3 +117,11 @@ lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark 
 lean_exe csr_bench where              -- CSR index build/save/load/check timing (unproved IO)
   srcDir := "bench"
   root := `CsrBench
+
+lean_exe par_bench where              -- parMap threads / shared-memory check only
+  srcDir := "bench"
+  root := `ParBench
+
+lean_exe stream_bench where           -- writer overlapped with mapping, benchmark only
+  srcDir := "bench"
+  root := `StreamBench
