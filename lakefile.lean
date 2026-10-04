@@ -101,3 +101,7 @@ lean_exe «lean-align» where
 lean_exe map_bench where              -- benchmark only; prints to stdout
   srcDir := "bench"
   root := `MapBench
+
+lean_exe proto where                  -- speed prototype only (unproved)
+  srcDir := "bench"
+  root := `Proto
