@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -129,3 +129,7 @@ lean_exe stream_bench where           -- writer overlapped with mapping, benchma
 lean_exe lowerr_bench where           -- benchmark only: low-error fast path vs mapWith
   srcDir := "bench"
   root := `LowErrBench
+
+lean_exe group_bench where            -- dedup / sort / binned pipelines vs plain streaming, benchmark only
+  srcDir := "bench"
+  root := `GroupBench
