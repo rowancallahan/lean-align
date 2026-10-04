@@ -118,14 +118,25 @@ def main (args : List String) : IO UInt32 := do
   let same ← timed "compare" fun t => idx2.l0 == idx.l0 + (if t == 1 then 1 else 0) &&
     idx2.starts == idx.starts && idx2.offs == idx.offs && idx2.pos == idx.pos
   assert! same
-  let invs ← timed "inverse" fun t => inversePositions (if t == 1 then idx else idx2) gb
-  let ok ← timed "verify" fun t => verifyIndex (if t == 1 then idx else idx2) gb invs
+  let invs ← timed "inverse" fun t => inversePositions (if t == 1 then idx else idx2) gb 16 4
+  let ok ← timed "verify" fun t => verifyIndex (if t == 1 then idx else idx2) gb 16 invs
   IO.println s!"check: {ok}"
   assert! ok
+  let okM ← timed "checkM" fun t => checkIndexM (if t == 1 then idx else idx2) gb
+  IO.println s!"checkM: {okM}"
+  assert! okM
   -- a corrupted index must be rejected: entry 0 overwritten by entry 1
   let bad := { idx2 with pos := setU32 idx2.pos 0 (getU32 idx2.pos 1) }
   let okBad ← timed "check_corrupted" fun t => checkIndex (if t == 1 then idx else bad) gb
   IO.println s!"corrupted check: {okBad}"
   assert! !okBad
+  let okBadM ← timed "checkM_corrupted" fun t => checkIndexM (if t == 1 then idx else bad) gb
+  IO.println s!"corrupted checkM: {okBadM}"
+  assert! !okBadM
+  -- and so must one with a bucket boundary moved (offs[1] + 1)
+  let bad2 := { idx2 with offs := setU32 idx2.offs 1 (getU32 idx2.offs 1 + 1) }
+  let okBad2 ← timed "check_corrupted2" fun t => checkIndex (if t == 1 then idx else bad2) gb
+  IO.println s!"corrupted2 check: {okBad2}"
+  assert! !okBad2
   IO.println (← peakRssMb)
   return 0

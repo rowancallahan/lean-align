@@ -118,13 +118,20 @@ def codeNat (n : Nat) : Nat :=
 /-- A0 C1 G2 T3, anything else 0. -/
 def charCode (ch : Char) : Nat := codeNat ch.val.toNat
 
-def byteCode (b : UInt8) : Nat := codeNat b.toNat
+@[inline] def byteCode (b : UInt8) : Nat :=
+  if b == 67 then 1 else if b == 71 then 2 else if b == 84 then 3 else 0
+
+theorem byteCode_eq_codeNat (b : UInt8) : byteCode b = codeNat b.toNat := by
+  have h : ∀ k : UInt8, (b == k) = decide (b.toNat = k.toNat) := fun k => by
+    rw [Bool.eq_iff_iff, beq_iff_eq, decide_eq_true_iff]; exact ⟨fun h => h ▸ rfl, UInt8.toNat_inj.mp⟩
+  simp only [byteCode, codeNat, h, decide_eq_true_eq]
+  rfl
 
 theorem codeNat_lt (n : Nat) : codeNat n < 4 := by
   unfold codeNat; split <;> (try split) <;> (try split) <;> omega
 
 theorem charCode_toChar (b : UInt8) : charCode (toChar b) = byteCode b := by
-  simp only [charCode, byteCode, toChar_val_toNat]
+  simp only [charCode, byteCode_eq_codeNat, toChar_val_toNat]
 
 def codeStep (h : Nat) (ch : Char) : Nat := h * 4 + charCode ch
 
