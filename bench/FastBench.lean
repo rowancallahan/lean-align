@@ -101,8 +101,9 @@ def main (args : List String) : IO UInt32 := do
           (·.map fun (w, s) => (w, s, false))
     else do
       let B := ((← IO.getEnv "FAST_MZ_B").getD "24").toNat!
-      let idxs ← timed "index" fun t => gbs.map fun g => Mz.build (if t == 1 then g.push 0 else g) mz B
-      IO.println s!"minimizer k={mz} B={B} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size) 0}"
+      let C := ((← IO.getEnv "FAST_MZ_C").getD (toString (25 - mz))).toNat!   -- context letters per side
+      let idxs ← timed "index" fun t => gbs.map fun g => Mz.buildC (if t == 1 then g.push 0 else g) mz B C
+      IO.println s!"minimizer k={mz} B={B} C={C} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size) 0}"
       let ok ← timed "check" fun t => Fast.checkAllMz (if t == 1 then #[] else idxs) gbs
       IO.println s!"index check: {ok}"
       assert! ok
