@@ -141,33 +141,43 @@ def hamSeeds (r g : ByteArray) (q a mask lim : Nat) : Nat := Id.run do
 
 def pop4 (mask : Nat) : Nat := mask % 2 + (mask >>> 1) % 2 + (mask >>> 2) % 2 + (mask >>> 3) % 2
 
-/-- Mismatches of r[k, stop) against g[d + k ..] (d may be negative: g[k + d1 - d0]). -/
-def misCount (r g : ByteArray) (d1 d0 k stop m : Nat) : Nat :=
-  if h : k < stop then misCount r g d1 d0 (k + 1) stop (if r.get! k != g.get! (k + d1 - d0) then m + 1 else m)
-  else m
-termination_by stop - k
-
-/-- min over gap positions i ∈ [i, stop) of pre + suf, see `gappedPen`. -/
-def gapScan (r g : ByteArray) (st len skip mmax i stop pre suf best : Nat) : Nat :=
+/-- Position of the k-th mismatch (k ≥ 1) of r[i, stop) against g[st + i ..], or `stop`. -/
+def fwdMis (r g : ByteArray) (st i stop k : Nat) : Nat :=
   if h : i < stop then
-    let pre := if r.get! i != g.get! (st + i) then pre + 1 else pre
-    if pre > mmax then best else
-    let suf := if r.get! (i + skip) != g.get! (st + len + i + skip - r.size) then suf - 1 else suf
-    gapScan r g st len skip mmax (i + 1) stop pre suf (min best (pre + suf))
-  else best
+    if r.get! i != g.get! (st + i) then (if k ≤ 1 then i else fwdMis r g st (i + 1) stop (k - 1))
+    else fwdMis r g st (i + 1) stop k
+  else stop
 termination_by stop - i
 
-/-- Penalty of window (st, len), len ≠ n, |len - n| ≤ 3, if ≤ `lim`; else lim + 1. -/
+/-- 1 + position of the k-th mismatch from the right (k ≥ 1) of r[lo, e) against
+g[e' ..] with read letter x ↔ g[x + d1 - d0], or `lo` when there are fewer. -/
+def bwdMis (r g : ByteArray) (d1 d0 lo e k : Nat) : Nat :=
+  if h : lo < e then
+    if r.get! (e - 1) != g.get! (e - 1 + d1 - d0) then (if k ≤ 1 then e else bwdMis r g d1 d0 lo (e - 1) (k - 1))
+    else bwdMis r g d1 d0 lo (e - 1) k
+  else lo
+termination_by e - lo
+
+/-- Penalty of window (st, len), len ≠ n, L = |len - n| ≤ 3, if ≤ `lim`; else lim + 1.
+The one gap sits before read letter i: read x < i ↔ g[st + x], read x ≥ i + skip ↔
+g[st + x + len - n] (skip = L when the read has the extra letters).  With F_k the
+k-th mismatch of the prefix diagonal on [0, n - skip) and E_k one past the k-th
+last mismatch of the suffix diagonal on [skip, n), "≤ t + u mismatches at some i"
+⟺ E_{u+1} - skip ≤ F_{t+1}. -/
 def gappedPen (r g : ByteArray) (st len lim : Nat) : Nat :=
   let n := r.size
   let L := if len > n then len - n else n - len
   if lim < 6 + 2 * L then lim + 1 else
   let mmax := (lim - 6 - 2 * L) / 4
   let skip := if len < n then L else 0
-  -- read k < i ↔ g[st + k];  read k ≥ i + skip ↔ g[st + k + len - n]
-  let suf := misCount r g (st + len) n skip n 0
-  let best := gapScan r g st len skip mmax 0 (n - skip) 0 suf suf
-  if best > mmax then lim + 1 else 6 + 2 * L + 4 * best
+  let F1 := fwdMis r g st 0 (n - skip) 1
+  let E1 := bwdMis r g (st + len) n skip n 1
+  if E1 - skip ≤ F1 then 6 + 2 * L else
+  if mmax == 0 then lim + 1 else
+  let F2 := fwdMis r g st 0 (n - skip) 2
+  let E2 := bwdMis r g (st + len) n skip n 2
+  assert! mmax == 1
+  if E1 - skip ≤ F2 || E2 - skip ≤ F1 then 6 + 2 * L + 4 else lim + 1
 
 structure Best where
   pen : Nat := cap + 1
