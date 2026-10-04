@@ -23,7 +23,7 @@ package lean_align where
 @[default_target]
 lean_lib AlignmentSpecLib where
   srcDir := "spec"
-  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec]
+  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec]
 
 -- ──────────────────────────── codecs ────────────────────────────
 
