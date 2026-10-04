@@ -306,6 +306,11 @@ theorem minimizerMapper_eq_mapSpec (k w : Nat) (ord : List Char → Nat) (sc : S
     sketchMapper (minimizerSketch k w ord) sc T g read = mapSpec sc T g read :=
   sketchMapper_eq_mapSpec _ sc hv T g read
 
+theorem modMinimizerMapper_eq_mapSpec (k w t : Nat) (ord : List Char → Nat) (sc : Scoring)
+    (hv : ValidScoring sc) (T : Int) (g : Genome) (read : List Char) :
+    sketchMapper (modMinimizerSketch k w t ord) sc T g read = mapSpec sc T g read :=
+  sketchMapper_eq_mapSpec _ sc hv T g read
+
 theorem syncmerMapper_eq_mapSpec (k s : Nat) (ord : List Char → Nat) (hs : s < k) (sc : Scoring)
     (hv : ValidScoring sc) (T : Int) (g : Genome) (read : List Char) :
     sketchMapper (syncmerSketch k s ord hs) sc T g read = mapSpec sc T g read :=
@@ -325,4 +330,5 @@ end MapSpec
 #print axioms MapSpec.sketchMapper_eq_mapSpec
 #print axioms MapSpec.mapReadsSketch_eq_mapSpec
 #print axioms MapSpec.minimizerMapper_eq_mapSpec
+#print axioms MapSpec.modMinimizerMapper_eq_mapSpec
 #print axioms MapSpec.syncmerMapper_eq_mapSpec

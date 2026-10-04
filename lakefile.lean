@@ -130,6 +130,6 @@ lean_exe lowerr_bench where           -- benchmark only: low-error fast path vs 
   srcDir := "bench"
   root := `LowErrBench
 
-lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer index
+lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer / mod-minimizer index
   srcDir := "bench"
   root := `ProtoSketch
