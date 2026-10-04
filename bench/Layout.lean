@@ -1,9 +1,14 @@
+import MzIndex
+
 /-!
 Index layout bench (NOT proved, not part of the tool).
 
     lake exe layout <genome.fa> <reads.txt> <spec> [dump.tsv]
     spec = boxed          the `bench/Proto.lean` index (Array UInt32: 16 bytes/entry)
          | w,s,B,kb       packed ByteArray index (see `Pk`)
+         | n,B            exact 25-mer keys in Array Nat slots
+         | m,k,B / mn,k,B minimizer index, ByteArray / Array Nat slots (see `Mz`)
+         | z,k,B          the proved `codecs/MzIndex.lean` (env CHECK=1: run its checker)
     env SORT=1            map reads in order of the index bucket of their first seed
 
 The mapping code between the markers is `bench/Proto.lean` (speed/proto-tune
@@ -617,6 +622,15 @@ def Idx.lk (idx : Idx) : Lk where
     idx.offs[b + 1]!.toNat - idx.offs[b]!.toNat
   bucketOf v := (mix v.toUInt64 >>> (50 - BBITS)).toNat
 
+def zLk (ix : MapSpec.Mz.MzIdx) : Lk where
+  q := 25
+  look g r j _ := (MapSpec.Mz.lookupSeed ix g r (j * 25)).map fun p => (p + BIAS - j * 25) * 16 + bit j
+  size v := if v >>> 60 != 0 then 0 else
+    let o := ix.mini v
+    let b := ix.hsh (ix.sub v o) >>> ix.kb
+    ix.hiB b - ix.loB b
+  bucketOf v := if v >>> 60 != 0 then 0 else ix.hsh (ix.sub v (ix.mini v)) >>> ix.kb
+
 def memKB : IO String := do
   let st ← IO.FS.readFile "/proc/self/status"
   let f := fun (k : String) => ((st.splitOn "\n").find? (·.startsWith k)).getD "?"
@@ -646,6 +660,15 @@ def main (args : List String) : IO UInt32 := do
       let ix := buildMz g 25 k.toNat! B.toNat! true
       if !ix.ok then throw (IO.userError "index fill check failed")
       pure (ix.lk, ix.offs.size + 8 * ix.sl.size + 8 * ix.odd.size, ix.sl.size)
+    else if spec.startsWith "z," then do
+      let [_, k, B] := spec.splitOn "," | throw (IO.userError "spec")
+      let ix := MapSpec.Mz.build g k.toNat! B.toNat!
+      if (← IO.getEnv "CHECK") == some "1" then
+        let tc ← IO.monoNanosNow
+        let ok ← IO.lazyPure fun _ => MapSpec.Mz.check ix g
+        IO.println s!"check {ok}  check_seconds {secs tc (← IO.monoNanosNow)}"
+        if !ok then throw (IO.userError "index check failed")
+      pure (zLk ix, ix.offs.size + 8 * ix.sl.size + 8 * (ix.odd.foldl (· + ·.size) 0), ix.sl.size)
     else if spec.startsWith "n," then do
       let [_, B] := spec.splitOn "," | throw (IO.userError "spec")
       let ix := buildPk g 25 1 B.toNat! 0 true
