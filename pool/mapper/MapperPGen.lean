@@ -8,8 +8,10 @@ import MapperMzWords
 flag byte, 1 when the block lies inside the genome and is all ACGT, then the 2-bit
 codes (A0 C1 G2 T3), letter `i` in bits `2·(i % 4)` of byte `i % 64 / 4`.
 Outside flagged blocks the byte comes from the run list `ex` (LE `UInt32`
-triples `start, stop, byte`, increasing).  `PGen.get P i` is the byte at `i`, and
-0 past the end (as `ByteArray.get!`) when no flag 1 reaches past the end (`tailOk`).
+triples `start, stop, byte`, increasing).  A `PGen` is the window `[o, o + n)` of
+these blocks, so chromosomes are views into one packed concatenated genome
+(`view`, no copies).  `PGen.get P i` is the byte at `o + i` for `i < n`, else 0
+(as `ByteArray.get!`).
 
 The builder `pack` is not trusted: `checkPG P G = true → Rep P G` (same size,
 same byte at every index).  Under `Rep`, the genome-reading loops (`hammingP`,
@@ -20,6 +22,7 @@ namespace MapSpec.Fast
 
 structure PGen where
   n : Nat
+  o : Nat
   w : ByteArray
   ex : ByteArray
 deriving Inhabited
@@ -40,17 +43,19 @@ def exFind (ex : ByteArray) (i : Nat) : (f lo hi : Nat) → Nat
 @[inline] def PGen.code (P : PGen) (i : Nat) : UInt8 :=
   (P.w.get! (17 * (i >>> 6) + 1 + ((i >>> 2) &&& 15)) >>> ((i.toUInt8 &&& 3) <<< 1)) &&& 3
 
-/-- Byte at `i` outside the all-ACGT blocks. -/
+/-- Byte at place `i` of the blocks (no window) outside the all-ACGT blocks. -/
 def PGen.slow (P : PGen) (i : Nat) : UInt8 :=
-  if i < P.n then
-    let t := exFind P.ex i 64 0 (len32 P.ex / 3)
-    if 0 < t && i < u32 P.ex (3 * (t - 1) + 1) then (u32 P.ex (3 * (t - 1) + 2)).toUInt8 else letter (P.code i)
-  else 0
+  let t := exFind P.ex i 64 0 (len32 P.ex / 3)
+  if 0 < t && i < u32 P.ex (3 * (t - 1) + 1) then (u32 P.ex (3 * (t - 1) + 2)).toUInt8 else letter (P.code i)
 
-/-- Flag 1: block `i / 64` lies inside the genome and is all ACGT (a missing flag
-reads 0, so no separate bounds test). -/
-@[inline] def PGen.get (P : PGen) (i : Nat) : UInt8 :=
+/-- Byte at place `i` of the blocks. -/
+@[inline] def PGen.raw (P : PGen) (i : Nat) : UInt8 :=
   if P.w.get! (17 * (i >>> 6)) == 1 then letter (P.code i) else P.slow i
+
+@[inline] def PGen.get (P : PGen) (i : Nat) : UInt8 := if i < P.n then P.raw (P.o + i) else 0
+
+/-- Letters `[o, o + n)` of `P` (shares its arrays). -/
+def view (P : PGen) (o n : Nat) : PGen := { P with o := P.o + o, n }
 
 /-- Builder state (not trusted; see `checkPG`): letters so far, blocks, the byte
 being filled, the current block's flag and its place, runs, previous byte. -/
@@ -81,7 +86,7 @@ def PB.push : PB → UInt8 → PB
     ⟨n + 1, w, cur, f, fpos, ex, v⟩
 
 /-- A partial last block keeps flag 0 (slow path). -/
-def PB.finish (s : PB) : PGen := ⟨s.n, if s.n % 4 == 0 then s.w else s.w.push s.cur, pack32 s.ex⟩
+def PB.finish (s : PB) : PGen := ⟨s.n, 0, if s.n % 4 == 0 then s.w else s.w.push s.cur, pack32 s.ex⟩
 
 def pack (G : ByteArray) : PGen := (G.foldl PB.push (PB.init G.size)).finish
 
@@ -92,32 +97,15 @@ theorem get!_out (G : ByteArray) (i : Nat) (h : G.size ≤ i) : G.get! i = 0 := 
   cases G with
   | mk a => simp only [ByteArray.get!, ByteArray.size] at *; rw [getElem!_neg a i (by omega)]; rfl
 
-/-- No block flag 1 covers a place `≥ n`. -/
-def tailOk (P : PGen) : Bool :=
-  decide (P.w.size ≤ 17 * (P.n / 64)) ||
-    (decide (P.w.size ≤ 17 * (P.n / 64) + 17) && P.w.get! (17 * (P.n / 64)) != 1)
-
-theorem get_out (P : PGen) (h : tailOk P = true) (i : Nat) (hi : P.n ≤ i) : P.get i = 0 := by
-  have hs : i >>> 6 = i / 64 := by rw [Nat.shiftRight_eq_div_pow]
-  have hb : P.w.get! (17 * (i >>> 6)) ≠ 1 := by
-    rw [hs]
-    simp only [tailOk, Bool.or_eq_true, decide_eq_true_eq, Bool.and_eq_true, bne_iff_ne, ne_eq] at h
-    by_cases e : i / 64 = P.n / 64
-    · rcases h with h | h
-      · rw [get!_out _ _ (by omega)]; decide
-      · rw [e]; exact h.2
-    · have : P.n / 64 < i / 64 := by
-        have := Nat.div_le_div_right (c := 64) hi; omega
-      rcases h with h | h <;> (rw [get!_out _ _ (by omega)]; decide)
-  unfold PGen.get PGen.slow
-  rw [if_neg (by simpa using hb), if_neg (by omega)]
+theorem get_out (P : PGen) (i : Nat) (hi : P.n ≤ i) : P.get i = 0 := by
+  unfold PGen.get; rw [if_neg (by omega)]
 
 def eqAll (P : PGen) (G : ByteArray) : (k i : Nat) → Bool
   | 0, _ => true
   | k + 1, i => P.get i == G.get! i && eqAll P G k (i + 1)
 
 /-- The runtime check of a packed genome. -/
-def checkPG (P : PGen) (G : ByteArray) : Bool := P.n == G.size && tailOk P && eqAll P G G.size 0
+def checkPG (P : PGen) (G : ByteArray) : Bool := P.n == G.size && eqAll P G G.size 0
 
 theorem eqAll_ok (P : PGen) (G : ByteArray) : ∀ k i, eqAll P G k i = true → ∀ j, i ≤ j → j < i + k →
     P.get j = G.get! j := by
@@ -133,10 +121,10 @@ theorem eqAll_ok (P : PGen) (G : ByteArray) : ∀ k i, eqAll P G k i = true → 
 
 theorem checkPG_ok (P : PGen) (G : ByteArray) (h : checkPG P G = true) : Rep P G := by
   simp only [checkPG, Bool.and_eq_true, beq_iff_eq] at h
-  refine ⟨h.1.1, fun i => ?_⟩
+  refine ⟨h.1, fun i => ?_⟩
   by_cases hi : i < G.size
   · exact eqAll_ok P G _ 0 h.2 i (by omega) (by omega)
-  · rw [get!_out G i (by omega)]; exact get_out P h.1.2 i (by omega)
+  · rw [get!_out G i (by omega)]; exact get_out P i (by omega)
 
 /-! ## Genome-reading loops over `PGen` (copies of the byte versions) -/
 

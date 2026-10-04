@@ -4,6 +4,7 @@ import PairInterleave
 import PairConcat
 import ParMap
 import PairPacked
+import PairConcatPacked
 
 /-!
 Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
@@ -16,6 +17,8 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
     PAIR_CONCAT (with PAIR_INTERLEAVE: one index over the concatenated chromosomes, pairFastC),
     PAIR_DIAG (per-read counts of lookups, anchors, windows scored; pairFastI only)
     With several chromosomes the dump has the chromosome index before each hit.
+    PAIR_PACKED=1 PAIR_CONCAT=1 PAIR_INTERLEAVE=1 PAIR_MZ=k: one packed genome (chromosomes are views into it),
+      one index built and checked on it (pairFastCP_mz_eq_pairSpec)
     PAIR_PACKED=1 with PAIR_INTERLEAVE and PAIR_MZ (2-bit genome, pairFastIP_mzP_eq_pairSpec): the FASTA is
       packed as it is read, the indexes are built and checked on the packed genome
 
@@ -95,6 +98,29 @@ def readFastaPacked (path : String) : IO (Array Fast.PGen) := do
         cur := cur.map (·.push b)
   let some s := cur | throw (IO.userError "no sequence")
   return out.push s.finish
+
+/-- All sequences of a FASTA file packed into one genome as they are read, with
+each sequence's offset and length. -/
+def readFastaPackedCat (path : String) : IO (Fast.PGen × Array Nat × Array Nat) := do
+  let total := (← System.FilePath.metadata path).byteSize.toNat
+  let h ← IO.FS.Handle.mk path .read
+  let mut s := Fast.PB.init total
+  let mut offs : Array Nat := #[]
+  let mut header := false
+  repeat
+    let chunk ← h.read 16777216
+    if chunk.isEmpty then break
+    for b in chunk do
+      if header then
+        if b == 10 then header := false
+      else if b == 62 then  -- '>'
+        offs := offs.push s.n
+        header := true
+      else if b != 10 && b != 13 then
+        s := s.push b
+  assert! offs.size > 0
+  let G := s.finish
+  return (G, offs, (Array.range offs.size).map fun c => (offs[c + 1]?.getD G.n) - offs[c]!)
 
 def readReads (path : String) : IO (Array String × Array ByteArray) := do
   let rl := (lines (← IO.FS.readBinFile path)).filter (·.size > 0)
@@ -235,7 +261,24 @@ def main (args : List String) : IO UInt32 := do
   let mz := ((← IO.getEnv "PAIR_MZ").getD "0").toNat!
   let diag := (← IO.getEnv "PAIR_DIAG").isSome
   let cat := (← IO.getEnv "PAIR_CONCAT").isSome
-  let f : ByteArray × ByteArray → Option ((Placement × Int) × (Placement × Int)) ← if packed then do
+  let nch ← IO.mkRef gbs.size
+  let f : ByteArray × ByteArray → Option ((Placement × Int) × (Placement × Int)) ← if packed && cat then do
+      assert! inter && mz > 0
+      let B := ((← IO.getEnv "PAIR_MZ_B").getD "24").toNat!
+      let C := ((← IO.getEnv "PAIR_MZ_C").getD (toString (25 - mz))).toNat!
+      let W := ((← IO.getEnv "PAIR_MZ_W").getD "8").toNat!
+      let T := ((← IO.getEnv "PAIR_MZ_T").getD (toString mz)).toNat!
+      -- one packed genome, chromosomes are views into it (pairFastCP_mz_eq_pairSpec)
+      let (G, offs, ns) ← readFastaPackedCat gpath
+      nch.set ns.size
+      assert! Fast.cutOk G offs ns
+      IO.println s!"genome packed: {ns.size} chromosomes, {G.n} letters, genome_bytes: {G.w.size + G.ex.size}; rss_MB: {(← statusKB "VmRSS:") / 1024}"
+      let ix := Mz.buildWP G mz B C W T
+      assert! Mz.check2P ix G
+      IO.println s!"index check: ok  minimizer k={mz} B={B} C={C} W={W} T={T} kf={ix.kf} index_bytes: {ix.offs.size + ix.sl.size + 8 * ix.runs.size}; rss_MB: {(← statusKB "VmRSS:") / 1024}"
+      let pgs := Fast.cutAll G offs ns
+      pure fun p => Fast.pairFastCP Fast.mzL Fast.mzLookP lo hi ix G offs pgs p.1 p.2
+    else if packed then do
       assert! inter && mz > 0
       let B := ((← IO.getEnv "PAIR_MZ_B").getD "24").toNat!
       let C := ((← IO.getEnv "PAIR_MZ_C").getD (toString (25 - mz))).toNat!
@@ -243,6 +286,7 @@ def main (args : List String) : IO UInt32 := do
       let T := ((← IO.getEnv "PAIR_MZ_T").getD (toString mz)).toNat!
       -- no byte genome: the indexes are built and checked on the packed genome (pairFastIP_mzP_eq_pairSpec)
       let pgs ← readFastaPacked gpath
+      nch.set pgs.size
       IO.println s!"genome packed; rss_MB: {(← statusKB "VmRSS:") / 1024}"
       let idxs := pgs.map fun P => Mz.buildWP P mz B C W T
       assert! Fast.checkAllMzP idxs pgs
@@ -302,8 +346,9 @@ def main (args : List String) : IO UInt32 := do
   let kept := (out.filter (·.isSome)).size
   IO.println s!"pairs: {ps.size}  kept: {kept}  peak_rss_MB: {(← statusKB "VmHWM:") / 1024}  rss_MB: {(← statusKB "VmRSS:") / 1024}"
   IO.println s!"map_seconds: {secs t0 t1}  pairs/s: {Float.ofNat ps.size / secs t0 t1}  reads/s: {Float.ofNat (2 * ps.size) / secs t0 t1}"
+  let multi := (← nch.get) > 1
   if let dp :: _ := rest then
     IO.FS.writeFile dp (String.join ((names.zip out).toList.map fun (nm, x) => match x with
-      | some (a, b) => s!"{nm}\t{showHit (gbs.size > 1) a}\t{showHit (gbs.size > 1) b}\n"
+      | some (a, b) => s!"{nm}\t{showHit multi a}\t{showHit multi b}\n"
       | none => s!"{nm}\tnone\n"))
   return 0

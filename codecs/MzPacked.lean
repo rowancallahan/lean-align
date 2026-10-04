@@ -8,23 +8,23 @@ The checker `Mz.check2` and the builder `Mz.buildW` read the genome only
 through `G.get!` and `G.size`.  `check2P` / `buildWP` are copies reading a
 `PGen` (pool/mapper/MapperPGen.lean).  `check2P_eq`: under `Rep P G`,
 `check2P ix P = check2 ix G`.  `unpack P` (never run) is the byte genome a
-`PGen` spells, and `Rep P (unpack P)` holds when `tailOk P` (`rep_unpack`), so a packed
+`PGen` spells, and `Rep P (unpack P)` always holds (`rep_unpack`), so a packed
 genome and its index are checked without the byte genome in memory.
 -/
 
 namespace MapSpec.Mz
 
-open MapSpec.Fast (PGen Rep tailOk)
+open MapSpec.Fast (PGen Rep)
 
 /-- The bytes a packed genome spells (for statements only). -/
 def unpack (P : PGen) : ByteArray := ⟨(Array.range P.n).map P.get⟩
 
-theorem rep_unpack (P : PGen) (ht : tailOk P = true) : Rep P (unpack P) := by
+theorem rep_unpack (P : PGen) : Rep P (unpack P) := by
   refine ⟨by simp [unpack, ByteArray.size], fun i => ?_⟩
   by_cases hi : i < P.n
   · simp [unpack, ByteArray.get!, hi]
   · rw [Fast.get!_out _ i (by simp [unpack, ByteArray.size]; omega)]
-    exact Fast.get_out P ht i (by omega)
+    exact Fast.get_out P i (by omega)
 
 /-! ## Copies reading a `PGen` -/
 

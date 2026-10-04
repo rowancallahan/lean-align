@@ -401,7 +401,7 @@ theorem pairFastIP_mz_eq_pairSpec (lo hi : Nat) (g : Genome) (m1 m2 : List Char)
 
 /-- Every index passes the checker on its packed chromosome (no byte genome needed). -/
 def checkAllMzP (idxs : Array Mz.MzIdx) (pgs : Array PGen) : Bool :=
-  (List.range pgs.size).all fun c => tailOk pgs[c]! && Mz.check2P idxs[c]! pgs[c]!
+  (List.range pgs.size).all fun c => Mz.check2P idxs[c]! pgs[c]!
 
 /-- **Packed genome only.**  For a packed genome that spells `g` (`GenomeBytes` of its
 bytes, `Mz.unpack`, which is never computed) and indexes that pass `checkAllMzP`
@@ -412,11 +412,11 @@ theorem pairFastIP_mzP_eq_pairSpec (lo hi : Nat) (g : Genome) (m1 m2 : List Char
     (hok1 : fastOk R1 = true) (hok2 : fastOk R2 = true) :
     pairFastIP mzL mzLookP lo hi pgs idxs R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 := by
   unfold checkAllMzP at hchk
-  simp only [List.all_eq_true, List.mem_range, Bool.and_eq_true] at hchk
+  simp only [List.all_eq_true, List.mem_range] at hchk
   have hrep : RepAll pgs (pgs.map Mz.unpack) := by
     refine ⟨by simp, fun c => ?_⟩
     by_cases hc : c < pgs.size
-    · rw [show (pgs.map Mz.unpack)[c]! = Mz.unpack pgs[c]! by simp [hc]]; exact Mz.rep_unpack _ (hchk c hc).1
+    · rw [show (pgs.map Mz.unpack)[c]! = Mz.unpack pgs[c]! by simp [hc]]; exact Mz.rep_unpack _
     · rw [getElem!_neg pgs c (by omega), getElem!_neg _ c (by simp; omega)]
       exact ⟨rfl, fun i => by rw [get!_out _ i (Nat.zero_le _)]; rfl⟩
   rw [pairFastIP_eq mzL mzLookP lo hi pgs _ idxs R1 R2 hrep (fun P G h ix R j p => mzLookP_eq h ix R j p)]
@@ -424,8 +424,8 @@ theorem pairFastIP_mzP_eq_pairSpec (lo hi : Nat) (g : Genome) (m1 m2 : List Char
   unfold checkAllMz
   simp only [List.all_eq_true, List.mem_range, Array.size_map]
   intro c hc
-  rw [show (pgs.map Mz.unpack)[c]! = Mz.unpack pgs[c]! by simp [hc], ← Mz.check2P_eq (Mz.rep_unpack _ (hchk c hc).1)]
-  exact (hchk c hc).2
+  rw [show (pgs.map Mz.unpack)[c]! = Mz.unpack pgs[c]! by simp [hc], ← Mz.check2P_eq (Mz.rep_unpack _)]
+  exact hchk c hc
 
 end MapSpec.Fast
 
