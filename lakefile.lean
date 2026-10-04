@@ -105,3 +105,7 @@ lean_exe map_bench where              -- benchmark only; prints to stdout
 lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "bench"
   root := `Proto
+
+lean_exe csr_bench where              -- CSR index build/save/load/check timing (unproved IO)
+  srcDir := "bench"
+  root := `CsrBench
