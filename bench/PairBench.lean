@@ -129,7 +129,7 @@ def main (args : List String) : IO UInt32 := do
       IO.println s!"genome packed; rss_MB: {(← statusKB "VmRSS:") / 1024}"
       let idxs := pgs.map fun P => Mz.buildWP P mz B C W T
       assert! Fast.checkAllMzP idxs pgs
-      IO.println s!"packed genome + index checks: ok  minimizer k={mz} B={B} C={C} W={W} T={T} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.sl.size + 8 * ix.runs.size) 0}  genome_bytes: {pgs.foldl (fun n P => n + P.w.size + P.blk.size + P.ex.size) 0}"
+      IO.println s!"packed genome + index checks: ok  minimizer k={mz} B={B} C={C} W={W} T={T} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.sl.size + 8 * ix.runs.size) 0}  genome_bytes: {pgs.foldl (fun n P => n + P.w.size + P.ex.size) 0}"
       pure fun p => Fast.pairFastIP Fast.mzL Fast.mzLookP lo hi pgs idxs p.1 p.2
     else if mz == 0 then do
       let idxs := gbs.map Fast.buildIdx

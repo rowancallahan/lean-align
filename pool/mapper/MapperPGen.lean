@@ -4,11 +4,12 @@ import MapperMzWords
 /-!
 # Compact genome: 2 bits per letter plus the exact non-ACGT runs
 
-`PGen`: letter `i` is the 2-bit code in bits `2·(i % 4)` of byte `w[i / 4]`
-(A0 C1 G2 T3); `blk[i / 64] = 1` marks a full 64-letter block of ACGT letters;
-elsewhere the byte comes from the run list `ex` (LE `UInt32` triples
-`start, stop, byte`, increasing).  `PGen.get P i` is the byte at `i`, and 0 past
-the end (as `ByteArray.get!`) when no flag 1 reaches past the end (`tailOk`).
+`PGen`: blocks of 64 letters, 17 bytes each (one cache line holds a block): a
+flag byte, 1 when the block lies inside the genome and is all ACGT, then the 2-bit
+codes (A0 C1 G2 T3), letter `i` in bits `2·(i % 4)` of byte `i % 64 / 4`.
+Outside flagged blocks the byte comes from the run list `ex` (LE `UInt32`
+triples `start, stop, byte`, increasing).  `PGen.get P i` is the byte at `i`, and
+0 past the end (as `ByteArray.get!`) when no flag 1 reaches past the end (`tailOk`).
 
 The builder `pack` is not trusted: `checkPG P G = true → Rep P G` (same size,
 same byte at every index).  Under `Rep`, the genome-reading loops (`hammingP`,
@@ -20,7 +21,6 @@ namespace MapSpec.Fast
 structure PGen where
   n : Nat
   w : ByteArray
-  blk : ByteArray
   ex : ByteArray
 deriving Inhabited
 
@@ -37,7 +37,8 @@ def exFind (ex : ByteArray) (i : Nat) : (f lo hi : Nat) → Nat
     else lo
 
 /-- 2-bit code of letter `i`. -/
-@[inline] def PGen.code (P : PGen) (i : Nat) : UInt8 := (P.w.get! (i >>> 2) >>> ((i.toUInt8 &&& 3) <<< 1)) &&& 3
+@[inline] def PGen.code (P : PGen) (i : Nat) : UInt8 :=
+  (P.w.get! (17 * (i >>> 6) + 1 + ((i >>> 2) &&& 15)) >>> ((i.toUInt8 &&& 3) <<< 1)) &&& 3
 
 /-- Byte at `i` outside the all-ACGT blocks. -/
 def PGen.slow (P : PGen) (i : Nat) : UInt8 :=
@@ -46,40 +47,41 @@ def PGen.slow (P : PGen) (i : Nat) : UInt8 :=
     if 0 < t && i < u32 P.ex (3 * (t - 1) + 1) then (u32 P.ex (3 * (t - 1) + 2)).toUInt8 else letter (P.code i)
   else 0
 
-/-- `blk[i / 64] = 1`: block `i / 64` lies inside the genome and is all ACGT (a
-missing flag reads 0, so no separate bounds test). -/
+/-- Flag 1: block `i / 64` lies inside the genome and is all ACGT (a missing flag
+reads 0, so no separate bounds test). -/
 @[inline] def PGen.get (P : PGen) (i : Nat) : UInt8 :=
-  if P.blk.get! (i >>> 6) == 1 then letter (P.code i) else P.slow i
+  if P.w.get! (17 * (i >>> 6)) == 1 then letter (P.code i) else P.slow i
 
-/-- Builder state (not trusted; see `checkPG`): letters so far, packed bytes, the
-byte being filled, block flags, the current block's flag, runs, previous byte. -/
+/-- Builder state (not trusted; see `checkPG`): letters so far, blocks, the byte
+being filled, the current block's flag and its place, runs, previous byte. -/
 structure PB where
   n : Nat := 0
   w : ByteArray
   cur : UInt8 := 0
-  blk : ByteArray
   f : UInt8 := 1
+  fpos : Nat := 0
   ex : Array UInt32 := #[]
   prev : UInt8 := 65
 
 /-- Empty builder with room for `cap` letters (untouched capacity is not resident). -/
-def PB.init (cap : Nat) : PB := { w := .emptyWithCapacity (cap / 4 + 1), blk := .emptyWithCapacity (cap / 64 + 1) }
+def PB.init (cap : Nat) : PB := { w := .emptyWithCapacity (17 * (cap / 64 + 1)) }
 
-/-- Append letter `v`. -/
-def PB.push (s : PB) (v : UInt8) : PB :=
-  let r := s.n % 4
-  let cur := s.cur ||| ((c2 v).toUInt8 <<< (2 * r).toUInt8)
-  let odd := !acgt v
-  let ex := if !odd then s.ex else if s.n > 0 && s.prev == v then s.ex.set! (s.ex.size - 2) (s.n + 1).toUInt32
-    else ((s.ex.push s.n.toUInt32).push (s.n + 1).toUInt32).push v.toUInt32
-  let f := if odd then 0 else s.f
-  let (w, cur) := if r == 3 then (s.w.push cur, 0) else (s.w, cur)
-  let (blk, f) := if s.n % 64 == 63 then (s.blk.push f, 1) else (s.blk, f)
-  { n := s.n + 1, w, cur, blk, f, ex, prev := v }
+/-- Append letter `v` (fields taken apart so the arrays are updated in place). -/
+def PB.push : PB → UInt8 → PB
+  | ⟨n, w, cur, f, fpos, ex, prev⟩, v =>
+    let fpos := if n % 64 == 0 then w.size else fpos
+    let w := if n % 64 == 0 then w.push 0 else w
+    let cur := cur ||| ((c2 v).toUInt8 <<< (2 * (n % 4)).toUInt8)
+    let odd := !acgt v
+    let ex := if !odd then ex else if n > 0 && prev == v then ex.set! (ex.size - 2) (n + 1).toUInt32
+      else ((ex.push n.toUInt32).push (n + 1).toUInt32).push v.toUInt32
+    let f := if odd then 0 else f
+    let (w, cur) := if n % 4 == 3 then (w.push cur, 0) else (w, cur)
+    let (w, f) := if n % 64 == 63 then (w.set! fpos f, 1) else (w, f)
+    ⟨n + 1, w, cur, f, fpos, ex, v⟩
 
-def PB.finish (s : PB) : PGen :=
-  -- a partial last block takes the slow path
-  ⟨s.n, if s.n % 4 == 0 then s.w else s.w.push s.cur, if s.n % 64 == 0 then s.blk else s.blk.push 0, pack32 s.ex⟩
+/-- A partial last block keeps flag 0 (slow path). -/
+def PB.finish (s : PB) : PGen := ⟨s.n, if s.n % 4 == 0 then s.w else s.w.push s.cur, pack32 s.ex⟩
 
 def pack (G : ByteArray) : PGen := (G.foldl PB.push (PB.init G.size)).finish
 
@@ -92,13 +94,14 @@ theorem get!_out (G : ByteArray) (i : Nat) (h : G.size ≤ i) : G.get! i = 0 := 
 
 /-- No block flag 1 covers a place `≥ n`. -/
 def tailOk (P : PGen) : Bool :=
-  decide (P.blk.size ≤ P.n / 64) || (P.blk.size == P.n / 64 + 1 && P.blk.get! (P.n / 64) != 1)
+  decide (P.w.size ≤ 17 * (P.n / 64)) ||
+    (decide (P.w.size ≤ 17 * (P.n / 64) + 17) && P.w.get! (17 * (P.n / 64)) != 1)
 
 theorem get_out (P : PGen) (h : tailOk P = true) (i : Nat) (hi : P.n ≤ i) : P.get i = 0 := by
   have hs : i >>> 6 = i / 64 := by rw [Nat.shiftRight_eq_div_pow]
-  have hb : P.blk.get! (i >>> 6) ≠ 1 := by
+  have hb : P.w.get! (17 * (i >>> 6)) ≠ 1 := by
     rw [hs]
-    simp only [tailOk, Bool.or_eq_true, decide_eq_true_eq, Bool.and_eq_true, beq_iff_eq, bne_iff_ne, ne_eq] at h
+    simp only [tailOk, Bool.or_eq_true, decide_eq_true_eq, Bool.and_eq_true, bne_iff_ne, ne_eq] at h
     by_cases e : i / 64 = P.n / 64
     · rcases h with h | h
       · rw [get!_out _ _ (by omega)]; decide
