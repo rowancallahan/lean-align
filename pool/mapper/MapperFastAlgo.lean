@@ -8,9 +8,9 @@ Scoring (0, −4, −6, −2), `T = −12`, so the penalty cap is 12.  Reads of
 
 * Hashed 25-mer index per chromosome: CSR over `2^24` buckets, entries
   (position, key) as `UInt32` pairs.  `mix` is a bijection on 50-bit values,
-  so (bucket, key) determines the word.  `checkIdx` certifies an index
-  (every ACGT 25-mer present, every entry correct, positions increasing in
-  each bucket); the builder is not trusted.
+  so (bucket, key) determines the word.  `checkIdx` certifies an index in one
+  rolling pass (every ACGT 25-mer is the next entry of its bucket, and every
+  bucket is used up), plus the odd-letter lists; the builder is not trusted.
 * Anchors: packed `A·16 + mask`, `A = p + BIAS − j·q` (diagonal biased by
   `BIAS`), mask = the seeds that match exactly on that diagonal.
 * Same-length windows (penalty `4·mismatches`), best support first, with the
@@ -69,22 +69,31 @@ deriving Inhabited
 
 def NB : Nat := 1 <<< 24
 
-/-- Builder (fast, not trusted): two passes over the chromosome. -/
+/-- Builder (fast, not trusted): two passes over the chromosome with a rolling
+code (`good` = length of the ACGT run ending here). -/
 def buildIdx (g : ByteArray) : HIdx := Id.run do
+  let wmask : UInt64 := 0x3FFFFFFFFFFFF
   let mut cnt : Array UInt32 := Array.replicate (NB + 1) 0
-  for p in [0:g.size + 1 - q] do
-    if allACGT g p (p + q) then
-      let b := bucketOf (hashAt g p)
+  let mut x : UInt64 := 0
+  let mut good := 0
+  for p in [0:g.size] do
+    let v := g.get! p
+    if acgt v then x := (x * 4 + c2 v) &&& wmask; good := good + 1 else good := 0
+    if good ≥ q then
+      let b := bucketOf (mix x)
       cnt := cnt.modify (b + 1) (· + 1)
   for b in [0:NB] do cnt := cnt.set! (b + 1) (cnt[b + 1]! + cnt[b]!)
   let mut fill := cnt
   let mut ent : Array UInt32 := Array.replicate (2 * cnt[NB]!.toNat) 0
-  for p in [0:g.size + 1 - q] do
-    if allACGT g p (p + q) then
-      let y := hashAt g p
+  x := 0; good := 0
+  for p in [0:g.size] do
+    let v := g.get! p
+    if acgt v then x := (x * 4 + c2 v) &&& wmask; good := good + 1 else good := 0
+    if good ≥ q then
+      let y := mix x
       let b := bucketOf y
       let i := fill[b]!.toNat
-      ent := (ent.set! (2 * i) p.toUInt32).set! (2 * i + 1) (keyOf y)
+      ent := (ent.set! (2 * i) (p + 1 - q).toUInt32).set! (2 * i + 1) (keyOf y)
       fill := fill.set! b (i + 1).toUInt32
   let mut odd : Array (Array Nat) := Array.replicate 256 #[]
   for p in [0:g.size] do
@@ -94,38 +103,33 @@ def buildIdx (g : ByteArray) : HIdx := Id.run do
 
 /-! ### Checker -/
 
-/-- Completeness at places `p, p+1, …` (`k` of them): each ACGT word's place is the
-entry `fill[b]` of its bucket `b` (`fill` is only a hint, every claim is checked). -/
-def checkComplete (ix : HIdx) (G : ByteArray) (fill : Array UInt32) : (k p : Nat) → Bool
-  | 0, _ => true
-  | k + 1, p =>
-    if allACGT G p (p + q) then
-      let y := hashAt G p
-      let b := bucketOf y
-      let t := fill[b]!.toNat
-      decide (ix.offs[b]!.toNat ≤ t) && decide (t < ix.offs[b + 1]!.toNat) &&
-        ix.ent[2 * t]!.toNat == p && ix.ent[2 * t + 1]! == keyOf y &&
-        checkComplete ix G (fill.set! b (t + 1).toUInt32) k (p + 1)
-    else checkComplete ix G fill k (p + 1)
+/-- One pass over the chromosome from `e` (`k` letters).  `x` is the code of the
+last `r ≤ 25` letters, all ACGT (`r` = the ACGT run ending before `e`, capped).
+Each ACGT word must be the next entry `fill[b]` of its bucket `b`, with its
+place and key; `none` if one is not. -/
+def scanIdx (ix : HIdx) (G : ByteArray) : (k e : Nat) → (x : UInt64) → (r : Nat) → Array UInt32 →
+    Option (Array UInt32)
+  | 0, _, _, _, fill => some fill
+  | k + 1, e, x, r, fill =>
+    let v := G.get! e
+    if acgt v then
+      let x := (x * 4 + c2 v) &&& 0x3FFFFFFFFFFFF
+      let r := min (r + 1) q
+      if r = q then
+        let y := mix x
+        let b := bucketOf y
+        let t := fill[b]!.toNat
+        if ix.offs[b]!.toNat ≤ t && t < ix.offs[b + 1]!.toNat && ix.ent[2 * t]!.toNat == e + 1 - q &&
+            ix.ent[2 * t + 1]! == keyOf y then
+          scanIdx ix G k (e + 1) x r (fill.set! b (t + 1).toUInt32)
+        else none
+      else scanIdx ix G k (e + 1) x r fill
+    else scanIdx ix G k (e + 1) 0 0 fill
 
-/-- Entry `t` of bucket `b` is right: an ACGT word at its place, hashing to
-(`b`, its key); and the next entry of the bucket has a larger place. -/
-@[inline] def entryOk (ix : HIdx) (G : ByteArray) (b hi t : Nat) : Bool :=
-  let p := ix.ent[2 * t]!.toNat
-  decide (p + q ≤ G.size) && allACGT G p (p + q) && bucketOf (hashAt G p) == b &&
-    keyOf (hashAt G p) == ix.ent[2 * t + 1]! &&
-    (decide (hi ≤ t + 1) || decide (p < ix.ent[2 * t + 2]!.toNat))
-
-def checkBucket (ix : HIdx) (G : ByteArray) (b hi : Nat) : (k t : Nat) → Bool
+/-- After the scan every bucket was used up exactly. -/
+def fillOk (ix : HIdx) (fill : Array UInt32) : (k b : Nat) → Bool
   | 0, _ => true
-  | k + 1, t => entryOk ix G b hi t && checkBucket ix G b hi k (t + 1)
-
-def checkSound (ix : HIdx) (G : ByteArray) : (k b : Nat) → Bool
-  | 0, _ => true
-  | k + 1, b =>
-    let lo := ix.offs[b]!.toNat
-    let hi := ix.offs[b + 1]!.toNat
-    checkBucket ix G b hi (hi - lo) lo && checkSound ix G k (b + 1)
+  | k + 1, b => fill[b]! == ix.offs[b + 1]! && fillOk ix fill k (b + 1)
 
 /-- Every place `p, p+1, …` (`k` of them) holding a byte `v` other than ACGT is
 entry `cur[v]` of `odd[v]` (`cur` is only a hint). -/
@@ -142,7 +146,9 @@ def increasing (a : Array Nat) : (k i : Nat) → Bool
 
 /-- The runtime checker. -/
 def checkIdx (ix : HIdx) (G : ByteArray) : Bool :=
-  checkComplete ix G ix.offs (G.size + 1 - q) 0 && checkSound ix G NB 0 &&
+  (match scanIdx ix G G.size 0 0 0 ix.offs with
+   | some fill => fillOk ix fill NB 0
+   | none => false) &&
     checkOdd ix G (Array.replicate 256 0) G.size 0 &&
     (List.range 256).all fun v => increasing ix.odd[v]! (ix.odd[v]!.size - 1) 0
 

@@ -69,12 +69,15 @@ def main (args : List String) : IO UInt32 := do
   let fast := reads.foldl (fun k r => if Fast.fastOk r then k + 1 else k) 0
   IO.println s!"fast-path reads: {fast}"
   assert! fast == reads.size   -- other read lengths take the proved slow fallback
+  let reps := ((← IO.getEnv "FAST_REPS").getD "1").toNat!   -- repeat the mapping (timing only)
   let t0 ← IO.monoNanosNow
-  let res := reads.map fun r => Fast.mapFast gbs idxs (if t0 == 1 then r.push 0 else r)
+  let mut res := #[]
+  for k in [0:reps] do
+    res := reads.map fun r => Fast.mapFast gbs idxs (if t0 + k == 1 then r.push 0 else r)
   let mapped := res.foldl (fun k x => if x.isSome then k + 1 else k) 0
   let t1 ← IO.monoNanosNow
   IO.println s!"mapped: {mapped}"
-  IO.println s!"map_seconds: {secs t0 t1}  reads/s: {Float.ofNat reads.size / secs t0 t1}"
+  IO.println s!"map_seconds: {secs t0 t1 / Float.ofNat reps}  reads/s: {Float.ofNat (reps * reads.size) / secs t0 t1}"
   match rest with
   | [dp] =>
     IO.FS.writeFile dp (String.join (List.zipWith (fun nm x => match x with
