@@ -296,6 +296,81 @@ theorem addB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (st
   · exact add_pen_le _ _ _ _ _
   · exact Nat.le_refl _
 
+/-! ## Stage K with shared profiles is stage K -/
+
+theorem kerGP_eq (R G : ByteArray) (st len lim : Nat) :
+    kerGP R G st len lim (fwdProf R G st) (bwdProf R G (st + len)) = kerG R G st len lim := by
+  unfold kerGP kerG
+  simp only [gappedPen2P_eq]
+
+theorem kerHP_eq (R : ByteArray) (gbs : Array ByteArray) (c st len l : Nat) :
+    kerHP R gbs c st len l (fwdProf R gbs[c]! st) (bwdProf R gbs[c]! (st + len)) = kerH R gbs c st len l := by
+  unfold kerHP kerH ker16P ker16
+  simp only [kerGP_eq, twoGapBP_eq, filt16P_eq]
+
+theorem addKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (pf pb : Nat × Nat × Nat)
+    (b : Best) (hf : 0 ≤ st → pf = fwdProf R gbs[c]! st.toNat)
+    (hb : 0 ≤ st → 0 ≤ len → pb = bwdProf R gbs[c]! (st.toNat + len.toNat)) :
+    addKP R gbs c lim st len pf pb b = addK R gbs c lim st len b := by
+  unfold addKP addK
+  split
+  · next h => rw [hf h.1, hb h.1 h.2]; simp only [kerHP_eq]
+  · rfl
+
+theorem shapeR_ge (shs : List (Int × Int)) :
+    ∀ sh ∈ shs, sh.1.natAbs ≤ shapeR shs ∧ sh.2.natAbs ≤ shapeR shs := by
+  have key : ∀ (l : List (Int × Int)) (m : Nat),
+      m ≤ l.foldl (fun m sh => max m (max sh.1.natAbs sh.2.natAbs)) m ∧
+      ∀ sh ∈ l, sh.1.natAbs ≤ l.foldl (fun m sh => max m (max sh.1.natAbs sh.2.natAbs)) m ∧
+        sh.2.natAbs ≤ l.foldl (fun m sh => max m (max sh.1.natAbs sh.2.natAbs)) m := by
+    intro l
+    induction l with
+    | nil => intro m; simp
+    | cons x l ih =>
+      intro m
+      obtain ⟨h1, h2⟩ := ih (max m (max x.1.natAbs x.2.natAbs))
+      simp only [List.foldl_cons]
+      refine ⟨by omega, fun sh hsh => ?_⟩
+      rcases List.mem_cons.mp hsh with rfl | hsh
+      · omega
+      · exact h2 sh hsh
+  exact (key shs 0).2
+
+theorem foldl_ext_mem {α β : Type} (f g : β → α → β) (l : List α) (h : ∀ b, ∀ a ∈ l, f b a = g b a) :
+    ∀ b, l.foldl f b = l.foldl g b := by
+  induction l with
+  | nil => intro b; rfl
+  | cons a l ih =>
+    intro b
+    simp only [List.foldl_cons]
+    rw [h b a List.mem_cons_self]
+    exact ih (fun b a ha => h b a (List.mem_cons_of_mem _ ha)) _
+
+theorem stageKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int))
+    (ds : List Nat) (b : Best) : stageKP R gbs c lim shs ds b = stageK R gbs c lim shs ds b := by
+  unfold stageKP stageK
+  simp only []
+  have hr := shapeR_ge shs
+  generalize shapeR shs = d at hr
+  apply foldl_ext_mem
+  intro b D _
+  apply foldl_ext_mem
+  intro b sh hsh
+  obtain ⟨h1, h2⟩ := hr sh hsh
+  apply addKP_eq
+  · intro _
+    rw [getElem!_pos _ _ (by simp; omega)]
+    simp only [Array.getElem_map, Array.getElem_range]
+    unfold dst; congr 2; omega
+  · intro hs hl
+    rw [getElem!_pos _ _ (by simp; omega)]
+    simp only [Array.getElem_map, Array.getElem_range]
+    unfold dst wlen at *
+    congr 1; omega
+
+theorem stageKP_fun : stageKP = stageK := by
+  funext R gbs c lim shs ds b; exact stageKP_eq R gbs c lim shs ds b
+
 /-! ## Phase 1 and the stages -/
 
 section chrom
@@ -536,7 +611,7 @@ theorem chromKB_cover (arr : Nat → Array Nat)
   have hacc : acc = (pre.map arr).reverse := hacc0.symm
   obtain ⟨J, hJ⟩ : ∃ J, J = pre.reverse := ⟨_, rfl⟩
   unfold chromKB
-  simp only []
+  simp only [stageKP_fun, ite_self]
   -- stage K
   generalize hQ1 : min b1.pen P = Q1
   generalize hshK : (shapesAt Q1).filter (· != (0, 0)) = shK
