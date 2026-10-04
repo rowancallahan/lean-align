@@ -53,12 +53,25 @@ entries (pos, key) in increasing pos.  `odd` = starts of the q-windows that
 contain a letter other than ACGTN (looked up directly). -/
 structure Idx where
   q : Nat
-  offs : Array UInt32
-  ent : Array UInt32
+  offs : ByteArray    -- 2^24 + 1 bucket starts, 4 bytes each (little endian)
+  ent : ByteArray     -- entries (pos, key), 4 + 4 bytes
+  -- ByteArrays, not `Array UInt32`: sharing an Array with a Task makes Lean
+  -- walk all its elements once (lean_mark_mt, ~3 s on chr21).
   odd : Array Nat
   pk : ByteArray      -- genome, 2 bits per letter, first letter in the top bits (non-ACGT ↦ 0)
   amb : ByteArray     -- per 32-letter block: 1 when it holds a letter other than ACGT
 deriving Inhabited
+
+/-- Little-endian 4-byte packing. -/
+def pack32 (a : Array UInt32) : ByteArray := Id.run do
+  let mut b := ByteArray.emptyWithCapacity (4 * a.size)
+  for x in a do
+    b := ((b.push x.toUInt8).push (x >>> 8).toUInt8).push (x >>> 16).toUInt8 |>.push (x >>> 24).toUInt8
+  return b
+
+@[inline] def get32 (b : ByteArray) (i : Nat) : UInt32 :=
+  (b.get! (4 * i)).toUInt32 ||| (b.get! (4 * i + 1)).toUInt32 <<< 8 |||
+    (b.get! (4 * i + 2)).toUInt32 <<< 16 ||| (b.get! (4 * i + 3)).toUInt32 <<< 24
 
 def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
   assert! q == 25
@@ -96,7 +109,7 @@ def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
     let c := code (g.get! p)
     if c < 4 then pk := pk.set! (p / 4) (pk.get! (p / 4) ||| (c.toUInt8 <<< (6 - 2 * (p % 4)).toUInt8))
     else amb := amb.set! (p / 32) 1
-  return { q, offs := cnt, ent, odd, pk, amb }
+  return { q, offs := pack32 cnt, ent := pack32 ent, odd, pk, amb }
 
 /-- 2-bit code of the 25 letters g[p, p+25), first letter in the top bits (as `seedCode`). -/
 @[inline] def gword (pk : ByteArray) (p : Nat) : UInt64 :=
@@ -142,10 +155,10 @@ def eqRun (a b : ByteArray) (i j stop : Nat) : Bool :=
 termination_by stop - i
 
 /-- Push `(p + BIAS - shift)·16 + bit` for entries t ∈ [t, hi) of the bucket with this key. -/
-def scanBucket (ent : Array UInt32) (key : UInt32) (t hi shift bit : Nat) (acc : Array Nat) : Array Nat :=
+def scanBucket (ent : ByteArray) (key : UInt32) (t hi shift bit : Nat) (acc : Array Nat) : Array Nat :=
   if h : t < hi then
     scanBucket ent key (t + 1) hi shift bit
-      (if ent[2 * t + 1]! == key then acc.push ((ent[2 * t]!.toNat + BIAS - shift) * 16 + bit) else acc)
+      (if get32 ent (2 * t + 1) == key then acc.push (((get32 ent (2 * t)).toNat + BIAS - shift) * 16 + bit) else acc)
   else acc
 termination_by hi - t
 
@@ -157,7 +170,7 @@ def lookup (idx : Idx) (g r : ByteArray) (j : Nat) (v : UInt64) : Array Nat :=
   if v >>> 60 == 0 then
     let y := mix v
     let b := (y >>> (50 - BBITS)).toNat
-    scanBucket idx.ent (y &&& KMASK).toUInt32 idx.offs[b]!.toNat idx.offs[b + 1]!.toNat o (1 <<< j) #[]
+    scanBucket idx.ent (y &&& KMASK).toUInt32 (get32 idx.offs b).toNat (get32 idx.offs (b + 1)).toNat o (1 <<< j) #[]
   else
     idx.odd.foldl (init := #[]) fun acc p =>
       if eqRun g r p o (p + q) then acc.push ((p + BIAS - o) * 16 + (1 <<< j)) else acc
@@ -229,6 +242,7 @@ structure Best where
   st : Nat := 0
   len : Nat := 0
   amb : Bool := false
+deriving Inhabited
 
 @[inline] def Best.add (b : Best) (st len pen : Nat) : Best :=
   if pen < b.pen then { pen, st, len, amb := false }
@@ -309,7 +323,7 @@ spoiling ≤ min(L, 2) seeds plus mismatches: 6 + 2L + 4(k - min(L, 2)) ≥ 4k),
 so the search stops once 4k > best.  Same-length windows are scored when their
 anchor first appears (later seeds cannot change their penalty); gapped ones
 only when best ≥ 8, which needs k ≥ 3. -/
-def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
+def mapCore (idx : Idx) (g r : ByteArray) (init : Best) : Best × Nat := Id.run do
   let n := r.size
   let q := idx.q
   assert! n / 4 == q && n + 3 ≤ BIAS
@@ -320,14 +334,16 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
   let sizes := vs.map fun v =>
     if v >>> 60 != 0 then 0 else
     let b := (mix v.toUInt64 >>> (50 - BBITS)).toNat
-    idx.offs[b + 1]!.toNat - idx.offs[b]!.toNat
+    (get32 idx.offs (b + 1)).toNat - (get32 idx.offs b).toNat
   let order := #[0, 1, 2, 3].insertionSort (fun i j => sizes[i]! < sizes[j]!)
   let mut as : Array Nat := #[]
-  let mut b : Best := {}
+  let mut b : Best := init
   let mut looked := 0
+  let mut lookups := 0
   for k in [0:4] do
     let j := order[k]!
     looked := looked ||| (1 <<< j)
+    lookups := lookups + 1
     let lj := lookup idx g r j vs[j]!.toUInt64
     let fresh := newOnly as lj 0 0 #[]
     as := merge as lj 0 0 #[]
@@ -339,8 +355,47 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
         if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
     if k ≥ 2 && b.pen ≥ 8 then b := gappedStage idx vs plain r g q as looked b
     if 4 * (k + 1) > b.pen then break
-  if b.pen ≤ cap && !b.amb then return some (b.st, b.len, b.pen)
-  return none
+  return (b, lookups)
+
+/-- Reverse complement (letters other than ACGT kept). -/
+def revComp (r : ByteArray) : ByteArray := Id.run do
+  let mut o := ByteArray.emptyWithCapacity r.size
+  for i in [0:r.size] do
+    let c := r.get! (r.size - 1 - i)
+    o := o.push (if c == 65 then 84 else if c == 84 then 65 else if c == 67 then 71 else if c == 71 then 67 else c)
+  return o
+
+/-- Placeholder start for "the best so far is on the other strand". -/
+def OTHER : Nat := 1 <<< 62
+
+/-- Unique best window (start, len, penalty, reverse?) and the number of seed
+lookups.  With `both`, the reverse complement is mapped too, starting from the
+forward best: a reverse window that only ties it makes the read ambiguous
+(different strand = different window), one that beats it wins.  Exact given
+that each strand's search is exact for windows with penalty ≤ its start best. -/
+def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × Nat × Bool) × Nat := Id.run do
+  let (f, kf) := mapCore idx g r {}
+  if !both then
+    return (if f.pen ≤ cap && !f.amb then some (f.st, f.len, f.pen, false) else none, kf)
+  let (b, kr) := mapCore idx g (revComp r) { f with st := OTHER, len := 0 }
+  -- b.amb covers f.amb and reverse windows tying the forward best
+  let res := if b.st == OTHER then
+      (if b.pen ≤ cap && !b.amb then some (f.st, f.len, f.pen, false) else none)
+    else (if b.pen ≤ cap && !b.amb then some (b.st, b.len, b.pen, true) else none)
+  return (res, kf + kr)
+
+def rss : IO String := do
+  let st ← IO.FS.readFile "/proc/self/status"
+  return " ".intercalate ((st.splitOn "\n").filter (fun l => l.startsWith "VmRSS" || l.startsWith "VmHWM"))
+
+/-- Map `reads` in `tasks` chunks, one `Task.spawn` each (pure: = reads.map). -/
+def mapAll (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray) (tasks : Nat) :
+    Array (Option (Nat × Nat × Nat × Bool) × Nat) :=
+  if tasks ≤ 1 then reads.map (mapRead idx g · both) else
+  let csz := (reads.size + tasks - 1) / tasks
+  let ts := (List.range tasks).map fun t =>
+    Task.spawn fun _ => (reads.extract (t * csz) (t * csz + csz)).map (mapRead idx g · both)
+  ts.foldl (fun acc t => acc ++ t.get) #[]
 
 def main (args : List String) : IO UInt32 := do
   let gpath :: rpath :: l0s :: rest := args | return 2
@@ -353,23 +408,25 @@ def main (args : List String) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   let idx := buildIdx g l0
   assert! l0 == 25
-  IO.println s!"index entries: {idx.ent.size / 2}"
+  IO.println s!"index entries: {idx.ent.size / 8}"
+  IO.println (← rss)
   let t1 ← IO.monoNanosNow
   let reps := ((← IO.getEnv "PROTO_REPS").getD "1").toNat!   -- for profiling
-  let mut res : Array (Option (Nat × Nat × Nat)) := #[]
-  for _ in [0:reps] do
-    res := #[]
-    for r in reads do res := res.push (mapRead idx g r)
+  let tasks := ((← IO.getEnv "PROTO_TASKS").getD "1").toNat!
+  let both := (← IO.getEnv "PROTO_BOTH").isSome
+  let mut out : Array (Option (Nat × Nat × Nat × Bool) × Nat) := #[]
+  for _ in [0:reps] do out := mapAll idx g both reads tasks
+  let res := out.map (·.1)
   let mapped := (res.filter (·.isSome)).size
-  IO.println s!"mapped: {mapped}"
+  IO.println s!"mapped: {mapped}  lookups/read: {Float.ofNat (out.foldl (· + ·.2) 0) / Float.ofNat reads.size}"
   let t2 ← IO.monoNanosNow
   let secs := Float.ofNat (t2 - t1) / 1e9
-  IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat (reps * reads.size) / secs}"
+  IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat (reps * reads.size) / secs}  {← rss}"
   match rest with
   | [_, dp] =>
     let names := (List.range (rlines.size / 2)).map fun i => (rlines[2*i]!.drop 1).toString
     IO.FS.writeFile dp (String.join ((names.zip res.toList).map fun (nm, x) => match x with
-      | some (s, l, p) => s!"{nm}\t{s}\t{l}\t{-(Int.ofNat p)}\n"
+      | some (s, l, p, rv) => s!"{nm}\t{s}\t{l}\t{-(Int.ofNat p)}" ++ (if both then (if rv then "\t-" else "\t+") else "") ++ "\n"
       | none => s!"{nm}\tnone\n"))
   | _ => pure ()
   match rest with
@@ -379,7 +436,7 @@ def main (args : List String) : IO UInt32 := do
     let mut right := 0
     for (line, r) in tl.zip res.toList do
       match line.splitOn "\t", r with
-      | [_, _, pos, _], some (s, _, _) => if pos.toNat! == s + 1 then right := right + 1
+      | [_, _, pos, _], some (s, _, _, false) => if pos.toNat! == s + 1 then right := right + 1
       | _, _ => pure ()
     IO.println s!"at_true_position: {right}"
   | [] => pure ()
