@@ -146,14 +146,18 @@ def main (args : List String) : IO UInt32 := do
   let idx := buildIdx g l0
   IO.println s!"index entries: {idx.pos.size}"
   let t1 ← IO.monoNanosNow
-  let mut res : Array (Option (Nat × Nat × Nat)) := #[]
-  for r in reads do res := res.push (mapRead idx g r)
+  let nt := (rest.find? (·.startsWith "-t")).map (·.drop 2 |>.toString.toNat!) |>.getD 1
+  let chunk := (reads.size + nt - 1) / nt
+  let tasks := (List.range nt).map fun t =>
+    Task.spawn (prio := .dedicated) fun _ => (reads.extract (t * chunk) ((t + 1) * chunk)).map (mapRead idx g)
+  let res := (tasks.map Task.get).foldl (· ++ ·) #[]
+  assert! res.size == reads.size
   let mapped := (res.filter (·.isSome)).size
   IO.println s!"mapped: {mapped}"
   let t2 ← IO.monoNanosNow
   let secs := Float.ofNat (t2 - t1) / 1e9
   IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat reads.size / secs}"
-  match rest with
+  match rest.filter (!·.startsWith "-t") with
   | tp :: _ =>
     let tl := ((← IO.FS.readFile tp).splitOn "\n").filter (· ≠ "") |>.drop 1
     let mut right := 0
