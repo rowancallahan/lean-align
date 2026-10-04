@@ -38,6 +38,9 @@ example : gapBound2 ⟨0, -4, -6, -2⟩ (-12) = 0 := by decide
 def shapeOk (d d2 : Nat) (s t : Int) : Prop :=
   s.natAbs + t.natAbs ≤ d ∧ ((0 ≤ s ∧ 0 ≤ t) ∨ (s ≤ 0 ∧ t ≤ 0) ∨ s.natAbs + t.natAbs ≤ d2)
 
+instance (d d2 : Nat) (s t : Int) : Decidable (shapeOk d d2 s t) :=
+  inferInstanceAs (Decidable (_ ∧ _))
+
 /-- Like `errCoords`, but a gap-in-x run gives one coordinate (its first column). -/
 def errReps : List Step → List Char → List Char → Nat → Option Step → List Nat
   | [], _, _, _, _ => []
