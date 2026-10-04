@@ -454,6 +454,19 @@ def hLook : Look HIdx (Option UInt64) := ⟨fun _ h => h, sizeH, lookupH⟩
   let b := fresh.foldl (sameStep2 R G c) b
   (as, if 2 ≤ k && 8 ≤ b.pen then gapAll2 R G c as looked as.size 0 b else b)
 
+/-- `lzStep` with the looked-up anchors `lj` given and `looked` already updated
+(`lzStep_eq_A`); lets a caller look a seed up once for several chromosomes. -/
+@[inline] def lzStepA (R G : ByteArray) (c : Nat) (lj : Array Nat) (k : Nat) (as : Array Nat) (looked : Nat)
+    (b : Best) : Array Nat × Best :=
+  let fresh := newOnly as lj 0 0 #[]
+  let as := merge as lj 0 0 #[]
+  let b := fresh.foldl (sameStep2 R G c) b
+  (as, if 2 ≤ k && 8 ≤ b.pen then gapAll2 R G c as looked as.size 0 b else b)
+
+theorem lzStep_eq_A {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (ix : L)
+    (ps : Array P) (j k : Nat) (as : Array Nat) (looked : Nat) (b : Best) :
+    lzStep R G c lk ix ps j k as looked b = lzStepA R G c (lk.look ix G R j ps[j]!) k as (looked + pow2 j) b := rfl
+
 def seedHashes (R : ByteArray) : Array (Option UInt64) :=
   #[seedHash R 0, seedHash R 1, seedHash R 2, seedHash R 3]
 
