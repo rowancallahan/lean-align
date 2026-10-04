@@ -1,3 +1,4 @@
+import Std.Data.HashMap
 /-!
 Speed prototype only (NOT proved, not part of the tool).  Measures how fast
 the planned fast mapper can go before the proofs are written.
@@ -397,6 +398,19 @@ def mapAll (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray) (
     Task.spawn fun _ => (reads.extract (t * csz) (t * csz + csz)).map (mapRead idx g · both)
   ts.foldl (fun acc t => acc ++ t.get) #[]
 
+/-- `mapAll` mapping each distinct read once (identical read ⇒ identical answer). -/
+def mapDedup (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray) (tasks : Nat) :
+    Array (Option (Nat × Nat × Nat × Bool) × Nat) := Id.run do
+  let mut first : Std.HashMap ByteArray Nat := {}
+  let mut uniq : Array ByteArray := #[]
+  let mut slot : Array Nat := Array.emptyWithCapacity reads.size
+  for r in reads do
+    match first.get? r with
+    | some i => slot := slot.push i
+    | none => first := first.insert r uniq.size; slot := slot.push uniq.size; uniq := uniq.push r
+  let out := mapAll idx g both uniq tasks
+  return slot.map (out[·]!)
+
 def main (args : List String) : IO UInt32 := do
   let gpath :: rpath :: l0s :: rest := args | return 2
   let l0 := l0s.toNat!
@@ -415,7 +429,8 @@ def main (args : List String) : IO UInt32 := do
   let tasks := ((← IO.getEnv "PROTO_TASKS").getD "1").toNat!
   let both := (← IO.getEnv "PROTO_BOTH").isSome
   let mut out : Array (Option (Nat × Nat × Nat × Bool) × Nat) := #[]
-  for _ in [0:reps] do out := mapAll idx g both reads tasks
+  let dedup := (← IO.getEnv "PROTO_DEDUP").isSome
+  for _ in [0:reps] do out := if dedup then mapDedup idx g both reads tasks else mapAll idx g both reads tasks
   let res := out.map (·.1)
   let mapped := (res.filter (·.isSome)).size
   IO.println s!"mapped: {mapped}  lookups/read: {Float.ofNat (out.foldl (· + ·.2) 0) / Float.ofNat reads.size}"
