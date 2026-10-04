@@ -30,6 +30,11 @@ def work (shared : ByteArray) (steps : Nat) (i : Nat) : UInt64 := Id.run do
     acc := acc + (shared.get! (h % n).toNat).toUInt64
   return acc
 
+def makeShared (n : Nat) : ByteArray := Id.run do
+  let mut a := ByteArray.emptyWithCapacity n
+  for i in [0:n] do a := a.push (i * 31 % 251).toUInt8
+  return a
+
 def scoring : AlignmentSpec.Scoring :=
   { matchScore := 0, mismatchScore := -4, gapOpen := -6, gapExtend := -2 }
 
@@ -52,7 +57,8 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | ["synth", ts, ns, ws, mbs] =>
     let nt := ts.toNat!; let items := ns.toNat!; let steps := ws.toNat!
-    let shared := ByteArray.mk (Array.ofFn (n := mbs.toNat! * 1048576) fun i => (i.val * 31 % 251).toUInt8)
+    let sharedRef ← IO.mkRef (makeShared (mbs.toNat! * 1048576))
+    let shared ← sharedRef.get
     IO.println s!"shared bytes: {shared.size}  peak_rss_MB {← peakRssMB}"
     let xs := Array.range items
     let res ← timeIt s!"synth threads {nt}" (fun _ => parMap nt (work shared steps) xs) (·.size)
