@@ -18,7 +18,7 @@ counts reads at the true position (and strand, with `FAST_BOTH`).
 Reads the FASTA (one or more chromosomes) and the reads, builds the hashed
 index of every chromosome, runs the proved checker on it, maps every read with
 the proved `mapFast` (`FAST_TASKS=n`: `mapFastPar` over n tasks; `FAST_MZ=k`
-[`FAST_MZ_B=B`]: minimizer index, `mapFastMz`/`mapFastMzPar`), prints times and reads/s, and optionally writes
+[`FAST_MZ_B=B`, `FAST_MZ_C=c`, `FAST_MZ_W=bytes`, `FAST_MZ_T=t`]: minimizer index, `mapFastMz`/`mapFastMzPar`), prints times and reads/s, and optionally writes
 `name \t start \t len \t score` (or `name \t none`) per read, the format of
 `proto`'s dump.
 -/
@@ -123,8 +123,11 @@ def main (args : List String) : IO UInt32 := do
           (·.map fun (w, s) => (w, s, false))
     else do
       let B := ((← IO.getEnv "FAST_MZ_B").getD "24").toNat!
-      let idxs ← timed "index" fun t => gbs.map fun g => Mz.build (if t == 1 then g.push 0 else g) mz B
-      IO.println s!"minimizer k={mz} B={B} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size) 0}"
+      let C := ((← IO.getEnv "FAST_MZ_C").getD (toString (25 - mz))).toNat!   -- context letters per side
+      let W := ((← IO.getEnv "FAST_MZ_W").getD "8").toNat!   -- bytes per slot (4, 5, 6, 8)
+      let T := ((← IO.getEnv "FAST_MZ_T").getD (toString mz)).toNat!   -- t-words pick the minimizer
+      let idxs ← timed "index" fun t => gbs.map fun g => Mz.buildW (if t == 1 then g.push 0 else g) mz B C W T
+      IO.println s!"minimizer k={mz} B={B} C={C} W={W} T={T} kf={idxs.toList.map (·.kf)} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.sl.size + 8 * ix.runs.size) 0}"
       let ok ← timed "check" fun t => Fast.checkAllMz (if t == 1 then #[] else idxs) gbs
       IO.println s!"index check: {ok}"
       assert! ok

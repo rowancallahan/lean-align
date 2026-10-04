@@ -10,7 +10,7 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
     lake exe pair_bench <genome.fa> <mate1.reads.txt> <mate2.reads.txt> [dump.tsv]
     env: PAIR_MIN (100), PAIR_MAX (1000), PAIR_TASKS (1), PAIR_JOINT (shared-best strand search, pairFastJ),
     PAIR_INTERLEAVE (strands interleaved one lookup at a time, pairFastI),
-    PAIR_MZ=k [PAIR_MZ_B=B] (minimizer index, with PAIR_JOINT / PAIR_INTERLEAVE: pairFastJ/I_mz_eq_pairSpec)
+    PAIR_MZ=k [PAIR_MZ_B=B] [PAIR_MZ_C=c] [PAIR_MZ_W=bytes] [PAIR_MZ_T=t] (minimizer index, with PAIR_JOINT / PAIR_INTERLEAVE: pairFastJ/I_mz_eq_pairSpec)
 
 Dump format = `bench/pair_ref.py` / `PROTO_PAIR` (name, then both hits or none).
 -/
@@ -31,15 +31,34 @@ def lines (raw : ByteArray) : Array ByteArray := Id.run do
     i := j + 1
   return out
 
+/-- The sequences of a FASTA file, read in 16 MB chunks (peak memory: the genome plus a
+chunk, not the file and its lines as well). -/
 def readFasta (path : String) : IO (Array ByteArray) := do
+  let total := (← System.FilePath.metadata path).byteSize.toNat
+  let h ← IO.FS.Handle.mk path .read
   let mut seqs : Array ByteArray := #[]
-  for l in lines (← IO.FS.readBinFile path) do
-    if l.size > 0 && l.get! 0 == 62 then seqs := seqs.push ByteArray.empty
-    else
-      assert! seqs.size > 0
-      seqs := seqs.modify (seqs.size - 1) (· ++ l)
-  assert! seqs.size > 0
-  return seqs
+  let mut cur := ByteArray.empty
+  let mut started := false
+  let mut header := false
+  let mut seen := 0
+  repeat
+    let chunk ← h.read 16777216
+    if chunk.isEmpty then break
+    for b in chunk do
+      seen := seen + 1
+      if header then
+        if b == 10 then header := false
+      else if b == 62 then  -- '>'
+        if started then
+          seqs := seqs.push cur
+        -- untouched capacity is not resident
+        cur := ByteArray.emptyWithCapacity (total - seen)
+        started := true
+        header := true
+      else if b != 10 && b != 13 then
+        cur := cur.push b
+  assert! started
+  return seqs.push cur
 
 def readReads (path : String) : IO (Array String × Array ByteArray) := do
   let rl := (lines (← IO.FS.readBinFile path)).filter (·.size > 0)
@@ -77,9 +96,12 @@ def main (args : List String) : IO UInt32 := do
     else do
       assert! joint || inter
       let B := ((← IO.getEnv "PAIR_MZ_B").getD "24").toNat!
-      let idxs := gbs.map fun g => Mz.build g mz B
+      let C := ((← IO.getEnv "PAIR_MZ_C").getD (toString (25 - mz))).toNat!   -- context letters per side
+      let W := ((← IO.getEnv "PAIR_MZ_W").getD "8").toNat!   -- bytes per slot (4, 5, 6, 8)
+      let T := ((← IO.getEnv "PAIR_MZ_T").getD (toString mz)).toNat!   -- t-words pick the minimizer
+      let idxs := gbs.map fun g => Mz.buildW g mz B C W T
       let ok := Fast.checkAllMz idxs gbs
-      IO.println s!"index check: {ok}  minimizer k={mz} B={B} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size) 0}"
+      IO.println s!"index check: {ok}  minimizer k={mz} B={B} C={C} W={W} T={T} kf={idxs.toList.map (·.kf)} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.sl.size + 8 * ix.runs.size) 0}"
       assert! ok
       pure fun p => if inter then Fast.pairFastI Fast.mzL lo hi gbs idxs p.1 p.2
         else Fast.pairFastJ Fast.mzL lo hi gbs idxs p.1 p.2
