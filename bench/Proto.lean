@@ -429,11 +429,17 @@ def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × 
 
 abbrev Hit := Nat × Nat × Nat × Bool    -- start, len, penalty, reverse strand?
 
-/-- Proper pair: opposite strands, facing, fragment (forward mate start to
-reverse mate end) in [lo, hi]. -/
+/-- Chromosome of a hit.  The prototype takes one-chromosome genomes only
+(`main` asserts it), so every hit is on chromosome 0. -/
+def Hit.chr (_ : Hit) : Nat := 0
+
+/-- Proper pair (`MapSpec.properPair`, spec/PairSpec.lean): same chromosome,
+opposite strands, facing, fragment (forward mate start to reverse mate end)
+in [lo, hi]. -/
 def proper (lo hi : Nat) (a b : Hit) : Bool :=
   let (f, rv) := if a.2.2.2 then (b, a) else (a, b)
-  f.2.2.2 != rv.2.2.2 && f.1 ≤ rv.1 + rv.2.1 && lo ≤ rv.1 + rv.2.1 - f.1 && rv.1 + rv.2.1 - f.1 ≤ hi
+  f.chr == rv.chr && f.2.2.2 != rv.2.2.2 && f.1 ≤ rv.1 + rv.2.1 && lo ≤ rv.1 + rv.2.1 - f.1 &&
+    rv.1 + rv.2.1 - f.1 ≤ hi
 
 /-- Proper-pair-only mapping: the answer is exactly "each mate's `mapSpec` over
 both strands (unique best window), then keep the pair only if both mates map
@@ -524,7 +530,8 @@ def mapDedup (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray)
 def main (args : List String) : IO UInt32 := do
   let gpath :: rpath :: l0s :: rest := args | return 2
   let l0 := l0s.toNat!
-  let glines := (← IO.FS.readFile gpath).splitOn "\n"
+  let glines := ((← IO.FS.readFile gpath).splitOn "\n").filter (· ≠ "")
+  assert! glines.length == 2   -- one chromosome (see `Hit.chr`)
   let g := glines[1]!.toUTF8
   let rlines := (((← IO.FS.readFile rpath).splitOn "\n").filter (· ≠ "")).toArray
   let mut reads : Array ByteArray := #[]
