@@ -75,7 +75,7 @@ theorem mapChromsG_inv :
       have hc : c < gbs.size := hl c List.mem_cons_self
       obtain ⟨hnd, hlt, hlen⟩ := ordG_spec ((hs.map (LookG.prep idxs[c]!)).map (LookG.size idxs[c]!)) (R.size / 25)
       obtain ⟨S1, h1, s1, c1⟩ := chromG_cover P read g gbs R hg hr idxs[c]! c (hs.map (LookG.prep idxs[c]!)) _
-        hc hm hsb (fun j hj => by
+        hc hm hsb (cwT P read g) (cwT_le P read g) (fun _ _ => rfl) (fun j hj => by
           rw [getElem!_pos _ j (by simp [hsz]; omega)]
           simp only [Array.getElem_map]
           rw [← hhs' j hj, getElem!_pos _ j (by omega)])
