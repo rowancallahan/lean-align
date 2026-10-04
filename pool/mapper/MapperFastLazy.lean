@@ -91,15 +91,15 @@ theorem maskJ_add (G R : ByteArray) (J j A : Nat) (hj : j < 4) (hJ : J < 16) (h0
       show (2 : Nat) ≠ 3 by omega, show (0 : Nat) ≠ 1 by omega]; omega
 
 /-- **Adding a seed.**  Merging seed `j`'s anchors into the anchors of `J`. -/
-theorem merge_step (ix : HIdx) (G R : ByteArray) (hchk : checkIdx ix G = true) (J j : Nat) (as : Array Nat)
+theorem merge_step (a : Array Nat) (G R : ByteArray) (J j : Nat) (hl : LookOk G R j a) (as : Array Nat)
     (h : AnchorsM (maskJ G R J) as) (hj : j < 4) (hJ : J < 16) (h0 : bit J j = 0) :
-    AnchorsM (maskJ G R (J + 2 ^ j)) (merge as (lookupSeed ix G R j) 0 0 #[]) := by
-  obtain ⟨s1, r1, m1⟩ := single_spec ix G R j (by
+    AnchorsM (maskJ G R (J + 2 ^ j)) (merge as (a) 0 0 #[]) := by
+  obtain ⟨s1, r1, m1⟩ := single_spec a G R j (by
     rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide)
-    (by rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide) hchk
+    (by rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide) hl
   have hm : ∀ A, maskJ G R (J + 2 ^ j) A = maskJ G R J A + seedBit G R j A :=
     fun A => maskJ_add G R J j A hj hJ h0
-  have hf : Fits as.toList (lookupSeed ix G R j).toList := by
+  have hf : Fits as.toList (a).toList := by
     intro a ha b hb hab
     rw [(h.mem a ha).1, r1 b hb, hab]
     have := maskJ_lt G R (J + 2 ^ j) (b / 16)
@@ -311,12 +311,12 @@ theorem insKey_perm (key : Nat → Nat) (x : Nat) (l : List Nat) : (insKey key x
     · exact List.Perm.refl _
     · exact (ih.cons y).trans (List.Perm.swap x y ys)
 
-theorem seedOrder_spec (ix : HIdx) (hs : Array (Option UInt64)) :
-    (seedOrder ix hs).Nodup ∧ (∀ j ∈ seedOrder ix hs, j < 4) ∧ (seedOrder ix hs).length = 4 := by
+theorem seedOrder_spec {L : Type} (lk : Look L) (ix : L) (hs : Array (Option UInt64)) :
+    (seedOrder lk ix hs).Nodup ∧ (∀ j ∈ seedOrder lk ix hs, j < 4) ∧ (seedOrder lk ix hs).length = 4 := by
   unfold seedOrder
   simp only []
-  generalize (fun j => if j = 0 then sizeH ix hs[0]! else if j = 1 then sizeH ix hs[1]! else
-    if j = 2 then sizeH ix hs[2]! else sizeH ix hs[3]!) = key
+  generalize (fun j => if j = 0 then lk.size ix hs[0]! else if j = 1 then lk.size ix hs[1]! else
+    if j = 2 then lk.size ix hs[2]! else lk.size ix hs[3]!) = key
   have hp : (insKey key 3 (insKey key 2 (insKey key 1 [0]))).Perm [3, 2, 1, 0] :=
     (insKey_perm key 3 _).trans (((insKey_perm key 2 _).trans ((insKey_perm key 1 _).cons 2)).cons 3)
   refine ⟨hp.nodup_iff.mpr (by decide), fun j hj => ?_, by rw [hp.length_eq]; rfl⟩
@@ -583,16 +583,17 @@ theorem finish (J K : Nat) (as : Array Nat) (b : Best) (S : Window → Prop) (hs
     · exact Or.inl hS
     · exact Or.inr ⟨rfl, hw, hS⟩
 
-theorem lookupH_eq (ix : HIdx) (j : Nat) (hj : j < 4) :
-    lookupH ix G R j (seedHashes R)[j]! = lookupSeed ix G R j := by
-  rw [seedHashes_get R j hj]; rfl
+theorem look_eq {L : Type} (lk : Look L) (ix : L) (j : Nat) (hj : j < 4) :
+    lk.look ix G R j (seedHashes R)[j]! = lk.look ix G R j (seedHash R j) := by
+  rw [seedHashes_get R j hj]
 
 /-- **The lazy loop.** -/
-theorem lazyLoop_inv (ix : HIdx) (hchk : checkIdx ix G = true) :
+theorem lazyLoop_inv {L : Type} (lk : Look L) (ix : L)
+    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (seedHash R j))) :
     ∀ (ord : List Nat) (J : Nat) (as : Array Nat) (b : Best) (S : Window → Prop),
       LoopState cw R G c J (pop4 J) as b S → ord.Nodup → (∀ j ∈ ord, j < 4 ∧ bit J j = 0) →
       pop4 J + ord.length = 4 →
-      ∃ S', Inv cw S' (lazyLoop R G c ix (seedHashes R) ord (pop4 J) as J b) ∧ (∀ w, S w → S' w) ∧
+      ∃ S', Inv cw S' (lazyLoop R G c lk ix (seedHashes R) ord (pop4 J) as J b) ∧ (∀ w, S w → S' w) ∧
         ∀ st len, cw ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩ := by
   intro ord
   induction ord with
@@ -606,15 +607,17 @@ theorem lazyLoop_inv (ix : HIdx) (hchk : checkIdx ix G = true) :
     obtain ⟨hpop, hJ'⟩ := pop4_add J hs.hJ j hj4 hj0
     unfold lazyLoop
     simp only []
-    rw [lookupH_eq cw hc13 R G c hcw hn ix j hj4, Nat.one_shiftLeft]
+    rw [look_eq cw hc13 R G c hcw hn lk ix j hj4, Nat.one_shiftLeft]
+    have hl := hlk j hj4
+    generalize lk.look ix G R j (seedHash R j) = a at hl
     -- the new anchors
-    obtain ⟨s1, r1, m1⟩ := single_spec ix G R j (by
+    obtain ⟨s1, r1, m1⟩ := single_spec a G R j (by
       rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide)
-      (by rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide) hchk
-    have ha' := merge_step ix G R hchk J j as hs.anchors hj4 hs.hJ hj0
-    obtain ⟨nsub, ncomp⟩ := newOnly_spec as (lookupSeed ix G R j)
+      (by rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide) hl
+    have ha' := merge_step a G R J j hl as hs.anchors hj4 hs.hJ hj0
+    obtain ⟨nsub, ncomp⟩ := newOnly_spec as (a)
     -- same-length windows of the new anchors
-    have hsound : ∀ e ∈ (newOnly as (lookupSeed ix G R j) 0 0 #[]).toList,
+    have hsound : ∀ e ∈ (newOnly as (a) 0 0 #[]).toList,
         ∀ j', j' < 4 → bit (e % 16) j' = 1 → seedBit G R j' (e / 16) ≠ 0 := by
       intro e he j' hj' hb
       have hel := nsub e he
@@ -625,12 +628,12 @@ theorem lazyLoop_inv (ix : HIdx) (hchk : checkIdx ix G = true) :
       rw [mv_of_mem _ s1 e hel, r1 e hel] at this
       rw [← this]; exact Nat.pos_iff_ne_zero.mp (Nat.pow_pos (by omega))
     have f1 := foldl_inv cw (sameStep2 R G c) (fun e w => BIAS ≤ e / 16 ∧ w = ⟨c, e / 16 - BIAS, R.size⟩)
-      (fun e => e ∈ (newOnly as (lookupSeed ix G R j) 0 0 #[]).toList)
+      (fun e => e ∈ (newOnly as (a) 0 0 #[]).toList)
       (fun e he S b h => sameStep2_inv cw hc13 R G c hcw hn e (hsound e he) S b h)
-      (newOnly as (lookupSeed ix G R j) 0 0 #[]).toList S b (fun e he => he) hs.inv
+      (newOnly as (a) 0 0 #[]).toList S b (fun e he => he) hs.inv
     rw [Array.foldl_toList] at f1
-    generalize (newOnly as (lookupSeed ix G R j) 0 0 #[]).foldl (sameStep2 R G c) b = b1 at f1
-    generalize hS1 : (fun w => S w ∨ ∃ e ∈ (newOnly as (lookupSeed ix G R j) 0 0 #[]).toList,
+    generalize (newOnly as (a) 0 0 #[]).foldl (sameStep2 R G c) b = b1 at f1
+    generalize hS1 : (fun w => S w ∨ ∃ e ∈ (newOnly as (a) 0 0 #[]).toList,
       BIAS ≤ e / 16 ∧ w = ⟨c, e / 16 - BIAS, R.size⟩) = S1 at f1
     have hSS1 : ∀ w, S w → S1 w := by intro w hw; rw [← hS1]; exact Or.inl hw
     have same1 : ∀ st, maskJ G R (J + 2 ^ j) (st + BIAS) ≠ 0 → S1 ⟨c, st, R.size⟩ := by
@@ -639,8 +642,8 @@ theorem lazyLoop_inv (ix : HIdx) (hchk : checkIdx ix G = true) :
       by_cases h0 : maskJ G R J (st + BIAS) = 0
       · have hsb : seedBit G R j (st + BIAS) ≠ 0 := by omega
         -- the anchor is new
-        have hmem : (st + BIAS) * 16 + 2 ^ j ∈ (lookupSeed ix G R j).toList := by
-          have hlj : AnchorsM (fun A => seedBit G R j A) (lookupSeed ix G R j) :=
+        have hmem : (st + BIAS) * 16 + 2 ^ j ∈ (a).toList := by
+          have hlj : AnchorsM (fun A => seedBit G R j A) (a) :=
             anchorsM_of _ _ (fun A => by
               rcases seedBit_cases G R j A with h | h <;> rw [h] <;>
               rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide)
@@ -663,19 +666,19 @@ theorem lazyLoop_inv (ix : HIdx) (hchk : checkIdx ix G = true) :
       · exact hSS1 _ (hs.same st h0)
     -- one-gap windows
     have stage : ∃ S2, Inv cw S2 (if 2 ≤ pop4 J && 8 ≤ b1.pen then
-          gapAll2 R G c (merge as (lookupSeed ix G R j) 0 0 #[]) (J + 2 ^ j)
-            (merge as (lookupSeed ix G R j) 0 0 #[]).size 0 b1 else b1) ∧
+          gapAll2 R G c (merge as (a) 0 0 #[]) (J + 2 ^ j)
+            (merge as (a) 0 0 #[]).size 0 b1 else b1) ∧
         (∀ w, S1 w → S2 w) ∧
         (3 ≤ pop4 J + 1 → (if 2 ≤ pop4 J && 8 ≤ b1.pen then
-          gapAll2 R G c (merge as (lookupSeed ix G R j) 0 0 #[]) (J + 2 ^ j)
-            (merge as (lookupSeed ix G R j) 0 0 #[]).size 0 b1 else b1).pen < 8 ∨
+          gapAll2 R G c (merge as (a) 0 0 #[]) (J + 2 ^ j)
+            (merge as (a) 0 0 #[]).size 0 b1 else b1).pen < 8 ∨
           ∀ st len, len ≠ R.size → cw ⟨c, st, len⟩ ≤ 12 →
             (maskJ G R (J + 2 ^ j) (st + BIAS) ≠ 0 ∨ maskJ G R (J + 2 ^ j) (st + len + BIAS - R.size) ≠ 0) →
             S2 ⟨c, st, len⟩) := by
       by_cases hrun : (decide (2 ≤ pop4 J) && decide (8 ≤ b1.pen)) = true
       · rw [if_pos hrun]
         have g := gapAll2_inv cw hc13 R G c hcw hn (J + 2 ^ j) _ ha'
-          (merge as (lookupSeed ix G R j) 0 0 #[]).size 0 S1 b1 (by omega) f1
+          (merge as (a) 0 0 #[]).size 0 S1 b1 (by omega) f1
         refine ⟨_, g, fun w hw => Or.inl hw, fun _ => Or.inr fun st len hl hw hm => ?_⟩
         obtain ⟨i, hi, L, hL1, hL3, hg⟩ := gap_coverM cw hc13 R G c hcw hn _ _ ha' st len hl hw hm
         exact Or.inr ⟨i, by omega, by omega, L, hL1, hL3, hg⟩
@@ -685,9 +688,9 @@ theorem lazyLoop_inv (ix : HIdx) (hchk : checkIdx ix G = true) :
         have := hrun (by omega); omega
     obtain ⟨S2, h2, hS12, hgap2⟩ := stage
     generalize (if 2 ≤ pop4 J && 8 ≤ b1.pen then
-          gapAll2 R G c (merge as (lookupSeed ix G R j) 0 0 #[]) (J + 2 ^ j)
-            (merge as (lookupSeed ix G R j) 0 0 #[]).size 0 b1 else b1) = b2 at h2 hgap2
-    have hst : LoopState cw R G c (J + 2 ^ j) (pop4 J + 1) (merge as (lookupSeed ix G R j) 0 0 #[]) b2 S2 :=
+          gapAll2 R G c (merge as (a) 0 0 #[]) (J + 2 ^ j)
+            (merge as (a) 0 0 #[]).size 0 b1 else b1) = b2 at h2 hgap2
+    have hst : LoopState cw R G c (J + 2 ^ j) (pop4 J + 1) (merge as (a) 0 0 #[]) b2 S2 :=
       ⟨h2, ha', hJ', hpop, fun st hm => hS12 _ (same1 st hm), hgap2⟩
     split
     · obtain ⟨S', h', hS', hc'⟩ := finish cw hc13 R G c hcw hn _ _ _ _ _ hst (Or.inl (by omega))
@@ -703,12 +706,13 @@ theorem lazyLoop_inv (ix : HIdx) (hchk : checkIdx ix G = true) :
       exact ⟨S', h', fun w hw => hS' w (hS12 w (hSS1 w hw)), hc'⟩
 
 /-- **One chromosome.**  `mapChrom2` keeps the invariant and looks at every hit of chromosome `c`. -/
-theorem mapChrom2_inv (ix : HIdx) (hchk : checkIdx ix G = true) (S : Window → Prop) (b : Best)
-    (h : Inv cw S b) : ∃ S', Inv cw S' (mapChrom2 R G c ix b) ∧ (∀ w, S w → S' w) ∧
+theorem mapChrom2_inv {L : Type} (lk : Look L) (ix : L)
+    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (seedHash R j))) (S : Window → Prop) (b : Best)
+    (h : Inv cw S b) : ∃ S', Inv cw S' (mapChrom2 lk R G c ix b) ∧ (∀ w, S w → S' w) ∧
       (∀ st len, cw ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩) := by
   unfold mapChrom2
-  obtain ⟨hnd, hlt, hl⟩ := seedOrder_spec ix (seedHashes R)
-  have := lazyLoop_inv cw hc13 R G c hcw hn ix hchk (seedOrder ix (seedHashes R)) 0 #[] b S
+  obtain ⟨hnd, hlt, hl⟩ := seedOrder_spec lk ix (seedHashes R)
+  have := lazyLoop_inv cw hc13 R G c hcw hn lk ix hlk (seedOrder lk ix (seedHashes R)) 0 #[] b S
     ⟨h, anchorsM_init G R, by omega, rfl, fun st hm => by simp [maskJ] at hm, fun h3 => by simp [pop4] at h3⟩
     hnd (fun j hj => ⟨hlt j hj, by simp [bit]⟩) (by rw [hl]; rfl)
   exact this
@@ -716,11 +720,12 @@ theorem mapChrom2_inv (ix : HIdx) (hchk : checkIdx ix G = true) (S : Window → 
 end chrom
 
 /-- **All chromosomes.**  `mapChroms` ends with the invariant over a set containing every hit. -/
-theorem mapChroms_inv (R : ByteArray) (gbs : Array ByteArray) (idxs : Array HIdx) (hn : 100 ≤ R.size)
-    (hchk : ∀ c, c < gbs.size → checkIdx idxs[c]! gbs[c]! = true) :
-    ∃ S, Inv (cwG R gbs) S (mapChroms R gbs idxs) ∧ ∀ w, cwG R gbs w ≤ 12 → S w := by
+theorem mapChroms_inv {L : Type} [Inhabited L] (lk : Look L) (R : ByteArray) (gbs : Array ByteArray)
+    (idxs : Array L) (hn : 100 ≤ R.size)
+    (hlk : ∀ c, c < gbs.size → ∀ j, j < 4 → LookOk gbs[c]! R j (lk.look idxs[c]! gbs[c]! R j (seedHash R j))) :
+    ∃ S, Inv (cwG R gbs) S (mapChroms lk R gbs idxs) ∧ ∀ w, cwG R gbs w ≤ 12 → S w := by
   have step : ∀ (l : List Nat) S b, (∀ c ∈ l, c < gbs.size) → Inv (cwG R gbs) S b →
-      ∃ S', Inv (cwG R gbs) S' (l.foldl (fun b c => mapChrom2 R gbs[c]! c idxs[c]! b) b) ∧
+      ∃ S', Inv (cwG R gbs) S' (l.foldl (fun b c => mapChrom2 lk R gbs[c]! c idxs[c]! b) b) ∧
         (∀ w, S w → S' w) ∧ ∀ c ∈ l, ∀ st len, cwG R gbs ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩ := by
     intro l
     induction l with
@@ -729,7 +734,7 @@ theorem mapChroms_inv (R : ByteArray) (gbs : Array ByteArray) (idxs : Array HIdx
       intro S b hl h
       have hc : c < gbs.size := hl c List.mem_cons_self
       obtain ⟨S1, h1, s1, c1⟩ := mapChrom2_inv (cwG R gbs) (cwG_le R gbs) R gbs[c]! c
-        (fun st len => by unfold cwG; simp [hc]) hn idxs[c]! (hchk c hc) S b h
+        (fun st len => by unfold cwG; simp [hc]) hn lk idxs[c]! (hlk c hc) S b h
       obtain ⟨S2, h2, s2, c2⟩ := ih S1 _ (fun c' h' => hl c' (List.mem_cons_of_mem _ h')) h1
       refine ⟨S2, h2, fun w hw => s2 w (s1 w hw), fun c' hc' st len hw => ?_⟩
       rcases List.mem_cons.mp hc' with rfl | hc'

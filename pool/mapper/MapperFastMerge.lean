@@ -206,12 +206,12 @@ theorem maskAt_lt (G R : ByteArray) (A : Nat) : maskAt G R A < 16 := by
   unfold maskAt seedBit
   split <;> split <;> split <;> split <;> simp
 
-theorem single_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : 2 ^ j < 16) (hjq : j * q ≤ BIAS)
-    (hchk : checkIdx ix G = true) :
-    SortedA (lookupSeed ix G R j).toList ∧ (∀ e ∈ (lookupSeed ix G R j).toList, e % 16 = 2 ^ j) ∧
-      ∀ A, mv (lookupSeed ix G R j).toList A = seedBit G R j A := by
-  obtain ⟨hp, hm⟩ := lookupSeed_spec ix G R j hchk
-  have hres : ∀ e ∈ (lookupSeed ix G R j).toList, e % 16 = 2 ^ j ∧ ∃ p, MatchAt G p R (j * q) ∧
+theorem single_spec (a : Array Nat) (G R : ByteArray) (j : Nat) (hj : 2 ^ j < 16) (hjq : j * q ≤ BIAS)
+    (hl : LookOk G R j a) :
+    SortedA (a).toList ∧ (∀ e ∈ (a).toList, e % 16 = 2 ^ j) ∧
+      ∀ A, mv (a).toList A = seedBit G R j A := by
+  obtain ⟨hp, hm⟩ := hl
+  have hres : ∀ e ∈ (a).toList, e % 16 = 2 ^ j ∧ ∃ p, MatchAt G p R (j * q) ∧
       e / 16 = p + (BIAS - j * q) := by
     intro e he
     obtain ⟨p, hp, rfl⟩ := (hm e).1 he
@@ -223,7 +223,7 @@ theorem single_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : 2 ^ j < 16) (h
   unfold seedBit
   split
   · next h =>
-    have hmem : anchorOf j (A - (BIAS - j * q)) ∈ (lookupSeed ix G R j).toList := (hm _).2 ⟨_, h.2, rfl⟩
+    have hmem : anchorOf j (A - (BIAS - j * q)) ∈ (a).toList := (hm _).2 ⟨_, h.2, rfl⟩
     have := mv_of_mem _ (List.Pairwise.imp_of_mem (fun ha hb hab => by
       have := (hres _ ha).1; have := (hres _ hb).1; omega) hp) _ hmem
     unfold anchorOf at this
