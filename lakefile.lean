@@ -169,3 +169,7 @@ lean_exe proto0 where                 -- first speed prototype, kept for compari
 lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
   srcDir := "bench"
   root := `PairBench
+
+lean_lib Wip where                    -- proof skeletons with `sorry` (not default, not in check.sh)
+  srcDir := "wip"
+  roots := #[`JointSkeleton]
