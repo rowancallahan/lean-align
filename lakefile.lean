@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2]
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -109,3 +109,7 @@ lean_exe proto where                  -- speed prototype only (unproved)
 lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
   srcDir := "bench"
   root := `MapBench2
+
+lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark only)
+  srcDir := "bench"
+  root := `BandBench
