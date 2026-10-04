@@ -6,6 +6,14 @@ Fast mapper benchmark (IO only, unproved).
 
     lake exe fast_bench <genome.fa> <reads.txt> [dump.tsv]
 
+`FAST_BOTH=1`: map each read and its reverse complement and keep the unique best
+over the two strands (a tie between strands: none), as `proto`'s `PROTO_BOTH`.
+The strands are combined here, in bench code, from each strand's `Best`
+(`mapChroms`, whose penalty and ambiguity `mapFast_eq_mapSpec` rests on); there is
+no strand theorem yet.  `FAST_SYM=1` also maps all reverse complements and checks
+the answers are the same windows with the strand flipped.  `FAST_TRUTH=truth.tsv`
+counts reads at the true position (and strand, with `FAST_BOTH`).
+
 Reads the FASTA (one or more chromosomes) and the reads, builds the hashed
 index of every chromosome, runs the proved checker on it, maps every read with
 the proved `mapFast` (`FAST_TASKS=n`: `mapFastPar` over n tasks; `FAST_MZ=k`
@@ -45,6 +53,19 @@ def readFasta (path : String) : IO (Array String × Array ByteArray) := do
   assert! seqs.size > 0
   return (names, seqs)
 
+/-- Reverse complement (letters other than ACGT kept). -/
+def revComp (r : ByteArray) : ByteArray := Id.run do
+  let mut o := ByteArray.emptyWithCapacity r.size
+  for i in [0:r.size] do
+    let c := r.get! (r.size - 1 - i)
+    o := o.push (if c == 65 then 84 else if c == 84 then 65 else if c == 67 then 71 else if c == 71 then 67 else c)
+  return o
+
+/-- Unique best over both strands (`true` = reverse); a tie between strands: none. -/
+def bothOf (f r : Fast.Best) : Option (Window × Int × Bool) :=
+  let one (b : Fast.Best) (rv : Bool) := if b.pen ≤ 12 && !b.amb then some (⟨b.chr, b.st, b.len⟩, -(b.pen : Int), rv) else none
+  if f.pen < r.pen then one f false else if r.pen < f.pen then one r true else none
+
 def secs (t0 t1 : Nat) : Float := Float.ofNat (t1 - t0) / 1e9
 
 /-- Runs `f` after reading the clock; `f` gets the time so it cannot be hoisted. -/
@@ -65,13 +86,19 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"chromosomes: {gbs.size}  letters: {gbs.foldl (· + ·.size) 0}  reads: {reads.size}"
   let tasks := ((← IO.getEnv "FAST_TASKS").getD "1").toNat!   -- 1 = no tasks
   let mz := ((← IO.getEnv "FAST_MZ").getD "0").toNat!          -- 0 = hashed index
-  let mapAll : Array ByteArray → Array (Option (Window × Int)) ← if mz == 0 then do
+  let both := (← IO.getEnv "FAST_BOTH").isSome
+  let par (f : ByteArray → Option (Window × Int × Bool)) (rs : Array ByteArray) :=
+    if tasks ≤ 1 then rs.map f else ParMap.parMap tasks f rs
+  let mapAll : Array ByteArray → Array (Option (Window × Int × Bool)) ← if mz == 0 then do
       let idxs ← timed "index" fun t => gbs.map fun g => Fast.buildIdx (if t == 1 then g.push 0 else g)
       IO.println s!"index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.ent.size + ix.odd.foldl (· + ·.size) 0) 0}"
       let ok ← timed "check" fun t => Fast.checkAll (if t == 1 then #[] else idxs) gbs
       IO.println s!"index check: {ok}"
       assert! ok
-      pure fun rs => if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs
+      let best R := Fast.mapChroms Fast.hLook R gbs idxs
+      pure fun rs => if both then par (fun R => bothOf (best R) (best (revComp R))) rs
+        else (if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs).map
+          (·.map fun (w, s) => (w, s, false))
     else do
       let B := ((← IO.getEnv "FAST_MZ_B").getD "24").toNat!
       let idxs ← timed "index" fun t => gbs.map fun g => Mz.build (if t == 1 then g.push 0 else g) mz B
@@ -79,7 +106,10 @@ def main (args : List String) : IO UInt32 := do
       let ok ← timed "check" fun t => Fast.checkAllMz (if t == 1 then #[] else idxs) gbs
       IO.println s!"index check: {ok}"
       assert! ok
-      pure fun rs => if tasks ≤ 1 then rs.map (Fast.mapFastMz gbs idxs) else Fast.mapFastMzPar tasks gbs idxs rs
+      let best R := Fast.mapChroms Fast.mzL R gbs idxs
+      pure fun rs => if both then par (fun R => bothOf (best R) (best (revComp R))) rs
+        else (if tasks ≤ 1 then rs.map (Fast.mapFastMz gbs idxs) else Fast.mapFastMzPar tasks gbs idxs rs).map
+          (·.map fun (w, s) => (w, s, false))
   let fast := reads.foldl (fun k r => if Fast.fastOk r then k + 1 else k) 0
   IO.println s!"fast-path reads: {fast}"
   assert! fast == reads.size   -- other read lengths take the proved slow fallback
@@ -95,10 +125,27 @@ def main (args : List String) : IO UInt32 := do
   let t1 ← IO.monoNanosNow
   IO.println s!"mapped: {mapped}"
   IO.println s!"map_seconds: {secs t0 t1 / Float.ofNat reps}  reads/s: {Float.ofNat (reps * reads.size) / secs t0 t1}"
+  if let some tp := ← IO.getEnv "FAST_TRUTH" then
+    let tl := ((lines (← IO.FS.readBinFile tp)).filter (·.size > 0)).extract 1 (reads.size + 1)
+    assert! tl.size == reads.size
+    let right := (tl.zip res).foldl (fun k (l, x) =>
+      match (String.fromUTF8! l).splitOn "\t", x with
+      | [_, _, pos, _, st], some (w, _, rv) => if pos.toNat! == w.start + 1 && (st == "-") == rv then k + 1 else k
+      | [_, _, pos, _], some (w, _, _) => if pos.toNat! == w.start + 1 then k + 1 else k
+      | _, _ => k) 0
+    IO.println s!"at_true_position{if both then "_and_strand" else ""}: {right}"
+  if both && (← IO.getEnv "FAST_SYM").isSome then
+    let rc := mapAll (reads.map revComp)
+    let bad := (res.zip rc).foldl (fun k (a, b) => match a, b with
+      | some (w, s, rv), some (w', s', rv') => if w == w' && s == s' && rv != rv' then k else k + 1
+      | none, none => k
+      | _, _ => k + 1) 0
+    IO.println s!"symmetry (reverse complements: same window, other strand): {res.size - bad} / {res.size} agree"
+    assert! bad == 0
   match rest with
   | [dp] =>
     IO.FS.writeFile dp (String.join (List.zipWith (fun nm x => match x with
-      | some (w, s) => s!"{nm}\t{w.start}\t{w.len}\t{s}\n"
+      | some (w, s, rv) => s!"{nm}\t{w.start}\t{w.len}\t{s}" ++ (if both then (if rv then "\t-" else "\t+") else "") ++ "\n"
       | none => s!"{nm}\tnone\n") names.toList res.toList))
   | _ => pure ()
   return 0
