@@ -35,6 +35,13 @@ def cap : Nat := 12
 /-- A C G T ↦ 0 1 2 3 (anything else 0). -/
 @[inline] def c2 (b : UInt8) : UInt64 := (codeTab.get! b.toNat).toUInt64 &&& 3
 
+/-- `2^j` for a seed number `j < 4` (a switch, not `Nat` shifting). -/
+@[inline] def pow2 : Nat → Nat
+  | 0 => 1
+  | 1 => 2
+  | 2 => 4
+  | _ => 8
+
 @[inline] def acgt (b : UInt8) : Bool := codeTab.get! b.toNat < 4
 
 /-- Base-4 code of `B[i, stop)` appended to `x`. -/
@@ -235,10 +242,10 @@ def lookupH (ix : HIdx) (G R : ByteArray) (j : Nat) (h : Option UInt64) : Array 
   match h with
   | some y =>
     let b := bucketOf y
-    scanBucket ix.ent (keyOf y) (BIAS - s) (1 <<< j) (u32 ix.offs (b + 1)) (u32 ix.offs b) #[]
+    scanBucket ix.ent (keyOf y) (BIAS - s) (pow2 j) (u32 ix.offs (b + 1)) (u32 ix.offs b) #[]
   | none =>
     let o := firstOdd R s (s + q)
-    scanOdd G R ix.odd[(R.get! o).toNat]! (o - s) s (BIAS - s) (1 <<< j) 0 #[]
+    scanOdd G R ix.odd[(R.get! o).toNat]! (o - s) s (BIAS - s) (pow2 j) 0 #[]
 
 def lookupSeed (ix : HIdx) (G R : ByteArray) (j : Nat) : Array Nat := lookupH ix G R j (seedHash R j)
 
@@ -429,7 +436,7 @@ def hLook : Look HIdx := ⟨lookupH, sizeH⟩
     let lj := lk.look ix G R j hs[j]!
     let fresh := newOnly as lj 0 0 #[]
     let as := merge as lj 0 0 #[]
-    let looked := looked + (1 <<< j)
+    let looked := looked + pow2 j
     let b := fresh.foldl (sameStep2 R G c) b
     let b := if 2 ≤ k && 8 ≤ b.pen then gapAll2 R G c as looked as.size 0 b else b
     if b.pen < 4 * (k + 1) then b else lazyLoop R G c lk ix hs rest (k + 1) as looked b

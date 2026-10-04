@@ -660,20 +660,23 @@ theorem range'_pairwise_in (lo n : Nat) :
   omega
 
 theorem lookupH_some (ix : HIdx) (G R : ByteArray) (j : Nat) (y : UInt64) :
-    lookupH ix G R j (some y) = scanBucket ix.ent (keyOf y) (BIAS - j * q) (1 <<< j)
+    lookupH ix G R j (some y) = scanBucket ix.ent (keyOf y) (BIAS - j * q) (pow2 j)
       (u32 ix.offs (bucketOf y + 1)) (u32 ix.offs (bucketOf y)) #[] := rfl
 
 theorem lookupH_none (ix : HIdx) (G R : ByteArray) (j : Nat) :
     lookupH ix G R j none = scanOdd G R ix.odd[(R.get! (firstOdd R (j * q) (j * q + q))).toNat]!
-      (firstOdd R (j * q) (j * q + q) - j * q) (j * q) (BIAS - j * q) (1 <<< j) 0 #[] := rfl
+      (firstOdd R (j * q) (j * q + q) - j * q) (j * q) (BIAS - j * q) (pow2 j) 0 #[] := rfl
 
 /-- What a seed lookup must give: seed `j`'s packed anchors, increasing. -/
+theorem pow2_eq (j : Nat) (hj : j < 4) : pow2 j = 2 ^ j := by
+  rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> rfl
+
 def LookOk (G R : ByteArray) (j : Nat) (a : Array Nat) : Prop :=
   a.toList.Pairwise (· < ·) ∧ ∀ e, e ∈ a.toList ↔ ∃ p, MatchAt G p R (j * q) ∧ e = anchorOf j p
 
 /-- **Lookup.**  Through a certified index, seed `j`'s anchors are increasing and
 are exactly the anchors of the places where the seed occurs. -/
-theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx ix G = true) :
+theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : j < 4) (hchk : checkIdx ix G = true) :
     (lookupSeed ix G R j).toList.Pairwise (· < ·) ∧
     ∀ e, e ∈ (lookupSeed ix G R j).toList ↔ ∃ p, MatchAt G p R (j * q) ∧ e = anchorOf j p := by
   obtain ⟨hC, hS, hO, hI⟩ := checkIdx_spec ix G hchk
@@ -683,7 +686,7 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
   generalize ho : firstOdd R (j * q) (j * q + q) = o at hfo
   by_cases hacgt : allACGT R (j * q) (j * q + q) = true
   · -- every letter of the seed is ACGT: the hashed buckets
-    rw [if_pos hacgt, lookupH_some, Nat.one_shiftLeft]
+    rw [if_pos hacgt, lookupH_some, pow2_eq j hj]
     generalize hy : hashAt R (j * q) = y
     have hb : bucketOf y < NB := by rw [← hy]; exact bucketOf_lt _ (mix_lt _)
     rw [scanBucket_toList _ _ _ _ _ _ _ _ rfl, show (#[] : Array Nat).toList = [] from rfl, List.nil_append]
@@ -727,7 +730,7 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
         simp only [ht4, beq_self_eq_true, if_true, ht3]
         rfl
   · -- a letter other than ACGT at `o`: the places of that letter
-    rw [if_neg hacgt, lookupH_none, Nat.one_shiftLeft, ho]
+    rw [if_neg hacgt, lookupH_none, pow2_eq j hj, ho]
     have hoe : o < j * q + q := by
       apply Classical.byContradiction; intro hlt
       apply hacgt; rw [allACGT_spec R _ _ _ rfl]
@@ -771,8 +774,8 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
           exact ⟨⟨by omega, hp1⟩, (eqRun_spec G R q _ _).2 hp2⟩), hp']
         rfl
 
-theorem hLook_ok (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx ix G = true) :
-    LookOk G R j (hLook.look ix G R j (seedHash R j)) := lookupSeed_spec ix G R j hchk
+theorem hLook_ok (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : j < 4) (hchk : checkIdx ix G = true) :
+    LookOk G R j (hLook.look ix G R j (seedHash R j)) := lookupSeed_spec ix G R j hj hchk
 
 end MapSpec.Fast
 
