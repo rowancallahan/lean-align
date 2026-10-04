@@ -72,7 +72,7 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch]
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
@@ -169,3 +169,7 @@ lean_exe proto0 where                 -- first speed prototype, kept for compari
 lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
   srcDir := "bench"
   root := `PairBench
+
+lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
+  srcDir := "bench"
+  root := `PackedBench
