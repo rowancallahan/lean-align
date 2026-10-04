@@ -22,16 +22,18 @@ open MapSpec AlignmentSpec
 
 /-! ## Algorithm -/
 
-/-- Both strands through one shared `Best`: chromosomes `0..n-1` with the read,
-then `n..2n-1` with its reverse complement. -/
+/-- Both strands through one shared `Best`: chromosomes `0..n-1` with the read
+and `n..2n-1` with its reverse complement; `rf`: reverse strand first.  Any order
+is exact; searching the likely strand first lets the other stop early. -/
 @[specialize] def mapChromsJ {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (R : ByteArray)
-    (gbs : Array ByteArray) (idxs : Array L) : Best :=
+    (gbs : Array ByteArray) (idxs : Array L) (rf : Bool := false) : Best :=
   let n := gbs.size
   let Rr := revCompB R
   let hs := seedHashes R
   let hr := seedHashes Rr
-  let b := (List.range n).foldl (fun b c => mapChrom2 lk R gbs[c]! c idxs[c]! hs b) {}
-  (List.range n).foldl (fun b c => mapChrom2 lk Rr gbs[c]! (n + c) idxs[c]! hr b) b
+  let fwd (b : Best) := (List.range n).foldl (fun b c => mapChrom2 lk R gbs[c]! c idxs[c]! hs b) b
+  let rev (b : Best) := (List.range n).foldl (fun b c => mapChrom2 lk Rr gbs[c]! (n + c) idxs[c]! hr b) b
+  if rf then fwd (rev {}) else rev (fwd {})
 
 /-- Virtual window → placement. -/
 def decodeJ (n : Nat) (b : Best) : Option (Placement × Int) :=
@@ -41,16 +43,17 @@ def decodeJ (n : Nat) (b : Best) : Option (Placement × Int) :=
   | none => none
 
 def mapFastJ {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (gbs : Array ByteArray)
-    (idxs : Array L) (R : ByteArray) : Option (Placement × Int) :=
-  decodeJ gbs.size (mapChromsJ lk R gbs idxs)
+    (idxs : Array L) (R : ByteArray) (rf : Bool := false) : Option (Placement × Int) :=
+  decodeJ gbs.size (mapChromsJ lk R gbs idxs rf)
 
 def pairFastJ {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (lo hi : Nat)
     (gbs : Array ByteArray) (idxs : Array L) (R1 R2 : ByteArray) :
     Option ((Placement × Int) × (Placement × Int)) :=
-  match mapFastJ lk gbs idxs R1 with
+  match mapFastJ lk gbs idxs R1 false with
   | none => none
   | some a =>
-    match mapFastJ lk gbs idxs R2 with
+    -- mate 2 of a proper pair is on the other strand: search that one first
+    match mapFastJ lk gbs idxs R2 (a.1.2 == Strand.fwd) with
     | some b => if properPair lo hi a.1 b.1 then some (a, b) else none
     | none => none
 
@@ -104,30 +107,43 @@ theorem foldJ_inv {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (R R'
 and covers every virtual window of penalty ≤ 12 (two folds of `mapChrom2_inv`,
 as in `mapChroms_inv`, MapperFastLazy.lean). -/
 theorem mapChromsJ_inv {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (R : ByteArray)
-    (gbs : Array ByteArray) (idxs : Array L) (hn : 100 ≤ R.size)
+    (gbs : Array ByteArray) (idxs : Array L) (rf : Bool) (hn : 100 ≤ R.size)
     (hlk : ∀ c, c < gbs.size → ∀ R' : ByteArray, ∀ j, j < 4 →
       LookOk gbs[c]! R' j (lk.look idxs[c]! gbs[c]! R' j (lk.prep idxs[c]! (seedHash R' j)))) :
-    ∃ S, Inv (cwJ R gbs) S (mapChromsJ lk R gbs idxs) ∧ ∀ w, cwJ R gbs w ≤ 12 → S w := by
+    ∃ S, Inv (cwJ R gbs) S (mapChromsJ lk R gbs idxs rf) ∧ ∀ w, cwJ R gbs w ≤ 12 → S w := by
   have hrn : 100 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
-  obtain ⟨S1, h1, -, cov1⟩ := foldJ_inv lk R R gbs idxs (fun c => c) hn
+  have F := foldJ_inv lk R R gbs idxs (fun c => c) hn
     (fun c hc st len => by unfold cwJ cwG; simp [hc]) (fun c hc => hlk c hc R)
-    (List.range gbs.size) (fun _ => False) {} (fun c hc => List.mem_range.mp hc)
-    (inv_init _ (cwJ_le R gbs))
-  obtain ⟨S2, h2, s2, cov2⟩ := foldJ_inv lk R (revCompB R) gbs idxs (fun c => gbs.size + c) hrn
+    (List.range gbs.size)
+  have V := foldJ_inv lk R (revCompB R) gbs idxs (fun c => gbs.size + c) hrn
     (fun c hc st len => by
       unfold cwJ cwG
       simp [hc, show ¬ gbs.size + c < gbs.size by omega, show gbs.size + c < 2 * gbs.size by omega])
-    (fun c hc => hlk c hc (revCompB R))
-    (List.range gbs.size) S1 _ (fun c hc => List.mem_range.mp hc) h1
-  refine ⟨S2, h2, fun ⟨c, st, len⟩ hw => ?_⟩
-  by_cases hc : c < gbs.size
-  · exact s2 _ (cov1 c (List.mem_range.mpr hc) st len hw)
-  · by_cases hc2 : c < 2 * gbs.size
-    · have := cov2 (c - gbs.size) (List.mem_range.mpr (by omega)) st len
-        (by rw [show gbs.size + (c - gbs.size) = c by omega]; exact hw)
-      rw [show gbs.size + (c - gbs.size) = c by omega] at this
-      exact this
-    · unfold cwJ at hw; simp [hc, hc2] at hw
+    (fun c hc => hlk c hc (revCompB R)) (List.range gbs.size)
+  have hl : ∀ c ∈ List.range gbs.size, c < gbs.size := fun c hc => List.mem_range.mp hc
+  -- every window of penalty ≤ 12 is a forward or a reverse virtual window
+  have cover : ∀ (S : Window → Prop),
+      (∀ c ∈ List.range gbs.size, ∀ st len, cwJ R gbs ⟨c, st, len⟩ ≤ 12 → S ⟨c, st, len⟩) →
+      (∀ c ∈ List.range gbs.size, ∀ st len,
+        cwJ R gbs ⟨gbs.size + c, st, len⟩ ≤ 12 → S ⟨gbs.size + c, st, len⟩) →
+      ∀ w, cwJ R gbs w ≤ 12 → S w := by
+    intro S cf cr ⟨c, st, len⟩ hw
+    by_cases hc : c < gbs.size
+    · exact cf c (List.mem_range.mpr hc) st len hw
+    · by_cases hc2 : c < 2 * gbs.size
+      · have := cr (c - gbs.size) (List.mem_range.mpr (by omega)) st len
+          (by rw [show gbs.size + (c - gbs.size) = c by omega]; exact hw)
+        rwa [show gbs.size + (c - gbs.size) = c by omega] at this
+      · unfold cwJ at hw; simp [hc, hc2] at hw
+  cases rf with
+  | false =>
+    obtain ⟨S1, h1, -, cov1⟩ := F (fun _ => False) {} hl (inv_init _ (cwJ_le R gbs))
+    obtain ⟨S2, h2, s2, cov2⟩ := V S1 _ hl h1
+    exact ⟨S2, h2, cover S2 (fun c hc st len hw => s2 _ (cov1 c hc st len hw)) cov2⟩
+  | true =>
+    obtain ⟨S1, h1, -, cov1⟩ := V (fun _ => False) {} hl (inv_init _ (cwJ_le R gbs))
+    obtain ⟨S2, h2, s2, cov2⟩ := F S1 _ hl h1
+    exact ⟨S2, h2, cover S2 cov2 (fun c hc st len hw => s2 _ (cov1 c hc st len hw))⟩
 
 /-- Placement → virtual window. -/
 def encJ (n : Nat) : Placement → Window
@@ -234,11 +250,11 @@ theorem decodeJ_spec (R : ByteArray) (gbs : Array ByteArray) (S : Window → Pro
 
 theorem mapFastJ_eq_mapSpecBoth {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
     (g : Genome) (read : List Char) (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray)
-    (hg : GenomeBytes gbs g) (hr : Encodes R read) (hlk : LookAll lk gbs idxs) (hok : fastOk R = true) :
-    mapFastJ lk gbs idxs R = mapSpecBoth sc0 (-12) g read := by
+    (rf : Bool) (hg : GenomeBytes gbs g) (hr : Encodes R read) (hlk : LookAll lk gbs idxs)
+    (hok : fastOk R = true) : mapFastJ lk gbs idxs R rf = mapSpecBoth sc0 (-12) g read := by
   have hn : 100 ≤ R.size := by unfold fastOk q at hok; simp at hok; omega
   have hrr := revCompB_encodes R read hr
-  obtain ⟨S, hinv, hall⟩ := mapChromsJ_inv lk R gbs idxs hn (fun c hc R' j hj => hlk c hc R' j hj)
+  obtain ⟨S, hinv, hall⟩ := mapChromsJ_inv lk R gbs idxs rf hn (fun c hc R' j hj => hlk c hc R' j hj)
   have key : ∀ (st : Strand) w' s', (strandScore g read st w' = some s' ∧ -12 ≤ s') ↔
       (cwP R gbs st w' ≤ 12 ∧ s' = -(cwP R gbs st w' : Int)) := by
     intro st w' s'
@@ -276,9 +292,13 @@ theorem pairFastJ_eq_pairSpec {L P : Type} [Inhabited L] [Inhabited P] (lk : Loo
     (hok1 : fastOk R1 = true) (hok2 : fastOk R2 = true) :
     pairFastJ lk lo hi gbs idxs R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 := by
   unfold pairFastJ pairSpec
-  rw [mapFastJ_eq_mapSpecBoth lk g m1 gbs idxs R1 hg h1 hlk hok1,
-      mapFastJ_eq_mapSpecBoth lk g m2 gbs idxs R2 hg h2 hlk hok2]
-  cases mapSpecBoth sc0 (-12) g m1 <;> cases mapSpecBoth sc0 (-12) g m2 <;> rfl
+  rw [mapFastJ_eq_mapSpecBoth lk g m1 gbs idxs R1 false hg h1 hlk hok1]
+  cases mapSpecBoth sc0 (-12) g m1 with
+  | none => rfl
+  | some a =>
+    simp only
+    rw [mapFastJ_eq_mapSpecBoth lk g m2 gbs idxs R2 _ hg h2 hlk hok2]
+    cases mapSpecBoth sc0 (-12) g m2 <;> rfl
 
 end MapSpec.Fast
 
