@@ -24,6 +24,11 @@ are byte strings (`GenomeBytes`, `Encodes`: one byte per letter).
 
 The index is not trusted: `checkAll idxs gbs` checks it at run time.
 
+Measured (`lake exe fast_bench`, chr21 = 46.7 Mb, 100k simulated 100-letter
+reads, one thread): 220k–290k reads/s; the prototype (`speed/proto-tune`
+dc0b687) 230k–270k reads/s on the same machine; identical answers on all
+100k reads.  Index build 31 s (untrusted), `checkAll` 9–13 s.
+
 ## The theorems
 
     GenomeBytes gbs g → Encodes R read → checkAll idxs gbs = true →
