@@ -1,27 +1,46 @@
+import Std.Data.HashMap
 /-!
 Speed prototype only (NOT proved, not part of the tool).  Measures how fast
 the planned fast mapper can go before the proofs are written.
 
-    lake exe proto <genome.fa> <reads.txt> <l0> [truth.tsv|-] [dump.tsv]
+    lake exe proto <genome.fa> <reads.txt> 25 [truth.tsv|-] [dump.tsv]
+    env: PROTO_REPS=k (map k times, profiling), LEAN_ABORT_ON_PANIC=1 (asserts abort)
 
 Same answer as `mapSpec` with scoring (0, -4, -6, -2) and T = -12, i.e.
-penalty cap 12 (mismatch 4, gap of length L costs 6 + 2L).  Why each step is exact:
+penalty cap 12 (mismatch 4, gap of length L costs 6 + 2L); reads of 100
+letters, no N (asserted).  Checked read by read with `bench/check.sh`.
+Why each step is exact:
 
-* Cap 12 < 16 = two gaps, so a hit window has at most one gap, of length
-  L ≤ 3 (6 + 2·3 = 12), and L = |len - n|.
-* Seeds: 4 seeds of q = n/4 letters; a hit window has ≤ 3 edits, so one seed
-  is aligned without edits (proved: `exists_clean_seed`).  The index is
-  `LookupComplete` for ACGT words (reads must be ACGT), the full q-letter
-  seed is then checked, so every hit window has an anchor a = p - j·q.
-* Shape: the one gap is before or after the clean seed, so a hit window is
-  (a, n) (no gap), (a, n+e) (gap after the seed) or (a+s, n-s) (gap before),
-  0 < |e|, |s| ≤ 3: 13 windows per anchor.
-* Same-length window: any gapped alignment needs ≥ 2 gaps (≥ 16), so its
-  penalty is 4·(mismatches) when ≤ 12.
-* Other window, L = |len - n|: penalty = 6 + 2L + 4·m, m = fewest mismatches
-  over the gap position, prefix on the start diagonal, suffix on the end one.
-* Gapped windows cost ≥ 8, so when the best same-length window costs ≤ 4 they
-  cannot tie or beat it and are not scored.
+* One gap: cap 12 < 16 = two gaps, so a hit window has at most one gap, of
+  length L ≤ 3, and L = |len - n|.
+* Seeds and index: 4 seeds of q = 25 letters; a hit window has a seed aligned
+  without edits (proved: `exists_clean_seed`).  The index maps every ACGT-only
+  25-letter word to its starts (CSR over 2^24 buckets of an invertible hash,
+  each entry storing the rest of the hash, so key equality = word equality);
+  words with other letters (not N) are found by a direct scan of `odd`.
+  So the lookup returns exactly the starts where a seed is clean.
+* Shape: the gap is before or after a clean seed, so a hit window with anchor
+  a = p - j·q is (a, n), (a, n±L) (gap after) or (a∓L, n±L) (gap before).
+* Same-length window: a gapped alignment of it needs 2 gaps (≥ 16), so its
+  penalty is 4·mismatches when ≤ 12 (word XOR + popcount on the packed genome).
+* Other window: penalty = 6 + 2L + 4·m, m = fewest mismatches over the gap
+  position (prefix on the start diagonal, suffix on the end diagonal); m ≤ 1
+  under the cap, read off the first two / last two mismatches (`gappedPen`).
+* Pigeonhole: a seed looked up but not clean at an anchor costs ≥ 1 mismatch;
+  after k seeds are looked up, any window none of whose clean seeds was looked
+  up costs ≥ 4k (`mapStreams`), so lookups stop once 4k > best; gapped windows
+  (≥ 8) are only scored when best ≥ 8 and only near diagonals carrying ≥ 2
+  clean seeds (≥ 3 when the bound is < 10).
+* Strands (PROTO_BOTH): the reverse complement is a second stream with the
+  same shared best; a window on the other strand is a different window.
+* Pairs (PROTO_PAIR): the answer is per-mate `mapSpec` over both strands,
+  then the proper-pair filter.  Pairing never prunes a mate's search: a
+  pairing window is reported only if it is the mate's unique best over the
+  whole genome and both strands, so every other window with penalty ≤ its
+  penalty must be ruled out (by the 4k bound above: P/4 + 1 seeds per strand)
+  — dropping far candidates would turn a tie into a false unique hit.  The
+  only shortcut is skipping mate 2 when mate 1 has no unique best (the filter
+  then rejects the pair whatever mate 2 gives).
 -/
 
 def cap : Nat := 12
@@ -45,10 +64,25 @@ entries (pos, key) in increasing pos.  `odd` = starts of the q-windows that
 contain a letter other than ACGTN (looked up directly). -/
 structure Idx where
   q : Nat
-  offs : Array UInt32
-  ent : Array UInt32
+  offs : ByteArray    -- 2^24 + 1 bucket starts, 4 bytes each (little endian)
+  ent : ByteArray     -- entries (pos, key), 4 + 4 bytes
+  -- ByteArrays, not `Array UInt32`: sharing an Array with a Task makes Lean
+  -- walk all its elements once (lean_mark_mt, ~3 s on chr21).
   odd : Array Nat
+  pk : ByteArray      -- genome, 2 bits per letter, first letter in the top bits (non-ACGT ↦ 0)
+  amb : ByteArray     -- per 32-letter block: 1 when it holds a letter other than ACGT
 deriving Inhabited
+
+/-- Little-endian 4-byte packing. -/
+def pack32 (a : Array UInt32) : ByteArray := Id.run do
+  let mut b := ByteArray.emptyWithCapacity (4 * a.size)
+  for x in a do
+    b := ((b.push x.toUInt8).push (x >>> 8).toUInt8).push (x >>> 16).toUInt8 |>.push (x >>> 24).toUInt8
+  return b
+
+@[inline] def get32 (b : ByteArray) (i : Nat) : UInt32 :=
+  (b.get! (4 * i)).toUInt32 ||| (b.get! (4 * i + 1)).toUInt32 <<< 8 |||
+    (b.get! (4 * i + 2)).toUInt32 <<< 16 ||| (b.get! (4 * i + 3)).toUInt32 <<< 24
 
 def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
   assert! q == 25
@@ -80,7 +114,39 @@ def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
       let i := fill[b]!.toNat
       ent := (ent.set! (2 * i) (p + 1 - q).toUInt32).set! (2 * i + 1) (y &&& KMASK).toUInt32
       fill := fill.set! b (i + 1).toUInt32
-  return { q, offs := cnt, ent, odd }
+  let mut pk := ByteArray.mk (Array.replicate (g.size / 4 + 9) 0)
+  let mut amb := ByteArray.mk (Array.replicate (g.size / 32 + 1) 0)
+  for p in [0:g.size] do
+    let c := code (g.get! p)
+    if c < 4 then pk := pk.set! (p / 4) (pk.get! (p / 4) ||| (c.toUInt8 <<< (6 - 2 * (p % 4)).toUInt8))
+    else amb := amb.set! (p / 32) 1
+  return { q, offs := pack32 cnt, ent := pack32 ent, odd, pk, amb }
+
+/-- 2-bit code of the 25 letters g[p, p+25), first letter in the top bits (as `seedCode`). -/
+@[inline] def gword (pk : ByteArray) (p : Nat) : UInt64 :=
+  let k := p / 4
+  let w := (pk.get! k).toUInt64 <<< 48 ||| (pk.get! (k + 1)).toUInt64 <<< 40 |||
+    (pk.get! (k + 2)).toUInt64 <<< 32 ||| (pk.get! (k + 3)).toUInt64 <<< 24 |||
+    (pk.get! (k + 4)).toUInt64 <<< 16 ||| (pk.get! (k + 5)).toUInt64 <<< 8 ||| (pk.get! (k + 6)).toUInt64
+  (w <<< (8 + 2 * (p % 4)).toUInt64) >>> 14
+
+def M1 : UInt64 := 0x5555555555555555
+def M2 : UInt64 := 0x3333333333333333
+def M4 : UInt64 := 0x0F0F0F0F0F0F0F0F
+def H01 : UInt64 := 0x0101010101010101
+
+/-- Number of nonzero 2-bit groups of x (mismatching letters of an XOR). -/
+@[inline] def pop2 (x : UInt64) : Nat :=
+  let y := (x ||| (x >>> 1)) &&& M1
+  let y := (y &&& M2) + ((y >>> 2) &&& M2)
+  let y := (y + (y >>> 4)) &&& M4
+  ((y * H01) >>> 56).toNat
+
+/-- g[p, p+len) is all ACGT (so the packed genome is exact there). -/
+@[inline] def clean (idx : Idx) (p len : Nat) : Bool := Id.run do
+  for k in [p / 32 : (p + len - 1) / 32 + 1] do
+    if idx.amb.get! k != 0 then return false
+  return true
 
 /-- Anchors are stored biased by `BIAS` (≥ n) so they are `Nat`s. -/
 def BIAS : Nat := 128
@@ -100,10 +166,10 @@ def eqRun (a b : ByteArray) (i j stop : Nat) : Bool :=
 termination_by stop - i
 
 /-- Push `(p + BIAS - shift)·16 + bit` for entries t ∈ [t, hi) of the bucket with this key. -/
-def scanBucket (ent : Array UInt32) (key : UInt32) (t hi shift bit : Nat) (acc : Array Nat) : Array Nat :=
+def scanBucket (ent : ByteArray) (key : UInt32) (t hi shift bit : Nat) (acc : Array Nat) : Array Nat :=
   if h : t < hi then
     scanBucket ent key (t + 1) hi shift bit
-      (if ent[2 * t + 1]! == key then acc.push ((ent[2 * t]!.toNat + BIAS - shift) * 16 + bit) else acc)
+      (if get32 ent (2 * t + 1) == key then acc.push (((get32 ent (2 * t)).toNat + BIAS - shift) * 16 + bit) else acc)
   else acc
 termination_by hi - t
 
@@ -115,7 +181,7 @@ def lookup (idx : Idx) (g r : ByteArray) (j : Nat) (v : UInt64) : Array Nat :=
   if v >>> 60 == 0 then
     let y := mix v
     let b := (y >>> (50 - BBITS)).toNat
-    scanBucket idx.ent (y &&& KMASK).toUInt32 idx.offs[b]!.toNat idx.offs[b + 1]!.toNat o (1 <<< j) #[]
+    scanBucket idx.ent (y &&& KMASK).toUInt32 (get32 idx.offs b).toNat (get32 idx.offs (b + 1)).toNat o (1 <<< j) #[]
   else
     idx.odd.foldl (init := #[]) fun acc p =>
       if eqRun g r p o (p + q) then acc.push ((p + BIAS - o) * 16 + (1 <<< j)) else acc
@@ -130,9 +196,14 @@ def hamming (r g : ByteArray) (a i stop lim m : Nat) : Nat :=
 termination_by stop - i
 
 /-- Mismatches of the read against g[a ..] (≥ lim + 1 means > lim), only over the
-seeds not in `mask` (seeds in `mask` are clean there) and the tail past 4·q. -/
-def hamSeeds (r g : ByteArray) (q a mask lim : Nat) : Nat := Id.run do
+seeds not in `mask` (seeds in `mask` are clean there) and the tail past 4·q.
+Word compares when read (`plain`) and window are all ACGT. -/
+def hamSeeds (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q a mask lim : Nat) : Nat := Id.run do
   let mut m := hamming r g a (4 * q) r.size lim 0
+  if plain && clean idx a r.size then
+    for j in [0:4] do
+      if m ≤ lim && (mask >>> j) % 2 == 0 then m := m + pop2 (vs[j]!.toUInt64 ^^^ gword idx.pk (a + j * q))
+    return m
   for j in [0:4] do
     if m ≤ lim && (mask >>> j) % 2 == 0 then m := hamming r g a (j * q) (j * q + q) lim m
   return m
@@ -182,18 +253,31 @@ structure Best where
   st : Nat := 0
   len : Nat := 0
   amb : Bool := false
+deriving Inhabited
 
 @[inline] def Best.add (b : Best) (st len pen : Nat) : Best :=
   if pen < b.pen then { pen, st, len, amb := false }
   else if pen == b.pen && (st != b.st || len != b.len) then { b with amb := true }
   else b
 
-/-- Support of biased anchor `A` (number of seeds clean on its diagonal),
-looked up near index `i` of the sorted packed anchors `as` (entries A·16 + seed mask). -/
-@[inline] def supNear (as : Array Nat) (i A : Nat) : Nat := Id.run do
+/-- Mask of looked-up seeds clean on biased diagonal `A`, found near index `i`
+of the increasing packed anchors `as` (entries A·16 + mask). -/
+@[inline] def maskNear (as : Array Nat) (i A : Nat) : Nat := Id.run do
   for k in [i - min i 3 : min as.size (i + 4)] do
-    if as[k]! / 16 == A then return pop4 (as[k]! % 16)
+    if as[k]! / 16 == A then return as[k]! % 16
   return 0
+
+/-- Number of seeds clean on biased diagonal `A`: the looked-up ones from the
+masks, the others (not in `looked`) checked in the genome. -/
+def supAt (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q : Nat) (as : Array Nat) (looked i A : Nat) : Nat := Id.run do
+  let mut c := pop4 (maskNear as i A)
+  if A < BIAS then return c
+  for j in [0:4] do
+    let p := A - BIAS + j * q
+    if (looked >>> j) % 2 == 0 && p + q ≤ g.size &&
+        (if plain && clean idx p q then gword idx.pk p == vs[j]!.toUInt64 else eqRun g r p (j * q) (p + q)) then
+      c := c + 1
+  return c
 
 /-- Merge two increasing packed anchor lists (A·16 + mask), joining masks of equal A. -/
 partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
@@ -208,81 +292,246 @@ partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
   else if h' : j < y.size then merge x y i (j + 1) (acc.push y[j])
   else acc
 
-/-- Number of seeds clean on biased diagonal `A` (checked in the genome). -/
-def supAt (r g : ByteArray) (q A : Nat) : Nat := Id.run do
-  let mut c := 0
-  if A < BIAS then return 0
-  for j in [0:4] do
-    let p := A - BIAS + j * q
-    if p + q ≤ g.size && eqRun g r p (j * q) (p + q) then c := c + 1
-  return c
-
-/-- Best window over the anchors of the seeds whose bucket holds ≤ K entries;
-also returns B = how many seeds were skipped.  Exact when B = 0 or the result's
-penalty is < 4·(4 - B): a window none of whose clean seeds was looked up has
-m ≥ 4 - B - (seeds spoiled by its gap) mismatches; with one gap of length L
-(spoiling ≤ min(L, 2) seeds) or none, penalty ≥ 4·(4 - B) in every case. -/
-def mapK (idx : Idx) (g r : ByteArray) (vs sizes : Array Nat) (K : Nat) : Best × Nat := Id.run do
+/-- Gapped windows near the anchors `as` with penalty ≤ min(b.pen, cap).  They cost
+≥ 8 and their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9); supports come
+from the masks and, for seeds not looked up, the genome. -/
+def gappedStage (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q : Nat) (as : Array Nat) (looked tag : Nat) (b : Best) : Best := Id.run do
   let n := r.size
-  let q := idx.q
-  let l := fun (j : Nat) => if sizes[j]! ≤ K then lookup idx g r j vs[j]!.toUInt64 else #[]
-  let looked := (if sizes[0]! ≤ K then 1 else 0) + (if sizes[1]! ≤ K then 2 else 0) +
-    (if sizes[2]! ≤ K then 4 else 0) + (if sizes[3]! ≤ K then 8 else 0)
-  let nB := 4 - pop4 looked
-  -- packed anchors A·16 + mask of the looked-up seeds clean on diagonal A - BIAS
-  let as := merge (merge (l 0) (l 1) 0 0 #[]) (merge (l 2) (l 3) 0 0 #[]) 0 0 #[]
-  let mut b : Best := {}
-  -- same-length windows: penalty ≥ 4·(looked-up seeds not clean); best first
-  for k in [0:4] do
-    if 4 * k ≤ b.pen && !(b.pen == 0 && b.amb) then
-      for e in as do
-        let A := e / 16
-        if pop4 (looked - (looked &&& (e % 16))) == k && A ≥ BIAS && A - BIAS + n ≤ g.size then
-          let m := hamSeeds r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
-          if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
-  -- gapped windows cost ≥ 8; their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9)
-  if b.pen ≥ 8 then
-    for i in [0:as.size] do
-      let A := as[i]! / 16
-      let c := if nB == 0 then pop4 (as[i]! % 16) else supAt r g q A
-      for L in [1:4] do
-        let need := if min b.pen cap < 10 then 3 else 2
-        let sm := if nB == 0 then supNear as i (A - L) else supAt r g q (A - L)
-        let sp := if nB == 0 then supNear as i (A + L) else supAt r g q (A + L)
-        -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
-        if c + sp ≥ need && A ≥ BIAS && A - BIAS + n + L ≤ g.size then
-          b := b.add (A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
-        if c + sm ≥ need && A ≥ BIAS && A - BIAS + n - L ≤ g.size then
-          b := b.add (A - BIAS) (n - L) (gappedPen r g (A - BIAS) (n - L) (min b.pen cap))
-        -- (A-L, n+L) and (A+L, n-L) end on A: gap before the seed
-        if c + sm ≥ need && A ≥ BIAS + L && A - BIAS + n ≤ g.size then
-          b := b.add (A - BIAS - L) (n + L) (gappedPen r g (A - BIAS - L) (n + L) (min b.pen cap))
-        if c + sp ≥ need && A - BIAS + n ≤ g.size then
-          b := b.add (A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
-  return (b, nB)
+  let mut b := b
+  for i in [0:as.size] do
+    let A := as[i]! / 16
+    let c := supAt idx vs plain r g q as looked i A
+    for L in [1:4] do
+      let need := if min b.pen cap < 10 then 3 else 2
+      let sm := supAt idx vs plain r g q as looked i (A - L)
+      let sp := supAt idx vs plain r g q as looked i (A + L)
+      -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
+      if c + sp ≥ need && A ≥ BIAS && A - BIAS + n + L ≤ g.size then
+        b := b.add (tag + A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
+      if c + sm ≥ need && A ≥ BIAS && A - BIAS + n - L ≤ g.size then
+        b := b.add (tag + A - BIAS) (n - L) (gappedPen r g (A - BIAS) (n - L) (min b.pen cap))
+      -- (A-L, n+L) and (A+L, n-L) end on A: gap before the seed
+      if c + sm ≥ need && A ≥ BIAS + L && A - BIAS + n ≤ g.size then
+        b := b.add (tag + A - BIAS - L) (n + L) (gappedPen r g (A - BIAS - L) (n + L) (min b.pen cap))
+      if c + sp ≥ need && A - BIAS + n ≤ g.size then
+        b := b.add (tag + A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
+  return b
 
-/-- Seeds with more than `bigK` bucket entries are looked up only when needed. -/
-def bigK : Nat := 32
+/-- Anchors of `y` whose diagonal is not in `x` (both increasing). -/
+partial def newOnly (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
+  if h : j < y.size then
+    if h' : i < x.size then
+      if x[i] / 16 < y[j] / 16 then newOnly x y (i + 1) j acc
+      else if x[i] / 16 == y[j] / 16 then newOnly x y (i + 1) (j + 1) acc
+      else newOnly x y i (j + 1) (acc.push y[j])
+    else newOnly x y i (j + 1) (acc.push y[j])
+  else acc
 
-def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
+/-- One read variant being searched (the read, or its reverse complement);
+its windows are told apart from other streams' by adding `tag` to the start. -/
+structure Strand where
+  r : ByteArray
+  vs : Array Nat
+  plain : Bool
+  sizes : Array Nat
+  order : Array Nat
+  as : Array Nat := #[]
+  looked : Nat := 0
+  k : Nat := 0          -- seeds looked up
+  tag : Nat
+deriving Inhabited
+
+def TAG : Nat := 1 <<< 40
+
+def mkStream (idx : Idx) (r : ByteArray) (tag : Nat) : Strand :=
   let q := idx.q
-  assert! r.size / 4 == q && r.size + 3 ≤ BIAS
   let vs := #[(seedCode r 0 0 q 0 0).toNat, (seedCode r q 0 q 0 0).toNat,
     (seedCode r (2 * q) 0 q 0 0).toNat, (seedCode r (3 * q) 0 q 0 0).toNat]
-  assert! vs.all (· >>> 61 == 0)
   let sizes := vs.map fun v =>
     if v >>> 60 != 0 then 0 else
     let b := (mix v.toUInt64 >>> (50 - BBITS)).toNat
-    idx.offs[b + 1]!.toNat - idx.offs[b]!.toNat
-  let (b, nB) := mapK idx g r vs sizes bigK
-  let b := if nB > 0 && 4 * (4 - nB) ≤ b.pen then (mapK idx g r vs sizes (1 <<< 40)).1 else b
-  if b.pen ≤ cap && !b.amb then return some (b.st, b.len, b.pen)
-  return none
+    (get32 idx.offs (b + 1)).toNat - (get32 idx.offs b).toNat
+  { r, vs, plain := vs.all (· >>> 60 == 0) && r.size == 4 * q, sizes, tag,
+    order := #[0, 1, 2, 3].insertionSort (fun i j => sizes[i]! < sizes[j]!) }
+
+/-- Look up the stream's next seed (smallest bucket first), score the
+same-length windows of its new anchors, and its gapped windows when best ≥ 8
+and ≥ 3 seeds are in. -/
+def step (idx : Idx) (g : ByteArray) (s : Strand) (b : Best) : Strand × Best := Id.run do
+  let n := s.r.size
+  let q := idx.q
+  let j := s.order[s.k]!
+  let looked := s.looked ||| (1 <<< j)
+  let lj := lookup idx g s.r j s.vs[j]!.toUInt64
+  let fresh := newOnly s.as lj 0 0 #[]
+  let as := merge s.as lj 0 0 #[]
+  let mut b := b
+  for e in fresh do
+    let A := e / 16
+    if A ≥ BIAS && A - BIAS + n ≤ g.size && !(b.pen == 0 && b.amb) then
+      let m := hamSeeds idx s.vs s.plain s.r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
+      if 4 * m ≤ cap then b := b.add (s.tag + A - BIAS) n (4 * m)
+  if s.k ≥ 2 && b.pen ≥ 8 then b := gappedStage idx s.vs s.plain s.r g q as looked s.tag b
+  return ({ s with as, looked, k := s.k + 1 }, b)
+
+/-! `mapStreams`: seeds of all streams are looked up one at a time.  After a
+stream has looked up k seeds, a window of it none of whose clean seeds was
+looked up has penalty ≥ 4k (its k looked-up seeds are spoiled: by ≥ k
+mismatches, or by one gap of length L spoiling ≤ min(L, 2) seeds plus
+mismatches: 6 + 2L + 4(k - min(L, 2)) ≥ 4k), so a stream is done once
+4k > best (shared best: windows of all streams compete).  The next lookup goes
+to the stream with fewest lookups, then smallest bucket.  Same-length windows
+are scored when their anchor first appears (later seeds cannot change their
+penalty, and best only decreases); gapped ones (≥ 8) at every lookup with
+k ≥ 3 while best ≥ 8: if the final best is ≥ 8, every stream ended with such a
+lookup, over all its anchors. -/
+def mapStreams (idx : Idx) (g : ByteArray) (rs : Array ByteArray) : Best × Nat := Id.run do
+  assert! rs.all fun r => r.size / 4 == idx.q && r.size + 3 ≤ BIAS && r.size == 4 * idx.q
+  let mut ss : Array Strand := (List.range rs.size).toArray.map fun i => mkStream idx rs[i]! (i * TAG)
+  assert! ss.all fun s => s.vs.all (· >>> 61 == 0)
+  let mut b : Best := {}
+  let mut lookups := 0
+  for _ in [0:4 * rs.size] do
+    if b.pen == 0 && b.amb then break
+    let mut pick := ss.size
+    for i in [0:ss.size] do
+      let s := ss[i]!
+      if s.k < 4 && 4 * s.k ≤ b.pen then
+        if pick == ss.size then pick := i
+        else
+          let t := ss[pick]!
+          if s.k < t.k || (s.k == t.k && s.sizes[s.order[s.k]!]! < t.sizes[t.order[t.k]!]!) then pick := i
+    if pick == ss.size then break
+    let (s', b') := step idx g ss[pick]! b
+    ss := ss.set! pick s'
+    b := b'
+    lookups := lookups + 1
+  return (b, lookups)
+
+def compTab : ByteArray := Id.run do
+  let mut t := ByteArray.mk ((List.range 256).toArray.map (·.toUInt8))
+  for (c, v) in [(65, 84), (84, 65), (67, 71), (71, 67)] do t := t.set! c v
+  return t
+
+def revCompGo (r : ByteArray) (i : Nat) (o : ByteArray) : ByteArray :=
+  if h : i < r.size then revCompGo r (i + 1) (o.set! (r.size - 1 - i) (compTab.get! (r.get! i).toNat)) else o
+termination_by r.size - i
+
+/-- Reverse complement (letters other than ACGT kept). -/
+def revComp (r : ByteArray) : ByteArray := revCompGo r 0 r   -- first set! copies (r is shared)
+
+/-- Unique best window (start, len, penalty, reverse?) over the read (and
+with `both` its reverse complement: a different strand is a different window),
+and the number of seed lookups. -/
+def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × Nat × Bool) × Nat :=
+  let (b, k) := mapStreams idx g (if both then #[r, revComp r] else #[r])
+  (if b.pen ≤ cap && !b.amb then some (b.st % TAG, b.len, b.pen, b.st ≥ TAG) else none, k)
+
+abbrev Hit := Nat × Nat × Nat × Bool    -- start, len, penalty, reverse strand?
+
+/-- Chromosome of a hit.  The prototype takes one-chromosome genomes only
+(`main` asserts it), so every hit is on chromosome 0. -/
+def Hit.chr (_ : Hit) : Nat := 0
+
+/-- Proper pair (`MapSpec.properPair`, spec/PairSpec.lean): same chromosome,
+opposite strands, facing, fragment (forward mate start to reverse mate end)
+in [lo, hi]. -/
+def proper (lo hi : Nat) (a b : Hit) : Bool :=
+  let (f, rv) := if a.2.2.2 then (b, a) else (a, b)
+  f.chr == rv.chr && f.2.2.2 != rv.2.2.2 && f.1 ≤ rv.1 + rv.2.1 && lo ≤ rv.1 + rv.2.1 - f.1 &&
+    rv.1 + rv.2.1 - f.1 ≤ hi
+
+/-- Proper-pair-only mapping: the answer is exactly "each mate's `mapSpec` over
+both strands (unique best window), then keep the pair only if both mates map
+and `proper` holds", i.e. (mapRead m1 both, mapRead m2 both) filtered.  Mate 2
+is not searched when mate 1 is unmapped or ambiguous: the filter rejects the
+pair whatever mate 2 gives. -/
+def mapPair (idx : Idx) (g : ByteArray) (lo hi : Nat) (m1 m2 : ByteArray) : Option (Hit × Hit) × Nat :=
+  match mapRead idx g m1 true with
+  | (none, k1) => (none, k1)
+  | (some a, k1) =>
+    match mapRead idx g m2 true with
+    | (some b, k2) => (if proper lo hi a b then some (a, b) else none, k1 + k2)
+    | (none, k2) => (none, k1 + k2)
+
+def mapPairs (idx : Idx) (g : ByteArray) (lo hi : Nat) (ps : Array (ByteArray × ByteArray)) (tasks : Nat) :
+    Array (Option (Hit × Hit) × Nat) :=
+  let f := fun (p : ByteArray × ByteArray) => mapPair idx g lo hi p.1 p.2
+  if tasks ≤ 1 then ps.map f else
+  let csz := (ps.size + tasks - 1) / tasks
+  let ts := (List.range tasks).map fun t => Task.spawn fun _ => (ps.extract (t * csz) (t * csz + csz)).map f
+  ts.foldl (fun acc t => acc ++ t.get) #[]
+
+def showHit (h : Hit) : String := s!"{h.1}\t{h.2.1}\t{-(Int.ofNat h.2.2.1)}\t{if h.2.2.2 then "-" else "+"}"
+
+/-- PROTO_PAIR=<mate 2 reads>: `rpath` holds mate 1.  Dump: name, then both hits or none. -/
+def pairMain (g : ByteArray) (idx : Idx) (rlines : Array String) (m2path : String) (rest : List String) : IO UInt32 := do
+  let l2 := (((← IO.FS.readFile m2path).splitOn "\n").filter (· ≠ "")).toArray
+  assert! l2.size == rlines.size
+  let ps := (List.range (rlines.size / 2)).toArray.map fun i => (rlines[2*i+1]!.toUTF8, l2[2*i+1]!.toUTF8)
+  let lo := ((← IO.getEnv "PAIR_MIN").getD "100").toNat!
+  let hi := ((← IO.getEnv "PAIR_MAX").getD "1000").toNat!
+  let tasks := ((← IO.getEnv "PROTO_TASKS").getD "1").toNat!
+  let t1 ← IO.monoNanosNow
+  let out := mapPairs idx g lo hi ps tasks
+  let kept := (out.filter (·.1.isSome)).size
+  IO.println s!"pairs: {ps.size}  kept: {kept}  lookups/pair: {Float.ofNat (out.foldl (· + ·.2) 0) / Float.ofNat ps.size}"
+  let t2 ← IO.monoNanosNow
+  let secs := Float.ofNat (t2 - t1) / 1e9
+  IO.println s!"map_seconds: {secs}  pairs/s: {Float.ofNat ps.size / secs}  reads/s: {Float.ofNat (2 * ps.size) / secs}"
+  match rest with
+  | [_, dp] =>
+    let names := (List.range ps.size).map fun i => (rlines[2*i]!.drop 1).toString
+    IO.FS.writeFile dp (String.join ((names.zip (out.map (·.1)).toList).map fun (nm, x) => match x with
+      | some (a, b) => s!"{nm}\t{showHit a}\t{showHit b}\n"
+      | none => s!"{nm}\tnone\n"))
+  | _ => pure ()
+  match rest with
+  | tp :: _ =>
+    if tp == "-" then return 0
+    let tl := ((← IO.FS.readFile tp).splitOn "\n").filter (· ≠ "") |>.drop 1
+    let mut right := 0
+    for (line, r) in tl.zip (out.map (·.1)).toList do
+      match line.splitOn "\t", r with
+      | [_, _, p1, s1, p2, s2], some (a, b) =>
+        if p1.toNat! == a.1 + 1 && (s1 == "-") == a.2.2.2 && p2.toNat! == b.1 + 1 && (s2 == "-") == b.2.2.2 then
+          right := right + 1
+      | _, _ => pure ()
+    IO.println s!"pairs_at_true_positions: {right}"
+  | [] => pure ()
+  return 0
+
+def rss : IO String := do
+  let st ← IO.FS.readFile "/proc/self/status"
+  return " ".intercalate ((st.splitOn "\n").filter (fun l => l.startsWith "VmRSS" || l.startsWith "VmHWM"))
+
+/-- Map `reads` in `tasks` chunks, one `Task.spawn` each (pure: = reads.map). -/
+def mapAll (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray) (tasks : Nat) :
+    Array (Option (Nat × Nat × Nat × Bool) × Nat) :=
+  if tasks ≤ 1 then reads.map (mapRead idx g · both) else
+  let csz := (reads.size + tasks - 1) / tasks
+  let ts := (List.range tasks).map fun t =>
+    Task.spawn fun _ => (reads.extract (t * csz) (t * csz + csz)).map (mapRead idx g · both)
+  ts.foldl (fun acc t => acc ++ t.get) #[]
+
+/-- `mapAll` mapping each distinct read once (identical read ⇒ identical answer). -/
+def mapDedup (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray) (tasks : Nat) :
+    Array (Option (Nat × Nat × Nat × Bool) × Nat) := Id.run do
+  let mut first : Std.HashMap ByteArray Nat := {}
+  let mut uniq : Array ByteArray := #[]
+  let mut slot : Array Nat := Array.emptyWithCapacity reads.size
+  for r in reads do
+    match first.get? r with
+    | some i => slot := slot.push i
+    | none => first := first.insert r uniq.size; slot := slot.push uniq.size; uniq := uniq.push r
+  let out := mapAll idx g both uniq tasks
+  return slot.map (out[·]!)
 
 def main (args : List String) : IO UInt32 := do
   let gpath :: rpath :: l0s :: rest := args | return 2
   let l0 := l0s.toNat!
-  let glines := (← IO.FS.readFile gpath).splitOn "\n"
+  let glines := ((← IO.FS.readFile gpath).splitOn "\n").filter (· ≠ "")
+  assert! glines.length == 2   -- one chromosome (see `Hit.chr`)
   let g := glines[1]!.toUTF8
   let rlines := (((← IO.FS.readFile rpath).splitOn "\n").filter (· ≠ "")).toArray
   let mut reads : Array ByteArray := #[]
@@ -290,23 +539,29 @@ def main (args : List String) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   let idx := buildIdx g l0
   assert! l0 == 25
-  IO.println s!"index entries: {idx.ent.size / 2}"
+  IO.println s!"index entries: {idx.ent.size / 8}"
+  IO.println (← rss)
+  if let some m2 ← IO.getEnv "PROTO_PAIR" then
+    IO.println s!"index_seconds: {Float.ofNat ((← IO.monoNanosNow) - t0) / 1e9}"
+    return ← pairMain g idx rlines m2 rest
   let t1 ← IO.monoNanosNow
   let reps := ((← IO.getEnv "PROTO_REPS").getD "1").toNat!   -- for profiling
-  let mut res : Array (Option (Nat × Nat × Nat)) := #[]
-  for _ in [0:reps] do
-    res := #[]
-    for r in reads do res := res.push (mapRead idx g r)
+  let tasks := ((← IO.getEnv "PROTO_TASKS").getD "1").toNat!
+  let both := (← IO.getEnv "PROTO_BOTH").isSome
+  let mut out : Array (Option (Nat × Nat × Nat × Bool) × Nat) := #[]
+  let dedup := (← IO.getEnv "PROTO_DEDUP").isSome
+  for _ in [0:reps] do out := if dedup then mapDedup idx g both reads tasks else mapAll idx g both reads tasks
+  let res := out.map (·.1)
   let mapped := (res.filter (·.isSome)).size
-  IO.println s!"mapped: {mapped}"
+  IO.println s!"mapped: {mapped}  lookups/read: {Float.ofNat (out.foldl (· + ·.2) 0) / Float.ofNat reads.size}"
   let t2 ← IO.monoNanosNow
   let secs := Float.ofNat (t2 - t1) / 1e9
-  IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat (reps * reads.size) / secs}"
+  IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat (reps * reads.size) / secs}  {← rss}"
   match rest with
   | [_, dp] =>
     let names := (List.range (rlines.size / 2)).map fun i => (rlines[2*i]!.drop 1).toString
     IO.FS.writeFile dp (String.join ((names.zip res.toList).map fun (nm, x) => match x with
-      | some (s, l, p) => s!"{nm}\t{s}\t{l}\t{-(Int.ofNat p)}\n"
+      | some (s, l, p, rv) => s!"{nm}\t{s}\t{l}\t{-(Int.ofNat p)}" ++ (if both then (if rv then "\t-" else "\t+") else "") ++ "\n"
       | none => s!"{nm}\tnone\n"))
   | _ => pure ()
   match rest with
@@ -316,7 +571,7 @@ def main (args : List String) : IO UInt32 := do
     let mut right := 0
     for (line, r) in tl.zip res.toList do
       match line.splitOn "\t", r with
-      | [_, _, pos, _], some (s, _, _) => if pos.toNat! == s + 1 then right := right + 1
+      | [_, _, pos, _], some (s, _, _, false) => if pos.toNat! == s + 1 then right := right + 1
       | _, _ => pure ()
     IO.println s!"at_true_position: {right}"
   | [] => pure ()

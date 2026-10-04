@@ -21,6 +21,8 @@ answers identical to the hashed index and the prototype):
     minimizer k=21 B=22   119.1 MB     176k
     minimizer k=22 B=22   140.7 MB     170k–199k    313k reads/s
     minimizer k=23 B=24   223.4 MB     204k
+    k=22 B=23, mod-minimizer t=6, 4-byte slots, c=0
+                          77.4 MB      347k (k=22 B=24 8-byte full context: 191.0 MB, 365k)
 
 `Mz.check2` (= `Mz.check`, rolling completeness pass, `codecs/MzCheckFast.lean`) 17 s
 (`Mz.check` 27–34 s), `Mz.build` 33–39 s.
@@ -40,11 +42,11 @@ section
 
 @[inline] def anc (base bit p : Nat) : Nat := (p + base) * 16 + bit
 
-def scanA (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 hi base bit : Nat) (t : Nat)
+def scanA (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) (t : Nat)
     (acc : Array Nat) : Array Nat :=
   if t < hi then
-    scanA ix G R s o key bw aw pmo o2 hi base bit (t + 1)
-      (if Mz.okAt ix G R s o key bw aw pmo o2 t then acc.push (anc base bit (ix.posOf (ix.slot t) - o)) else acc)
+    scanA ix G R s o key bw aw pmo o2 n1 a2 n2 hi base bit (t + 1)
+      (if Mz.okAt ix G R s o key bw aw pmo o2 n1 a2 n2 t then acc.push (anc base bit (ix.posOf (ix.slot t) - o)) else acc)
   else acc
 termination_by hi - t
 
@@ -71,7 +73,11 @@ def lookupCodeA (ix : Mz.MzIdx) (G R : ByteArray) (s v base bit : Nat) : Array N
   let o := ix.mini v
   let h := ix.hsh (ix.sub v o)
   let b := h >>> ix.kb
-  scanA ix G R s o (h &&& ix.kbM) (v >>> (2 * (Mz.q - o))) (v &&& ix.pm[ix.w - 1 - o]!) ix.pm[o]! (2 * o)
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  scanA ix G R s o (h &&& ix.kbM) ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+    ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+    (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
     (ix.hiB b) base bit (ix.loB b) #[]
 
 def lookupSeedA (ix : Mz.MzIdx) (G R : ByteArray) (s base bit : Nat) : Array Nat :=
@@ -83,9 +89,9 @@ def lookupSeedA (ix : Mz.MzIdx) (G R : ByteArray) (s base bit : Nat) : Array Nat
     if u2 < s + Mz.q then scanEdgeA ix G R 1 (u2 - s) s base bit 0 #[]
     else scanInsideA ix G R s base bit 0 #[]
 
-theorem scanA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 hi base bit : Nat) :
-    ∀ d t acc, hi - t = d → scanA ix G R s o key bw aw pmo o2 hi base bit t (acc.map (anc base bit)) =
-      (Mz.scan ix G R s o key bw aw pmo o2 hi t acc).map (anc base bit) := by
+theorem scanA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) :
+    ∀ d t acc, hi - t = d → scanA ix G R s o key bw aw pmo o2 n1 a2 n2 hi base bit t (acc.map (anc base bit)) =
+      (Mz.scan ix G R s o key bw aw pmo o2 n1 a2 n2 hi t acc).map (anc base bit) := by
   intro d; induction d with
   | zero =>
     intro t acc h
@@ -152,7 +158,7 @@ theorem lookupA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s base bit : Nat) :
   dsimp only
   split
   · conv => lhs; rw [e]
-    rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
+    rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
   · split
     · conv => lhs; rw [e]
       rw [scanEdgeA_eq _ _ _ _ _ _ _ _ _ _ _ rfl]
@@ -168,7 +174,7 @@ theorem lookupCodeA_eq (ix : Mz.MzIdx) (G R : ByteArray) (s v base bit : Nat) :
   unfold lookupCodeA Mz.lookupCode
   dsimp only
   conv => lhs; rw [e]
-  rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
+  rw [scanA_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
 
 end
 
@@ -195,8 +201,14 @@ deriving Inhabited
 
 /-- `lookupCodeA` with the prepared values. -/
 @[inline] def lookupP (ix : Mz.MzIdx) (G R : ByteArray) (s : Nat) (p : MzP) (base bit : Nat) : Array Nat :=
-  scanA ix G R s p.o (p.h &&& ix.kbM) (p.v >>> (2 * (Mz.q - p.o))) (p.v &&& ix.pm[ix.w - 1 - p.o]!) ix.pm[p.o]!
-    (2 * p.o) (ix.hiB p.b) base bit (ix.loB p.b) #[]
+  let o := p.o
+  let v := p.v
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  scanA ix G R s o (p.h &&& ix.kbM) ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+    ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+    (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
+    (ix.hiB p.b) base bit (ix.loB p.b) #[]
 
 /-- Seed `j`'s packed anchors from a minimizer index; an ACGT seed reuses its
 prepared code and bucket instead of reading its letters again. -/

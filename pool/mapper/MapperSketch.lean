@@ -146,6 +146,25 @@ theorem minimizerSketch_key (k w : Nat) (ord : List Char → Nat) (hw : 0 < w) (
   have hm := argminLeft_lt (fun j => ord ((((x.drop i).take (w + k - 1)).drop j).take k)) w hw
   exact ⟨take_drop_sub _ _ _ _ _ (by omega), by omega⟩
 
+/-- Mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): in each window of
+`w + k - 1` letters take the leftmost least t-mer (under `ord`) at `x`, and
+select the k-mer at `x mod w`.  Not a minimizer of any k-mer order, but a
+function of the window, so a `windowSketch`: complete for every `ord` and `t`. -/
+def modMinimizerSketch (k w t : Nat) (ord : List Char → Nat) : SeedSketch (List Char) :=
+  windowSketch (w + k - 1) fun win =>
+    let x := argminLeft (fun j => ord ((win.drop j).take t)) (w + k - t)
+    ((win.drop (x % w)).take k, x % w)
+
+theorem modMinimizerSketch_key (k w t : Nat) (ord : List Char → Nat) (hw : 0 < w) (x : List Char)
+    (e : List Char × Nat) (he : e ∈ (modMinimizerSketch k w t ord).sketch x) :
+    e.1 = (x.drop e.2).take k ∧ e.2 + k ≤ x.length := by
+  simp only [modMinimizerSketch, windowSketch] at he
+  rw [mem_windowSketchFn] at he
+  obtain ⟨i, hi, rfl⟩ := he
+  have hm := Nat.mod_lt (argminLeft (fun j => ord ((((x.drop i).take (w + k - 1)).drop j).take t))
+    (w + k - t)) hw
+  exact ⟨take_drop_sub _ _ _ _ _ (by omega), by omega⟩
+
 theorem kmerSketch_key (k : Nat) (x : List Char) (e : List Char × Nat)
     (he : e ∈ (kmerSketch k).sketch x) : e.1 = (x.drop e.2).take k ∧ e.2 + k ≤ x.length := by
   simp only [kmerSketch, windowSketch] at he
@@ -360,6 +379,7 @@ end MapSpec
 
 #print axioms MapSpec.SeedSketch.anchored
 #print axioms MapSpec.minimizerSketch_key
+#print axioms MapSpec.modMinimizerSketch_key
 #print axioms MapSpec.dictSel_prefixDet
 #print axioms MapSpec.closedSyncmer_hits
 #print axioms MapSpec.ctxSketch_key

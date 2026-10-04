@@ -23,7 +23,7 @@ package lean_align where
 @[default_target]
 lean_lib AlignmentSpecLib where
   srcDir := "spec"
-  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec]
+  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec]
 
 -- ──────────────────────────── codecs ────────────────────────────
 
@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperGenLook, `MapperGenSearch, `MapperMzWords, `MapperSketch]
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperGenSearch, `MapperInterleave]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenAlgo, `FastGenProof, `FastGen, `FastGenMz, `MzCheckFast, `MzIndex, `SketchMapper]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `FastGenMz, `PairInterleave, `MzCheckPar]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -146,10 +146,34 @@ lean_exe layout where                 -- index layout bench (unproved)
   srcDir := "bench"
   root := `Layout
 
-lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer index
+lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer / mod-minimizer index
   srcDir := "bench"
   root := `ProtoSketch
 
 lean_exe mz_test where                -- randomized test: proved MzIndex lookup vs naive scan
   srcDir := "bench"
   root := `MzTest
+
+lean_exe proto2 where                 -- speed prototype 2: closed-form scoring (unproved)
+  srcDir := "bench"
+  root := `Proto2
+
+lean_exe micro where                  -- micro-benchmarks of Lean code patterns
+  srcDir := "bench"
+  root := `Micro
+
+lean_exe map_dump where               -- benchmark only; per-read results of the proved mapper
+  srcDir := "bench"
+  root := `MapDump
+
+lean_exe proto0 where                 -- first speed prototype, kept for comparisons (unproved)
+  srcDir := "bench"
+  root := `Proto0
+
+lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
+  srcDir := "bench"
+  root := `PairBench
+
+lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
+  srcDir := "bench"
+  root := `PackedBench
