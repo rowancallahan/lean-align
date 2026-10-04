@@ -8,7 +8,7 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
 
     lake exe pair_bench <genome.fa> <mate1.reads.txt> <mate2.reads.txt> [dump.tsv]
     env: PAIR_MIN (100), PAIR_MAX (1000), PAIR_TASKS (1), PAIR_JOINT (shared-best strand search, pairFastJ),
-    PAIR_MZ=k [PAIR_MZ_B=B] (minimizer index, with PAIR_JOINT: pairFastJ_mz_eq_pairSpec)
+    PAIR_MZ=k [PAIR_MZ_B=B] [PAIR_MZ_C=c] [PAIR_MZ_W=bytes] [PAIR_MZ_T=t] (minimizer index, with PAIR_JOINT: pairFastJ_mz_eq_pairSpec)
 
 Dump format = `bench/pair_ref.py` / `PROTO_PAIR` (name, then both hits or none).
 -/
@@ -73,9 +73,12 @@ def main (args : List String) : IO UInt32 := do
     else do
       assert! joint
       let B := ((← IO.getEnv "PAIR_MZ_B").getD "24").toNat!
-      let idxs := gbs.map fun g => Mz.build g mz B
+      let C := ((← IO.getEnv "PAIR_MZ_C").getD (toString (25 - mz))).toNat!   -- context letters per side
+      let W := ((← IO.getEnv "PAIR_MZ_W").getD "8").toNat!   -- bytes per slot (4, 5, 6, 8)
+      let T := ((← IO.getEnv "PAIR_MZ_T").getD (toString mz)).toNat!   -- t-words pick the minimizer
+      let idxs := gbs.map fun g => Mz.buildW g mz B C W T
       let ok := Fast.checkAllMz idxs gbs
-      IO.println s!"index check: {ok}  minimizer k={mz} B={B} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size) 0}"
+      IO.println s!"index check: {ok}  minimizer k={mz} B={B} C={C} W={W} T={T} kf={idxs.toList.map (·.kf)} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.sl.size + 8 * ix.runs.size) 0}"
       assert! ok
       pure fun p => Fast.pairFastJ Fast.mzL lo hi gbs idxs p.1 p.2
   let t0 ← IO.monoNanosNow
