@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists]
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -105,3 +105,7 @@ lean_exe map_bench where              -- benchmark only; prints to stdout
 lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "bench"
   root := `Proto
+
+lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
+  srcDir := "bench"
+  root := `MapBench2
