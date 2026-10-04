@@ -140,6 +140,26 @@ theorem pickMin_ok {α : Type} (f : α → Nat) : PickOk (pickMin f) := by
   | nil => exact absurd rfl hl
   | cons a l => exact ⟨_, rfl, key l a⟩
 
+/-- Seed letters at offsets `offs` agree with the genome at `place` (the
+index can store these letters next to each key, so the check needs no genome
+access).  Offsets past the seed are ignored. -/
+def lettersAgree (g : Genome) (offs : List Nat) (seed : List Char) (place : Nat × Nat) : Bool :=
+  match g[place.1]? with
+  | some c => offs.all fun t => !decide (t < seed.length) || seed[t]? == c.seq[place.2 + t]?
+  | none => false
+
+theorem lettersAgree_complete (g : Genome) (offs : List Nat) : KeepComplete g (lettersAgree g offs) := by
+  intro c chromosome p w hc hp hw
+  simp only [lettersAgree, hc, List.all_eq_true]
+  intro t _
+  by_cases ht : t < w.length
+  · have : w[t]? = chromosome.seq[p + t]? := by
+      conv => lhs; rw [← hw]
+      rw [List.getElem?_take, if_pos ht, List.getElem?_drop]
+    rw [List.getElem?_eq_getElem ht] at this
+    simp [ht, this]
+  · simp [ht]
+
 /-- Every window the specification can report is among the candidates. -/
 theorem mem_candidatesS {κ : Type} (S : SeedSketch κ) (pick : List (κ × Nat) → Option (κ × Nat))
     (keep : List Char → Nat × Nat → Bool) (lookup : κ → List (Nat × Nat))
@@ -300,6 +320,7 @@ example (ord : List Char → Nat) : (syncmerSketch 15 4 ord (by decide)).L ≤ 1
 
 end MapSpec
 
+#print axioms MapSpec.lettersAgree_complete
 #print axioms MapSpec.mapWithSketch_eq_mapSpec
 #print axioms MapSpec.sketchMapper_eq_mapSpec
 #print axioms MapSpec.mapReadsSketch_eq_mapSpec
