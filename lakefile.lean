@@ -165,3 +165,7 @@ lean_exe map_dump where               -- benchmark only; per-read results of the
 lean_exe proto0 where                 -- first speed prototype, kept for comparisons (unproved)
   srcDir := "bench"
   root := `Proto0
+
+lean_lib Wip where                    -- proof skeletons with `sorry` (not default, not in check.sh)
+  srcDir := "wip"
+  roots := #[`PairSkeleton]
