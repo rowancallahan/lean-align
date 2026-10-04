@@ -40,11 +40,25 @@ def winLoop (seq qual : ByteArray) : Nat → PackedFoldState → PackedFoldState
   | 0, st => st
   | i + 1, st => winLoop seq qual i (packedFoldStep perBase (enc seq[i]! qual[i]!) st)
 
+/-- `winLoop` with the state's fields as arguments (no state allocated per base; `wl_eq`). -/
+def wl (seq qual : ByteArray) : Nat → Nat → Bool → Nat → Int → Nat → Nat → Int → PackedFoldState
+  | 0, ns, hr, pl, ps, bs, be, bsc => ⟨ns, hr, pl, ps, bs, be, bsc⟩
+  | i + 1, ns, hr, pl, ps, bs, be, bsc =>
+    let cs := ns - 1
+    let f := perBase (enc seq[i]! qual[i]!)
+    if hr then
+      if 0 < ps then
+        if bsc ≤ f + ps then wl seq qual i cs true (pl + 1) (f + ps) cs (cs + (pl + 1)) (f + ps)
+        else wl seq qual i cs true (pl + 1) (f + ps) bs be bsc
+      else if bsc ≤ f then wl seq qual i cs true 1 f cs (cs + 1) f
+      else wl seq qual i cs true 1 f bs be bsc
+    else wl seq qual i cs true 1 f cs (cs + 1) f
+
 /-- The kept window `[s, e)`, or `none` (nothing worth keeping: the best window
 starts with a non-A/C/G/T letter only when the read has no A/C/G/T at all). -/
 def trimRead (seq qual : ByteArray) : Option (Nat × Nat) :=
   if seq.size ≤ 10000 then
-    match (winLoop seq qual seq.size (initialPackedFoldState seq.size)).result.map
+    match (wl seq qual seq.size seq.size false 0 0 0 0 0).result.map
         (fun r => (r.bestStart, r.bestEnd)) with
     | some (s, e) => if isACGT seq[s]! then some (s, e) else none
     | none => none
@@ -93,6 +107,14 @@ theorem winLoop_eq (seq qual : ByteArray) (k : Nat) (st : PackedFoldState) :
   induction k generalizing st with
   | zero => rfl
   | succ k ih => rw [winLoop, ih, List.range_succ]; simp
+
+theorem wl_eq (seq qual : ByteArray) (i ns : Nat) (hr : Bool) (pl : Nat) (ps : Int) (bs be : Nat) (bsc : Int) :
+    wl seq qual i ns hr pl ps bs be bsc = winLoop seq qual i ⟨ns, hr, pl, ps, bs, be, bsc⟩ := by
+  induction i generalizing ns hr pl ps bs be bsc with
+  | zero => rfl
+  | succ i ih =>
+    simp only [wl, winLoop, packedFoldStep]
+    cases hr <;> simp only [Bool.false_eq_true, if_false, if_true] <;> (try split) <;> (try split) <;> rw [ih]
 
 theorem winLoop_packed (seq qual : ByteArray) :
     (winLoop seq qual seq.size (initialPackedFoldState seq.size)).result.map (fun r => (r.bestStart, r.bestEnd)) =
@@ -157,7 +179,7 @@ theorem trimRead_packed (seq qual : ByteArray) (s e : Nat) (ht : trimRead seq qu
       split at ht
       · next hA =>
         cases ht
-        rw [winLoop_packed, getBestWindowPacked_equals_frozen_get_best_window []] at hw
+        rw [wl_eq, ← initialPackedFoldState, winLoop_packed, getBestWindowPacked_equals_frozen_get_best_window []] at hw
         exact ⟨hsz, hA, hw⟩
       · cases ht
     · cases ht
@@ -177,6 +199,7 @@ theorem trimRead_eq_contract (seq qual : ByteArray) (h : seq.size ≤ 10000) (j 
     (hjA : isACGT seq[j]! = true) :
     trimRead seq qual = get_best_window [] (scoresOf seq qual) (fun ws => ws.map perBase) := by
   have hc := (winLoop_packed seq qual).trans (getBestWindowPacked_equals_frozen_get_best_window [] _ _)
+  rw [initialPackedFoldState, ← wl_eq] at hc
   unfold trimRead
   rw [if_pos h, hc]
   cases hw : get_best_window [] (scoresOf seq qual) (fun ws => ws.map perBase) with
