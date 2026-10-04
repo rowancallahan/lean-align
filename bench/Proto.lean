@@ -28,10 +28,10 @@ def cap : Nat := 12
 
 def codeTab : ByteArray := Id.run do
   let mut t := ByteArray.mk (Array.replicate 256 4)
-  for (c, v) in [(65, 0), (67, 1), (71, 2), (84, 3)] do t := t.set! c v
+  for (c, v) in [(65, 0), (67, 1), (71, 2), (84, 3), (78, 12)] do t := t.set! c v
   return t
 
-/-- A C G T ↦ 0 1 2 3, anything else ↦ 4. -/
+/-- A C G T ↦ 0 1 2 3, N ↦ 12, anything else ↦ 4. -/
 @[inline] def code (b : UInt8) : UInt64 := (codeTab.get! b.toNat).toUInt64
 
 /-- Bijection on 50-bit values (odd multiplier mod 2^50): bucket = top 24
@@ -62,7 +62,7 @@ def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
   for p in [0:g.size] do
     let c := code (g.get! p)
     if c < 4 then x := ((x <<< 2) ||| c) &&& wmask; good := good + 1 else good := 0
-    if c == 4 && g.get! p != 78 then lastOdd := p
+    if c == 4 then lastOdd := p
     if p + 1 ≥ q && lastOdd + q > p then odd := odd.push (p + 1 - q)
     if good ≥ q then
       let b := (mix x >>> (50 - BBITS)).toNat
@@ -85,19 +85,13 @@ def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
 /-- Anchors are stored biased by `BIAS` (≥ n) so they are `Nat`s. -/
 def BIAS : Nat := 128
 
-/-- 2-bit code of r[o+i, o+stop) appended to `x` (letters must be ACGT). -/
-def seedCode (r : ByteArray) (o i stop : Nat) (x : UInt64) : UInt64 :=
-  if h : i < stop then seedCode r o (i + 1) stop ((x <<< 2) ||| code (r.get! (o + i))) else x
-termination_by stop - i
-
-/-- r[o, o+q) is all ACGT. -/
-def plainAt (r : ByteArray) (o i stop : Nat) : Bool :=
-  if h : i < stop then code (r.get! (o + i)) < 4 && plainAt r o (i + 1) stop else true
-termination_by stop - i
-
-/-- r[o+i, o+stop) contains N (reads with N are refused: N-words are not indexed). -/
-def hasN (r : ByteArray) (o i stop : Nat) : Bool :=
-  if h : i < stop then r.get! (o + i) == 78 || hasN r o (i + 1) stop else false
+/-- 2-bit code of r[o+i, o+stop) appended to `x`; bits 60, 61 flag a letter
+other than ACGTN, an N. -/
+def seedCode (r : ByteArray) (o i stop : Nat) (x f : UInt64) : UInt64 :=
+  if h : i < stop then
+    let c := code (r.get! (o + i))
+    seedCode r o (i + 1) stop ((x <<< 2) ||| (c &&& 3)) (f ||| c)
+  else x ||| ((f >>> 2) <<< 60)
 termination_by stop - i
 
 /-- a[i, stop) = b[j, j + stop - i). -/
@@ -105,34 +99,47 @@ def eqRun (a b : ByteArray) (i j stop : Nat) : Bool :=
   if h : i < stop then a.get! i == b.get! j && eqRun a b (i + 1) (j + 1) stop else true
 termination_by stop - i
 
-/-- Push `(p + BIAS - shift)·8 + 1` for entries t ∈ [t, hi) of the bucket with this key. -/
-def scanBucket (ent : Array UInt32) (key : UInt32) (t hi shift : Nat) (acc : Array Nat) : Array Nat :=
+/-- Push `(p + BIAS - shift)·16 + bit` for entries t ∈ [t, hi) of the bucket with this key. -/
+def scanBucket (ent : Array UInt32) (key : UInt32) (t hi shift bit : Nat) (acc : Array Nat) : Array Nat :=
   if h : t < hi then
-    scanBucket ent key (t + 1) hi shift
-      (if ent[2 * t + 1]! == key then acc.push ((ent[2 * t]!.toNat + BIAS - shift) * 8 + 1) else acc)
+    scanBucket ent key (t + 1) hi shift bit
+      (if ent[2 * t + 1]! == key then acc.push ((ent[2 * t]!.toNat + BIAS - shift) * 16 + bit) else acc)
   else acc
 termination_by hi - t
 
-/-- Anchors (p + BIAS - shift)·8 + 1, increasing, for every start p with g[p, p+q) = r[o, o+q). -/
-def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (shift : Nat) : Array Nat :=
-  let acc := #[]
+/-- Seed j (letters r[j·q, j·q+q)): anchors (p + BIAS - j·q)·16 + 2^j, increasing,
+for every start p with g[p, p+q) = the seed. -/
+def lookup (idx : Idx) (g r : ByteArray) (j : Nat) : Array Nat :=
   let q := idx.q
-  assert! !hasN r o 0 q
-  if plainAt r o 0 q then
-    let y := mix (seedCode r o 0 q 0)
+  let o := j * q
+  let v := seedCode r o 0 q 0 0
+  assert! v >>> 61 == 0
+  if v >>> 60 == 0 then
+    let y := mix v
     let b := (y >>> (50 - BBITS)).toNat
-    scanBucket idx.ent (y &&& KMASK).toUInt32 idx.offs[b]!.toNat idx.offs[b + 1]!.toNat shift acc
+    scanBucket idx.ent (y &&& KMASK).toUInt32 idx.offs[b]!.toNat idx.offs[b + 1]!.toNat o (1 <<< j) #[]
   else
-    idx.odd.foldl (init := acc) fun acc p => if eqRun g r p o (p + q) then acc.push ((p + BIAS - shift) * 8 + 1) else acc
+    idx.odd.foldl (init := #[]) fun acc p =>
+      if eqRun g r p o (p + q) then acc.push ((p + BIAS - o) * 16 + (1 <<< j)) else acc
 
-/-- Mismatches of r[i ..] against g[a + i ..] plus `m`, stopping once above `lim`. -/
-def hamming (r g : ByteArray) (a i lim m : Nat) : Nat :=
-  if h : i < r.size then
+/-- Mismatches of r[i, stop) against g[a + i ..] plus `m`, stopping once above `lim`. -/
+def hamming (r g : ByteArray) (a i stop lim m : Nat) : Nat :=
+  if h : i < stop then
     if r.get! i != g.get! (a + i) then
-      if m + 1 > lim then m + 1 else hamming r g a (i + 1) lim (m + 1)
-    else hamming r g a (i + 1) lim m
+      if m + 1 > lim then m + 1 else hamming r g a (i + 1) stop lim (m + 1)
+    else hamming r g a (i + 1) stop lim m
   else m
-termination_by r.size - i
+termination_by stop - i
+
+/-- Mismatches of the read against g[a ..] (≥ lim + 1 means > lim), only over the
+seeds not in `mask` (seeds in `mask` are clean there) and the tail past 4·q. -/
+def hamSeeds (r g : ByteArray) (q a mask lim : Nat) : Nat := Id.run do
+  let mut m := hamming r g a (4 * q) r.size lim 0
+  for j in [0:4] do
+    if m ≤ lim && (mask >>> j) % 2 == 0 then m := hamming r g a (j * q) (j * q + q) lim m
+  return m
+
+def pop4 (mask : Nat) : Nat := mask % 2 + (mask >>> 1) % 2 + (mask >>> 2) % 2 + (mask >>> 3) % 2
 
 /-- Mismatches of r[k, stop) against g[d + k ..] (d may be negative: g[k + d1 - d0]). -/
 def misCount (r g : ByteArray) (d1 d0 k stop m : Nat) : Nat :=
@@ -174,21 +181,21 @@ structure Best where
   else b
 
 /-- Support of biased anchor `A` (number of seeds clean on its diagonal),
-looked up near index `i` of the sorted packed anchors `as` (entries A·8 + support). -/
+looked up near index `i` of the sorted packed anchors `as` (entries A·16 + seed mask). -/
 @[inline] def supNear (as : Array Nat) (i A : Nat) : Nat := Id.run do
   for k in [i - min i 3 : min as.size (i + 4)] do
-    if as[k]! / 8 == A then return as[k]! % 8
+    if as[k]! / 16 == A then return pop4 (as[k]! % 16)
   return 0
 
-/-- Merge two increasing packed anchor lists (A·8 + support), adding supports of equal A. -/
+/-- Merge two increasing packed anchor lists (A·16 + mask), joining masks of equal A. -/
 partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
   if h : i < x.size then
     if h' : j < y.size then
       let a := x[i]
       let b := y[j]
-      if a / 8 < b / 8 then merge x y (i + 1) j (acc.push a)
-      else if b / 8 < a / 8 then merge x y i (j + 1) (acc.push b)
-      else merge x y (i + 1) (j + 1) (acc.push (a + b % 8))
+      if a / 16 < b / 16 then merge x y (i + 1) j (acc.push a)
+      else if b / 16 < a / 16 then merge x y i (j + 1) (acc.push b)
+      else merge x y (i + 1) (j + 1) (acc.push (a ||| b % 16))
     else merge x y (i + 1) j (acc.push x[i])
   else if h' : j < y.size then merge x y i (j + 1) (acc.push y[j])
   else acc
@@ -197,8 +204,8 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
   let n := r.size
   let q := idx.q
   assert! n / 4 == q && n + 3 ≤ BIAS
-  -- packed anchors A·8 + support, support = number of seeds clean on diagonal A - BIAS
-  let l := fun j => lookup idx g r (j * q) (j * q)
+  -- packed anchors A·16 + mask of the seeds clean on diagonal A - BIAS; support = its size
+  let l := fun j => lookup idx g r j
   let as := merge (merge (l 0) (l 1) 0 0 #[]) (merge (l 2) (l 3) 0 0 #[]) 0 0 #[]
   let mut b : Best := {}
   -- same-length windows: penalty ≥ 4·(4 - support); best first
@@ -206,15 +213,15 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
     let sup := 4 - k
     if 4 * k ≤ b.pen && !(b.pen == 0 && b.amb) then
       for e in as do
-        let A := e / 8
-        if e % 8 == sup && A ≥ BIAS && A - BIAS + n ≤ g.size then
-          let m := hamming r g (A - BIAS) 0 (min 3 (b.pen / 4)) 0
+        let A := e / 16
+        if pop4 (e % 16) == sup && A ≥ BIAS && A - BIAS + n ≤ g.size then
+          let m := hamSeeds r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
           if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
   -- gapped windows cost ≥ 8; their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9)
   if b.pen ≥ 8 then
     for i in [0:as.size] do
-      let A := as[i]! / 8
-      let c := as[i]! % 8
+      let A := as[i]! / 16
+      let c := pop4 (as[i]! % 16)
       for L in [1:4] do
         let need := if min b.pen cap < 10 then 3 else 2
         let sm := supNear as i (A - L)
