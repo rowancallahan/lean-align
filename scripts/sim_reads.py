@@ -4,8 +4,10 @@
 Each base: substitution with prob err*(1-indel_frac); insertion or deletion
 (length 1 + geometric(0.3)) with prob err*indel_frac/2 each.  Reads touching N
 are redrawn.  Writes <prefix>.reads.txt (>name / seq lines, the Lean format),
-<prefix>.fq (for minibwa), <prefix>.truth.tsv."""
-import random, sys
+<prefix>.fq (for minibwa), <prefix>.truth.tsv.
+SIM_BOTH=1: each read is reverse-complemented with probability 1/2 and the truth
+gets a strand column (+/-); without it the output is unchanged (forward only)."""
+import os, random, sys
 fa, prefix, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 RL = int(sys.argv[4]) if len(sys.argv) > 4 else 100
 err = float(sys.argv[5]) if len(sys.argv) > 5 else 0.005
@@ -19,7 +21,8 @@ for line in open(fa):
 assert chrs and all(len(s) > RL + 50 for _, s in chrs)
 glen = lambda: 1 + (int(random.expovariate(0.3)) if random.random() < 0.3 else 0)
 with open(prefix + ".reads.txt", "w") as fr, open(prefix + ".fq", "w") as fq, open(prefix + ".truth.tsv", "w") as ft:
-    ft.write("read\tchromosome\tposition_1based\tedits\n")
+    both = os.environ.get("SIM_BOTH") == "1"
+    ft.write("read\tchromosome\tposition_1based\tedits" + ("\tstrand" if both else "") + "\n")
     i = 0
     while i < n:
         cname, seq = random.choice(chrs)
@@ -37,7 +40,10 @@ with open(prefix + ".reads.txt", "w") as fr, open(prefix + ".fq", "w") as fq, op
             else:
                 r.append(seq[j]); j += 1
         r = "".join(r[:RL])
+        strand = "+"
+        if both and random.random() < 0.5:
+            r = r[::-1].translate(str.maketrans("ACGT", "TGCA")); strand = "-"
         i += 1
         fr.write(">r%d\n%s\n" % (i, r))
         fq.write("@r%d\n%s\n+\n%s\n" % (i, r, "I" * RL))
-        ft.write("r%d\t%s\t%d\t%s\n" % (i, cname, pos + 1, ",".join(edits) or "-"))
+        ft.write("r%d\t%s\t%d\t%s%s\n" % (i, cname, pos + 1, ",".join(edits) or "-", "\t" + strand if both else ""))
