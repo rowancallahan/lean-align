@@ -93,6 +93,13 @@ def main (args : List String) : IO UInt32 := do
           then n else n + 1) 0
         IO.println s!"check vs mapFastC (T = -12) on {rs.size} reads: {bad} differ"
         assert! bad == 0
+      if (← IO.getEnv "GP_TWO").isSome then
+        -- estimate only (not the proved path): -12 first, -P for reads without a hit <= 12
+        pure fun R => if Fast.fastT 12 R then
+            let b := Fast.mapChromsGB 12 ix G offs gbs R
+            if b.pen ≤ 12 then Fast.decodeP gbs.size 12 b else Fast.mapFastGB P ix G offs gbs R
+          else Fast.mapFastGB P ix G offs gbs R
+      else
       pure fun R => Fast.mapFastGB P ix G offs gbs R
     else do
       let B := ((← IO.getEnv "GP_MZ_B").getD "24").toNat!
