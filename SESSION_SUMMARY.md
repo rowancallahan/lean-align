@@ -92,6 +92,7 @@ minibwa is the only comparison so far. Before claiming "faster than the fastest"
 Must work for reads up to ~250 bp. Fast path today: 100–103 letters only (`fastOk`), others take the slow proved path. In progress on `speed/fast-proved`: m = ⌊n/25⌋ disjoint 25-letter seeds (≥ m − 3 clean), multi-word Hamming. Rowan's decision: allow T = −16 (≤ 4 spoiling coordinates: 4 mismatches, two 1-bp indels, one gap ≤ 5, …) so ~250 bp reads at 0.5% error mostly map (reads will be trimmed). Being generalized on `speed/fast-proved`: fast path parameterised by T; two-gap windows go through the proved banded scorer (`BandScore`); ≥ 5 seeds needed at −16 (n ≥ 125 with 25-letter seeds). Builders, IO and the both-strand combine stay trusted.
 
 ## Specs Rowan plans to write
+- **TODO Rowan: redo `spec/PairSpec.lean`** — current file is a draft written by Claude so the paired proofs could start (both strands via reverse complement, unique best over placements, proper pair = same chromosome, opposite strands, facing, fragment in [lo, hi]). Proofs on `speed/fast-proved` target this draft for now.
 - FASTQ input spec, SAM output spec (CIGAR for the chosen window), CLI with filter options; later SAM→BAM with BAM checked as the inverse of SAM (fuzzing over BAM instead of a full BAM spec).
 
 ## Rules for all work here
