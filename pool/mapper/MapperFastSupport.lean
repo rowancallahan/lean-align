@@ -105,19 +105,6 @@ theorem same_hit_mask (R G : ByteArray) (st : Nat) (hn : 100 ≤ R.size) (hfit :
   simp [pop4] at hl
   omega
 
-/-- The bits a clean seed sets, for mask hypotheses of `hamSeeds_spec`. -/
-theorem same_clean (R G : ByteArray) (st : Nat) (hn : 100 ≤ R.size) (hfit : st + R.size ≤ G.size) :
-    (maskAt G R (st + BIAS) % 2 = 1 → hc R G st 0 25 = 0) ∧
-    (maskAt G R (st + BIAS) / 2 % 2 = 1 → hc R G st 25 25 = 0) ∧
-    (maskAt G R (st + BIAS) / 4 % 2 = 1 → hc R G st 50 25 = 0) ∧
-    (maskAt G R (st + BIAS) / 8 % 2 = 1 → hc R G st 75 25 = 0) := by
-  obtain ⟨b0, b1, b2, b3⟩ := maskAt_bits G R (st + BIAS)
-  refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩
-  · exact (seedBit_start G R st 0 (by omega) (by simp [q]; omega)).1 (b0.1 h)
-  · exact (seedBit_start G R st 1 (by omega) (by simp [q]; omega)).1 (b1.1 h)
-  · exact (seedBit_start G R st 2 (by omega) (by simp [q]; omega)).1 (b2.1 h)
-  · exact (seedBit_start G R st 3 (by omega) (by simp [q]; omega)).1 (b3.1 h)
-
 theorem penB_le (R G : ByteArray) (st len : Nat) : penB R G st len ≤ 13 := by
   unfold penB penSame penGap; split <;> (try split) <;> (try split) <;> (try split) <;> omega
 

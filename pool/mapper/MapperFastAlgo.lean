@@ -242,10 +242,6 @@ def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
   else acc
 termination_by (x.size - i) + (y.size - j)
 
-def anchors (ix : HIdx) (G R : ByteArray) : Array Nat :=
-  merge (merge (lookupSeed ix G R 0) (lookupSeed ix G R 1) 0 0 #[])
-    (merge (lookupSeed ix G R 2) (lookupSeed ix G R 3) 0 0 #[]) 0 0 #[]
-
 @[inline] def pop4 (m : Nat) : Nat := m % 2 + m / 2 % 2 + m / 4 % 2 + m / 8 % 2
 
 /-- Support of anchor `A` (0 if absent), looked for among `as[i-3 .. i+3]`. -/
@@ -281,34 +277,6 @@ the seeds in `mask` (clean there). -/
   hamStep r g a lim q (2 * q) (mask / 2 % 2 == 1) <|
   hamStep r g a lim 0 q (mask % 2 == 1) <|
   hamming r g a lim (4 * q) r.size 0
-
-/-- Mismatches of `r[k, stop)` against `g[k + d1 - d0]`, added to `m`. -/
-def misCount (r g : ByteArray) (d1 d0 : Nat) (k stop m : Nat) : Nat :=
-  if k < stop then
-    misCount r g d1 d0 (k + 1) stop (if r.get! k != g.get! (k + d1 - d0) then m + 1 else m)
-  else m
-termination_by stop - k
-
-/-- Least `pre + suf` over the gap positions `i+1 .. stop`, stopping once `pre > mmax`. -/
-def gapScan (r g : ByteArray) (st len skip mmax stop : Nat) (i pre suf best : Nat) : Nat :=
-  if i < stop then
-    let pre := if r.get! i != g.get! (st + i) then pre + 1 else pre
-    if mmax < pre then best else
-    let suf := if r.get! (i + skip) != g.get! (st + len + i + skip - r.size) then suf - 1 else suf
-    gapScan r g st len skip mmax stop (i + 1) pre suf (min best (pre + suf))
-  else best
-termination_by stop - i
-
-/-- Penalty of window `(st, len)`, `len ≠ n`, `|len − n| ≤ 3`, if it is `≤ lim`; else `lim + 1`. -/
-def gappedPen (r g : ByteArray) (st len lim : Nat) : Nat :=
-  let n := r.size
-  let L := if len > n then len - n else n - len
-  if lim < 6 + 2 * L then lim + 1 else
-  let mmax := (lim - 6 - 2 * L) / 4
-  let skip := if len < n then L else 0
-  let suf := misCount r g (st + len) n skip n 0
-  let best := gapScan r g st len skip mmax (n - skip) 0 0 suf suf
-  if mmax < best then lim + 1 else 6 + 2 * L + 4 * best
 
 /-- Position of the `k`-th mismatch (`k ≥ 1`) of `r[i, stop)` against `g[st + i ..]`, or `stop`. -/
 def fwdMis (r g : ByteArray) (st stop : Nat) (i k : Nat) : Nat :=
@@ -358,18 +326,6 @@ structure Best where
   else if pen == b.pen && (c != b.chr || st != b.st || len != b.len) then { b with amb := true }
   else b
 
-/-- Same-length windows of the anchors with support `sup`. -/
-@[inline] def sameStep (R G : ByteArray) (c sup : Nat) (b : Best) (e : Nat) : Best :=
-  let A := e / 16
-  if pop4 (e % 16) == sup && BIAS ≤ A && A - BIAS + R.size ≤ G.size then
-    let m := hamSeeds R G (A - BIAS) (e % 16) (min 3 (b.pen / 4))
-    if 4 * m ≤ cap then b.add c (A - BIAS) R.size (4 * m) else b
-  else b
-
-/-- Pass `k`: anchors with `4 − k` clean seeds (penalty `≥ 4k`). -/
-@[inline] def samePass (R G : ByteArray) (c : Nat) (as : Array Nat) (k : Nat) (b : Best) : Best :=
-  if 4 * k ≤ b.pen && !(b.pen == 0 && b.amb) then as.foldl (sameStep R G c (4 - k)) b else b
-
 @[inline] def need (b : Best) : Nat := if min b.pen cap < 10 then 3 else 2
 
 /-- Add window `(st, len)` scored by `gappedPen` with the current cap. -/
@@ -380,33 +336,6 @@ structure Best where
 `ok` and it fits and its support can reach the current best. -/
 @[inline] def gapW (R G : ByteArray) (c st len s : Nat) (ok : Bool) (b : Best) : Best :=
   if need b ≤ s && ok && st + len ≤ G.size then addGap R G c st len b else b
-
-/-- The four windows with a gap of length `L` next to anchor `A` (support `cs`):
-`(A, n+L)` ends on `A+L`, `(A, n-L)` on `A-L` (gap after the seed);
-`(A-L, n+L)` and `(A+L, n-L)` end on `A` (gap before the seed). -/
-@[inline] def gapL (R G : ByteArray) (c : Nat) (as : Array Nat) (i A cs L : Nat) (b : Best) : Best :=
-  let n := R.size
-  let sm := supNear as i (A - L)
-  let sp := supNear as i (A + L)
-  gapW R G c (A + L - BIAS) (n - L) (cs + sp) (BIAS ≤ A + L) <|
-  gapW R G c (A - L - BIAS) (n + L) (cs + sm) (BIAS + L ≤ A) <|
-  gapW R G c (A - BIAS) (n - L) (cs + sm) (BIAS ≤ A) <|
-  gapW R G c (A - BIAS) (n + L) (cs + sp) (BIAS ≤ A) b
-
-/-- One-gap windows of anchors `i, i+1, …` (`k` of them). -/
-def gapAll (R G : ByteArray) (c : Nat) (as : Array Nat) : (k i : Nat) → Best → Best
-  | 0, _, b => b
-  | k + 1, i, b =>
-    let A := as[i]! / 16
-    let cs := pop4 (as[i]! % 16)
-    gapAll R G c as k (i + 1) (gapL R G c as i A cs 3 (gapL R G c as i A cs 2 (gapL R G c as i A cs 1 b)))
-
-/-- All windows of chromosome `c` worth scoring. -/
-def mapChrom (R G : ByteArray) (c : Nat) (ix : HIdx) (b : Best) : Best :=
-  let as := anchors ix G R
-  let b := samePass R G c as 3 (samePass R G c as 2 (samePass R G c as 1 (samePass R G c as 0 b)))
-  -- gapped windows cost ≥ 8: skipped when the best so far is below that
-  if 8 ≤ b.pen then gapAll R G c as as.size 0 b else b
 
 /-! ## Lazy seed lookups (the prototype's `mapCore`)
 

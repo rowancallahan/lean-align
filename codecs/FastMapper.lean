@@ -264,10 +264,10 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.mapFast_eq_mapSpec
 #print axioms MapSpec.Fast.mapFastReads_eq_mapSpec
 #print axioms MapSpec.Fast.lookupSeed_spec
-#print axioms MapSpec.Fast.anchors_spec
+#print axioms MapSpec.Fast.mapChroms_inv
 #print axioms MapSpec.penL_same
 #print axioms MapSpec.penL_ins
 #print axioms MapSpec.penL_del
 #print axioms MapSpec.Fast.gap_support
 #print axioms MapSpec.Fast.hamSeeds_spec
-#print axioms MapSpec.Fast.gappedPen_spec
+#print axioms MapSpec.Fast.gappedPen2_spec

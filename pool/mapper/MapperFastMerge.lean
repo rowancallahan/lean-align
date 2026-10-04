@@ -4,12 +4,11 @@ import MapperFastIndex
 Packed anchor lists `A·16 + mask`: merging, and the support lookup `supNear`.
 
 * `lmerge` is the list form of `merge` (`merge_toList`); it keeps lists
-  increasing in `A` and adds the masks of equal anchors (`mv_lmerge`).
-* `anchors_spec`: through a certified index, `anchors ix G R` is increasing in
-  `A`, and its elements are exactly `A·16 + maskAt G R A` for the `A` with a
-  nonzero mask; `maskAt` has bit `j` set iff seed `j` occurs on diagonal `A`.
-* `supNear_spec`: near index `i` (within 3 diagonals), `supNear` finds the
-  support of any diagonal.
+  increasing in `A` and adds the masks of equal anchors (`lmerge_spec`).
+* `single_spec`: one seed's anchors, through a certified index: increasing,
+  each `A·16 + 2^j`, and mask `seedBit j A` per diagonal.
+* `supScan_found`, `sorted_gap`: tools for `supNear` (`supNearM_spec` in
+  `MapperFastLazy.lean`).
 -/
 
 namespace MapSpec.Fast
@@ -207,12 +206,6 @@ theorem maskAt_lt (G R : ByteArray) (A : Nat) : maskAt G R A < 16 := by
   unfold maskAt seedBit
   split <;> split <;> split <;> split <;> simp
 
-/-- What the mapper needs of its anchor array. -/
-structure AnchorsOK (G R : ByteArray) (as : Array Nat) : Prop where
-  sorted : SortedA as.toList
-  mem : ∀ e ∈ as.toList, e % 16 = maskAt G R (e / 16) ∧ 0 < e % 16
-  complete : ∀ A, maskAt G R A ≠ 0 → A * 16 + maskAt G R A ∈ as.toList
-
 theorem single_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : 2 ^ j < 16) (hjq : j * q ≤ BIAS)
     (hchk : checkIdx ix G = true) :
     SortedA (lookupSeed ix G R j).toList ∧ (∀ e ∈ (lookupSeed ix G R j).toList, e % 16 = 2 ^ j) ∧
@@ -247,59 +240,6 @@ theorem single_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : 2 ^ j < 16) (h
 
 theorem merge_list (x y : Array Nat) : (merge x y 0 0 #[]).toList = lmerge x.toList y.toList := by
   rw [merge_toList x y _ 0 0 #[] rfl]; simp
-
-theorem anchors_spec (ix : HIdx) (G R : ByteArray) (hchk : checkIdx ix G = true) :
-    AnchorsOK G R (anchors ix G R) := by
-  obtain ⟨s0, r0, m0⟩ := single_spec ix G R 0 (by decide) (by decide) hchk
-  obtain ⟨s1, r1, m1⟩ := single_spec ix G R 1 (by decide) (by decide) hchk
-  obtain ⟨s2, r2, m2⟩ := single_spec ix G R 2 (by decide) (by decide) hchk
-  obtain ⟨s3, r3, m3⟩ := single_spec ix G R 3 (by decide) (by decide) hchk
-  have f01 : Fits (lookupSeed ix G R 0).toList (lookupSeed ix G R 1).toList := by
-    intro a ha b hb _; rw [r0 a ha, r1 b hb]; decide
-  have f23 : Fits (lookupSeed ix G R 2).toList (lookupSeed ix G R 3).toList := by
-    intro a ha b hb _; rw [r2 a ha, r3 b hb]; decide
-  obtain ⟨s01, m01⟩ := lmerge_spec _ _ s0 s1 f01
-  obtain ⟨s23, m23⟩ := lmerge_spec _ _ s2 s3 f23
-  have sb : ∀ j A, seedBit G R j A ≤ 2 ^ j := by
-    intro j A; unfold seedBit; split
-    · exact Nat.le_refl _
-    · exact Nat.zero_le _
-  have f : Fits (lmerge (lookupSeed ix G R 0).toList (lookupSeed ix G R 1).toList)
-      (lmerge (lookupSeed ix G R 2).toList (lookupSeed ix G R 3).toList) := by
-    intro a ha b hb _
-    rw [← mv_of_mem _ s01 a ha, ← mv_of_mem _ s23 b hb, m01, m23, m0, m1, m2, m3]
-    have := sb 0 (a / 16); have := sb 1 (a / 16); have := sb 2 (b / 16); have := sb 3 (b / 16)
-    simp at *; omega
-  obtain ⟨sa, ma⟩ := lmerge_spec _ _ s01 s23 f
-  have pos01 := lmerge_pos _ _ (fun e he => by rw [r0 e he]; decide) (fun e he => by rw [r1 e he]; decide) f01
-  have pos23 := lmerge_pos _ _ (fun e he => by rw [r2 e he]; decide) (fun e he => by rw [r3 e he]; decide) f23
-  have posa := lmerge_pos _ _ pos01 pos23 f
-  have hmv : ∀ A, mv (anchors ix G R).toList A = maskAt G R A := by
-    intro A
-    unfold anchors
-    rw [merge_list, merge_list, merge_list, ma, m01, m23, m0, m1, m2, m3]
-    unfold maskAt; omega
-  have hl : (anchors ix G R).toList = lmerge (lmerge (lookupSeed ix G R 0).toList (lookupSeed ix G R 1).toList)
-      (lmerge (lookupSeed ix G R 2).toList (lookupSeed ix G R 3).toList) := by
-    unfold anchors; rw [merge_list, merge_list, merge_list]
-  refine ⟨by rw [hl]; exact sa, fun e he => ?_, fun A hA => ?_⟩
-  · have := mv_of_mem _ (by rw [hl]; exact sa) e he
-    rw [hmv] at this
-    exact ⟨this.symm, by rw [hl] at he; exact posa e he⟩
-  · by_cases hex : ∃ e ∈ (anchors ix G R).toList, e / 16 = A
-    · obtain ⟨e, he, heA⟩ := hex
-      have := mv_of_mem _ (by rw [hl]; exact sa) e he
-      rw [hmv, heA] at this
-      rw [show A * 16 + maskAt G R A = e by omega]; exact he
-    · exfalso; apply hA
-      rw [← hmv]; exact mv_zero _ _ (fun e he h => hex ⟨e, he, h⟩)
-
-theorem mask_bits (b0 b1 b2 b3 : Bool) :
-    let m := (if b0 then 1 else 0) + (if b1 then 2 else 0) + (if b2 then 4 else 0) + (if b3 then 8 else 0)
-    (m % 2 = 1 ↔ b0 = true) ∧ (m / 2 % 2 = 1 ↔ b1 = true) ∧ (m / 4 % 2 = 1 ↔ b2 = true) ∧
-      (m / 8 % 2 = 1 ↔ b3 = true) ∧
-      pop4 m = (if b0 then 1 else 0) + (if b1 then 1 else 0) + (if b2 then 1 else 0) + (if b3 then 1 else 0) := by
-  cases b0 <;> cases b1 <;> cases b2 <;> cases b3 <;> decide
 
 /-! ## `supNear` -/
 
@@ -347,37 +287,5 @@ theorem sorted_gap (as : Array Nat) (hs : SortedA as.toList) :
     have := adj (k + d) (by omega)
     rw [show k + (d + 1) = k + d + 1 by omega]; omega
 
-/-- **Support lookup.**  For a diagonal within 3 of anchor `i`'s, `supNear`
-returns the number of seeds occurring on it. -/
-theorem supNear_spec (G R : ByteArray) (as : Array Nat) (h : AnchorsOK G R as) (i A : Nat) (hi : i < as.size)
-    (h1 : A ≤ as[i]! / 16 + 3) (h2 : as[i]! / 16 ≤ A + 3) : supNear as i A = pop4 (maskAt G R A) := by
-  unfold supNear
-  by_cases hA : maskAt G R A = 0
-  · rw [hA, supScan_none as A _ _ _ rfl]
-    · rfl
-    intro k' _ hk' he
-    have hm := h.mem as[k']! (by rw [getElem!_pos as k' (by omega)]; exact Array.getElem_mem_toList _)
-    rw [he, hA] at hm; omega
-  · have hmem := h.complete A hA
-    obtain ⟨k, hk, hke⟩ := List.mem_iff_getElem.mp hmem
-    simp only [Array.length_toList] at hk
-    simp only [Array.getElem_toList] at hke
-    have hkA : as[k]! / 16 = A := by
-      rw [getElem!_pos as k hk, hke]; have := maskAt_lt G R A; omega
-    have hclose : i - min i 3 ≤ k ∧ k < min as.size (i + 4) := by
-      by_cases hki : i ≤ k
-      · have := sorted_gap as h.sorted (k - i) i (by omega)
-        rw [show i + (k - i) = k by omega] at this
-        omega
-      · have := sorted_gap as h.sorted (i - k) k (by omega)
-        rw [show k + (i - k) = i by omega] at this
-        omega
-    apply supScan_found as A _ _ _ _ rfl ⟨k, hclose.1, hclose.2, hkA⟩
-    intro k' _ hk' he
-    have hm := h.mem as[k']! (by rw [getElem!_pos as k' (by omega)]; exact Array.getElem_mem_toList _)
-    rw [he] at hm; rw [hm.1]
-
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.anchors_spec
-#print axioms MapSpec.Fast.supNear_spec
