@@ -5,7 +5,7 @@ import BandScore
 Benchmark only (unproved IO).  Times the proved banded kernel against the
 proved `wfaAlignU3` on windows a seed mapper would score.
 
-    lake exe band_bench [genomeLen] [reads]
+    lake exe band_bench [genomeLen] [reads] [reps]
 
 Random genome, 100-base reads (3 substitutions; every third read also has a
 1-base deletion).  Window sets per read: the true window, the 48 windows
@@ -53,10 +53,13 @@ def wfaScore (r : Array Char) (g : ByteArray) (w : Window) : Option Int :=
   | some res => some res.2
   | none => none
 
-def timeIt (label : String) (count : Nat) (act : IO Int) : IO Float := do
+def timeIt (label : String) (count reps : Nat) (act : IO Int) : IO Float := do
+  let _ ← act
   let t0 ← IO.monoNanosNow
-  let chk ← act
+  let mut chk := 0
+  for _ in [0:reps] do chk := chk + (← act)
   let t1 ← IO.monoNanosNow
+  let count := count * reps
   let secs := Float.ofNat (t1 - t0) / 1e9
   let rate := Float.ofNat count / secs
   IO.println s!"{label}: {count} windows in {secs} s = {rate} windows/s (checksum {chk})"
@@ -65,6 +68,7 @@ def timeIt (label : String) (count : Nat) (act : IO Int) : IO Float := do
 def main (args : List String) : IO UInt32 := do
   let glen := (args[0]?.bind String.toNat?).getD 100000
   let nreads := (args[1]?.bind String.toNat?).getD 200
+  let reps := (args[2]?.bind String.toNat?).getD 10
   assert! B0 == 3
   let g := randGenome glen 42
   let gbs : Array ByteArray := #[g]
@@ -104,12 +108,12 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"checked {all.size} windows, {hitsW} score ≥ T: band = wfa on all"
   -- timing
   for (name, ws) in [("true", trueW), ("near", nearW), ("random", randW)] do
-    let wr ← timeIt s!"wfaAlignU3 {name}" ws.size do
+    let wr ← timeIt s!"wfaAlignU3 {name}" ws.size reps do
       let mut acc : Int := 0
       for (j, w) in ws do
         acc := acc + (wfaScore rc[j]! g w).getD 0
       return acc
-    let br ← timeIt s!"bandScore  {name}" ws.size do
+    let br ← timeIt s!"bandScore  {name}" ws.size reps do
       let mut acc : Int := 0
       for (j, w) in ws do
         acc := acc + (bandScore sc0 T0 B0 reads[j]!.1 gbs w).getD 0
@@ -121,12 +125,19 @@ def main (args : List String) : IO UInt32 := do
     let (_, st) := reads[j]
     let len := if (j + 1) % 3 == 0 then 101 else 100
     for de in [0:7] do ends := ends.push (j, st + len + de - 3)
-  let er ← timeIt "bandEnd (7 windows per pass)" (7 * ends.size) do
+  let er ← timeIt "bandEnd  near ends (7 windows per pass)" (7 * ends.size) reps do
     let mut acc : Int := 0
     for (j, e) in ends do
       match bandEnd sc0 T0 B0 reads[j]!.1 g e with
       | some A => acc := acc + A.foldl (· + ·) 0
       | none => pure ()
     return acc
-  IO.println s!"bandEnd window rate {er}"
+  let er2 ← timeIt "bandEnd2 near ends (7 windows per pass)" (7 * ends.size) reps do
+    let mut acc : Int := 0
+    for (j, e) in ends do
+      match bandEnd2 sc0 T0 B0 reads[j]!.1 g e with
+      | some A => acc := acc + (A.extract 1 8).foldl (· + ·) 0
+      | none => pure ()
+    return acc
+  IO.println s!"window rate: bandEnd {er}, bandEnd2 {er2}"
   return 0

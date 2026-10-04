@@ -1,5 +1,5 @@
 import SeedMapper
-import MapperBandProof
+import MapperBandFast
 
 /-!
 # Codec `bandScore`: capped banded score-only window scorer
@@ -8,7 +8,8 @@ Part 1: a scorer only has to be right about windows scoring at least `T`
 (`ScoreFaithful`); `mapWith` with such a scorer is `mapSpec`.
 
 Part 2: `bandScore`, the window scorer built on the banded kernel `bandEnd`
-(`pool/mapper/MapperBandKernel.lean`, proof in `MapperBandProof.lean`), is
+(`pool/mapper/MapperBandKernel.lean`, proof in `MapperBandProof.lean`;
+the leaner `bandEnd2` in `MapperBandFast.lean` is the one used here), is
 faithful (`bandScore_faithful`), so `bandMapper` = `mapSpec`
 (`bandMapper_eq_mapSpec`).  `bandEnd` scores all `2B+1` windows ending at one
 place in a single pass; `bandScore` exposes one of them per call.
@@ -107,8 +108,8 @@ def bandScore (sc : Scoring) (T : Int) (B : Nat) (rb : ByteArray) (gbs : Array B
     (w : Window) : Option Int :=
   if h : w.chr < gbs.size then
     if w.start + w.len ≤ gbs[w.chr].size ∧ rb.size ≤ w.len + B ∧ w.len ≤ rb.size + B then
-      match bandEnd sc T B rb gbs[w.chr] (w.start + w.len) with
-      | some A => some A[w.len + B - rb.size]!
+      match bandEnd2 sc T B rb gbs[w.chr] (w.start + w.len) with
+      | some A => some A[w.len + B - rb.size + 1]!
       | none => none
     else none
   else none
@@ -151,14 +152,14 @@ theorem bandScore_faithful (sc : Scoring) (hv : ValidScoring sc) (T : Int) (B : 
       have hn : rb.size = read.length := hr.1
       by_cases hband : rb.size ≤ w.len + B ∧ w.len ≤ rb.size + B
       · rw [if_pos ⟨by omega, hband⟩]
-        have hk := bandEnd_spec sc hv T B hb read g[w.chr].seq (w.start + w.len) hfit rb gbs[w.chr]
+        have hk := bandEnd2_spec sc hv T B hb read g[w.chr].seq (w.start + w.len) hfit rb gbs[w.chr]
           hr henc
         have hval : Valid read.length B (w.start + w.len) 0 (w.len + B - rb.size) := by
           unfold Valid; omega
         have hp : pOf read.length B (w.start + w.len) 0 (w.len + B - rb.size) = w.start := by
           unfold pOf; omega
         revert hk
-        cases bandEnd sc T B rb gbs[w.chr] (w.start + w.len) with
+        cases bandEnd2 sc T B rb gbs[w.chr] (w.start + w.len) with
         | some A =>
           intro hk
           have hrel := hk.2 _ (by omega) hval
@@ -213,6 +214,7 @@ end MapSpec
 
 #print axioms MapSpec.mapWith_eq_mapSpec_of_faithful
 #print axioms MapSpec.bandEnd_spec
+#print axioms MapSpec.bandEnd2_spec
 #print axioms MapSpec.bandScore_faithful
 #print axioms MapSpec.bandMapper_eq_mapSpec
 #print axioms MapSpec.bandMapper_index_eq_mapSpec
