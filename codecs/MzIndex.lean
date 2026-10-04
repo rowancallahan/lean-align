@@ -131,16 +131,19 @@ def scanOdd (G R : ByteArray) (ps : Array Nat) (o s : Nat) (t : Nat) (acc : Arra
   else acc
 termination_by ps.size - t
 
+/-- Lookup of an ACGT seed `R[s, s+q)` whose code `v = wc R s q` the caller
+already has (`lookupSeed_eq_lookupCode`). -/
+def lookupCode (ix : MzIdx) (G R : ByteArray) (s v : Nat) : Array Nat :=
+  let o := ix.mini v
+  let h := ix.hsh (ix.sub v o)
+  let b := h >>> ix.kb
+  scan ix G R s o (h &&& ix.kbM) (v >>> (2 * (q - o))) (v &&& ix.pm[ix.w - 1 - o]!) (ix.hiB b)
+    (ix.loB b) #[]
+
 /-- Places `p` (increasing) with `G[p, p+q) = R[s, s+q)`. -/
 def lookupSeed (ix : MzIdx) (G R : ByteArray) (s : Nat) : Array Nat :=
   let u := firstOdd R s (s + q)
-  if u = s + q then
-    let v := wcGo R s (s + q) 0
-    let o := ix.mini v
-    let h := ix.hsh (ix.sub v o)
-    let b := h >>> ix.kb
-    scan ix G R s o (h &&& ix.kbM) (v >>> (2 * (q - o))) (v &&& ix.pm[ix.w - 1 - o]!) (ix.hiB b)
-      (ix.loB b) #[]
+  if u = s + q then lookupCode ix G R s (wcGo R s (s + q) 0)
   else scanOdd G R ix.odd[(R.get! u).toNat]! (u - s) s 0 #[]
 
 /-! ## Checker -/
@@ -694,7 +697,7 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
   have hg := good_of_check hc
   have hw := hg.w_eq; have hk := hg.k_le; have hk0 := hg.k_pos
   obtain ⟨u1, u2, u3, u4⟩ := firstOdd_spec R q s
-  unfold lookupSeed
+  unfold lookupSeed lookupCode
   dsimp only
   split
   · next hu =>
@@ -763,7 +766,7 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
 theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
     (lookupSeed ix G R s).toList.Pairwise (· < ·) := by
   have hg := good_of_check hc
-  unfold lookupSeed
+  unfold lookupSeed lookupCode
   dsimp only
   split
   · rw [scan_toList ix G R s _ _ _ _ _ _ _ #[] rfl, Array.toList_empty, List.nil_append]
@@ -786,6 +789,22 @@ theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
     omega
 
 end
+
+/-- An ACGT seed with known code: `lookupCode` is `lookupSeed`. -/
+theorem lookupSeed_eq_lookupCode (ix : MzIdx) (G R : ByteArray) (s : Nat)
+    (hR : ∀ i < q, acgt (R.get! (s + i)) = true) :
+    lookupSeed ix G R s = lookupCode ix G R s (wc R s q) := by
+  obtain ⟨u1, u2, -, u4⟩ := firstOdd_spec R q s
+  unfold lookupSeed
+  dsimp only
+  have hu : firstOdd R s (s + q) = s + q := by
+    by_cases hlt : firstOdd R s (s + q) < s + q
+    · have h := u4 hlt
+      have := hR (firstOdd R s (s + q) - s) (by omega)
+      rw [show s + (firstOdd R s (s + q) - s) = firstOdd R s (s + q) by omega] at this
+      rw [this] at h; cases h
+    · omega
+  rw [if_pos hu, wcGo_zero]
 
 /-! ## Byte genome: `LookupComplete` and the mapping theorem -/
 
@@ -862,5 +881,6 @@ end MapSpec.Mz
 
 #print axioms MapSpec.Mz.lookupSeed_mem
 #print axioms MapSpec.Mz.lookupSeed_sorted
+#print axioms MapSpec.Mz.lookupSeed_eq_lookupCode
 #print axioms MapSpec.Mz.checkAll_complete
 #print axioms MapSpec.Mz.mapWithMz_eq_mapSpec
