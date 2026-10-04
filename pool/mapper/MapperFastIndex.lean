@@ -18,15 +18,15 @@ namespace MapSpec.Fast
 
 def c2N (b : UInt8) : Nat := if b = 67 then 1 else if b = 71 then 2 else if b = 84 then 3 else 0
 
+set_option maxRecDepth 100000 in
+theorem c2_tab : ∀ n, n < 256 → ((codeTab.get! n).toUInt64 &&& 3).toNat = c2N n.toUInt8 := by decide +kernel
+
+set_option maxRecDepth 100000 in
+theorem acgt_tab : ∀ n, n < 256 → codeTab.get! n < 4 → n = 65 ∨ n = 67 ∨ n = 71 ∨ n = 84 := by decide +kernel
+
 theorem c2_toNat (b : UInt8) : (c2 b).toNat = c2N b := by
-  unfold c2 c2N
-  by_cases h1 : b = 67
-  · simp [h1]
-  · by_cases h2 : b = 71
-    · simp [h2]
-    · by_cases h3 : b = 84
-      · simp [h3]
-      · simp [h1, h2, h3]
+  have := c2_tab b.toNat (UInt8.toNat_lt b)
+  rwa [show b.toNat.toUInt8 = b by simp] at this
 
 theorem c2N_lt (b : UInt8) : c2N b < 4 := by
   unfold c2N
@@ -37,7 +37,13 @@ theorem c2N_lt (b : UInt8) : c2N b < 4 := by
     · by_cases h3 : b = 84 <;> simp [h1, h2, h3]
 
 theorem acgt_cases (b : UInt8) (h : acgt b = true) : b = 65 ∨ b = 67 ∨ b = 71 ∨ b = 84 := by
-  unfold acgt at h; simp at h; rcases h with ((h | h) | h) | h <;> simp [h]
+  unfold acgt at h
+  have := acgt_tab b.toNat (UInt8.toNat_lt b) (by simpa using h)
+  rcases this with e | e | e | e
+  · left; exact UInt8.toNat_inj.mp e
+  · right; left; exact UInt8.toNat_inj.mp e
+  · right; right; left; exact UInt8.toNat_inj.mp e
+  · right; right; right; exact UInt8.toNat_inj.mp e
 
 theorem c2N_inj (b b' : UInt8) (h : acgt b = true) (h' : acgt b' = true) (e : c2N b = c2N b') : b = b' := by
   rcases acgt_cases b h with r | r | r | r <;> rcases acgt_cases b' h' with r' | r' | r' | r' <;>

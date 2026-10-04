@@ -26,11 +26,13 @@ def cap : Nat := 12
 
 /-! ## Letters and word codes -/
 
-/-- A C G T ↦ 0 1 2 3 (anything else 0). -/
-@[inline] def c2 (b : UInt8) : UInt64 :=
-  if b == 67 then 1 else if b == 71 then 2 else if b == 84 then 3 else 0
+/-- A C G T ↦ 0 1 2 3, any other byte ↦ 4 (a table: no branches on letters). -/
+@[irreducible] def codeTab : ByteArray := ⟨#[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]⟩
 
-@[inline] def acgt (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84
+/-- A C G T ↦ 0 1 2 3 (anything else 0). -/
+@[inline] def c2 (b : UInt8) : UInt64 := (codeTab.get! b.toNat).toUInt64 &&& 3
+
+@[inline] def acgt (b : UInt8) : Bool := codeTab.get! b.toNat < 4
 
 /-- Base-4 code of `B[i, stop)` appended to `x`. -/
 def wcode (B : ByteArray) (i stop : Nat) (x : UInt64) : UInt64 :=
