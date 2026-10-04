@@ -381,6 +381,117 @@ Two-pass 2x50 then 4x25:
   letters).
 
 
+Q10. Aeneas: hot path in safe Rust, translated to Lean and proved
+-----------------------------------------------------------------
+(Written offline from memory.  Everything about Aeneas's feature set is
+TO VERIFY ONLINE.)
+What Aeneas is: Charon extracts rustc MIR, and Aeneas translates SAFE Rust
+into a pure functional model in Lean 4 (also F*, Coq/Rocq, HOL4).  Mutable
+borrows become "backward functions".  Fallible operations (indexing, integer
+overflow, division) return Result, so each proof also shows no panic.  It
+has been used on production cryptographic code (SymCrypt), which suggests
+the loop and slice support is real.  TO VERIFY ONLINE.
+Supported subset (as I remember it; TO VERIFY ONLINE):
+- yes: structs/enums, generics, traits (incl. trait-bound generics), u8..u64/
+  usize with checked arithmetic, arrays, slices, Vec (through a model
+  library), shared and mutable borrows incl. returning mutable borrows,
+  loops (translated to recursive functions; loop invariants are proved in
+  Lean), early return/break.
+- partial: iterators and closures (simple `for i in 0..n` ok; general
+  Iterator adapters and closures capturing &mut are limited), nested
+  borrows inside data structures.
+- no: unsafe (so no get_unchecked, no std::arch SIMD intrinsics, no raw
+  pointers), interior mutability (Cell/RefCell), threads/Send/Sync/rayon,
+  IO, allocation failure, panics as values.
+Split if adopted:
+- proved (Rust -> Lean model, then a Lean theorem that model = our Lean
+  mapper or = mapSpec): mapRead per read (seed lookup, rarest-seed
+  shortcut, closed form, unique best), index lookup, packed-genome scans,
+  index builder or index checker.
+- trusted Rust CLI: FASTA/FASTQ parsing, mmap/loading the serialized index,
+  thread pool (rayon/std::thread over read chunks), SAM output.  The
+  trusted surface grows: rustc + Charon + Aeneas translation + the CLI glue,
+  where today it is the Lean compiler + Main.lean.
+Expected speed-up over the Lean-compiled hot path (estimates, TO MEASURE):
+- Proto2's hot path is already scalar C after the Q5/Q7 rules (unboxed
+  UInt64/USize, uget, tail recursion).  What remains in Lean that Rust
+  removes: RC traffic on the genome/index objects, Array UInt32 boxing (or
+  ByteArray byte assembly), small allocations (result Arrays in
+  fwdP/closedForm, tuples), and the unexplained Task slowdown (rayon would
+  sidestep it).
+- What stays: about half of Proto2's time is cache misses (index lookups,
+  genome fetches), the same in any language.  Bounds checks remain in
+  verified safe Rust unless LLVM elides them; SIMD needs unsafe intrinsics,
+  so it is unverifiable.  Autovectorization of the 4-word XOR/popcount scan
+  is small change.
+- Estimate: 1.3-2x per thread end to end on chr21 (up to 3x on the compute-
+  bound stress set), plus better thread scaling (minibwa gets ~2.7x on 4
+  threads; Lean tasks currently give ~1x net).
+Effort (estimate): 1-2 weeks to write the Rust hot path in the Aeneas
+subset and get it through Charon/Aeneas; 3-6 weeks of proofs (loop
+invariants on the generated model, no-overflow and no-out-of-bounds
+obligations, then equality with the Lean mapper, reusing the Lean proofs of
+items 1-2 above).  Cheaper route first: apply the Q7 rules, fix the
+Task slowdown in Lean, and only move to Rust if a measured gap remains.
+Note on the figures in the request ("~190k reads/s/thread vs minibwa ~34k"):
+they do not match my measurements on this machine and read set.  Here
+minibwa maps 54-62k reads/s single-thread excluding index load (35-40k
+including it) and Proto2 maps 57-65k.  The difference may be the
+prototype, the read set (error rate, fraction of exact reads), counting
+minibwa with load and SAM output, or the machine.  Compare on one machine,
+one read file, mapping time only, before using either ratio.
+
+Q11. Is minibwa still among the fastest?  Other mappers (from memory only)
+------------------------------------------------------------------------
+Every number and characterisation here is TO VERIFY ONLINE; nothing was
+read or run tonight.
+  minibwa       lh3, 2024-25; bwa-mem seeding (SMEM) + minimap2 chaining +
+                ksw2.  Heuristic (seed occurrence caps, chain filtering,
+                repeat down-weighting).  Measured here: 54-62 k reads/s
+                single-thread on chr21 (mapping only).  The README claims
+                it is several times faster than bwa-mem at similar
+                accuracy: TO VERIFY ONLINE.
+  BWA-MEM3      I know of no tool by that name.  bwa-mem2 (Vasimuddin et al.
+                2019) is the AVX-512/AVX2 rewrite of bwa-mem with identical
+                output, reported ~2-3x faster than bwa-mem.  Heuristic like
+                bwa-mem.  "BWA-MEM3" may be a confusion with bwa-mem2 or
+                minibwa: TO VERIFY ONLINE.
+  minimap2 -x sr  Minimizer seeding + chaining + ksw2; reported ~2-3x faster
+                than bwa-mem on short reads, slightly lower accuracy in
+                repeats.  Heuristic.  TO VERIFY ONLINE.
+  strobealign   Sahlin 2022/2024, randstrobe seeds; reported among the
+                fastest short-read mappers (several x bwa-mem, faster than
+                minimap2 -x sr) with competitive accuracy.  Heuristic: speed
+                reference only, not like-for-like with an exact spec.
+                TO VERIFY ONLINE.
+  Bowtie2       FM-index, multi-seed with randomised extension; generally
+                slower than bwa-mem on human reads in end-to-end mode.
+                Heuristic.  TO VERIFY ONLINE.
+  SNAP          Zaharia et al. 2011; hash index of long seeds, edit-distance
+                verification with a max-distance parameter; reported 3-20x
+                faster than BWA at the time, large index (tens of GB).
+                Heuristic in practice (seed count limits, popular-seed
+                skipping).  TO VERIFY ONLINE.
+  URMAP         Edgar 2020; "boost words" (long unique-ish k-mers) for
+                ultra-fast mapping; reported ~10x faster than bwa-mem, with
+                lower sensitivity in some tests.  Heuristic.  TO VERIFY ONLINE.
+  Accel-Align   Yan et al. 2021, seed-embed-extend (CGK embedding to skip
+                most DP); reported fast; heuristic (embedding filter).
+                TO VERIFY ONLINE.
+  Full-sensitivity mappers (closest to our guarantee: every location within
+  an error bound): RazerS 3, Yara, mrsFAST/mrFAST, GEM (strata, exhaustive
+  mode).  These are the like-for-like comparison: same "all hits within k
+  errors, then choose" semantics.  Typically much slower than bwa-mem class
+  tools.  TO VERIFY ONLINE.
+Recommendation for tomorrow's benchmarks (same machine, same reads,
+mapping time and peak RSS, 1 and 4 threads):
+  1. minibwa (have it; state-of-the-art bwa-style, heuristic).
+  2. strobealign (likely fastest heuristic; speed reference only).
+  3. One full-sensitivity mapper (Yara or RazerS 3; mrsFAST if only
+     mismatches): the fair comparison for an exact, proved mapper.
+  Add bwa-mem2 if a widely recognised baseline is wanted for a write-up.
+
+
 RANKED LIST OF CHANGES
 ======================
 (speedup = measured on chr21/100k reads unless marked "est."; the proof is what
@@ -472,6 +583,10 @@ remains to do; "exact" = why the answer equals mapSpec)
 Proof difficulty in one line (easiest first): 7, 8 trivial; 5, 10 easy/small;
 2 easy-medium; 3, 4, 6, 9 medium; 1 medium-hard.  All ten are exact, and
 none needs @[extern], unsafe or implemented_by.
+
+Optional later: Aeneas/Rust hot path (Q10), est. 1.3-2x per thread plus
+working threads.  Proof hard (weeks), larger trusted base.  Do it only if a
+measured gap remains after items 1-10.
 
 Not recommended: FM-index/suffix array (large proof, 25+ dependent misses per
 seed; its one advantage, counting repeats, is covered by 2 and 9);
