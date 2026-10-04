@@ -218,14 +218,17 @@ def entryOk (ix : MzIdx) (G : ByteArray) (b hi t : Nat) : Bool :=
   let e := (ix.slot t)
   let pos := ix.posOf e
   let tg := ix.tagOf e
-  let h := ix.hsh (wcGo G pos (pos + ix.k) 0)
+  -- one pass per word: its code, or `BADU` when a letter is not ACGT
+  let x := wcU G pos (pos + ix.k) 0
+  let h := ix.hsh x.toNat
   let w1 := ix.c
-  decide (pos + ix.k ≤ G.size) && allA G pos (pos + ix.k) && (h >>> ix.kb) == b &&
+  decide (pos + ix.k ≤ G.size) && x != BADU && (h >>> ix.kb) == b &&
     ix.keyF tg == (h &&& ix.kbM) &&
     (ix.flagF tg != 0 ||
       (decide (w1 ≤ pos) && decide (pos + ix.k + w1 ≤ G.size) &&
-        allA G (pos - w1) pos && allA G (pos + ix.k) (pos + ix.k + w1) &&
-        ix.befF tg == wcGo G (pos - w1) pos 0 && ix.aftF tg == wcGo G (pos + ix.k) (pos + ix.k + w1) 0)) &&
+        (let bf := wcU G (pos - w1) pos 0
+         let af := wcU G (pos + ix.k) (pos + ix.k + w1) 0
+         bf != BADU && af != BADU && ix.befF tg == bf.toNat && ix.aftF tg == af.toNat))) &&
     (decide (hi ≤ t + 1) || decide (pos < ix.posOf (ix.slot (t + 1))))
 
 def checkBucket (ix : MzIdx) (G : ByteArray) (b hi : Nat) : (n t : Nat) → Bool
@@ -404,6 +407,9 @@ theorem good_of_checkParams (ix : MzIdx) (h : checkParams ix = true) : Good ix :
 section
 variable {ix : MzIdx} (hg : Good ix)
 include hg
+
+theorem c_le31 : ix.c ≤ 31 := by
+  have := hg.c_le; have := hg.w_eq; have : q = 25 := rfl; omega
 
 theorem hsh_eq (x : Nat) : ix.hsh x = x * HC.toNat % 2 ^ (2 * ix.k) :=
   hashU_eq x ix.k ix.kmU hg.kmU_eq (by have := hg.k_le31; omega)
@@ -721,7 +727,8 @@ theorem scanInside_toList (ix : MzIdx) (G R : ByteArray) (s : Nat) :
 /-! ### Entries -/
 
 /-- What `entryOk` says about entry `t` (place `pos`, tag `tg`). -/
-theorem entryOk_spec {ix : MzIdx} {G : ByteArray} {b hi t : Nat} (h : entryOk ix G b hi t = true)
+theorem entryOk_spec {ix : MzIdx} {G : ByteArray} {b hi t : Nat} (hk31 : ix.k ≤ 31) (hc31 : ix.c ≤ 31)
+    (h : entryOk ix G b hi t = true)
     (pos tg : Nat) (hpos : pos = ix.posOf (ix.slot t)) (htg : tg = ix.tagOf (ix.slot t)) :
     pos + ix.k ≤ G.size ∧ (∀ i < ix.k, acgt (G.get! (pos + i)) = true) ∧
     ix.hsh (wc G pos ix.k) >>> ix.kb = b ∧ ix.keyF tg = (ix.hsh (wc G pos ix.k) &&& ix.kbM) ∧
@@ -735,14 +742,18 @@ theorem entryOk_spec {ix : MzIdx} {G : ByteArray} {b hi t : Nat} (h : entryOk ix
   simp only [Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq, bne_iff_ne, ne_eq,
     and_assoc] at h
   obtain ⟨h1, h2, h3, h4, h5, h6⟩ := h
-  rw [wcGo_zero] at h3 h4
-  refine ⟨h1, (allA_iff G _ _).mp h2, h3, h4, fun hf => ?_, fun ht => ?_⟩
+  obtain ⟨x1, x2⟩ := wcU_spec G _ _ (by omega) (by omega) h2
+  rw [Nat.add_sub_cancel_left] at x1 x2
+  rw [x2] at h3 h4
+  refine ⟨h1, x1, h3, h4, fun hf => ?_, fun ht => ?_⟩
   · rcases h5 with h5 | ⟨f1, f2, f3, f4, f5, f6⟩
     · exact absurd hf h5
-    · rw [allA_iff' G _ _ (by omega), show ix.posOf (ix.slot t) - (ix.posOf (ix.slot t) - ix.c) = ix.c by omega] at f3
-      rw [wcGo_zero' G _ _ (by omega), show ix.posOf (ix.slot t) - (ix.posOf (ix.slot t) - ix.c) = ix.c by omega] at f5
-      rw [wcGo_zero] at f6
-      exact ⟨f1, f2, f3, (allA_iff G _ _).mp f4, f5, f6⟩
+    · obtain ⟨b1, b2⟩ := wcU_spec G _ _ (by omega) (by omega) f3
+      obtain ⟨a1, a2⟩ := wcU_spec G _ _ (by omega) (by omega) f4
+      rw [show ix.posOf (ix.slot t) - (ix.posOf (ix.slot t) - ix.c) = ix.c by omega] at b1 b2
+      rw [Nat.add_sub_cancel_left] at a1 a2
+      rw [b2] at f5; rw [a2] at f6
+      exact ⟨f1, f2, b1, a1, f5, f6⟩
   · rcases h6 with h6 | h6
     · omega
     · exact h6
@@ -847,7 +858,7 @@ theorem okAt_occurs (R : ByteArray) (s : Nat) (hR : ∀ i < q, acgt (R.get! (s +
   have hg := good_of_check hc
   have hw := hg.w_eq; have hk := hg.k_le; have hk0 := hg.k_pos; have hcw := hg.c_le
   have he := sound_of_check hc _ (bucket_lt hg _) t ht1 ht2
-  obtain ⟨e1, e2, e3, e4, e5, -⟩ := entryOk_spec he pos _ hpos.symm rfl
+  obtain ⟨e1, e2, e3, e4, e5, -⟩ := entryOk_spec hg.k_le31 (c_le31 hg) he pos _ hpos.symm rfl
   rw [keyF_tagOf hg] at e4
   unfold okAt at hok
   simp only [hpos, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hok
@@ -947,7 +958,7 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
       rw [hkw] at h1 h2
       refine ⟨t, h1, by omega, ?_, by omega⟩
       have he := sound_of_check hc _ (bucket_lt hg _) t h1 h2
-      obtain ⟨e1, e2, e3, e4, e5, -⟩ := entryOk_spec he _ _ h3.symm rfl
+      obtain ⟨e1, e2, e3, e4, e5, -⟩ := entryOk_spec hg.k_le31 (c_le31 hg) he _ _ h3.symm rfl
       rw [keyF_tagOf hg] at e4
       unfold okAt
       simp only [h3, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
@@ -1073,7 +1084,7 @@ theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
     have hge : ix.mini (wcGo R s (s + q) 0) ≤ ix.posOf (ix.slot i) := by
       unfold okAt at ok1; simp only [Bool.and_eq_true, decide_eq_true_eq] at ok1; exact ok1.2.1
     have hst := lt_of_steps (fun t => ix.posOf (ix.slot t)) _ _ (fun j h1 h2 =>
-      (entryOk_spec (sound_of_check hc _ (bucket_lt hg _) j h1 (by omega)) _ _ rfl rfl).2.2.2.2.2 h2)
+      (entryOk_spec hg.k_le31 (c_le31 hg) (sound_of_check hc _ (bucket_lt hg _) j h1 (by omega)) _ _ rfl rfl).2.2.2.2.2 h2)
       (j - i - 1) i hi (by omega)
     rw [show i + (j - i - 1) + 1 = j by omega] at hst
     omega

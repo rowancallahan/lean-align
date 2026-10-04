@@ -104,6 +104,72 @@ theorem wcGo_zero' (B : ByteArray) (i j : Nat) (h : i ≤ j) : wcGo B i j 0 = wc
   rw [show i + (j - i) = j by omega] at this
   rw [this]; simp
 
+/-- "Not an ACGT word" (no code of ≤ 31 letters reaches it). -/
+def BADU : UInt64 := 0xFFFFFFFFFFFFFFFF
+
+/-- Code of `B[i, stop)` appended to `x` if every letter is ACGT, else `BADU`
+(one pass instead of `allA` then `wcGo`). -/
+def wcU (B : ByteArray) (i stop : Nat) (x : UInt64) : UInt64 :=
+  if i < stop then
+    let b := B.get! i
+    if acgt b then wcU B (i + 1) stop (x * 4 + (byteCode b).toUInt64) else BADU
+  else x
+termination_by stop - i
+
+theorem wcU_go (B : ByteArray) (n : Nat) : ∀ i x, wcU B i (i + n) x ≠ BADU →
+    (∀ t < n, acgt (B.get! (i + t)) = true) ∧
+      (wcU B i (i + n) x).toNat = (x.toNat * 4 ^ n + wc B i n) % 2 ^ 64 := by
+  induction n with
+  | zero =>
+    intro i x _
+    rw [wcU, if_neg (by omega)]
+    refine ⟨fun t ht => by omega, ?_⟩
+    simp [wc, Nat.mod_eq_of_lt x.toNat_lt]
+  | succ n ih =>
+    intro i x h
+    rw [wcU, if_pos (by omega)] at h ⊢
+    dsimp only at h ⊢
+    split at h
+    · next ha =>
+      rw [if_pos ha]
+      rw [show i + (n + 1) = (i + 1) + n by omega] at h ⊢
+      obtain ⟨h1, h2⟩ := ih (i + 1) _ h
+      refine ⟨fun t ht => ?_, ?_⟩
+      · by_cases t0 : t = 0
+        · subst t0; simpa using ha
+        · have := h1 (t - 1) (by omega); rwa [show i + 1 + (t - 1) = i + t by omega] at this
+      · rw [h2]
+        have hw := wc_add B i 1 n
+        have h1' : wc B i 1 = byteCode (B.get! i) := by simp [wc]
+        rw [Nat.add_comm 1 n, h1'] at hw
+        rw [hw]
+        have hc := byteCode_lt (B.get! i)
+        have e : (x * 4 + (byteCode (B.get! i)).toUInt64).toNat = (x.toNat * 4 + byteCode (B.get! i)) % 2 ^ 64 := by
+          rw [UInt64.toNat_add, UInt64.toNat_mul]
+          simp only [Nat.toUInt64, UInt64.toNat_ofNat', show (4 : UInt64).toNat = 4 from rfl]
+          rw [Nat.mod_eq_of_lt (show byteCode (B.get! i) < 2 ^ 64 by omega)]
+          rw [Nat.add_mod, Nat.mod_mod, ← Nat.add_mod]
+        rw [e, Nat.pow_succ]
+        have key : ∀ a P W M : Nat, ((a % M) * P + W) % M = (a * P + W) % M := by
+          intro a P W M; rw [Nat.add_mod, Nat.mul_mod, Nat.mod_mod, ← Nat.mul_mod, ← Nat.add_mod]
+        rw [key]
+        congr 1
+        rw [Nat.add_mul, Nat.mul_assoc, Nat.mul_comm 4 (4 ^ n), Nat.add_assoc, Nat.pow_succ]
+    · next ha => exact absurd rfl h
+
+theorem wcU_spec (B : ByteArray) (i j : Nat) (hij : i ≤ j) (hn : j - i ≤ 31) (h : wcU B i j 0 ≠ BADU) :
+    (∀ t < j - i, acgt (B.get! (i + t)) = true) ∧ (wcU B i j 0).toNat = wc B i (j - i) := by
+  obtain ⟨n, rfl⟩ : ∃ n, j = i + n := ⟨j - i, by omega⟩
+  rw [Nat.add_sub_cancel_left] at hn ⊢
+  obtain ⟨h1, h2⟩ := wcU_go B n i 0 h
+  refine ⟨h1, ?_⟩
+  rw [h2]
+  have hl := wc_lt B i n
+  have hp : 4 ^ n ≤ 4 ^ 31 := Nat.pow_le_pow_right (by omega) hn
+  have : (4 : Nat) ^ 31 < 2 ^ 64 := by decide
+  simp only [show (0 : UInt64).toNat = 0 from rfl, Nat.zero_mul, Nat.zero_add]
+  exact Nat.mod_eq_of_lt (by omega)
+
 /-- Every byte of `B[i, stop)` is A, C, G or T. -/
 def allA (B : ByteArray) (i stop : Nat) : Bool :=
   if i < stop then acgt (B.get! i) && allA B (i + 1) stop else true
