@@ -13,11 +13,12 @@ are byte strings (`GenomeBytes`, `Encodes`: one byte per letter).
 
 * Reads of 100–103 letters (`fastOk`) take the fast path of
   `pool/mapper/MapperFastAlgo.lean` (the code of `bench/Proto.lean`, branch
-  `speed/proto-tune`): hashed 25-mer index per chromosome, 4 seeds, packed
-  anchors with clean-seed masks, same-length windows (`4·mismatches`) best
-  support first, one-gap windows (`6 + 2L + 4·mismatches`) only when the best
-  costs ≥ 8, with support pruning.  Letters other than ACGT in a seed are
-  looked up through the index's per-letter place lists.
+  `speed/proto-tune`, `mapCore`): hashed 25-mer index per chromosome, 4 seeds
+  looked up lazily (smallest bucket first, stop once the best is below
+  `4·lookups`), packed anchors with clean-seed masks, same-length windows
+  (`4·mismatches`), one-gap windows (`6 + 2L + 4·mismatches`) only after 3
+  lookups and while the best costs ≥ 8, with support pruning.  Letters other
+  than ACGT in a seed are looked up through the index's per-letter place lists.
 * Other reads take a slow proved path (`mapWith` of `SeedMapper.lean` with a
   scanning lookup and the proved codec `wfaAlignU3`).
 

@@ -7,15 +7,18 @@ Scoring (0, −4, −6, −2), `T = −12`, so the penalty cap is 12.  Reads of
 `100 .. 103` letters; 4 seeds of `q = 25`.
 
 * Hashed 25-mer index per chromosome: CSR over `2^24` buckets, entries
-  (position, key) as `UInt32` pairs.  `mix` is a bijection on 50-bit values,
+  (position, key) as little-endian `UInt32` pairs in `ByteArray`s.  `mix` is a bijection on 50-bit values,
   so (bucket, key) determines the word.  `checkIdx` certifies an index in one
   rolling pass (every ACGT 25-mer is the next entry of its bucket, and every
   bucket is used up), plus the odd-letter lists; the builder is not trusted.
 * Anchors: packed `A·16 + mask`, `A = p + BIAS − j·q` (diagonal biased by
-  `BIAS`), mask = the seeds that match exactly on that diagonal.
-* Same-length windows (penalty `4·mismatches`), best support first, with the
-  mismatch count capped by the current best; then, only when the best is
-  `≥ 8`, the 12 one-gap windows per anchor with support pruning.
+  `BIAS`), mask = the looked-up seeds that match exactly on that diagonal.
+* Seeds are looked up lazily, smallest bucket first (`lazyLoop`); the search
+  stops once the best penalty is below `4·lookups`.  A same-length window
+  (penalty `4·mismatches`, count capped by the current best) is scored when its
+  anchor first appears; after 3 lookups and while the best is `≥ 8`, the 12
+  one-gap windows per anchor (penalty from the first/last two mismatches,
+  `gappedPen2`), pruned by the support of their two diagonals.
 -/
 
 namespace MapSpec.Fast
@@ -72,6 +75,13 @@ def MIXC : UInt64 := 0x9E3779B97F4A7C15
   ((((B.set! j v.toUInt8).set! (j + 1) (v >>> 8).toUInt8).set! (j + 2) (v >>> 16).toUInt8).set!
     (j + 3) (v >>> 24).toUInt8)
 
+/-- Little-endian bytes of the `UInt32`s. -/
+def pack32 (a : Array UInt32) : ByteArray := Id.run do
+  let mut b := ByteArray.emptyWithCapacity (4 * a.size)
+  for x in a do
+    b := (((b.push x.toUInt8).push (x >>> 8).toUInt8).push (x >>> 16).toUInt8).push (x >>> 24).toUInt8
+  return b
+
 /-- `offs`: `2^24 + 1` bucket offsets (LE `UInt32`s); bucket `b` is entries
 `offs[b] ..< offs[b+1]`.  `ent`: entry `t` is position `ent[2t]`, key `ent[2t+1]`. -/
 structure HIdx where
@@ -98,7 +108,7 @@ def buildIdx (g : ByteArray) : HIdx := Id.run do
       cnt := cnt.modify (b + 1) (· + 1)
   for b in [0:NB] do cnt := cnt.set! (b + 1) (cnt[b + 1]! + cnt[b]!)
   let mut fill := cnt
-  let mut ent := ByteArray.mk (Array.replicate (8 * cnt[NB]!.toNat) 0)
+  let mut ents : Array UInt32 := Array.replicate (2 * cnt[NB]!.toNat) 0
   x := 0; good := 0
   for p in [0:g.size] do
     let v := g.get! p
@@ -107,10 +117,10 @@ def buildIdx (g : ByteArray) : HIdx := Id.run do
       let y := mix x
       let b := bucketOf y
       let i := fill[b]!.toNat
-      ent := setU32 (setU32 ent (2 * i) (p + 1 - q)) (2 * i + 1) (keyOf y)
+      ents := (ents.set! (2 * i) (p + 1 - q).toUInt32).set! (2 * i + 1) (keyOf y).toUInt32
       fill := fill.set! b (i + 1).toUInt32
-  let mut offs := ByteArray.mk (Array.replicate (4 * (NB + 1)) 0)
-  for b in [0:NB + 1] do offs := setU32 offs b cnt[b]!.toNat
+  let offs := pack32 cnt
+  let ent := pack32 ents
   let mut odd : Array (Array Nat) := Array.replicate 256 #[]
   for p in [0:g.size] do
     let v := g.get! p
