@@ -69,6 +69,9 @@ def MIXC : UInt64 := 0x9E3779B97F4A7C15
   ((B.get! j).toUInt32 ||| ((B.get! (j + 1)).toUInt32 <<< 8) |||
     ((B.get! (j + 2)).toUInt32 <<< 16) ||| ((B.get! (j + 3)).toUInt32 <<< 24)).toNat
 
+/-- Number of `UInt32`s in `B`. -/
+@[inline] def len32 (B : ByteArray) : Nat := B.size / 4
+
 @[inline] def setU32 (B : ByteArray) (i v : Nat) : ByteArray :=
   let j := 4 * i
   let v := v.toUInt32
@@ -87,8 +90,9 @@ def pack32 (a : Array UInt32) : ByteArray := Id.run do
 structure HIdx where
   offs : ByteArray
   ent : ByteArray
-  /-- `odd[v]`: the places of byte `v` (not A, C, G, T), increasing -/
-  odd : Array (Array Nat)
+  /-- `odd[v]`: the places of byte `v` (not A, C, G, T), increasing (LE `UInt32`s;
+  flat, so sharing the index with tasks walks no boxed elements) -/
+  odd : Array ByteArray
 deriving Inhabited
 
 def NB : Nat := 1 <<< 24
@@ -121,11 +125,11 @@ def buildIdx (g : ByteArray) : HIdx := Id.run do
       fill := fill.set! b (i + 1).toUInt32
   let offs := pack32 cnt
   let ent := pack32 ents
-  let mut odd : Array (Array Nat) := Array.replicate 256 #[]
+  let mut odd : Array (Array UInt32) := Array.replicate 256 #[]
   for p in [0:g.size] do
     let v := g.get! p
-    if !acgt v then odd := odd.modify v.toNat (·.push p)
-  return { offs, ent, odd }
+    if !acgt v then odd := odd.modify v.toNat (·.push p.toUInt32)
+  return { offs, ent, odd := odd.map pack32 }
 
 /-! ### Checker -/
 
@@ -164,11 +168,11 @@ def checkOdd (ix : HIdx) (G : ByteArray) (cur : Array Nat) : (k p : Nat) → Boo
   | k + 1, p =>
     let v := (G.get! p).toNat
     if acgt (G.get! p) then checkOdd ix G cur k (p + 1)
-    else decide (cur[v]! < ix.odd[v]!.size) && ix.odd[v]![cur[v]!]! == p && checkOdd ix G (cur.set! v (cur[v]! + 1)) k (p + 1)
+    else decide (cur[v]! < len32 ix.odd[v]!) && u32 ix.odd[v]! cur[v]! == p && checkOdd ix G (cur.set! v (cur[v]! + 1)) k (p + 1)
 
-def increasing (a : Array Nat) : (k i : Nat) → Bool
+def increasing (a : ByteArray) : (k i : Nat) → Bool
   | 0, _ => true
-  | k + 1, i => decide (a[i]! < a[i + 1]!) && increasing a k (i + 1)
+  | k + 1, i => decide (u32 a i < u32 a (i + 1)) && increasing a k (i + 1)
 
 /-- The runtime checker. -/
 def checkIdx (ix : HIdx) (G : ByteArray) : Bool :=
@@ -176,7 +180,7 @@ def checkIdx (ix : HIdx) (G : ByteArray) : Bool :=
    | some fill => fillOk ix fill NB 0
    | none => false) &&
     checkOdd ix G (Array.replicate 256 0) G.size 0 &&
-    (List.range 256).all fun v => increasing ix.odd[v]! (ix.odd[v]!.size - 1) 0
+    (List.range 256).all fun v => increasing ix.odd[v]! (len32 ix.odd[v]! - 1) 0
 
 /-! ## Anchors -/
 
@@ -201,14 +205,14 @@ termination_by stop - i
 
 /-- Packed anchors of the places `pos - o` (`pos ∈ ps[t ..]`) where the whole seed
 `R[s, s+q)` occurs. -/
-def scanOdd (G R : ByteArray) (ps : Array Nat) (o s base bit : Nat) (t : Nat) (acc : Array Nat) :
+def scanOdd (G R : ByteArray) (ps : ByteArray) (o s base bit : Nat) (t : Nat) (acc : Array Nat) :
     Array Nat :=
-  if t < ps.size then
-    let p := ps[t]! - o
+  if t < len32 ps then
+    let p := u32 ps t - o
     scanOdd G R ps o s base bit (t + 1)
-      (if o ≤ ps[t]! && p + q ≤ G.size && eqRun G R p s q then acc.push ((p + base) * 16 + bit) else acc)
+      (if o ≤ u32 ps t && p + q ≤ G.size && eqRun G R p s q then acc.push ((p + base) * 16 + bit) else acc)
   else acc
-termination_by ps.size - t
+termination_by len32 ps - t
 
 /-- One pass over `B[i, stop)`: base-4 code appended to `x`, and `f` counts the
 letters other than ACGT; the result is `code + f·2^56`. -/
