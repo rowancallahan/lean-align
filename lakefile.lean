@@ -165,3 +165,7 @@ lean_exe map_dump where               -- benchmark only; per-read results of the
 lean_exe proto0 where                 -- first speed prototype, kept for comparisons (unproved)
   srcDir := "bench"
   root := `Proto0
+
+lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
+  srcDir := "bench"
+  root := `PairBench
