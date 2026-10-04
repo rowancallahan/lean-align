@@ -398,13 +398,17 @@ def mapStreams (idx : Idx) (g : ByteArray) (rs : Array ByteArray) : Best × Nat 
     lookups := lookups + 1
   return (b, lookups)
 
+def compTab : ByteArray := Id.run do
+  let mut t := ByteArray.mk ((List.range 256).toArray.map (·.toUInt8))
+  for (c, v) in [(65, 84), (84, 65), (67, 71), (71, 67)] do t := t.set! c v
+  return t
+
+def revCompGo (r : ByteArray) (i : Nat) (o : ByteArray) : ByteArray :=
+  if h : i < r.size then revCompGo r (i + 1) (o.set! (r.size - 1 - i) (compTab.get! (r.get! i).toNat)) else o
+termination_by r.size - i
+
 /-- Reverse complement (letters other than ACGT kept). -/
-def revComp (r : ByteArray) : ByteArray := Id.run do
-  let mut o := ByteArray.emptyWithCapacity r.size
-  for i in [0:r.size] do
-    let c := r.get! (r.size - 1 - i)
-    o := o.push (if c == 65 then 84 else if c == 84 then 65 else if c == 67 then 71 else if c == 71 then 67 else c)
-  return o
+def revComp (r : ByteArray) : ByteArray := revCompGo r 0 r   -- first set! copies (r is shared)
 
 /-- Unique best window (start, len, penalty, reverse?) over the read (and
 with `both` its reverse complement: a different strand is a different window),
@@ -412,6 +416,74 @@ and the number of seed lookups. -/
 def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × Nat × Bool) × Nat :=
   let (b, k) := mapStreams idx g (if both then #[r, revComp r] else #[r])
   (if b.pen ≤ cap && !b.amb then some (b.st % TAG, b.len, b.pen, b.st ≥ TAG) else none, k)
+
+abbrev Hit := Nat × Nat × Nat × Bool    -- start, len, penalty, reverse strand?
+
+/-- Proper pair: opposite strands, facing, fragment (forward mate start to
+reverse mate end) in [lo, hi]. -/
+def proper (lo hi : Nat) (a b : Hit) : Bool :=
+  let (f, rv) := if a.2.2.2 then (b, a) else (a, b)
+  f.2.2.2 != rv.2.2.2 && f.1 ≤ rv.1 + rv.2.1 && lo ≤ rv.1 + rv.2.1 - f.1 && rv.1 + rv.2.1 - f.1 ≤ hi
+
+/-- Proper-pair-only mapping: the answer is exactly "each mate's `mapSpec` over
+both strands (unique best window), then keep the pair only if both mates map
+and `proper` holds", i.e. (mapRead m1 both, mapRead m2 both) filtered.  Mate 2
+is not searched when mate 1 is unmapped or ambiguous: the filter rejects the
+pair whatever mate 2 gives. -/
+def mapPair (idx : Idx) (g : ByteArray) (lo hi : Nat) (m1 m2 : ByteArray) : Option (Hit × Hit) × Nat :=
+  match mapRead idx g m1 true with
+  | (none, k1) => (none, k1)
+  | (some a, k1) =>
+    match mapRead idx g m2 true with
+    | (some b, k2) => (if proper lo hi a b then some (a, b) else none, k1 + k2)
+    | (none, k2) => (none, k1 + k2)
+
+def mapPairs (idx : Idx) (g : ByteArray) (lo hi : Nat) (ps : Array (ByteArray × ByteArray)) (tasks : Nat) :
+    Array (Option (Hit × Hit) × Nat) :=
+  let f := fun (p : ByteArray × ByteArray) => mapPair idx g lo hi p.1 p.2
+  if tasks ≤ 1 then ps.map f else
+  let csz := (ps.size + tasks - 1) / tasks
+  let ts := (List.range tasks).map fun t => Task.spawn fun _ => (ps.extract (t * csz) (t * csz + csz)).map f
+  ts.foldl (fun acc t => acc ++ t.get) #[]
+
+def showHit (h : Hit) : String := s!"{h.1}\t{h.2.1}\t{-(Int.ofNat h.2.2.1)}\t{if h.2.2.2 then "-" else "+"}"
+
+/-- PROTO_PAIR=<mate 2 reads>: `rpath` holds mate 1.  Dump: name, then both hits or none. -/
+def pairMain (g : ByteArray) (idx : Idx) (rlines : Array String) (m2path : String) (rest : List String) : IO UInt32 := do
+  let l2 := (((← IO.FS.readFile m2path).splitOn "\n").filter (· ≠ "")).toArray
+  assert! l2.size == rlines.size
+  let ps := (List.range (rlines.size / 2)).toArray.map fun i => (rlines[2*i+1]!.toUTF8, l2[2*i+1]!.toUTF8)
+  let lo := ((← IO.getEnv "PAIR_MIN").getD "100").toNat!
+  let hi := ((← IO.getEnv "PAIR_MAX").getD "1000").toNat!
+  let tasks := ((← IO.getEnv "PROTO_TASKS").getD "1").toNat!
+  let t1 ← IO.monoNanosNow
+  let out := mapPairs idx g lo hi ps tasks
+  let kept := (out.filter (·.1.isSome)).size
+  IO.println s!"pairs: {ps.size}  kept: {kept}  lookups/pair: {Float.ofNat (out.foldl (· + ·.2) 0) / Float.ofNat ps.size}"
+  let t2 ← IO.monoNanosNow
+  let secs := Float.ofNat (t2 - t1) / 1e9
+  IO.println s!"map_seconds: {secs}  pairs/s: {Float.ofNat ps.size / secs}  reads/s: {Float.ofNat (2 * ps.size) / secs}"
+  match rest with
+  | [_, dp] =>
+    let names := (List.range ps.size).map fun i => (rlines[2*i]!.drop 1).toString
+    IO.FS.writeFile dp (String.join ((names.zip (out.map (·.1)).toList).map fun (nm, x) => match x with
+      | some (a, b) => s!"{nm}\t{showHit a}\t{showHit b}\n"
+      | none => s!"{nm}\tnone\n"))
+  | _ => pure ()
+  match rest with
+  | tp :: _ =>
+    if tp == "-" then return 0
+    let tl := ((← IO.FS.readFile tp).splitOn "\n").filter (· ≠ "") |>.drop 1
+    let mut right := 0
+    for (line, r) in tl.zip (out.map (·.1)).toList do
+      match line.splitOn "\t", r with
+      | [_, _, p1, s1, p2, s2], some (a, b) =>
+        if p1.toNat! == a.1 + 1 && (s1 == "-") == a.2.2.2 && p2.toNat! == b.1 + 1 && (s2 == "-") == b.2.2.2 then
+          right := right + 1
+      | _, _ => pure ()
+    IO.println s!"pairs_at_true_positions: {right}"
+  | [] => pure ()
+  return 0
 
 def rss : IO String := do
   let st ← IO.FS.readFile "/proc/self/status"
@@ -452,6 +524,9 @@ def main (args : List String) : IO UInt32 := do
   assert! l0 == 25
   IO.println s!"index entries: {idx.ent.size / 8}"
   IO.println (← rss)
+  if let some m2 ← IO.getEnv "PROTO_PAIR" then
+    IO.println s!"index_seconds: {Float.ofNat ((← IO.monoNanosNow) - t0) / 1e9}"
+    return ← pairMain g idx rlines m2 rest
   let t1 ← IO.monoNanosNow
   let reps := ((← IO.getEnv "PROTO_REPS").getD "1").toNat!   -- for profiling
   let tasks := ((← IO.getEnv "PROTO_TASKS").getD "1").toNat!
