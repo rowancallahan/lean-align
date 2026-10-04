@@ -102,16 +102,26 @@ variable (ix : MzIdx)
 /-- The k-word at offset `o` of the q-word with code `v`. -/
 @[inline] def sub (v o : Nat) : Nat := (v >>> (2 * (q - o - ix.k))) &&& ix.kmU.toNat
 
-/-- Leftmost `o ∈ [o, w)` with the least hash (best so far `bo`, `bh`). -/
-def miniGo (v : Nat) (o bo bh : Nat) : Nat :=
-  if o < ix.w then
-    let h := ix.hsh (ix.sub v o)
-    if h < bh then miniGo v (o + 1) o h else miniGo v (o + 1) bo bh
-  else bo
-termination_by ix.w - o
+end MzIdx
 
-/-- Minimizer offset of the q-word with code `v`. -/
-@[inline] def mini (v : Nat) : Nat := ix.miniGo v 1 0 (ix.hsh (ix.sub v 0))
+/-- Leftmost `o ∈ [o, w)` whose k-word (at shift `sh` of the q-word code `v`) has the least
+`(word · HC) mod 4^k`; best so far `bo`, `bh`.  All in `UInt64`, one multiply per offset. -/
+def miniGo (v kmU : UInt64) (w : Nat) (o bo : Nat) (sh bh : UInt64) : Nat :=
+  if o < w then
+    let h := ((v >>> sh) &&& kmU) * HC &&& kmU
+    if h < bh then miniGo v kmU w (o + 1) o (sh - 2) h else miniGo v kmU w (o + 1) bo (sh - 2) bh
+  else bo
+termination_by w - o
+
+namespace MzIdx
+variable (ix : MzIdx)
+
+/-- Minimizer offset of the q-word with code `v` (`miniGo`; any order works,
+correctness only needs it to be a function of the seed's letters). -/
+@[inline] def mini (v : Nat) : Nat :=
+  let u := v.toUInt64
+  let sh := (2 * (q - ix.k)).toUInt64
+  miniGo u ix.kmU ix.w 1 0 (sh - 2) (((u >>> sh) &&& ix.kmU) * HC &&& ix.kmU)
 
 end MzIdx
 
@@ -293,14 +303,17 @@ def mkIdx (k B c : Nat) : MzIdx :=
     offs := .empty, sl := .empty, runs := #[] }
 
 /-- Slot of minimizer place `pm` (with k-word hash `h`). -/
-def slotAt (ix : MzIdx) (G : ByteArray) (pm h : Nat) : Nat :=
-  let w1 := ix.c
-  let good := decide (w1 ≤ pm) && decide (pm + ix.k + w1 ≤ G.size) &&
-    allA G (pm - w1) pm && allA G (pm + ix.k) (pm + ix.k + w1)
+def slotAt (ix : MzIdx) (G : ByteArray) (pm h : Nat) : UInt64 :=
+  let c := ix.c
+  let good := decide (c ≤ pm) && decide (pm + ix.k + c ≤ G.size) &&
+    allA G (pm - c) pm && allA G (pm + ix.k) (pm + ix.k + c)
+  -- `UInt64` shifts (a `Nat` power or shift is an out-of-line GMP call)
+  let key := (h &&& ix.kbM).toUInt64
   let tag := if good then
-      (h &&& ix.kbM) + 2 ^ ix.kb * (wcGo G (pm - w1) pm 0 + 2 ^ (2 * w1) * wcGo G (pm + ix.k) (pm + ix.k + w1) 0)
-    else (h &&& ix.kbM) + 2 ^ (ix.kb + 4 * w1)
-  pm * 2 ^ ix.T + tag
+      key ||| ((wcGo G (pm - c) pm 0).toUInt64 <<< ix.kb.toUInt64) |||
+        ((wcGo G (pm + ix.k) (pm + ix.k + c) 0).toUInt64 <<< ix.ash.toUInt64)
+    else key ||| ((1 : UInt64) <<< ix.fsh.toUInt64)
+  (pm.toUInt64 <<< ix.T.toUInt64) ||| tag
 
 /-- Fold `f` over the minimizer places of the ACGT windows (increasing, each
 once) with the hash of their k-word; rolling window code. -/
@@ -343,7 +356,7 @@ def buildC (G : ByteArray) (k B c : Nat) : MzIdx := Id.run do
   let (_, sl) := foldMins ix0 G (cnt, sl0) fun (fill, sl) pm h =>
     let b := h >>> ix0.kb
     let t := getU32 fill b
-    (setU32 fill b (t + 1), sl.set! t (Float.ofBits (slotAt ix0 G pm h).toUInt64))
+    (setU32 fill b (t + 1), sl.set! t (Float.ofBits (slotAt ix0 G pm h)))
   let mut runs : Array Nat := #[]
   for p in [0:G.size] do
     let odd := !acgt (G.get! p)
@@ -461,22 +474,22 @@ end
 
 /-! ### Minimizer offset -/
 
-theorem miniGo_lt (ix : MzIdx) (v : Nat) :
-    ∀ n o bo bh, ix.w - o = n → bo < ix.w → ix.miniGo v o bo bh < ix.w := by
+theorem miniGo_lt (v kmU : UInt64) (w : Nat) :
+    ∀ n o bo sh bh, w - o = n → bo < w → miniGo v kmU w o bo sh bh < w := by
   intro n
   induction n with
-  | zero => intro o bo bh hn hb; rw [MzIdx.miniGo, if_neg (by omega)]; exact hb
+  | zero => intro o bo sh bh hn hb; rw [miniGo, if_neg (by omega)]; exact hb
   | succ n ih =>
-    intro o bo bh hn hb
-    rw [MzIdx.miniGo, if_pos (by omega)]
+    intro o bo sh bh hn hb
+    rw [miniGo, if_pos (by omega)]
     dsimp only
     split
-    · exact ih _ _ _ (by omega) (by omega)
-    · exact ih _ _ _ (by omega) hb
+    · exact ih _ _ _ _ (by omega) (by omega)
+    · exact ih _ _ _ _ (by omega) hb
 
 theorem mini_lt {ix : MzIdx} (hg : Good ix) (v : Nat) : ix.mini v < ix.w := by
   have := hg.w_eq; have := hg.k_le
-  exact miniGo_lt ix v _ 1 0 _ rfl (by omega)
+  exact miniGo_lt _ _ _ _ 1 0 _ _ rfl (by omega)
 
 
 /-! ### Checker loops -/
