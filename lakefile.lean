@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperGenLook, `MapperMzWords, `MapperSketch]
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperGenLook, `MapperGenSearch, `MapperMzWords, `MapperSketch]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenAlgo, `FastGenProof, `FastGen, `MzCheckFast, `MzIndex, `SketchMapper]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenAlgo, `FastGenProof, `FastGen, `FastGenMz, `MzCheckFast, `MzIndex, `SketchMapper]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -133,6 +133,10 @@ lean_exe lowerr_bench where           -- benchmark only: low-error fast path vs 
 lean_exe group_bench where            -- dedup / sort / binned pipelines vs plain streaming, benchmark only
   srcDir := "bench"
   root := `GroupBench
+
+lean_exe gen_try where                 -- experiments on the general fast path (unproved IO)
+  srcDir := "bench"
+  root := `GenTry
 
 lean_exe fast_bench where             -- proved fast mapper on a real genome (unproved IO)
   srcDir := "bench"
