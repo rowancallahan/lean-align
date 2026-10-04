@@ -149,3 +149,11 @@ lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer
 lean_exe mz_test where                -- randomized test: proved MzIndex lookup vs naive scan
   srcDir := "bench"
   root := `MzTest
+
+lean_exe proto2 where                 -- speed prototype 2: closed-form scoring (unproved)
+  srcDir := "bench"
+  root := `Proto2
+
+lean_exe micro where                  -- micro-benchmarks of Lean code patterns
+  srcDir := "bench"
+  root := `Micro
