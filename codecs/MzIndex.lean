@@ -105,11 +105,13 @@ end MzIdx
 first `o` letters `bw`, last `w-1-o` letters `aw`). -/
 @[inline] def okAt (ix : MzIdx) (G R : ByteArray) (s o key bw aw t : Nat) : Bool :=
   let e := ix.sl[t]!
-  let pos := ix.posOf e
-  let tg := ix.tagOf e
-  ix.keyF tg == key && decide (o ≤ pos) &&
-    (if ix.flagF tg = 0 then (ix.befF tg &&& ix.pm[o]!) == bw && (ix.aftF tg >>> (2 * o)) == aw
-     else decide (pos - o + q ≤ G.size) && eqRun G R (pos - o) s q)
+  -- the key is the low `kb` bits of the slot: one mask for a non-matching entry
+  (e &&& ix.kbM) == key &&
+    (let pos := ix.posOf e
+     let tg := ix.tagOf e
+     decide (o ≤ pos) &&
+      (if ix.flagF tg = 0 then (ix.befF tg &&& ix.pm[o]!) == bw && (ix.aftF tg >>> (2 * o)) == aw
+       else decide (pos - o + q ≤ G.size) && eqRun G R (pos - o) s q))
 
 /-- Places `pos - o` of the matching entries `t ∈ [t, hi)`. -/
 def scan (ix : MzIdx) (G R : ByteArray) (s o key bw aw hi : Nat) (t : Nat) (acc : Array Nat) :
@@ -247,33 +249,37 @@ def slotAt (ix : MzIdx) (G : ByteArray) (pm h : Nat) : Nat :=
     else (h &&& ix.kbM) + 2 ^ (ix.kb + 4 * w1)
   pm * 2 ^ ix.T + tag
 
-/-- Minimizer places of the ACGT windows, increasing, each with its hash. -/
+/-- Fold `f` over the minimizer places of the ACGT windows (increasing, each
+once) with the hash of their k-word; rolling window code. -/
+@[specialize] def foldMins {α : Type} (ix0 : MzIdx) (G : ByteArray) (init : α)
+    (f : α → Nat → Nat → α) : α := Id.run do
+  let mask := 2 ^ (2 * q) - 1
+  let mut x := 0
+  let mut good := 0
+  let mut last := 0
+  let mut acc := init
+  for p in [0:G.size] do
+    let c := G.get! p
+    if acgt c then x := (x * 4 + byteCode c) &&& mask; good := good + 1 else good := 0
+    if good ≥ q then
+      let o := ix0.mini x
+      let pm := p + 1 - q + o
+      if pm + 1 != last then
+        last := pm + 1
+        acc := f acc pm (ix0.hsh (ix0.sub x o))
+  return acc
+
 def build (G : ByteArray) (k B : Nat) : MzIdx := Id.run do
   let ix0 := mkIdx k B
   let nb := 2 ^ B
-  let mut cnt := zeros (4 * (nb + 1))
-  let mut last := 0
-  for p in [0:G.size + 1 - q] do
-    if allA G p (p + q) then
-      let pm := p + ix0.mini (wcGo G p (p + q) 0)
-      if pm + 1 != last then
-        last := pm + 1
-        let b := ix0.hsh (wcGo G pm (pm + k) 0) >>> ix0.kb
-        cnt := setU32 cnt (b + 1) (getU32 cnt (b + 1) + 1)
+  let mut cnt := foldMins ix0 G (zeros (4 * (nb + 1))) fun cnt _ h =>
+    let b := h >>> ix0.kb
+    setU32 cnt (b + 1) (getU32 cnt (b + 1) + 1)
   for b in [0:nb] do cnt := setU32 cnt (b + 1) (getU32 cnt (b + 1) + getU32 cnt b)
-  let mut fill := cnt
-  let mut sl : Array Nat := Array.replicate (getU32 cnt nb) 0
-  last := 0
-  for p in [0:G.size + 1 - q] do
-    if allA G p (p + q) then
-      let pm := p + ix0.mini (wcGo G p (p + q) 0)
-      if pm + 1 != last then
-        last := pm + 1
-        let h := ix0.hsh (wcGo G pm (pm + k) 0)
-        let b := h >>> ix0.kb
-        let t := getU32 fill b
-        fill := setU32 fill b (t + 1)
-        sl := sl.set! t (slotAt ix0 G pm h)
+  let (_, sl) := foldMins ix0 G (cnt, (Array.replicate (getU32 cnt nb) 0 : Array Nat)) fun (fill, sl) pm h =>
+    let b := h >>> ix0.kb
+    let t := getU32 fill b
+    (setU32 fill b (t + 1), sl.set! t (slotAt ix0 G pm h))
   let mut odd : Array (Array Nat) := Array.replicate 256 #[]
   for p in [0:G.size] do
     if !acgt (G.get! p) then odd := odd.modify (G.get! p).toNat (·.push p)
@@ -300,13 +306,15 @@ structure Good (ix : MzIdx) : Prop where
   kmU_eq : ix.kmU.toNat = 2 ^ (2 * ix.k) - 1
   kbM_eq : ix.kbM = 2 ^ ix.kb - 1
   fM_eq : ix.fM = 2 ^ (2 * (ix.w - 1)) - 1
+  T_eq : ix.T = ix.kb + 4 * (ix.w - 1) + 1
+  tM_eq : ix.tM = 2 ^ ix.T - 1
   pm_eq : ∀ i, i ≤ ix.w → ix.pm[i]! = 2 ^ (2 * i) - 1
 
 theorem good_of_checkParams (ix : MzIdx) (h : checkParams ix = true) : Good ix := by
   simp only [checkParams, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.all_eq_true,
     List.mem_range, and_assoc] at h
-  obtain ⟨h1, h2, h3, h4, h5, h6, _, h8, h9, h10, _, h12⟩ := h
-  exact ⟨h1, h2, h3, h4, h5, h6, h8, h9, h10, fun i hi => h12 i (by omega)⟩
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12⟩ := h
+  exact ⟨h1, h2, h3, h4, h5, h6, h8, h9, h10, h7, h11, fun i hi => h12 i (by omega)⟩
 
 section
 variable {ix : MzIdx} (hg : Good ix)
@@ -328,6 +336,12 @@ theorem bucket_lt (x : Nat) : ix.hsh x >>> ix.kb < 2 ^ ix.B := by
   rw [shiftRight_eq, Nat.div_lt_iff_lt_mul (Nat.pow_pos (by omega)), ← Nat.pow_add, hg.kb_eq,
     show ix.B + (2 * ix.k - ix.B) = 2 * ix.k by have := hg.B_le; omega]
   exact hsh_lt hg x
+
+/-- The key of a slot's tag is the slot's low `kb` bits. -/
+theorem keyF_tagOf (e : Nat) : ix.keyF (ix.tagOf e) = e &&& ix.kbM := by
+  unfold MzIdx.keyF MzIdx.tagOf
+  rw [hg.kbM_eq, hg.tM_eq, and_mask_eq, and_mask_eq, and_mask_eq,
+    Nat.mod_mod_of_dvd _ (Nat.pow_dvd_pow 2 (by rw [hg.T_eq]; omega))]
 
 /-- The k-word at offset `o` of a seed's code is the code of the seed's k-word. -/
 theorem sub_wc (R : ByteArray) (s o : Nat) (ho : o + ix.k ≤ q) :
@@ -644,11 +658,12 @@ theorem okAt_occurs (R : ByteArray) (s : Nat) (hR : ∀ i < q, acgt (R.get! (s +
   have hw := hg.w_eq; have hk := hg.k_le; have hk0 := hg.k_pos
   have he := sound_of_check hc _ (bucket_lt hg _) t ht1 ht2
   obtain ⟨e1, e2, e3, e4, e5, -⟩ := entryOk_spec he pos _ hpos.symm rfl
+  rw [keyF_tagOf hg] at e4
   unfold okAt at hok
   simp only [hpos, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hok
-  generalize ix.tagOf ix.sl[t]! = tg at e4 e5 hok
+  generalize ix.tagOf ix.sl[t]! = tg at e5 hok
   generalize hh : ix.hsh (wc R (s + o) ix.k) = h at hok e3
-  obtain ⟨⟨hkey, hop⟩, hrest⟩ := hok
+  obtain ⟨hkey, hop, hrest⟩ := hok
   split at hrest
   · next hf =>
     simp only [Bool.and_eq_true, beq_iff_eq] at hrest
@@ -725,10 +740,11 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
       refine ⟨t, h1, by omega, ?_, by omega⟩
       have he := sound_of_check hc _ (bucket_lt hg _) t h1 h2
       obtain ⟨e1, e2, e3, e4, e5, -⟩ := entryOk_spec he _ _ h3.symm rfl
+      rw [keyF_tagOf hg] at e4
       unfold okAt
       simp only [h3, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
-      generalize ix.tagOf ix.sl[t]! = tg at e4 e5 ⊢
-      refine ⟨⟨by rw [e4, hkw], by omega⟩, ?_⟩
+      generalize ix.tagOf ix.sl[t]! = tg at e5 ⊢
+      refine ⟨by rw [e4, hkw], by omega, ?_⟩
       split
       · next hf =>
         obtain ⟨f1, f2, f3, f4, f5, f6⟩ := e5 hf
@@ -773,7 +789,7 @@ theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
     apply pairwise_filterMap_ite
     intro i j hi hij hj ok1 _
     have hge : ix.mini (wcGo R s (s + q) 0) ≤ ix.posOf ix.sl[i]! := by
-      unfold okAt at ok1; simp only [Bool.and_eq_true, decide_eq_true_eq] at ok1; exact ok1.1.2
+      unfold okAt at ok1; simp only [Bool.and_eq_true, decide_eq_true_eq] at ok1; exact ok1.2.1
     have hst := lt_of_steps (fun t => ix.posOf ix.sl[t]!) _ _ (fun j h1 h2 =>
       (entryOk_spec (sound_of_check hc _ (bucket_lt hg _) j h1 (by omega)) _ _ rfl rfl).2.2.2.2.2 h2)
       (j - i - 1) i hi (by omega)
