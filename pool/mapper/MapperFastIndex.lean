@@ -220,7 +220,7 @@ def MatchAt (G : ByteArray) (p : Nat) (R : ByteArray) (s : Nat) : Prop :=
 
 theorem checkOdd_spec (ix : HIdx) (G : ByteArray) :
     ∀ k p cur, checkOdd ix G cur k p = true → ∀ p', p ≤ p' → p' < p + k → acgt (G.get! p') = false →
-      ∃ t, t < ix.odd[(G.get! p').toNat]!.size ∧ ix.odd[(G.get! p').toNat]![t]! = p' := by
+      ∃ t, t < len32 ix.odd[(G.get! p').toNat]! ∧ u32 ix.odd[(G.get! p').toNat]! t = p' := by
   intro k
   induction k with
   | zero => intro p cur _ p' h1 h2; omega
@@ -237,8 +237,8 @@ theorem checkOdd_spec (ix : HIdx) (G : ByteArray) :
       · simp only [Bool.and_eq_true] at h
         exact ih _ _ h.2 p' (by omega) (by omega) hodd
 
-theorem increasing_spec (a : Array Nat) :
-    ∀ k i, increasing a k i = true → ∀ i', i ≤ i' → i' < i + k → a[i']! < a[i' + 1]! := by
+theorem increasing_spec (a : ByteArray) :
+    ∀ k i, increasing a k i = true → ∀ i', i ≤ i' → i' < i + k → u32 a i' < u32 a (i' + 1) := by
   intro k
   induction k with
   | zero => intro i _ i' h1 h2; omega
@@ -451,8 +451,8 @@ theorem checkIdx_spec (ix : HIdx) (G : ByteArray) (h : checkIdx ix G = true) :
         (u32 ix.ent (2 * t)) = p ∧ (u32 ix.ent (2 * t + 1)) = keyOf (hashAt G p)) ∧
     (∀ b, b < NB → ∀ t, (u32 ix.offs (b)) ≤ t → t < (u32 ix.offs (b + 1)) → EntryGood ix G b t) ∧
     (∀ p, p < G.size → acgt (G.get! p) = false →
-      ∃ t, t < ix.odd[(G.get! p).toNat]!.size ∧ ix.odd[(G.get! p).toNat]![t]! = p) ∧
-    (∀ v, v < 256 → ∀ i, i + 1 < ix.odd[v]!.size → ix.odd[v]![i]! < ix.odd[v]![i + 1]!) := by
+      ∃ t, t < len32 ix.odd[(G.get! p).toNat]! ∧ u32 ix.odd[(G.get! p).toNat]! t = p) ∧
+    (∀ v, v < 256 → ∀ i, i + 1 < len32 ix.odd[v]! → u32 ix.odd[v]! i < u32 ix.odd[v]! (i + 1)) := by
   unfold checkIdx at h
   simp only [Bool.and_eq_true, List.all_eq_true, List.mem_range] at h
   obtain ⟨⟨hs, ho⟩, hi⟩ := h
@@ -540,11 +540,11 @@ theorem scanBucket_toList (ent : ByteArray) (key : Nat) (base bit hi : Nat) :
     · rw [if_pos hk, if_pos hk, Array.toList_push, List.append_assoc]; rfl
     · rw [if_neg hk, if_neg hk]
 
-theorem scanOdd_toList (G R : ByteArray) (ps : Array Nat) (o s base bit : Nat) :
-    ∀ d t acc, ps.size - t = d → (scanOdd G R ps o s base bit t acc).toList = acc.toList ++
-      (List.range' t (ps.size - t)).filterMap (fun t =>
-        if (o ≤ ps[t]! && ps[t]! - o + q ≤ G.size && eqRun G R (ps[t]! - o) s q) = true then
-          some ((ps[t]! - o + base) * 16 + bit) else none) := by
+theorem scanOdd_toList (G R : ByteArray) (ps : ByteArray) (o s base bit : Nat) :
+    ∀ d t acc, len32 ps - t = d → (scanOdd G R ps o s base bit t acc).toList = acc.toList ++
+      (List.range' t (len32 ps - t)).filterMap (fun t =>
+        if (o ≤ u32 ps t && u32 ps t - o + q ≤ G.size && eqRun G R (u32 ps t - o) s q) = true then
+          some ((u32 ps t - o + base) * 16 + bit) else none) := by
   intro d
   induction d with
   | zero => intro t acc hd; unfold scanOdd; rw [if_neg (by omega), hd]; simp
@@ -553,9 +553,9 @@ theorem scanOdd_toList (G R : ByteArray) (ps : Array Nat) (o s base bit : Nat) :
     unfold scanOdd
     rw [if_pos (by omega)]
     simp only []
-    rw [ih (t + 1) _ (by omega), show ps.size - t = (ps.size - (t + 1)) + 1 by omega,
+    rw [ih (t + 1) _ (by omega), show len32 ps - t = (len32 ps - (t + 1)) + 1 by omega,
       List.range'_succ, List.filterMap_cons]
-    by_cases hk : (o ≤ ps[t]! && ps[t]! - o + q ≤ G.size && eqRun G R (ps[t]! - o) s q) = true
+    by_cases hk : (o ≤ u32 ps t && u32 ps t - o + q ≤ G.size && eqRun G R (u32 ps t - o) s q) = true
     · rw [if_pos hk, if_pos hk, Array.toList_push, List.append_assoc]; rfl
     · rw [if_neg hk, if_neg hk]
 
@@ -734,12 +734,12 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
     generalize hv : (R.get! o).toNat = v
     have hv256 : v < 256 := by rw [← hv]; exact UInt8.toNat_lt _
     generalize hps : ix.odd[v]! = ps
-    have hinc : ∀ t t', t < t' → t' < ps.size → ps[t]! < ps[t']! := by
+    have hinc : ∀ t t', t < t' → t' < len32 ps → u32 ps t < u32 ps t' := by
       intro t t' h1 h2
-      apply chain_lt (fun t => ps[t]!) 0 ps.size _ (t' - t - 1) t t' (by omega) (by omega) h2
+      apply chain_lt (fun t => u32 ps t) 0 (len32 ps) _ (t' - t - 1) t t' (by omega) (by omega) h2
       intro u _ hu; have := hI v hv256 u; rw [hps] at this; exact this hu
     constructor
-    · apply List.Pairwise.filterMap _ _ (range'_pairwise_in 0 ps.size)
+    · apply List.Pairwise.filterMap _ _ (range'_pairwise_in 0 (len32 ps))
       intro t t' htt' b1 hb1 b2 hb2
       simp only [Option.ite_none_right_eq_some, Option.some.injEq, Bool.and_eq_true,
         decide_eq_true_eq] at hb1 hb2
@@ -761,7 +761,7 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
         obtain ⟨t, ht1, ht2⟩ := hO (p + (o - j * q)) (by omega) (by rw [hgo]; exact hodd)
         rw [hgo, hv, hps] at ht1 ht2
         refine ⟨t, List.mem_range'_1.2 ⟨by omega, by omega⟩, ?_⟩
-        have hp' : ps[t]! - (o - j * q) = p := by omega
+        have hp' : u32 ps t - (o - j * q) = p := by omega
         rw [if_pos (by
           simp only [Bool.and_eq_true, decide_eq_true_eq, hp']
           exact ⟨⟨by omega, hp1⟩, (eqRun_spec G R q _ _).2 hp2⟩), hp']

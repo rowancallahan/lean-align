@@ -75,7 +75,9 @@ def main (args : List String) : IO UInt32 := do
   let tasks := ((← IO.getEnv "FAST_TASKS").getD "1").toNat!   -- 1 = no tasks
   for k in [0:reps] do
     let rs := if t0 + k == 1 then #[] else reads
+    let ta ← IO.monoNanosNow
     res := if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs
+    IO.println s!"rep {k}: {secs ta (← IO.monoNanosNow)} s ({res.size})"
   let mapped := res.foldl (fun k x => if x.isSome then k + 1 else k) 0
   let t1 ← IO.monoNanosNow
   IO.println s!"mapped: {mapped}"
