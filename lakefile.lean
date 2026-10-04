@@ -23,7 +23,7 @@ package lean_align where
 @[default_target]
 lean_lib AlignmentSpecLib where
   srcDir := "spec"
-  roots := #[`AlignmentSpec, `AlignmentLexicographic]
+  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec]
 
 -- ──────────────────────────── codecs ────────────────────────────
 
@@ -70,9 +70,14 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
   roots := #[`ProbeU32, `AlignmentWfaU32Level, `AlignmentWfaU32Step, `AlignmentWfaU32Loop, `AlignmentWfaU32, `AlignmentWfaU32Fill, `AlignmentWfaU32Run2, `AlignmentWfaU32Ext, `AlignmentWfaU32FillSpec, `AlignmentWfaU32Single, `AlignmentWfaU32Level2, `AlignmentWfaU32Lattice, `AlignmentWfaU32Kernel2, `AlignmentWfaU32FillS, `AlignmentWfaU32FillSSpec, `AlignmentWfaU32LevelS, `AlignmentWfaU32Fill3, `AlignmentWfaU32Run3, `AlignmentWfaU32FillSpec3, `AlignmentWfaU32Loop3, `AlignmentWfaU32Level3, `AlignmentWfaU32Kernel3]
 
 @[default_target]
+lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
+  srcDir := "pool/mapper"
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists]
+
+@[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3]
+  roots := #[`WfaU3, `SeedMapper]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
