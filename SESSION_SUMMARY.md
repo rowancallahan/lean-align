@@ -59,7 +59,8 @@ Stringency: wgsim reads mapped by minibwa, fraction within T = −12 (our scorin
 - Two-pass seeding: a second index of 50-letter seeds (2 per read; a read with ≤ 1 error has a clean half) settles most reads with few hits even in repeats; unsettled reads fall back to 4 × 25. Costs extra index memory.
 - Cache locality from read sorting: sort reads into buckets by seed code so each core works on a region of the index (fewer cache misses); optionally order the index to match.
 - Threads: oversubscribe (more tasks than cores) to overlap memory stalls; batch size tuning; better multi-core scaling.
-- Pre-filter by downstream flags: users filter afterwards (proper pair, MAPQ, …); a CLI filter option could skip reads that cannot pass (e.g. mates whose seeds cannot form a proper pair) — needs a paired-end spec and a theorem that skipped reads are exactly the filtered ones.
+- Pre-filter by downstream flags: users filter afterwards (proper pair, MAPQ, …); a CLI filter option skips reads that cannot pass. Exact because the final position is always among the seed candidates (`LookupComplete`): if no (read-1 candidate, read-2 candidate) combination has proper-pair orientation/distance, the pair cannot be proper → drop both before any alignment. Same pattern for any filter decided by location; for multi-mapper/MAPQ filters, stop as soon as a tie between different windows is proved. Needs a paired-end spec; theorem: filtered output with pre-filter = filtered output without it.
+- Two-pass (tentative): map repeat-prone / likely multi-mapping regions in a second pass.
 - Multi-mappers / low MAPQ can be dropped (goal is genotyping), already what `mapSpec` does on ties.
 - Kernel: plain banded DP (Smith-Waterman/Gotoh-style loop) may compile better than WFA in Lean; low-error Hamming fast path already removes most DP.
 
