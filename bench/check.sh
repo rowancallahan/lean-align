@@ -11,7 +11,7 @@ for t in 100k:c21_100k.fa:c21_100k.r10k 1m:c21_1m.fa:c21_1m.r10k chr21:chr21.1l.
   echo "== $n"; $B/proto $D/$g $D/$r.reads.txt $L $D/$r.truth.tsv $D/out_$n.tsv
   cmp $D/out_$n.tsv $D/ref_$n.tsv && echo "same as ref_$n"
 done
-for r in hard_1m:c21_1m hard_chr21:chr21.1l rep:rep; do
+for r in hard_1m:c21_1m hard_chr21:chr21.1l rep:rep rep2:rep2 iupac:iupac; do
   $B/proto $D/${r#*:}.fa $D/${r%:*}.reads.txt $L - $D/out_${r%:*}.tsv | grep reads/s
   cmp $D/out_${r%:*}.tsv $D/ref_${r%:*}.tsv && echo "same as ref_${r%:*}"
 done
