@@ -188,12 +188,22 @@ structure Best where
   else if pen == b.pen && (st != b.st || len != b.len) then { b with amb := true }
   else b
 
-/-- Support of biased anchor `A` (number of seeds clean on its diagonal),
-looked up near index `i` of the sorted packed anchors `as` (entries A·16 + seed mask). -/
-@[inline] def supNear (as : Array Nat) (i A : Nat) : Nat := Id.run do
+/-- Mask of looked-up seeds clean on biased diagonal `A`, found near index `i`
+of the increasing packed anchors `as` (entries A·16 + mask). -/
+@[inline] def maskNear (as : Array Nat) (i A : Nat) : Nat := Id.run do
   for k in [i - min i 3 : min as.size (i + 4)] do
-    if as[k]! / 16 == A then return pop4 (as[k]! % 16)
+    if as[k]! / 16 == A then return as[k]! % 16
   return 0
+
+/-- Number of seeds clean on biased diagonal `A`: the looked-up ones from the
+masks, the others (not in `looked`) checked in the genome. -/
+def supAt (r g : ByteArray) (q : Nat) (as : Array Nat) (looked i A : Nat) : Nat := Id.run do
+  let mut c := pop4 (maskNear as i A)
+  if A < BIAS then return c
+  for j in [0:4] do
+    let p := A - BIAS + j * q
+    if (looked >>> j) % 2 == 0 && p + q ≤ g.size && eqRun g r p (j * q) (p + q) then c := c + 1
+  return c
 
 /-- Merge two increasing packed anchor lists (A·16 + mask), joining masks of equal A. -/
 partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
@@ -208,63 +218,52 @@ partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
   else if h' : j < y.size then merge x y i (j + 1) (acc.push y[j])
   else acc
 
-/-- Number of seeds clean on biased diagonal `A` (checked in the genome). -/
-def supAt (r g : ByteArray) (q A : Nat) : Nat := Id.run do
-  let mut c := 0
-  if A < BIAS then return 0
-  for j in [0:4] do
-    let p := A - BIAS + j * q
-    if p + q ≤ g.size && eqRun g r p (j * q) (p + q) then c := c + 1
-  return c
+/-- Gapped windows near the anchors `as` with penalty ≤ min(b.pen, cap).  They cost
+≥ 8 and their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9); supports come
+from the masks and, for seeds not looked up, the genome. -/
+def gappedStage (r g : ByteArray) (q : Nat) (as : Array Nat) (looked : Nat) (b : Best) : Best := Id.run do
+  let n := r.size
+  let mut b := b
+  for i in [0:as.size] do
+    let A := as[i]! / 16
+    let c := supAt r g q as looked i A
+    for L in [1:4] do
+      let need := if min b.pen cap < 10 then 3 else 2
+      let sm := supAt r g q as looked i (A - L)
+      let sp := supAt r g q as looked i (A + L)
+      -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
+      if c + sp ≥ need && A ≥ BIAS && A - BIAS + n + L ≤ g.size then
+        b := b.add (A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
+      if c + sm ≥ need && A ≥ BIAS && A - BIAS + n - L ≤ g.size then
+        b := b.add (A - BIAS) (n - L) (gappedPen r g (A - BIAS) (n - L) (min b.pen cap))
+      -- (A-L, n+L) and (A+L, n-L) end on A: gap before the seed
+      if c + sm ≥ need && A ≥ BIAS + L && A - BIAS + n ≤ g.size then
+        b := b.add (A - BIAS - L) (n + L) (gappedPen r g (A - BIAS - L) (n + L) (min b.pen cap))
+      if c + sp ≥ need && A - BIAS + n ≤ g.size then
+        b := b.add (A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
+  return b
 
-/-- Best window over the anchors of the seeds whose bucket holds ≤ K entries
-(`bigK`, default 32: bigger buckets are looked up only when needed);
-also returns B = how many seeds were skipped.  Exact when B = 0 or the result's
-penalty is < 4·(4 - B): a window none of whose clean seeds was looked up has
-m ≥ 4 - B - (seeds spoiled by its gap) mismatches; with one gap of length L
-(spoiling ≤ min(L, 2) seeds) or none, penalty ≥ 4·(4 - B) in every case. -/
-def mapK (idx : Idx) (g r : ByteArray) (vs sizes : Array Nat) (K : Nat) : Best × Nat := Id.run do
+/-- Anchors of `y` whose diagonal is not in `x` (both increasing). -/
+partial def newOnly (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
+  if h : j < y.size then
+    if h' : i < x.size then
+      if x[i] / 16 < y[j] / 16 then newOnly x y (i + 1) j acc
+      else if x[i] / 16 == y[j] / 16 then newOnly x y (i + 1) (j + 1) acc
+      else newOnly x y i (j + 1) (acc.push y[j])
+    else newOnly x y i (j + 1) (acc.push y[j])
+  else acc
+
+/-- Seeds are looked up one at a time, smallest bucket first.  After k seeds,
+a window none of whose clean seeds was looked up has penalty ≥ 4k (its k
+looked-up seeds are spoiled: by ≥ k mismatches, or by one gap of length L
+spoiling ≤ min(L, 2) seeds plus mismatches: 6 + 2L + 4(k - min(L, 2)) ≥ 4k),
+so the search stops once 4k > best.  Same-length windows are scored when their
+anchor first appears (later seeds cannot change their penalty); gapped ones
+only when best ≥ 8, which needs k ≥ 3. -/
+def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
   let n := r.size
   let q := idx.q
-  let l := fun (j : Nat) => if sizes[j]! ≤ K then lookup idx g r j vs[j]!.toUInt64 else #[]
-  let looked := (if sizes[0]! ≤ K then 1 else 0) + (if sizes[1]! ≤ K then 2 else 0) +
-    (if sizes[2]! ≤ K then 4 else 0) + (if sizes[3]! ≤ K then 8 else 0)
-  let nB := 4 - pop4 looked
-  -- packed anchors A·16 + mask of the looked-up seeds clean on diagonal A - BIAS
-  let as := merge (merge (l 0) (l 1) 0 0 #[]) (merge (l 2) (l 3) 0 0 #[]) 0 0 #[]
-  let mut b : Best := {}
-  -- same-length windows: penalty ≥ 4·(looked-up seeds not clean); best first
-  for k in [0:4] do
-    if 4 * k ≤ b.pen && !(b.pen == 0 && b.amb) then
-      for e in as do
-        let A := e / 16
-        if pop4 (looked - (looked &&& (e % 16))) == k && A ≥ BIAS && A - BIAS + n ≤ g.size then
-          let m := hamSeeds r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
-          if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
-  -- gapped windows cost ≥ 8; their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9)
-  if b.pen ≥ 8 then
-    for i in [0:as.size] do
-      let A := as[i]! / 16
-      let c := if nB == 0 then pop4 (as[i]! % 16) else supAt r g q A
-      for L in [1:4] do
-        let need := if min b.pen cap < 10 then 3 else 2
-        let sm := if nB == 0 then supNear as i (A - L) else supAt r g q (A - L)
-        let sp := if nB == 0 then supNear as i (A + L) else supAt r g q (A + L)
-        -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
-        if c + sp ≥ need && A ≥ BIAS && A - BIAS + n + L ≤ g.size then
-          b := b.add (A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
-        if c + sm ≥ need && A ≥ BIAS && A - BIAS + n - L ≤ g.size then
-          b := b.add (A - BIAS) (n - L) (gappedPen r g (A - BIAS) (n - L) (min b.pen cap))
-        -- (A-L, n+L) and (A+L, n-L) end on A: gap before the seed
-        if c + sm ≥ need && A ≥ BIAS + L && A - BIAS + n ≤ g.size then
-          b := b.add (A - BIAS - L) (n + L) (gappedPen r g (A - BIAS - L) (n + L) (min b.pen cap))
-        if c + sp ≥ need && A - BIAS + n ≤ g.size then
-          b := b.add (A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
-  return (b, nB)
-
-def mapRead (idx : Idx) (g r : ByteArray) (bigK : Nat) : Option (Nat × Nat × Nat) := Id.run do
-  let q := idx.q
-  assert! r.size / 4 == q && r.size + 3 ≤ BIAS
+  assert! n / 4 == q && n + 3 ≤ BIAS
   let vs := #[(seedCode r 0 0 q 0 0).toNat, (seedCode r q 0 q 0 0).toNat,
     (seedCode r (2 * q) 0 q 0 0).toNat, (seedCode r (3 * q) 0 q 0 0).toNat]
   assert! vs.all (· >>> 61 == 0)
@@ -272,8 +271,24 @@ def mapRead (idx : Idx) (g r : ByteArray) (bigK : Nat) : Option (Nat × Nat × N
     if v >>> 60 != 0 then 0 else
     let b := (mix v.toUInt64 >>> (50 - BBITS)).toNat
     idx.offs[b + 1]!.toNat - idx.offs[b]!.toNat
-  let (b, nB) := mapK idx g r vs sizes bigK
-  let b := if nB > 0 && 4 * (4 - nB) ≤ b.pen then (mapK idx g r vs sizes (1 <<< 40)).1 else b
+  let order := #[0, 1, 2, 3].insertionSort (fun i j => sizes[i]! < sizes[j]!)
+  let mut as : Array Nat := #[]
+  let mut b : Best := {}
+  let mut looked := 0
+  for k in [0:4] do
+    let j := order[k]!
+    looked := looked ||| (1 <<< j)
+    let lj := lookup idx g r j vs[j]!.toUInt64
+    let fresh := newOnly as lj 0 0 #[]
+    as := merge as lj 0 0 #[]
+    -- same-length windows of the new anchors
+    for e in fresh do
+      let A := e / 16
+      if A ≥ BIAS && A - BIAS + n ≤ g.size && !(b.pen == 0 && b.amb) then
+        let m := hamSeeds r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
+        if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
+    if k ≥ 2 && b.pen ≥ 8 then b := gappedStage r g q as looked b
+    if 4 * (k + 1) > b.pen then break
   if b.pen ≤ cap && !b.amb then return some (b.st, b.len, b.pen)
   return none
 
@@ -290,12 +305,11 @@ def main (args : List String) : IO UInt32 := do
   assert! l0 == 25
   IO.println s!"index entries: {idx.ent.size / 2}"
   let t1 ← IO.monoNanosNow
-  let bigK := ((← IO.getEnv "PROTO_BIGK").getD "32").toNat!   -- small values test the lazy path
   let reps := ((← IO.getEnv "PROTO_REPS").getD "1").toNat!   -- for profiling
   let mut res : Array (Option (Nat × Nat × Nat)) := #[]
   for _ in [0:reps] do
     res := #[]
-    for r in reads do res := res.push (mapRead idx g r bigK)
+    for r in reads do res := res.push (mapRead idx g r)
   let mapped := (res.filter (·.isSome)).size
   IO.println s!"mapped: {mapped}"
   let t2 ← IO.monoNanosNow
