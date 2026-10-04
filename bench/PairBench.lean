@@ -1,5 +1,6 @@
 import PairMapper
 import PairJoint
+import PairInterleave
 import ParMap
 
 /-!
@@ -8,7 +9,8 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
 
     lake exe pair_bench <genome.fa> <mate1.reads.txt> <mate2.reads.txt> [dump.tsv]
     env: PAIR_MIN (100), PAIR_MAX (1000), PAIR_TASKS (1), PAIR_JOINT (shared-best strand search, pairFastJ),
-    PAIR_MZ=k [PAIR_MZ_B=B] (minimizer index, with PAIR_JOINT: pairFastJ_mz_eq_pairSpec)
+    PAIR_INTERLEAVE (strands interleaved one lookup at a time, pairFastI),
+    PAIR_MZ=k [PAIR_MZ_B=B] (minimizer index, with PAIR_JOINT / PAIR_INTERLEAVE: pairFastJ/I_mz_eq_pairSpec)
 
 Dump format = `bench/pair_ref.py` / `PROTO_PAIR` (name, then both hits or none).
 -/
@@ -62,22 +64,25 @@ def main (args : List String) : IO UInt32 := do
   let tasks := ((← IO.getEnv "PAIR_TASKS").getD "1").toNat!
   let ps := (Array.range r1.size).map fun i => (r1[i]!, r2[i]!)
   let joint := (← IO.getEnv "PAIR_JOINT").isSome
+  let inter := (← IO.getEnv "PAIR_INTERLEAVE").isSome
   let mz := ((← IO.getEnv "PAIR_MZ").getD "0").toNat!
   let f : ByteArray × ByteArray → Option ((Placement × Int) × (Placement × Int)) ← if mz == 0 then do
       let idxs := gbs.map Fast.buildIdx
       let ok := Fast.checkAll idxs gbs
       IO.println s!"index check: {ok}  index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.ent.size + ix.odd.foldl (· + ·.size) 0) 0}"
       assert! ok
-      pure fun p => if joint then Fast.pairFastJ Fast.hLook lo hi gbs idxs p.1 p.2
+      pure fun p => if inter then Fast.pairFastI Fast.hLook lo hi gbs idxs p.1 p.2
+        else if joint then Fast.pairFastJ Fast.hLook lo hi gbs idxs p.1 p.2
         else Fast.pairFast Fast.hLook lo hi gbs idxs p.1 p.2
     else do
-      assert! joint
+      assert! joint || inter
       let B := ((← IO.getEnv "PAIR_MZ_B").getD "24").toNat!
       let idxs := gbs.map fun g => Mz.build g mz B
       let ok := Fast.checkAllMz idxs gbs
       IO.println s!"index check: {ok}  minimizer k={mz} B={B} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size) 0}"
       assert! ok
-      pure fun p => Fast.pairFastJ Fast.mzL lo hi gbs idxs p.1 p.2
+      pure fun p => if inter then Fast.pairFastI Fast.mzL lo hi gbs idxs p.1 p.2
+        else Fast.pairFastJ Fast.mzL lo hi gbs idxs p.1 p.2
   let t0 ← IO.monoNanosNow
   let out ← (← IO.mkRef (if t0 == 1 then #[] else if tasks ≤ 1 then ps.map f else ParMap.parMap tasks f ps)).get
   let t1 ← IO.monoNanosNow

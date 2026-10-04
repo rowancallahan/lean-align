@@ -443,6 +443,17 @@ def hLook : Look HIdx (Option UInt64) := ⟨fun _ h => h, sizeH, lookupH⟩
     let b := if 2 ≤ k && 8 ≤ b.pen then gapAll2 R G c as looked as.size 0 b else b
     if b.pen < 4 * (k + 1) then b else lazyLoop R G c lk ix ps rest (k + 1) as looked b
 
+/-- One step of `lazyLoop` (seed `j` after `k` lookups): the new anchors and best
+(the new mask is `looked + pow2 j`). -/
+@[inline] def lzStep {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (ix : L)
+    (ps : Array P) (j k : Nat) (as : Array Nat) (looked : Nat) (b : Best) : Array Nat × Best :=
+  let lj := lk.look ix G R j ps[j]!
+  let fresh := newOnly as lj 0 0 #[]
+  let as := merge as lj 0 0 #[]
+  let looked := looked + pow2 j
+  let b := fresh.foldl (sameStep2 R G c) b
+  (as, if 2 ≤ k && 8 ≤ b.pen then gapAll2 R G c as looked as.size 0 b else b)
+
 def seedHashes (R : ByteArray) : Array (Option UInt64) :=
   #[seedHash R 0, seedHash R 1, seedHash R 2, seedHash R 3]
 

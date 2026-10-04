@@ -249,13 +249,13 @@ theorem decodeJ_spec (R : ByteArray) (gbs : Array ByteArray) (S : Window → Pro
 
 /-! ## Top theorems (from the lemmas) -/
 
-theorem mapFastJ_eq_mapSpecBoth {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
-    (g : Genome) (read : List Char) (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray)
-    (rf : Bool) (hg : GenomeBytes gbs g) (hr : Encodes R read) (hlk : LookAll lk gbs idxs)
-    (hok : fastOk R = true) : mapFastJ lk gbs idxs R rf = mapSpecBoth sc0 (-12) g read := by
-  have hn : 100 ≤ R.size := by unfold fastOk q at hok; simp at hok; omega
+/-- Any best that keeps the invariant over all virtual windows decodes to `mapSpecBoth`. -/
+theorem decodeJ_eq_mapSpecBoth (g : Genome) (read : List Char) (gbs : Array ByteArray) (R : ByteArray)
+    (b : Best) (hg : GenomeBytes gbs g) (hr : Encodes R read)
+    (hb : ∃ S, Inv (cwJ R gbs) S b ∧ ∀ w, cwJ R gbs w ≤ 12 → S w) :
+    decodeJ gbs.size b = mapSpecBoth sc0 (-12) g read := by
   have hrr := revCompB_encodes R read hr
-  obtain ⟨S, hinv, hall⟩ := mapChromsJ_inv lk R gbs idxs rf hn (fun c hc R' j hj => hlk c hc R' j hj)
+  obtain ⟨S, hinv, hall⟩ := hb
   have key : ∀ (st : Strand) w' s', (strandScore g read st w' = some s' ∧ -12 ≤ s') ↔
       (cwP R gbs st w' ≤ 12 ∧ s' = -(cwP R gbs st w' : Int)) := by
     intro st w' s'
@@ -271,7 +271,6 @@ theorem mapFastJ_eq_mapSpecBoth {L P : Type} [Inhabited L] [Inhabited P] (lk : L
       exact penOf_some _ s' (windowScore_nonpos (revComp read) g w')
   apply Option.ext
   rintro ⟨p, s⟩
-  unfold mapFastJ
   rw [mapSpecBoth_iff, decodeJ_spec R gbs S _ hinv hall]
   constructor
   · rintro ⟨⟨h1, rfl⟩, h3⟩
@@ -286,6 +285,13 @@ theorem mapFastJ_eq_mapSpecBoth {L P : Type} [Inhabited L] [Inhabited P] (lk : L
     rcases h3 p' _ ((key p'.2 p'.1 _).mpr ⟨h4, rfl⟩).1 ((key p'.2 p'.1 _).mpr ⟨h4, rfl⟩).2 with h6 | h6
     · omega
     · exact absurd h6 h5
+
+theorem mapFastJ_eq_mapSpecBoth {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
+    (g : Genome) (read : List Char) (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray)
+    (rf : Bool) (hg : GenomeBytes gbs g) (hr : Encodes R read) (hlk : LookAll lk gbs idxs)
+    (hok : fastOk R = true) : mapFastJ lk gbs idxs R rf = mapSpecBoth sc0 (-12) g read :=
+  decodeJ_eq_mapSpecBoth g read gbs R _ hg hr (mapChromsJ_inv lk R gbs idxs rf
+    (by unfold fastOk q at hok; simp at hok; omega) (fun c hc R' j hj => hlk c hc R' j hj))
 
 theorem pairFastJ_eq_pairSpec {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (lo hi : Nat)
     (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray) (idxs : Array L) (R1 R2 : ByteArray)

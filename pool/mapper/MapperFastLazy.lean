@@ -587,25 +587,24 @@ theorem look_eq {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (j : Nat) (h
   rw [← seedHashes_get R j hj]
   rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> rfl
 
-/-- **The lazy loop.** -/
-theorem lazyLoop_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
-    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (lk.prep ix (seedHash R j)))) :
-    ∀ (ord : List Nat) (J : Nat) (as : Array Nat) (b : Best) (S : Window → Prop),
-      LoopState cw R G c J (pop4 J) as b S → ord.Nodup → (∀ j ∈ ord, j < 4 ∧ bit J j = 0) →
-      pop4 J + ord.length = 4 →
-      ∃ S', Inv cw S' (lazyLoop R G c lk ix (prepAll lk ix (seedHashes R)) ord (pop4 J) as J b) ∧ (∀ w, S w → S' w) ∧
-        ∀ st len, cw ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩ := by
-  intro ord
-  induction ord with
-  | nil =>
-    intro J as b S hs _ _ hlen
-    simp only [List.length_nil, Nat.add_zero] at hlen
-    exact finish cw hc13 R G c hcw hn J _ as b S hs (Or.inr (pop4_full J hs.hJ hlen))
-  | cons j rest ih =>
-    intro J as b S hs hnd hord hlen
-    obtain ⟨hj4, hj0⟩ := hord j List.mem_cons_self
+omit hc13 hcw hn in
+theorem lazyLoop_cons {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (ps : Array P) (j : Nat)
+    (rest : List Nat) (k : Nat) (as : Array Nat) (looked : Nat) (b : Best) :
+    lazyLoop R G c lk ix ps (j :: rest) k as looked b =
+      if (lzStep R G c lk ix ps j k as looked b).2.pen < 4 * (k + 1) then (lzStep R G c lk ix ps j k as looked b).2
+      else lazyLoop R G c lk ix ps rest (k + 1) (lzStep R G c lk ix ps j k as looked b).1 (looked + pow2 j)
+        (lzStep R G c lk ix ps j k as looked b).2 := rfl
+
+/-- **One lookup** (`lzStep`) keeps the loop state. -/
+theorem lzStep_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
+    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (lk.prep ix (seedHash R j))))
+    (j J : Nat) (as : Array Nat) (b : Best) (S : Window → Prop)
+    (hs : LoopState cw R G c J (pop4 J) as b S) (hj4 : j < 4) (hj0 : bit J j = 0) :
+    ∃ S2, LoopState cw R G c (J + 2 ^ j) (pop4 J + 1)
+        (lzStep R G c lk ix (prepAll lk ix (seedHashes R)) j (pop4 J) as J b).1
+        (lzStep R G c lk ix (prepAll lk ix (seedHashes R)) j (pop4 J) as J b).2 S2 ∧ (∀ w, S w → S2 w) := by
     obtain ⟨hpop, hJ'⟩ := pop4_add J hs.hJ j hj4 hj0
-    unfold lazyLoop
+    unfold lzStep
     simp only []
     rw [look_eq cw hc13 R G c hcw hn lk ix j hj4, pow2_eq j hj4]
     have hl := hlk j hj4
@@ -692,18 +691,41 @@ theorem lazyLoop_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
             (merge as (a) 0 0 #[]).size 0 b1 else b1) = b2 at h2 hgap2
     have hst : LoopState cw R G c (J + 2 ^ j) (pop4 J + 1) (merge as (a) 0 0 #[]) b2 S2 :=
       ⟨h2, ha', hJ', hpop, fun st hm => hS12 _ (same1 st hm), hgap2⟩
+    exact ⟨S2, hst, fun w hw => hS12 w (hSS1 w hw)⟩
+
+/-- **The lazy loop.** -/
+theorem lazyLoop_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
+    (hlk : ∀ j, j < 4 → LookOk G R j (lk.look ix G R j (lk.prep ix (seedHash R j)))) :
+    ∀ (ord : List Nat) (J : Nat) (as : Array Nat) (b : Best) (S : Window → Prop),
+      LoopState cw R G c J (pop4 J) as b S → ord.Nodup → (∀ j ∈ ord, j < 4 ∧ bit J j = 0) →
+      pop4 J + ord.length = 4 →
+      ∃ S', Inv cw S' (lazyLoop R G c lk ix (prepAll lk ix (seedHashes R)) ord (pop4 J) as J b) ∧ (∀ w, S w → S' w) ∧
+        ∀ st len, cw ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩ := by
+  intro ord
+  induction ord with
+  | nil =>
+    intro J as b S hs _ _ hlen
+    simp only [List.length_nil, Nat.add_zero] at hlen
+    exact finish cw hc13 R G c hcw hn J _ as b S hs (Or.inr (pop4_full J hs.hJ hlen))
+  | cons j rest ih =>
+    intro J as b S hs hnd hord hlen
+    obtain ⟨hj4, hj0⟩ := hord j List.mem_cons_self
+    obtain ⟨hpop, hJ'⟩ := pop4_add J hs.hJ j hj4 hj0
+    rw [lazyLoop_cons, pow2_eq j hj4]
+    obtain ⟨S2, hst, hS12⟩ := lzStep_inv cw hc13 R G c hcw hn lk ix hlk j J as b S hs hj4 hj0
+    generalize lzStep R G c lk ix (prepAll lk ix (seedHashes R)) j (pop4 J) as J b = r at hst
     split
     · obtain ⟨S', h', hS', hc'⟩ := finish cw hc13 R G c hcw hn _ _ _ _ _ hst (Or.inl (by omega))
-      exact ⟨S', h', fun w hw => hS' w (hS12 w (hSS1 w hw)), hc'⟩
+      exact ⟨S', h', fun w hw => hS' w (hS12 w hw), hc'⟩
     · rw [← hpop]
       have hnd' := (List.nodup_cons.mp hnd)
-      obtain ⟨S', h', hS', hc'⟩ := ih (J + 2 ^ j) _ b2 S2 (by rw [hpop]; exact hst) hnd'.2
+      obtain ⟨S', h', hS', hc'⟩ := ih (J + 2 ^ j) _ _ S2 (by rw [hpop]; exact hst) hnd'.2
         (fun j' hj' => by
           obtain ⟨a1, a2⟩ := hord j' (List.mem_cons_of_mem _ hj')
           refine ⟨a1, ?_⟩
           rw [bit_add J j j' hj4 a1 hs.hJ hj0, if_neg (fun e : j' = j => hnd'.1 (e ▸ hj'))]; exact a2)
         (by simp at hlen; omega)
-      exact ⟨S', h', fun w hw => hS' w (hS12 w (hSS1 w hw)), hc'⟩
+      exact ⟨S', h', fun w hw => hS' w (hS12 w hw), hc'⟩
 
 /-- **One chromosome.**  `mapChrom2` keeps the invariant and looks at every hit of chromosome `c`. -/
 theorem mapChrom2_inv {L P : Type} [Inhabited P] (lk : Look L P) (ix : L)
