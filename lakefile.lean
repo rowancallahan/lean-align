@@ -95,3 +95,9 @@ lean_lib LeanAlign where
 @[default_target]
 lean_exe «lean-align» where
   root := `Main
+
+-- ──────────────────────────── bench ─────────────────────────────
+
+lean_exe map_bench where              -- benchmark only; prints to stdout
+  srcDir := "bench"
+  root := `MapBench
