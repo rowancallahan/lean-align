@@ -63,13 +63,22 @@ def slowMap (gbs : Array ByteArray) (R : ByteArray) : Option (Window × Int) :=
   let l0 := read.length / (errBound sc0 (-12) + 1)
   mapWith (scanLookup g l0) (kernelScore sc0 read g) l0 (-12) (errBound sc0 (-12)) g read
 
-/-- Map one read. -/
-def mapFast (gbs : Array ByteArray) (idxs : Array HIdx) (R : ByteArray) : Option (Window × Int) :=
+/-- Map one read through any seed lookup `lk` (index `idxs[c]` for chromosome `c`). -/
+@[specialize] def mapFastG {L : Type} [Inhabited L] (lk : Look L) (gbs : Array ByteArray) (idxs : Array L)
+    (R : ByteArray) : Option (Window × Int) :=
   if fastOk R then
-    match result (mapChroms R gbs idxs) with
+    match result (mapChroms lk R gbs idxs) with
     | some (c, st, len, pen) => some (⟨c, st, len⟩, -(pen : Int))
     | none => none
   else slowMap gbs R
+
+/-- Map one read (hashed index). -/
+def mapFast (gbs : Array ByteArray) (idxs : Array HIdx) (R : ByteArray) : Option (Window × Int) :=
+  mapFastG hLook gbs idxs R
+
+/-- What the generic mapper needs of a lookup: every chromosome's lookup is right. -/
+def LookAll {L : Type} [Inhabited L] (lk : Look L) (gbs : Array ByteArray) (idxs : Array L) : Prop :=
+  ∀ c, c < gbs.size → ∀ R j, j < 4 → LookOk gbs[c]! R j (lk.look idxs[c]! gbs[c]! R j (seedHash R j))
 
 def mapFastReads (gbs : Array ByteArray) (idxs : Array HIdx) (Rs : List ByteArray) :
     List (Option (Window × Int)) :=
@@ -193,19 +202,16 @@ theorem mapSpec_iff (g : Genome) (read : List Char) (w : Window) (s : Int) :
     rw [mem_hitsOf] at hb
     exact h3 w' s' hb.2.1 hb.2.2
 
-/-- **Fast path.**  Under the hypotheses, `mapFast` is the specification's answer. -/
-theorem mapFast_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteArray) (idxs : Array HIdx)
-    (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read) (hchk : checkAll idxs gbs = true) :
-    mapFast gbs idxs R = mapSpec sc0 (-12) g read := by
-  unfold mapFast
+/-- **Generic.**  Through any lookup satisfying `LookAll`, `mapFastG` is the specification's answer. -/
+theorem mapFastG_eq_mapSpec {L : Type} [Inhabited L] (lk : Look L) (g : Genome) (read : List Char)
+    (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read)
+    (hlk : LookAll lk gbs idxs) :
+    mapFastG lk gbs idxs R = mapSpec sc0 (-12) g read := by
+  unfold mapFastG
   split
   · next hok =>
     have hn : 100 ≤ R.size := by unfold fastOk q at hok; simp at hok; omega
-    have hchk' : ∀ c, c < gbs.size → checkIdx idxs[c]! gbs[c]! = true := by
-      unfold checkAll at hchk
-      simp only [List.all_eq_true, List.mem_range] at hchk
-      exact hchk
-    obtain ⟨S, hinv, hall⟩ := mapChroms_inv R gbs idxs hn hchk'
+    obtain ⟨S, hinv, hall⟩ := mapChroms_inv lk R gbs idxs hn (fun c hc j hj => hlk c hc R j hj)
     have hcw := cwG_eq g read gbs R hg hr
     apply Option.ext
     rintro ⟨w, s⟩
@@ -230,7 +236,7 @@ theorem mapFast_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteArra
         · left; have := h3 w' h6 hw; omega
       · cases hm
     · rintro ⟨⟨h1, rfl⟩, h3⟩
-      have hp : result (mapChroms R gbs idxs) = some (w.chr, w.start, w.len, cwG R gbs w) := by
+      have hp : result (mapChroms lk R gbs idxs) = some (w.chr, w.start, w.len, cwG R gbs w) := by
         rw [hres]
         refine ⟨rfl, h1, fun w' h4 h5 => ?_⟩
         rcases h3 w' _ ((key w' _).mpr ⟨h4, rfl⟩).1 ((key w' _).mpr ⟨h4, rfl⟩).2 with h6 | h6
@@ -246,6 +252,19 @@ theorem mapFast_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteArra
     · intro i h1 h2
       simp only [List.getElem_map, Array.getElem_toList]
       exact decodeBytes_of_encodes _ _ (henc i (by simpa using h1) (by simpa using h2))
+
+theorem lookAll_hLook (gbs : Array ByteArray) (idxs : Array HIdx) (hchk : checkAll idxs gbs = true) :
+    LookAll hLook gbs idxs := by
+  intro c hc R j _
+  unfold checkAll at hchk
+  simp only [List.all_eq_true, List.mem_range] at hchk
+  exact hLook_ok _ _ _ _ (hchk c hc)
+
+/-- **Fast path.**  Under the hypotheses, `mapFast` is the specification's answer. -/
+theorem mapFast_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteArray) (idxs : Array HIdx)
+    (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read) (hchk : checkAll idxs gbs = true) :
+    mapFast gbs idxs R = mapSpec sc0 (-12) g read :=
+  mapFastG_eq_mapSpec hLook g read gbs idxs R hg hr (lookAll_hLook gbs idxs hchk)
 
 /-- **Many reads.** -/
 theorem mapFastReads_eq_mapSpec (g : Genome) (gbs : Array ByteArray) (idxs : Array HIdx)
@@ -267,6 +286,7 @@ theorem mapFastReads_eq_mapSpec (g : Genome) (gbs : Array ByteArray) (idxs : Arr
 
 end MapSpec.Fast
 
+#print axioms MapSpec.Fast.mapFastG_eq_mapSpec
 #print axioms MapSpec.Fast.mapFast_eq_mapSpec
 #print axioms MapSpec.Fast.mapFastReads_eq_mapSpec
 #print axioms MapSpec.Fast.lookupSeed_spec

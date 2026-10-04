@@ -667,6 +667,10 @@ theorem lookupH_none (ix : HIdx) (G R : ByteArray) (j : Nat) :
     lookupH ix G R j none = scanOdd G R ix.odd[(R.get! (firstOdd R (j * q) (j * q + q))).toNat]!
       (firstOdd R (j * q) (j * q + q) - j * q) (j * q) (BIAS - j * q) (1 <<< j) 0 #[] := rfl
 
+/-- What a seed lookup must give: seed `j`'s packed anchors, increasing. -/
+def LookOk (G R : ByteArray) (j : Nat) (a : Array Nat) : Prop :=
+  a.toList.Pairwise (· < ·) ∧ ∀ e, e ∈ a.toList ↔ ∃ p, MatchAt G p R (j * q) ∧ e = anchorOf j p
+
 /-- **Lookup.**  Through a certified index, seed `j`'s anchors are increasing and
 are exactly the anchors of the places where the seed occurs. -/
 theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx ix G = true) :
@@ -766,6 +770,9 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
           simp only [Bool.and_eq_true, decide_eq_true_eq, hp']
           exact ⟨⟨by omega, hp1⟩, (eqRun_spec G R q _ _).2 hp2⟩), hp']
         rfl
+
+theorem hLook_ok (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx ix G = true) :
+    LookOk G R j (hLook.look ix G R j (seedHash R j)) := lookupSeed_spec ix G R j hchk
 
 end MapSpec.Fast
 
