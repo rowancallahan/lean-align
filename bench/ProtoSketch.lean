@@ -65,6 +65,11 @@ def Scheme.L (sc : Scheme) : Nat :=
   let x := (x ^^^ (x >>> 29)) * 0x94D049BB133111EB
   x ^^^ (x >>> 32)
 
+/-- 32-bit order hash for s-mers (unboxed in arrays). -/
+@[inline] def ordS (x : UInt64) : UInt32 :=
+  let h := (x + 1) * 0x9E3779B97F4A7C15
+  ((h ^^^ (h >>> 29)) >>> 32).toUInt32
+
 /-- Leftmost minimum of `h` over [i, i + w). -/
 @[inline] def argminH (h : Nat → UInt64) (i w : Nat) : Nat := Id.run do
   let mut m := i
@@ -77,20 +82,41 @@ def Scheme.L (sc : Scheme) : Nat :=
 is its first or its last. -/
 @[inline] def closedSync (k s : Nat) (x : UInt64) : Bool := Id.run do
   let sm : UInt64 := (1 <<< (2 * s.toUInt64)) - 1
-  let first := ordH ((x >>> (2 * (k - s)).toUInt64) &&& sm)
-  let last := ordH (x &&& sm)
+  let first := ordS ((x >>> (2 * (k - s)).toUInt64) &&& sm)
+  let last := ordS (x &&& sm)
   let mut mn := min first last
   for i in [1 : k - s] do
-    mn := min mn (ordH ((x >>> (2 * (k - s - i)).toUInt64) &&& sm))
+    mn := min mn (ordS ((x >>> (2 * (k - s - i)).toUInt64) &&& sm))
   return mn == first || mn == last
 
 /-- Open syncmer test: smallest s-mer at offset t (value tie allowed). -/
 @[inline] def openSync (k s t : Nat) (x : UInt64) : Bool := Id.run do
   let sm : UInt64 := (1 <<< (2 * s.toUInt64)) - 1
-  let atV := ordH ((x >>> (2 * (k - s - t)).toUInt64) &&& sm)
+  let atV := ordS ((x >>> (2 * (k - s - t)).toUInt64) &&& sm)
   for i in [0 : k - s + 1] do
-    if ordH ((x >>> (2 * (k - s - i)).toUInt64) &&& sm) < atV then return false
+    if ordS ((x >>> (2 * (k - s - i)).toUInt64) &&& sm) < atV then return false
   return true
+
+/-- Bijection on 2k-bit values (odd multiplier): bucket = top 24 bits,
+key = low 2k − 24 bits, so (bucket, key) determines the k-mer (k ≥ 12). -/
+@[inline] def hk (k : Nat) (x : UInt64) : UInt64 :=
+  (x * (0x9E3779B97F4A7C15 : UInt64)) &&& (((1 : UInt64) <<< (2 * k.toUInt64)) - 1)
+@[inline] def bucketOf (k : Nat) (y : UInt64) : Nat := (y >>> (2 * k - 24).toUInt64).toNat
+@[inline] def keyOf (k : Nat) (y : UInt64) : UInt32 := (y &&& ((1 <<< (2 * k - 24).toUInt64) - 1)).toUInt32
+
+/-- 2-bit letter of the packed genome at p (0 outside). -/
+@[inline] def gletter (pk : ByteArray) (n : Nat) (p : Int) : UInt32 :=
+  if p < 0 || p ≥ n then 0 else
+    let q := p.toNat
+    ((pk.get! (q / 4) >>> (6 - 2 * (q % 4)).toUInt8) &&& 3).toUInt32
+
+/-- Context of the k-mer at m: letter m−1−i at bits 2i, letter m+k+i at bits 2cl+2i. -/
+def ctxAt (pk : ByteArray) (n m k cl : Nat) : UInt32 := Id.run do
+  let mut c : UInt32 := 0
+  for i in [0:cl] do
+    c := c ||| (gletter pk n ((m : Int) - 1 - i) <<< (2 * i).toUInt32)
+    c := c ||| (gletter pk n ((m + k + i : Nat) : Int) <<< (2 * cl + 2 * i).toUInt32)
+  return c
 
 /-- Index of the selected ACGT k-mers: CSR over 2^24 buckets,
 entries (pos, key) in increasing pos.  `odd` = starts of the q-windows that
@@ -98,12 +124,20 @@ contain a letter other than ACGTN (looked up directly). -/
 structure Idx where
   q : Nat
   sch : Scheme
+  cl : Nat            -- genome letters of context stored per side in each entry
+  pick : Nat          -- 0: rarest selected k-mer of the seed; 1: best context cover
   offs : Array UInt32
   ent : Array UInt32
   odd : Array Nat
   pk : ByteArray      -- genome, 2 bits per letter, first letter in the top bits (non-ACGT ↦ 0)
   amb : ByteArray     -- per 32-letter block: 1 when it holds a letter other than ACGT
 deriving Inhabited
+
+/-- g[p, p+len) is all ACGT (so the packed genome is exact there). -/
+@[inline] def clean (idx : Idx) (p len : Nat) : Bool := Id.run do
+  for k in [p / 32 : (p + len - 1) / 32 + 1] do
+    if idx.amb.get! k != 0 then return false
+  return true
 
 /-- Marks (1) the starts of the selected k-mers. -/
 def selectPositions (g : ByteArray) (sch : Scheme) : ByteArray := Id.run do
@@ -129,10 +163,18 @@ def selectPositions (g : ByteArray) (sch : Scheme) : ByteArray := Id.run do
       | _ => if openSync k sch.s sch.w x then sel := sel.set! i 1
   return sel
 
-def buildIdx (g : ByteArray) (q : Nat) (sch : Scheme) : Idx := Id.run do
-  assert! q == 25 && sch.k ≤ 25 && sch.L ≤ q
+def buildIdx (g : ByteArray) (q : Nat) (sch : Scheme) (useCtx : Bool) (pick : Nat) : Idx := Id.run do
+  assert! q == 25 && sch.k ≤ 25 && sch.k ≥ 12 && sch.L ≤ q && g.size < 2 ^ 31
   let k := sch.k
+  let kb := 2 * k - 24
+  let cl := if useCtx then min 7 ((32 - kb) / 4) else 0
   let sel := selectPositions g sch
+  let mut pk := ByteArray.mk (Array.replicate (g.size / 4 + 9) 0)
+  let mut amb := ByteArray.mk (Array.replicate (g.size / 32 + 1) 0)
+  for p in [0:g.size] do
+    let c := code (g.get! p)
+    if c < 4 then pk := pk.set! (p / 4) (pk.get! (p / 4) ||| (c.toUInt8 <<< (6 - 2 * (p % 4)).toUInt8))
+    else amb := amb.set! (p / 32) 1
   let nb := 1 <<< BBITS.toNat
   let wmask : UInt64 := (1 <<< (2 * k.toUInt64)) - 1
   let mut cnt : Array UInt32 := Array.replicate (nb + 1) 0
@@ -146,28 +188,28 @@ def buildIdx (g : ByteArray) (q : Nat) (sch : Scheme) : Idx := Id.run do
     if c == 4 then lastOdd := p
     if p + 1 ≥ q && lastOdd + q > p then odd := odd.push (p + 1 - q)
     if good ≥ k && sel.get! (p + 1 - k) == 1 then
-      let b := (mix x >>> (50 - BBITS)).toNat
+      let b := bucketOf k (hk k x)
       cnt := cnt.modify (b + 1) (· + 1)
   for b in [0:nb] do cnt := cnt.set! (b + 1) (cnt[b + 1]! + cnt[b]!)
   let mut fill := cnt
   let mut ent : Array UInt32 := Array.replicate (2 * cnt[nb]!.toNat) 0
   x := 0; good := 0
+  let tmp : Idx := { q, sch, cl, pick, offs := #[], ent := #[], odd := #[], pk, amb }
   for p in [0:g.size] do
     let c := code (g.get! p)
     if c < 4 then x := ((x <<< 2) ||| c) &&& wmask; good := good + 1 else good := 0
     if good ≥ k && sel.get! (p + 1 - k) == 1 then
-      let y := mix x
-      let b := (y >>> (50 - BBITS)).toNat
+      let m := p + 1 - k
+      let y := hk k x
+      let b := bucketOf k y
       let i := fill[b]!.toNat
-      ent := (ent.set! (2 * i) (p + 1 - k).toUInt32).set! (2 * i + 1) (y &&& KMASK).toUInt32
+      -- bit 31 of the position: the context holds a letter other than ACGT
+      let dirty := cl > 0 && (m < cl || m + k + cl > g.size || !clean tmp (m - cl) (k + 2 * cl))
+      let w1 := m.toUInt32 ||| (if dirty then 0x80000000 else 0)
+      let w2 := keyOf k y ||| (if cl > 0 then ctxAt pk g.size m k cl <<< kb.toUInt32 else 0)
+      ent := (ent.set! (2 * i) w1).set! (2 * i + 1) w2
       fill := fill.set! b (i + 1).toUInt32
-  let mut pk := ByteArray.mk (Array.replicate (g.size / 4 + 9) 0)
-  let mut amb := ByteArray.mk (Array.replicate (g.size / 32 + 1) 0)
-  for p in [0:g.size] do
-    let c := code (g.get! p)
-    if c < 4 then pk := pk.set! (p / 4) (pk.get! (p / 4) ||| (c.toUInt8 <<< (6 - 2 * (p % 4)).toUInt8))
-    else amb := amb.set! (p / 32) 1
-  return { q, sch, offs := cnt, ent, odd, pk, amb }
+  return { q, sch, cl, pick, offs := cnt, ent, odd, pk, amb }
 
 /-- 2-bit code of the 25 letters g[p, p+25), first letter in the top bits (as `seedCode`). -/
 @[inline] def gword (pk : ByteArray) (p : Nat) : UInt64 :=
@@ -188,12 +230,6 @@ def H01 : UInt64 := 0x0101010101010101
   let y := (y &&& M2) + ((y >>> 2) &&& M2)
   let y := (y + (y >>> 4)) &&& M4
   ((y * H01) >>> 56).toNat
-
-/-- g[p, p+len) is all ACGT (so the packed genome is exact there). -/
-@[inline] def clean (idx : Idx) (p len : Nat) : Bool := Id.run do
-  for k in [p / 32 : (p + len - 1) / 32 + 1] do
-    if idx.amb.get! k != 0 then return false
-  return true
 
 /-- Anchors are stored biased by `BIAS` (≥ n) so they are `Nat`s. -/
 def BIAS : Nat := 128
@@ -224,6 +260,44 @@ termination_by hi - t
 @[inline] def subCode (v : UInt64) (q k d : Nat) : UInt64 :=
   (v >>> (2 * (q - k - d)).toUInt64) &&& ((1 <<< (2 * k.toUInt64)) - 1)
 
+/-- 32-bit order hash of the s-mer at offset i of the q-letter code v. -/
+@[inline] def smerH (v : UInt64) (q s i : Nat) : UInt32 :=
+  ordS ((v >>> (2 * (q - s - i)).toUInt64) &&& ((1 <<< (2 * s.toUInt64)) - 1))
+
+/-- Order hashes of the q − s + 1 s-mers of the q-letter code v, in order. -/
+def smerHashes (v : UInt64) (q s : Nat) : Array UInt32 := Id.run do
+  let sm : UInt64 := (1 <<< (2 * s.toUInt64)) - 1
+  let mut sh : UInt64 := (2 * (q - s)).toUInt64
+  let mut hs : Array UInt32 := Array.mkEmpty (q - s + 1)
+  for _ in [0 : q - s + 1] do
+    hs := hs.push (ordS ((v >>> sh) &&& sm))
+    sh := sh - 2
+  return hs
+
+/-- Least of hs over [i, stop). -/
+def minH (hs : Array UInt32) (i stop : Nat) (m : UInt32) : UInt32 :=
+  if h : i < stop then minH hs (i + 1) stop (min m hs[i]!) else m
+termination_by stop - i
+
+/-- Offsets d ≥ d0 of the closed (k, s) syncmers of the q-letter seed (same test as `closedSync`). -/
+def closedOffsetsH (hs : Array UInt32) (k s q : Nat) (d : Nat) (acc : Array Nat) : Array Nat :=
+  if h : d + k ≤ q then
+    let f := hs[d]!
+    let l := hs[d + k - s]!
+    let m := minH hs (d + 1) (d + k - s) (min f l)
+    closedOffsetsH hs k s q (d + 1) (if m == f || m == l then acc.push d else acc)
+  else acc
+termination_by q + 1 - d
+
+/-- Leftmost least-ordH k-mer among offsets [d, d + cnt) of the q-letter code v
+(k-mer at d = (v >>> sh) & km with sh = 2(q − k − d)); same choice as `argminH`. -/
+def miniScan (v km : UInt64) (sh : UInt64) (d cnt best : Nat) (bv : UInt64) : Nat :=
+  match cnt with
+  | 0 => best
+  | c + 1 =>
+    let h := ordH ((v >>> sh) &&& km)
+    if h < bv then miniScan v km (sh - 2) (d + 1) c d h else miniScan v km (sh - 2) (d + 1) c best bv
+
 /-- Offsets (in the seed) of the k-mers the scheme selects inside the seed,
 seen from the seed alone.  Each of them is selected at the matching place of
 every genome occurrence of the seed. -/
@@ -234,24 +308,34 @@ def seedOffsets (sch : Scheme) (q : Nat) (v : UInt64) : Array Nat := Id.run do
   | 1 =>
     let mut ds : Array Nat := #[]
     for i in [0 : q - sch.L + 1] do
-      let m := argminH (fun d => ordH (subCode v q k d)) i sch.w
+      let km : UInt64 := (1 <<< (2 * k.toUInt64)) - 1
+      let sh := (2 * (q - k - i)).toUInt64
+      let m := miniScan v km (sh - 2) (i + 1) (sch.w - 1) i (ordH ((v >>> sh) &&& km))
       if !ds.contains m then ds := ds.push m
     return ds
   | _ =>
-    let mut ds : Array Nat := #[]
-    for d in [0 : q - k + 1] do
-      if closedSync k sch.s (subCode v q k d) then ds := ds.push d
-    return ds
+    closedOffsetsH (smerHashes v q sch.s) k sch.s q 0 #[]
 
 @[inline] def bucketSize (idx : Idx) (x : UInt64) : Nat :=
-  let b := (mix x >>> (50 - BBITS)).toNat
+  let b := bucketOf idx.sch.k (hk idx.sch.k x)
   idx.offs[b + 1]!.toNat - idx.offs[b]!.toNat
 
-/-- The selected offset with the smallest bucket, and that bucket's size. -/
+/-- Seed letters not covered by the stored context when the key sits at d. -/
+@[inline] def uncovered (idx : Idx) (d : Nat) : Nat :=
+  let r := idx.q - d - idx.sch.k
+  (d - min d idx.cl) + (r - min r idx.cl)
+
+/-- The chosen selected offset of the seed and its bucket size: the rarest
+(pick 0) or the one whose context covers most of the seed (pick 1). -/
 def bestOffset (idx : Idx) (v : UInt64) : Nat × Nat := Id.run do
   if idx.sch.kind == 0 && idx.sch.k == idx.q then return (0, bucketSize idx v)
   let ds := seedOffsets idx.sch idx.q v
   assert! ds.size > 0
+  if idx.pick == 1 then
+    let mut d := ds[0]!
+    for e in ds do
+      if uncovered idx e < uncovered idx d then d := e
+    return (d, bucketSize idx (subCode v idx.q idx.sch.k d))
   let mut best := (ds[0]!, bucketSize idx (subCode v idx.q idx.sch.k ds[0]!))
   for d in ds do
     let z := bucketSize idx (subCode v idx.q idx.sch.k d)
@@ -263,14 +347,38 @@ def bestOffset (idx : Idx) (v : UInt64) : Nat × Nat := Id.run do
   p + idx.q ≤ g.size &&
     (if clean idx p idx.q then gword idx.pk p == v else eqRun g r p o (p + idx.q))
 
-/-- Bucket entries t ∈ [t, hi) with this key at genome pos ≥ d whose seed matches at pos − d:
-push (pos − d + BIAS − o)·16 + bit. -/
-def scanBucketV (idx : Idx) (g r : ByteArray) (v : UInt64) (key : UInt32) (t hi d o bit : Nat)
-    (acc : Array Nat) : Array Nat :=
+/-- What a bucket entry must show for the seed (code v) with its key at d:
+(mask, expected) on the second word, and whether key + context cover the seed. -/
+def probe (idx : Idx) (v : UInt64) (d : Nat) : UInt32 × UInt32 × Bool := Id.run do
+  let k := idx.sch.k
+  let q := idx.q
+  let kb := 2 * k - 24
+  let y := hk k (subCode v q k d)
+  let a := min d idx.cl
+  let b := min (q - d - k) idx.cl
+  let mut cm : UInt32 := 0
+  let mut ce : UInt32 := 0
+  for i in [0:a] do
+    cm := cm ||| (3 <<< (2 * i).toUInt32)
+    ce := ce ||| (((v >>> (2 * (q - d + i)).toUInt64) &&& 3).toUInt32 <<< (2 * i).toUInt32)
+  for i in [0:b] do
+    cm := cm ||| (3 <<< (2 * idx.cl + 2 * i).toUInt32)
+    ce := ce ||| (((v >>> (2 * (q - 1 - (d + k + i))).toUInt64) &&& 3).toUInt32 <<< (2 * idx.cl + 2 * i).toUInt32)
+  let km : UInt32 := ((1 <<< kb.toUInt64) - 1 : UInt64).toUInt32
+  return (km ||| (cm <<< kb.toUInt32), keyOf k y ||| (ce <<< kb.toUInt32),
+    idx.sch.k == q || (idx.cl > 0 && uncovered idx d == 0))
+
+/-- Bucket entries t ∈ [t, hi) matching (mask, expected) at genome pos ≥ d whose
+seed matches at pos − d (checked in the genome unless key + clean context cover
+the seed): push (pos − d + BIAS − o)·16 + bit. -/
+def scanBucketV (idx : Idx) (g r : ByteArray) (v : UInt64) (msk ex : UInt32) (full : Bool)
+    (t hi d o bit : Nat) (acc : Array Nat) : Array Nat :=
   if h : t < hi then
-    let pos := idx.ent[2 * t]!.toNat
-    scanBucketV idx g r v key (t + 1) hi d o bit
-      (if idx.ent[2 * t + 1]! == key && pos ≥ d && (idx.sch.k == idx.q || seedAt idx g r v (pos - d) o)
+    let w1 := idx.ent[2 * t]!
+    let pos := (w1 &&& 0x7FFFFFFF).toNat
+    scanBucketV idx g r v msk ex full (t + 1) hi d o bit
+      (if idx.ent[2 * t + 1]! &&& msk == ex && pos ≥ d &&
+          ((full && w1 >>> 31 == 0) || seedAt idx g r v (pos - d) o)
        then acc.push ((pos - d + BIAS - o) * 16 + bit) else acc)
   else acc
 termination_by hi - t
@@ -281,28 +389,38 @@ def lookup (idx : Idx) (g r : ByteArray) (j : Nat) (v : UInt64) (d : Nat) : Arra
   let q := idx.q
   let o := j * q
   if v >>> 60 == 0 then
-    let y := mix (subCode v q idx.sch.k d)
-    let b := (y >>> (50 - BBITS)).toNat
-    scanBucketV idx g r v (y &&& KMASK).toUInt32 idx.offs[b]!.toNat idx.offs[b + 1]!.toNat d o (1 <<< j) #[]
+    let (msk, ex, full) := probe idx v d
+    let b := bucketOf idx.sch.k (hk idx.sch.k (subCode v q idx.sch.k d))
+    scanBucketV idx g r v msk ex full idx.offs[b]!.toNat idx.offs[b + 1]!.toNat d o (1 <<< j) #[]
   else
     idx.odd.foldl (init := #[]) fun acc p =>
       if eqRun g r p o (p + q) then acc.push ((p + BIAS - o) * 16 + (1 <<< j)) else acc
 
-/-- Per-seed counts for one ACGT seed: (bucket entries scanned, key matches, verified). -/
-def seedStats (idx : Idx) (g r : ByteArray) (j : Nat) (v : UInt64) : Nat × Nat × Nat := Id.run do
+/-- Per-seed counts for one ACGT seed: (bucket entries scanned, key matches,
+key + context matches, genome checks, verified). -/
+def seedStats (idx : Idx) (g r : ByteArray) (j : Nat) (v : UInt64) : Array Nat := Id.run do
   let q := idx.q
   let (d, _) := bestOffset idx v
-  let y := mix (subCode v q idx.sch.k d)
-  let b := (y >>> (50 - BBITS)).toNat
-  let key := (y &&& KMASK).toUInt32
+  let (msk, ex, full) := probe idx v d
+  let kb := 2 * idx.sch.k - 24
+  let km : UInt32 := ((1 <<< kb.toUInt64) - 1 : UInt64).toUInt32
+  let b := bucketOf idx.sch.k (hk idx.sch.k (subCode v q idx.sch.k d))
   let mut kh := 0
+  let mut ch := 0
+  let mut gc := 0
   let mut ok := 0
   for t in [idx.offs[b]!.toNat : idx.offs[b + 1]!.toNat] do
-    if idx.ent[2 * t + 1]! == key then
-      kh := kh + 1
-      let pos := idx.ent[2 * t]!.toNat
-      if pos ≥ d && seedAt idx g r v (pos - d) (j * q) then ok := ok + 1
-  return (idx.offs[b + 1]!.toNat - idx.offs[b]!.toNat, kh, ok)
+    let w2 := idx.ent[2 * t + 1]!
+    if w2 &&& km == ex &&& km then kh := kh + 1
+    let w1 := idx.ent[2 * t]!
+    let pos := (w1 &&& 0x7FFFFFFF).toNat
+    if w2 &&& msk == ex && pos ≥ d then
+      ch := ch + 1
+      if full && w1 >>> 31 == 0 then ok := ok + 1
+      else
+        gc := gc + 1
+        if seedAt idx g r v (pos - d) (j * q) then ok := ok + 1
+  return #[idx.offs[b + 1]!.toNat - idx.offs[b]!.toNat, kh, ch, gc, ok]
 
 /-- Mismatches of r[i, stop) against g[a + i ..] plus `m`, stopping once above `lim`. -/
 def hamming (r g : ByteArray) (a i stop lim m : Nat) : Nat :=
@@ -500,7 +618,9 @@ def main (args : List String) : IO UInt32 := do
   let mut reads : Array ByteArray := #[]
   for i in [0:rlines.size / 2] do reads := reads.push rlines[2*i+1]!.toUTF8
   let t0 ← IO.monoNanosNow
-  let idx := buildIdx g 25 sch
+  let useCtx := ((← IO.getEnv "CTX").getD "0") == "1"
+  let pick := ((← IO.getEnv "PICK").getD "0").toNat!
+  let idx := buildIdx g 25 sch useCtx pick
   let ne := idx.ent.size / 2
   IO.println s!"scheme {schs}  L={sch.L}  index entries: {ne}  ({Float.ofNat ne / Float.ofNat g.size} per base)  index MB (8/entry + 64 offs): {Float.ofNat (8 * ne + 4 * idx.offs.size) / 1e6}"
   let t1 ← IO.monoNanosNow
@@ -519,18 +639,32 @@ def main (args : List String) : IO UInt32 := do
     IO.println s!"open syncmer: seeds without a syncmer: {none} / {tot}"
     return 0
   -- per-seed lookup statistics (all 4 seeds, no early stop)
-  let mut sc := 0
-  let mut kh := 0
-  let mut ok := 0
+  let mut tot : Array Nat := #[0, 0, 0, 0, 0]
   let mut ns := 0
   for r in reads do
     for j in [0:4] do
       let v := seedCode r (j * 25) 0 25 0 0
       if v >>> 60 == 0 then
-        let (a, b, c) := seedStats idx g r j v
-        sc := sc + a; kh := kh + b; ok := ok + c; ns := ns + 1
+        let st := seedStats idx g r j v
+        tot := (tot.zip st).map fun (a, b) => a + b
+        ns := ns + 1
   let f (x : Nat) : Float := Float.ofNat x / Float.ofNat ns
-  IO.println s!"per seed: bucket entries scanned {f sc}  key matches {f kh}  verified anchors {f ok}"
+  let ta ← IO.monoNanosNow
+  let mut chk := 0
+  for r in reads do
+    for j in [0:4] do
+      let v := seedCode r (j * 25) 0 25 0 0
+      if v >>> 60 == 0 then chk := chk + (bestOffset idx v).1
+  let tb ← IO.monoNanosNow
+  IO.println s!"bestOffset over all seeds: {Float.ofNat (tb - ta) / 1e9} s (chk {chk})"
+  let mut chk2 := 0
+  for r in reads do
+    for j in [0:4] do
+      let v := seedCode r (j * 25) 0 25 0 0
+      if v >>> 60 == 0 then chk2 := chk2 + (seedOffsets idx.sch idx.q v).size
+  let tc ← IO.monoNanosNow
+  IO.println s!"seedOffsets alone: {Float.ofNat (tc - tb) / 1e9} s (selected per seed {Float.ofNat chk2 / Float.ofNat ns})"
+  IO.println s!"ctx letters/side {idx.cl} pick {pick}: per seed: scanned {f tot[0]!}  key matches {f tot[1]!}  key+ctx matches {f tot[2]!}  genome checks {f tot[3]!}  verified {f tot[4]!}"
   let t2 ← IO.monoNanosNow
   let reps := ((← IO.getEnv "PROTO_REPS").getD "1").toNat!
   let mut res : Array (Option (Nat × Nat × Nat)) := #[]
