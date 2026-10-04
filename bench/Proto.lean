@@ -77,8 +77,11 @@ def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
       fill := fill.set! b (i + 1).toUInt32
   return { q, offs := cnt, ent, odd }
 
-/-- Starts p with g[p, p+q) = r[o, o+q). -/
-def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Int) (shift : Nat) : Array Int := Id.run do
+/-- Anchors are stored biased by `BIAS` (≥ n) so they are `Nat`s. -/
+def BIAS : Nat := 128
+
+/-- Push `p + BIAS - shift` for every start p with g[p, p+q) = r[o, o+q). -/
+def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Nat) (shift : Nat) : Array Nat := Id.run do
   let q := idx.q
   let mut x : UInt64 := 0
   let mut plain := true
@@ -93,13 +96,13 @@ def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Int) (shift : Na
     let b := (y >>> (50 - BBITS)).toNat
     let key := (y &&& KMASK).toUInt32
     for t in [idx.offs[b]!.toNat:idx.offs[b + 1]!.toNat] do
-      if idx.ent[2 * t + 1]! == key then acc := acc.push ((idx.ent[2 * t]!.toNat : Int) - shift)
+      if idx.ent[2 * t + 1]! == key then acc := acc.push (idx.ent[2 * t]!.toNat + BIAS - shift)
   else
     for p in idx.odd do
       let mut ok := true
       for u in [0:q] do
         if g.get! (p + u) != r.get! (o + u) then ok := false; break
-      if ok then acc := acc.push ((p : Int) - shift)
+      if ok then acc := acc.push (p + BIAS - shift)
   return acc
 
 /-- Mismatches of `r` against `g[a ..]`, stopping once above `lim`. -/
@@ -143,47 +146,54 @@ structure Best where
   else if pen == b.pen && (st != b.st || len != b.len) then { b with amb := true }
   else b
 
-/-- Support of anchor `a`: how many seeds are clean on its diagonal (sorted `as`). -/
-def supOf (as : Array (Int × Nat)) (a : Int) : Nat := Id.run do
-  let mut lo := 0
-  let mut hi := as.size
-  while lo < hi do
-    let mid := (lo + hi) / 2
-    if as[mid]!.1 < a then lo := mid + 1 else hi := mid
-  if lo < as.size && as[lo]!.1 == a then return as[lo]!.2
+/-- Support of biased anchor `A` (number of seeds clean on its diagonal),
+looked up near index `i` of the sorted packed anchors `as` (entries A·8 + support). -/
+@[inline] def supNear (as : Array Nat) (i A : Nat) : Nat := Id.run do
+  for k in [i - min i 3 : min as.size (i + 4)] do
+    if as[k]! / 8 == A then return as[k]! % 8
   return 0
 
 def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
   let n := r.size
   let q := idx.q
-  assert! n / 4 == q
-  let mut raw : Array Int := #[]
+  assert! n / 4 == q && n + 3 ≤ BIAS
+  let mut raw : Array Nat := #[]
   for j in [0:4] do raw := lookup idx g r (j * q) raw (j * q)
   let sorted := raw.qsort (· < ·)
-  -- anchors with support = number of seeds clean on that diagonal
-  let mut as : Array (Int × Nat) := #[]
-  for a in sorted do
-    if as.size > 0 && as.back!.1 == a then as := as.modify (as.size - 1) fun (x, c) => (x, c + 1)
-    else as := as.push (a, 1)
+  -- packed anchors A·8 + support, support = number of seeds clean on diagonal A - BIAS
+  let mut as : Array Nat := #[]
+  for A in sorted do
+    if as.size > 0 && as.back! / 8 == A then as := as.modify (as.size - 1) (· + 1)
+    else as := as.push (A * 8 + 1)
   let mut b : Best := {}
   -- same-length windows: penalty ≥ 4·(4 - support); best first
-  for sup in [0:4] do
-    let sup := 4 - sup
-    if 4 * (4 - sup) ≤ b.pen && !(b.pen == 0 && b.amb) then
-      for (a, c) in as do
-        if c == sup && a ≥ 0 && a.toNat + n ≤ g.size then
-          let m := hamming r g a.toNat (min 3 (b.pen / 4))
-          if 4 * m ≤ cap then b := b.add a.toNat n (4 * m)
+  for k in [0:4] do
+    let sup := 4 - k
+    if 4 * k ≤ b.pen && !(b.pen == 0 && b.amb) then
+      for e in as do
+        let A := e / 8
+        if e % 8 == sup && A ≥ BIAS && A - BIAS + n ≤ g.size then
+          let m := hamming r g (A - BIAS) (min 3 (b.pen / 4))
+          if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
   -- gapped windows cost ≥ 8; their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9)
   if b.pen ≥ 8 then
-    for (a, _) in as do
+    for i in [0:as.size] do
+      let A := as[i]! / 8
+      let c := as[i]! % 8
       for L in [1:4] do
-        for (s, len) in [((0 : Int), n + L), (0, n - L), (-(L : Int), n + L), ((L : Int), n - L)] do
-          let st := a + s
-          let d2 := st + len - n
-          let need := if min b.pen cap < 10 then 3 else 2
-          if st ≥ 0 && st.toNat + len ≤ g.size && supOf as st + supOf as d2 ≥ need then
-            b := b.add st.toNat len (gappedPen r g st.toNat len (min b.pen cap))
+        let need := if min b.pen cap < 10 then 3 else 2
+        let sm := supNear as i (A - L)
+        let sp := supNear as i (A + L)
+        -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
+        if c + sp ≥ need && A ≥ BIAS && A - BIAS + n + L ≤ g.size then
+          b := b.add (A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
+        if c + sm ≥ need && A ≥ BIAS && A - BIAS + n - L ≤ g.size then
+          b := b.add (A - BIAS) (n - L) (gappedPen r g (A - BIAS) (n - L) (min b.pen cap))
+        -- (A-L, n+L) and (A+L, n-L) end on A: gap before the seed
+        if c + sm ≥ need && A ≥ BIAS + L && A - BIAS + n ≤ g.size then
+          b := b.add (A - BIAS - L) (n + L) (gappedPen r g (A - BIAS - L) (n + L) (min b.pen cap))
+        if c + sp ≥ need && A - BIAS + n ≤ g.size then
+          b := b.add (A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
   if b.pen ≤ cap && !b.amb then return some (b.st, b.len, b.pen)
   return none
 
@@ -192,24 +202,27 @@ def main (args : List String) : IO UInt32 := do
   let l0 := l0s.toNat!
   let glines := (← IO.FS.readFile gpath).splitOn "\n"
   let g := glines[1]!.toUTF8
-  let rlines := ((← IO.FS.readFile rpath).splitOn "\n").filter (· ≠ "")
+  let rlines := (((← IO.FS.readFile rpath).splitOn "\n").filter (· ≠ "")).toArray
   let mut reads : Array ByteArray := #[]
-  for i in [0:rlines.length / 2] do reads := reads.push rlines[2*i+1]!.toUTF8
+  for i in [0:rlines.size / 2] do reads := reads.push rlines[2*i+1]!.toUTF8
   let t0 ← IO.monoNanosNow
   let idx := buildIdx g l0
   assert! l0 == 25
   IO.println s!"index entries: {idx.ent.size / 2}"
   let t1 ← IO.monoNanosNow
+  let reps := ((← IO.getEnv "PROTO_REPS").getD "1").toNat!   -- for profiling
   let mut res : Array (Option (Nat × Nat × Nat)) := #[]
-  for r in reads do res := res.push (mapRead idx g r)
+  for _ in [0:reps] do
+    res := #[]
+    for r in reads do res := res.push (mapRead idx g r)
   let mapped := (res.filter (·.isSome)).size
   IO.println s!"mapped: {mapped}"
   let t2 ← IO.monoNanosNow
   let secs := Float.ofNat (t2 - t1) / 1e9
-  IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat reads.size / secs}"
+  IO.println s!"index_seconds: {Float.ofNat (t1 - t0) / 1e9}  map_seconds: {secs}  reads/s: {Float.ofNat (reps * reads.size) / secs}"
   match rest with
   | [_, dp] =>
-    let names := (List.range (rlines.length / 2)).map fun i => (rlines[2*i]!.drop 1).toString
+    let names := (List.range (rlines.size / 2)).map fun i => (rlines[2*i]!.drop 1).toString
     IO.FS.writeFile dp (String.join ((names.zip res.toList).map fun (nm, x) => match x with
       | some (s, l, p) => s!"{nm}\t{s}\t{l}\t{-(Int.ofNat p)}\n"
       | none => s!"{nm}\tnone\n"))
