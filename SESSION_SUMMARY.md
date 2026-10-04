@@ -56,6 +56,7 @@ Stringency: wgsim reads mapped by minibwa, fraction within T = −12 (our scorin
 - Output: one extra writer thread collects finished batches from a queue and writes them, in input order, while worker threads keep mapping (small startup cost; fine unless disk bandwidth limits). Proof boundary: chunk → map each chunk (parallel) → de-chunk is proved equal to mapping the whole input, and the byte stream equal to format of the whole result; only the file writes are outside the proofs.
 - Index (built once, cost not counted in mapping time, so spend computation there): whole genome ~30 GB at 8 bytes/position — try bit-packing positions (32-bit or fewer bits per entry, implicit bucket bits), compression that keeps lookups cheap, smaller layouts that improve cache hits; sort/lay out the index for locality.
 - Seed order + early stop: with best gapless penalty P found so far, any tie-or-better window has ≤ P/4 errors, so it shows up in the hits of any P/4 + 1 seeds: stop after that many lookups (P = 0 → 1 seed). Try likely seeds first (smallest bucket, or a learned table of which seed of a pair usually hits; remember where reads map) — order is free for correctness, only the stop rule needs proof.
+- Two-pass seeding: a second index of 50-letter seeds (2 per read; a read with ≤ 1 error has a clean half) settles most reads with few hits even in repeats; unsettled reads fall back to 4 × 25. Costs extra index memory.
 - Cache locality from read sorting: sort reads into buckets by seed code so each core works on a region of the index (fewer cache misses); optionally order the index to match.
 - Threads: oversubscribe (more tasks than cores) to overlap memory stalls; batch size tuning; better multi-core scaling.
 - Pre-filter by downstream flags: users filter afterwards (proper pair, MAPQ, …); a CLI filter option could skip reads that cannot pass (e.g. mates whose seeds cannot form a proper pair) — needs a paired-end spec and a theorem that skipped reads are exactly the filtered ones.
@@ -66,6 +67,7 @@ Stringency: wgsim reads mapped by minibwa, fraction within T = −12 (our scorin
 - FASTQ input spec, SAM output spec (CIGAR for the chosen window), CLI with filter options; later SAM→BAM with BAM checked as the inverse of SAM (fuzzing over BAM instead of a full BAM spec).
 
 ## Rules for all work here
+- Every proof must close. If something is not provable as written, rewrite the code into a form that can be proved correct, even if slower; correctness by proof beats raw speed.
 - No `sorry`, `native_decide`, `axiom`, `@[extern]`, `unsafe`, `partial`, `implemented_by` in `codecs/`, `pool/`, `spec/`.
 - Do not edit `spec/AlignmentSpec.lean` (frozen) or weaken existing theorem statements.
 - Do not write READMEs. New work goes on a branch; merge to `main` only when `scripts/check.sh` passes.
