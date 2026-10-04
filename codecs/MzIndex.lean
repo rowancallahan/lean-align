@@ -129,7 +129,7 @@ end MzIdx
 
 /-- Entry `t` matches the seed `R[s, s+q)` (minimizer offset `o`, key `key`,
 first `o` letters `bw`, last `w-1-o` letters `aw`). -/
-@[inline] def okAt (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 : Nat) (full : Bool) (t : Nat) : Bool :=
+@[inline] def okAt (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 t : Nat) : Bool :=
   let e := (ix.slot t)
   -- the key is the low `kb` bits of the slot: one mask for a non-matching entry
   (e &&& ix.kbM) == key &&
@@ -137,15 +137,17 @@ first `o` letters `bw`, last `w-1-o` letters `aw`). -/
      let tg := ix.tagOf e
      decide (o ≤ pos) &&
       (if ix.flagF tg = 0 then (ix.befF tg &&& pmo) == bw && (ix.aftF tg >>> o2) == aw &&
-         (full || (decide (pos - o + q ≤ G.size) && eqRun G R (pos - o) s q))
+         -- the seed letters the stored context does not cover: `n1` first, `n2` last
+         decide (pos - o + q ≤ G.size) && eqRun G R (pos - o) s n1 &&
+         eqRun G R (pos + a2) (s + o + a2) n2
        else decide (pos - o + q ≤ G.size) && eqRun G R (pos - o) s q))
 
 /-- Places `pos - o` of the matching entries `t ∈ [t, hi)`. -/
-def scan (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 : Nat) (full : Bool) (hi : Nat) (t : Nat)
+def scan (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 hi : Nat) (t : Nat)
     (acc : Array Nat) : Array Nat :=
   if t < hi then
-    scan ix G R s o key bw aw pmo o2 full hi (t + 1)
-      (if okAt ix G R s o key bw aw pmo o2 full t then acc.push (ix.posOf (ix.slot t) - o) else acc)
+    scan ix G R s o key bw aw pmo o2 n1 a2 n2 hi (t + 1)
+      (if okAt ix G R s o key bw aw pmo o2 n1 a2 n2 t then acc.push (ix.posOf (ix.slot t) - o) else acc)
   else acc
 termination_by hi - t
 
@@ -187,7 +189,7 @@ def lookupCode (ix : MzIdx) (G R : ByteArray) (s v : Nat) : Array Nat :=
   let m2 := min (ix.w - 1 - o) ix.c
   scan ix G R s o (h &&& ix.kbM) ((v >>> (2 * (q - o))) &&& ix.pm[m1]!)
     ((v >>> (2 * (q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
-    (decide (o ≤ ix.c) && decide (ix.w - 1 - o ≤ ix.c)) (ix.hiB b) (ix.loB b) #[]
+    (o - m1) (ix.k + m2) (ix.w - 1 - o - m2) (ix.hiB b) (ix.loB b) #[]
 
 /-- Places `p` (increasing) with `G[p, p+q) = R[s, s+q)`. -/
 def lookupSeed (ix : MzIdx) (G R : ByteArray) (s : Nat) : Array Nat :=
@@ -663,10 +665,10 @@ theorem pairwise_filterMap_ite (P : Nat → Bool) (f : Nat → Nat) (a n : Nat)
     · rw [if_neg p2] at hb2; cases hb2
   · rw [if_neg p1] at hb1; cases hb1
 
-theorem scan_toList (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 : Nat) (full : Bool) (hi : Nat) :
+theorem scan_toList (ix : MzIdx) (G R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 hi : Nat) :
     ∀ n t acc, hi - t = n →
-      (scan ix G R s o key bw aw pmo o2 full hi t acc).toList = acc.toList ++ (List.range' t n).filterMap
-        (fun t => if okAt ix G R s o key bw aw pmo o2 full t then some (ix.posOf (ix.slot t) - o) else none) := by
+      (scan ix G R s o key bw aw pmo o2 n1 a2 n2 hi t acc).toList = acc.toList ++ (List.range' t n).filterMap
+        (fun t => if okAt ix G R s o key bw aw pmo o2 n1 a2 n2 t then some (ix.posOf (ix.slot t) - o) else none) := by
   intro n
   induction n with
   | zero => intro t acc hn; rw [scan, if_neg (by omega)]; simp
@@ -839,7 +841,7 @@ theorem okAt_occurs (R : ByteArray) (s : Nat) (hR : ∀ i < q, acgt (R.get! (s +
       ((wc R s q >>> (2 * (q - o))) &&& ix.pm[min o ix.c]!)
       ((wc R s q >>> (2 * (q - o - ix.k - min (ix.w - 1 - o) ix.c))) &&& ix.pm[min (ix.w - 1 - o) ix.c]!)
       ix.pm[min o ix.c]! (2 * (ix.c - min (ix.w - 1 - o) ix.c))
-      (decide (o ≤ ix.c) && decide (ix.w - 1 - o ≤ ix.c)) t = true)
+      (o - min o ix.c) (ix.k + min (ix.w - 1 - o) ix.c) (ix.w - 1 - o - min (ix.w - 1 - o) ix.c) t = true)
     (pos : Nat) (hpos : ix.posOf (ix.slot t) = pos) :
     Occurs G R s (pos - o) := by
   have hg := good_of_check hc
@@ -854,47 +856,58 @@ theorem okAt_occurs (R : ByteArray) (s : Nat) (hR : ∀ i < q, acgt (R.get! (s +
   obtain ⟨hkey, hop, hrest⟩ := hok
   split at hrest
   · next hf =>
-    simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hrest
-    obtain ⟨⟨hb, ha⟩, hfull⟩ := hrest
-    rcases hfull with ⟨hc1, hc2⟩ | ⟨hsz, heq⟩
-    · rw [Nat.min_eq_left hc1] at hb
-      rw [Nat.min_eq_left hc2] at ha
-      obtain ⟨f1, f2, f3, f4, f5, f6⟩ := e5 hf
-      -- the k-word
-      have hhash : ix.hsh (wc G pos ix.k) = h := by
-        have m1 : ix.hsh (wc G pos ix.k) % 2 ^ ix.kb = h % 2 ^ ix.kb := by
-          rw [← and_mask_eq, ← and_mask_eq, ← hg.kbM_eq, ← e4, hkey]
-        have m2 : ix.hsh (wc G pos ix.k) / 2 ^ ix.kb = h / 2 ^ ix.kb := by
-          rw [← shiftRight_eq, ← shiftRight_eq, e3]
-        rw [← Nat.div_add_mod (ix.hsh (wc G pos ix.k)) (2 ^ ix.kb), m1, m2, Nat.div_add_mod]
-      have hcode := hsh_inj hg _ _ (wc_lt G pos ix.k) (wc_lt R (s + o) ix.k) (hhash.trans hh.symm)
-      have hmid := eq_of_wc G R pos (s + o) ix.k e2
-        (fun i hi => by have := hR (o + i) (by omega); rwa [← Nat.add_assoc] at this) hcode
-      -- the first o letters
-      rw [f5, flank_bef hg G pos o hc1 f1, seed_bef hg R s o o (by omega) (by omega) (by omega),
-        show s + o - o = s by omega] at hb
-      have hbef := eq_of_wc G R (pos - o) s o
-        (fun i hi => by
-          have := f3 (ix.c - o + i) (by omega)
-          rwa [show pos - ix.c + (ix.c - o + i) = pos - o + i by omega] at this)
-        (fun i hi => hR i (by omega)) hb
-      -- the last w-1-o letters
-      rw [f6, flank_aft G ix.c pos ix.k (ix.w - 1 - o) hc2,
-        seed_aft hg R s o (ix.w - 1 - o) (by omega) (by omega)] at ha
-      have haft := eq_of_wc G R (pos + ix.k) (s + o + ix.k) (ix.w - 1 - o)
-        (fun i hi => f4 i (by omega))
-        (fun i hi => by
-          have := hR (o + ix.k + i) (by omega); rwa [← Nat.add_assoc, ← Nat.add_assoc] at this) ha
-      refine ⟨by omega, fun i hi => ?_⟩
-      by_cases h1 : i < o
-      · exact hbef i h1
-      · by_cases h2 : i < o + ix.k
+    simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hrest
+    obtain ⟨⟨⟨⟨hb, ha⟩, hsz⟩, hr1⟩, hr2⟩ := hrest
+    rw [eqRun_iff] at hr1 hr2
+    generalize hm1 : min o ix.c = m1 at hb hr1
+    generalize hm2 : min (ix.w - 1 - o) ix.c = m2 at ha hr2
+    have hm1c : m1 ≤ ix.c := by omega
+    have hm1o : m1 ≤ o := by omega
+    have hm2c : m2 ≤ ix.c := by omega
+    have hm2o : m2 ≤ ix.w - 1 - o := by omega
+    obtain ⟨f1, f2, f3, f4, f5, f6⟩ := e5 hf
+    -- the k-word
+    have hhash : ix.hsh (wc G pos ix.k) = h := by
+      have m1 : ix.hsh (wc G pos ix.k) % 2 ^ ix.kb = h % 2 ^ ix.kb := by
+        rw [← and_mask_eq, ← and_mask_eq, ← hg.kbM_eq, ← e4, hkey]
+      have m2 : ix.hsh (wc G pos ix.k) / 2 ^ ix.kb = h / 2 ^ ix.kb := by
+        rw [← shiftRight_eq, ← shiftRight_eq, e3]
+      rw [← Nat.div_add_mod (ix.hsh (wc G pos ix.k)) (2 ^ ix.kb), m1, m2, Nat.div_add_mod]
+    have hcode := hsh_inj hg _ _ (wc_lt G pos ix.k) (wc_lt R (s + o) ix.k) (hhash.trans hh.symm)
+    have hmid := eq_of_wc G R pos (s + o) ix.k e2
+      (fun i hi => by have := hR (o + i) (by omega); rwa [← Nat.add_assoc] at this) hcode
+    -- the m1 stored letters before the k-word
+    rw [f5, flank_bef hg G pos m1 hm1c f1, seed_bef hg R s o m1 hm1o (by omega) (by omega)] at hb
+    have hbef := eq_of_wc G R (pos - m1) (s + o - m1) m1
+      (fun i hi => by
+        have := f3 (ix.c - m1 + i) (by omega)
+        rwa [show pos - ix.c + (ix.c - m1 + i) = pos - m1 + i by omega] at this)
+      (fun i hi => by
+        have := hR (o - m1 + i) (by omega)
+        rwa [show s + (o - m1 + i) = s + o - m1 + i by omega] at this) hb
+    -- the m2 stored letters after it
+    rw [f6, flank_aft G ix.c pos ix.k m2 hm2c, seed_aft hg R s o m2 (by omega) (by omega)] at ha
+    have haft := eq_of_wc G R (pos + ix.k) (s + o + ix.k) m2
+      (fun i hi => f4 i (by omega))
+      (fun i hi => by
+        have := hR (o + ix.k + i) (by omega); rwa [← Nat.add_assoc, ← Nat.add_assoc] at this) ha
+    refine ⟨hsz, fun i hi => ?_⟩
+    by_cases i1 : i < o - m1
+    · exact hr1 i i1
+    · by_cases i2 : i < o
+      · have := hbef (i - (o - m1)) (by omega)
+        rwa [show pos - m1 + (i - (o - m1)) = pos - o + i by omega,
+          show s + o - m1 + (i - (o - m1)) = s + i by omega] at this
+      · by_cases i3 : i < o + ix.k
         · have := hmid (i - o) (by omega)
           rwa [show pos + (i - o) = pos - o + i by omega, show s + o + (i - o) = s + i by omega] at this
-        · have := haft (i - o - ix.k) (by omega)
-          rwa [show pos + ix.k + (i - o - ix.k) = pos - o + i by omega,
-            show s + o + ix.k + (i - o - ix.k) = s + i by omega] at this
-    · exact ⟨hsz, (eqRun_iff G R q _ _).mp heq⟩
+        · by_cases i4 : i < o + ix.k + m2
+          · have := haft (i - o - ix.k) (by omega)
+            rwa [show pos + ix.k + (i - o - ix.k) = pos - o + i by omega,
+              show s + o + ix.k + (i - o - ix.k) = s + i by omega] at this
+          · have := hr2 (i - o - ix.k - m2) (by omega)
+            rwa [show pos + (ix.k + m2) + (i - o - ix.k - m2) = pos - o + i by omega,
+              show s + o + (ix.k + m2) + (i - o - ix.k - m2) = s + i by omega] at this
   · next hf =>
     simp only [Bool.and_eq_true, decide_eq_true_eq] at hrest
     obtain ⟨hsz, heq⟩ := hrest
@@ -915,7 +928,7 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
     rw [wcGo_zero]
     have ho := mini_lt hg (wc R s q)
     rw [sub_wc hg R s _ (by omega)]
-    rw [scan_toList ix G R s _ _ _ _ _ _ _ _ _ _ #[] rfl, Array.toList_empty, List.nil_append,
+    rw [scan_toList ix G R s _ _ _ _ _ _ _ _ _ _ _ _ #[] rfl, Array.toList_empty, List.nil_append,
       mem_filterMap_ite]
     constructor
     · rintro ⟨t, h1, h2, hok, rfl⟩
@@ -944,19 +957,23 @@ theorem lookupSeed_mem (R : ByteArray) (s p : Nat) :
       · next hf =>
         have hcw := hg.c_le
         obtain ⟨f1, f2, f3, f4, f5, f6⟩ := e5 hf
-        simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq]
+        simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
         rw [f5, f6, flank_bef hg G _ (min o ix.c) (Nat.min_le_right _ _) f1,
           flank_aft G ix.c _ ix.k (min (ix.w - 1 - o) ix.c) (Nat.min_le_right _ _),
           seed_bef hg R s o (min o ix.c) (Nat.min_le_left _ _) (by omega) (by omega),
           seed_aft hg R s o (min (ix.w - 1 - o) ix.c) (by omega) (by omega),
           show p + o - o = p from by omega]
-        refine ⟨⟨wc_congr G R _ _ _ fun i hi => ?_, wc_congr G R _ _ _ fun i hi => ?_⟩,
-          Or.inr ⟨hsz, (eqRun_iff G R q p s).mpr heq⟩⟩
+        refine ⟨⟨⟨⟨wc_congr G R _ _ _ fun i hi => ?_, wc_congr G R _ _ _ fun i hi => ?_⟩, hsz⟩,
+          (eqRun_iff G R _ _ _).mpr fun i hi => heq i (by omega)⟩,
+          (eqRun_iff G R _ _ _).mpr fun i hi => ?_⟩
         · have := heq (o - min o ix.c + i) (by omega)
           rwa [show p + (o - min o ix.c + i) = p + o - min o ix.c + i by omega,
             show s + (o - min o ix.c + i) = s + o - min o ix.c + i by omega] at this
         · have := heq (o + ix.k + i) (by omega)
           rwa [← Nat.add_assoc, ← Nat.add_assoc, ← Nat.add_assoc, ← Nat.add_assoc] at this
+        · have := heq (o + (ix.k + min (ix.w - 1 - o) ix.c) + i) (by omega)
+          rwa [show p + (o + (ix.k + min (ix.w - 1 - o) ix.c) + i) = p + o + (ix.k + min (ix.w - 1 - o) ix.c) + i by omega,
+            show s + (o + (ix.k + min (ix.w - 1 - o) ix.c) + i) = s + o + (ix.k + min (ix.w - 1 - o) ix.c) + i by omega] at this
       · simp only [Bool.and_eq_true, decide_eq_true_eq]
         rw [show p + o - o = p from by omega]
         exact ⟨hsz, (eqRun_iff G R q p s).mpr heq⟩
@@ -1050,7 +1067,7 @@ theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
   unfold lookupSeed lookupCode
   dsimp only
   split
-  · rw [scan_toList ix G R s _ _ _ _ _ _ _ _ _ _ #[] rfl, Array.toList_empty, List.nil_append]
+  · rw [scan_toList ix G R s _ _ _ _ _ _ _ _ _ _ _ _ #[] rfl, Array.toList_empty, List.nil_append]
     apply pairwise_filterMap_ite
     intro i j hi hij hj ok1 _
     have hge : ix.mini (wcGo R s (s + q) 0) ≤ ix.posOf (ix.slot i) := by
