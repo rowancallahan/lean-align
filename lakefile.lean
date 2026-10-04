@@ -143,6 +143,8 @@ lean_exe layout where                 -- index layout bench (unproved)
   root := `Layout
 
 lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer index
+
+lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer / mod-minimizer index
   srcDir := "bench"
   root := `ProtoSketch
 
