@@ -624,7 +624,9 @@ def Idx.lk (idx : Idx) : Lk where
 
 def zLk (ix : MapSpec.Mz.MzIdx) : Lk where
   q := 25
-  look g r j _ := (MapSpec.Mz.lookupSeed ix g r (j * 25)).map fun p => (p + BIAS - j * 25) * 16 + bit j
+  -- ACGT seed: its code v is `wc r (25 j) 25` (`lookupSeed_eq_lookupCode`)
+  look g r j v := (if v >>> 60 == 0 then MapSpec.Mz.lookupCode ix g r (j * 25) v.toNat
+    else MapSpec.Mz.lookupSeed ix g r (j * 25)).map fun p => (p + BIAS - j * 25) * 16 + bit j
   size v := if v >>> 60 != 0 then 0 else
     let o := ix.mini v
     let b := ix.hsh (ix.sub v o) >>> ix.kb
@@ -668,7 +670,7 @@ def main (args : List String) : IO UInt32 := do
         let ok ← IO.lazyPure fun _ => MapSpec.Mz.check ix g
         IO.println s!"check {ok}  check_seconds {secs tc (← IO.monoNanosNow)}"
         if !ok then throw (IO.userError "index check failed")
-      pure (zLk ix, ix.offs.size + 8 * ix.sl.size + 8 * (ix.odd.foldl (· + ·.size) 0), ix.sl.size)
+      pure (zLk ix, ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size, ix.sl.size)
     else if spec.startsWith "n," then do
       let [_, B] := spec.splitOn "," | throw (IO.userError "spec")
       let ix := buildPk g 25 1 B.toNat! 0 true
@@ -701,27 +703,35 @@ def main (args : List String) : IO UInt32 := do
   let scanned := codes.foldl (init := 0) fun a c => a + (c.map lk.size).foldl (· + ·) 0
   let per := fun (t : Nat) => Float.ofNat t / Float.ofNat reads.size
   IO.println s!"lookup ns/read {per (t3 - t2)}  of which cached-compute {per (t3' - t3 - (t3 - t2))}  seed hits {hits}  bucket entries {scanned}"
-  let sorted := (← IO.getEnv "SORT") == some "1"
-  let t4 ← IO.monoNanosNow
-  let order : Array Nat := if sorted then
-      ((Array.range reads.size).map (fun i => (lk.bucketOf codes[i]![0]!) <<< 24 ||| i)).qsort (· < ·)
-        |>.map (· &&& 0xFFFFFF)
-    else Array.range reads.size
+  -- SORT=1: reads in order of the index bucket of their first seed; SORT=both: unsorted then sorted
+  let sortEnv := (← IO.getEnv "SORT").getD "0"
+  let modes := if sortEnv == "both" then [false, true] else [sortEnv == "1"]
   assert! reads.size < 1 <<< 24
-  let t5 ← IO.monoNanosNow
-  -- best of REPS (default 3) mapping passes
   let reps := ((← IO.getEnv "REPS").getD "3").toNat!
-  let mut res : Array (Option (Nat × Nat × Nat)) := #[]
-  let mut best := 0
-  for _ in [0:reps] do
-    let ta ← IO.monoNanosNow
-    res := Array.replicate reads.size none
-    for i in order do res := res.set! i (mapRead lk g reads[i]!)
-    let tb ← IO.monoNanosNow
-    if best == 0 || tb - ta < best then best := tb - ta
-  let t6 := t5 + best
-  let mapped := (res.filter (·.isSome)).size
-  IO.println s!"mapped {mapped}  sort_seconds {secs t4 t5}  map_seconds {secs t5 t6}  reads/s {Float.ofNat reads.size / secs t5 t6}  reads/s incl sort {Float.ofNat reads.size / secs t4 t6}"
+  let mut res0 : Array (Option (Nat × Nat × Nat)) := #[]
+  for sorted in modes do
+    let t4 ← IO.monoNanosNow
+    let order ← IO.lazyPure fun _ => if sorted then
+        ((Array.range reads.size).map (fun i => (lk.bucketOf codes[i]![0]!) <<< 24 ||| i)).qsort (· < ·)
+          |>.map (· &&& 0xFFFFFF)
+      else Array.range reads.size
+    assert! order.size == reads.size
+    let t5 ← IO.monoNanosNow
+    -- best of REPS (default 3) mapping passes
+    let mut res : Array (Option (Nat × Nat × Nat)) := #[]
+    let mut best := 0
+    for _ in [0:reps] do
+      let ta ← IO.monoNanosNow
+      res := Array.replicate reads.size none
+      for i in order do res := res.set! i (mapRead lk g reads[i]!)
+      let tb ← IO.monoNanosNow
+      if best == 0 || tb - ta < best then best := tb - ta
+    let t6 := t5 + best
+    let mapped := (res.filter (·.isSome)).size
+    IO.println s!"{if sorted then "SORTED  " else "unsorted"} mapped {mapped}  sort_seconds {secs t4 t5}  map_seconds {secs t5 t6}  reads/s {Float.ofNat reads.size / secs t5 t6}  reads/s incl sort {Float.ofNat reads.size / secs t4 t6}"
+    if res0.size > 0 && res0 != res then throw (IO.userError "sorted and unsorted answers differ")
+    res0 := res
+  let res := res0
   IO.println s!"mem end: {← memKB}"
   if let [dp] := rest then
     IO.FS.writeFile dp (String.join ((List.range reads.size).map fun i =>
