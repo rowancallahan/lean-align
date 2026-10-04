@@ -26,8 +26,13 @@ penalty cap 12 (mismatch 4, gap of length L costs 6 + 2L).  Why each step is exa
 
 def cap : Nat := 12
 
-def code (b : UInt8) : UInt64 :=
-  if b == 65 then 0 else if b == 67 then 1 else if b == 71 then 2 else if b == 84 then 3 else 4
+def codeTab : ByteArray := Id.run do
+  let mut t := ByteArray.mk (Array.replicate 256 4)
+  for (c, v) in [(65, 0), (67, 1), (71, 2), (84, 3)] do t := t.set! c v
+  return t
+
+/-- A C G T ↦ 0 1 2 3, anything else ↦ 4. -/
+@[inline] def code (b : UInt8) : UInt64 := (codeTab.get! b.toNat).toUInt64
 
 /-- Bijection on 50-bit values (odd multiplier mod 2^50): bucket = top 24
 bits, key = low 26 bits, so (bucket, key) determines the 25-letter word. -/
@@ -100,16 +105,17 @@ def eqRun (a b : ByteArray) (i j stop : Nat) : Bool :=
   if h : i < stop then a.get! i == b.get! j && eqRun a b (i + 1) (j + 1) stop else true
 termination_by stop - i
 
-/-- Push `p + BIAS - shift` for entries t ∈ [t, hi) of the bucket with this key. -/
+/-- Push `(p + BIAS - shift)·8 + 1` for entries t ∈ [t, hi) of the bucket with this key. -/
 def scanBucket (ent : Array UInt32) (key : UInt32) (t hi shift : Nat) (acc : Array Nat) : Array Nat :=
   if h : t < hi then
     scanBucket ent key (t + 1) hi shift
-      (if ent[2 * t + 1]! == key then acc.push (ent[2 * t]!.toNat + BIAS - shift) else acc)
+      (if ent[2 * t + 1]! == key then acc.push ((ent[2 * t]!.toNat + BIAS - shift) * 8 + 1) else acc)
   else acc
 termination_by hi - t
 
-/-- Push `p + BIAS - shift` for every start p with g[p, p+q) = r[o, o+q). -/
-def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Nat) (shift : Nat) : Array Nat :=
+/-- Anchors (p + BIAS - shift)·8 + 1, increasing, for every start p with g[p, p+q) = r[o, o+q). -/
+def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (shift : Nat) : Array Nat :=
+  let acc := #[]
   let q := idx.q
   assert! !hasN r o 0 q
   if plainAt r o 0 q then
@@ -117,7 +123,7 @@ def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Nat) (shift : Na
     let b := (y >>> (50 - BBITS)).toNat
     scanBucket idx.ent (y &&& KMASK).toUInt32 idx.offs[b]!.toNat idx.offs[b + 1]!.toNat shift acc
   else
-    idx.odd.foldl (init := acc) fun acc p => if eqRun g r p o (p + q) then acc.push (p + BIAS - shift) else acc
+    idx.odd.foldl (init := acc) fun acc p => if eqRun g r p o (p + q) then acc.push ((p + BIAS - shift) * 8 + 1) else acc
 
 /-- Mismatches of r[i ..] against g[a + i ..] plus `m`, stopping once above `lim`. -/
 def hamming (r g : ByteArray) (a i lim m : Nat) : Nat :=
@@ -174,18 +180,26 @@ looked up near index `i` of the sorted packed anchors `as` (entries A·8 + suppo
     if as[k]! / 8 == A then return as[k]! % 8
   return 0
 
+/-- Merge two increasing packed anchor lists (A·8 + support), adding supports of equal A. -/
+partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
+  if h : i < x.size then
+    if h' : j < y.size then
+      let a := x[i]
+      let b := y[j]
+      if a / 8 < b / 8 then merge x y (i + 1) j (acc.push a)
+      else if b / 8 < a / 8 then merge x y i (j + 1) (acc.push b)
+      else merge x y (i + 1) (j + 1) (acc.push (a + b % 8))
+    else merge x y (i + 1) j (acc.push x[i])
+  else if h' : j < y.size then merge x y i (j + 1) (acc.push y[j])
+  else acc
+
 def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
   let n := r.size
   let q := idx.q
   assert! n / 4 == q && n + 3 ≤ BIAS
-  let mut raw : Array Nat := #[]
-  for j in [0:4] do raw := lookup idx g r (j * q) raw (j * q)
-  let sorted := raw.qsort (· < ·)
   -- packed anchors A·8 + support, support = number of seeds clean on diagonal A - BIAS
-  let mut as : Array Nat := #[]
-  for A in sorted do
-    if as.size > 0 && as.back! / 8 == A then as := as.modify (as.size - 1) (· + 1)
-    else as := as.push (A * 8 + 1)
+  let l := fun j => lookup idx g r (j * q) (j * q)
+  let as := merge (merge (l 0) (l 1) 0 0 #[]) (merge (l 2) (l 3) 0 0 #[]) 0 0 #[]
   let mut b : Best := {}
   -- same-length windows: penalty ≥ 4·(4 - support); best first
   for k in [0:4] do
