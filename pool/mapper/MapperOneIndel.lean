@@ -10,7 +10,7 @@ open AlignmentSpec
 
 /-- `xs` with one letter removed is `ys`. -/
 def delOk : List Char → List Char → Bool
-  | x :: xs, y :: ys => if x = y then delOk xs ys else xs == y :: ys
+  | x :: xs, y :: ys => if x = y then delOk xs ys else decide (xs = y :: ys)
   | [_], [] => true
   | _, _ => false
 
