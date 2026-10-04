@@ -18,15 +18,15 @@ namespace MapSpec.Fast
 
 def c2N (b : UInt8) : Nat := if b = 67 then 1 else if b = 71 then 2 else if b = 84 then 3 else 0
 
+set_option maxRecDepth 100000 in
+theorem c2_tab : ∀ n, n < 256 → ((codeTab.get! n).toUInt64 &&& 3).toNat = c2N n.toUInt8 := by decide +kernel
+
+set_option maxRecDepth 100000 in
+theorem acgt_tab : ∀ n, n < 256 → codeTab.get! n < 4 → n = 65 ∨ n = 67 ∨ n = 71 ∨ n = 84 := by decide +kernel
+
 theorem c2_toNat (b : UInt8) : (c2 b).toNat = c2N b := by
-  unfold c2 c2N
-  by_cases h1 : b = 67
-  · simp [h1]
-  · by_cases h2 : b = 71
-    · simp [h2]
-    · by_cases h3 : b = 84
-      · simp [h3]
-      · simp [h1, h2, h3]
+  have := c2_tab b.toNat (UInt8.toNat_lt b)
+  rwa [show b.toNat.toUInt8 = b by simp] at this
 
 theorem c2N_lt (b : UInt8) : c2N b < 4 := by
   unfold c2N
@@ -37,7 +37,13 @@ theorem c2N_lt (b : UInt8) : c2N b < 4 := by
     · by_cases h3 : b = 84 <;> simp [h1, h2, h3]
 
 theorem acgt_cases (b : UInt8) (h : acgt b = true) : b = 65 ∨ b = 67 ∨ b = 71 ∨ b = 84 := by
-  unfold acgt at h; simp at h; rcases h with ((h | h) | h) | h <;> simp [h]
+  unfold acgt at h
+  have := acgt_tab b.toNat (UInt8.toNat_lt b) (by simpa using h)
+  rcases this with e | e | e | e
+  · left; exact UInt8.toNat_inj.mp e
+  · right; left; exact UInt8.toNat_inj.mp e
+  · right; right; left; exact UInt8.toNat_inj.mp e
+  · right; right; right; exact UInt8.toNat_inj.mp e
 
 theorem c2N_inj (b b' : UInt8) (h : acgt b = true) (h' : acgt b' = true) (e : c2N b = c2N b') : b = b' := by
   rcases acgt_cases b h with r | r | r | r <;> rcases acgt_cases b' h' with r' | r' | r' | r' <;>
@@ -150,8 +156,8 @@ theorem bucket_key_inj (y y' : UInt64) (hb : bucketOf y = bucketOf y') (hk : key
   unfold keyOf at hk
   rw [UInt64.toNat_shiftRight, UInt64.toNat_shiftRight, show (26 : UInt64).toNat % 64 = 26 from rfl,
     Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow] at hb
-  have hk' := congrArg UInt32.toNat hk
-  rw [UInt64.toNat_toUInt32, UInt64.toNat_toUInt32, UInt64.toNat_and, UInt64.toNat_and,
+  have hk' := hk
+  rw [UInt64.toNat_and, UInt64.toNat_and,
     show (0x3FFFFFF : UInt64).toNat = 2 ^ 26 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
     Nat.and_two_pow_sub_one_eq_mod] at hk'
   omega
@@ -211,60 +217,6 @@ theorem bucketOf_lt (y : UInt64) (h : y.toNat < 2 ^ 50) : bucketOf y < NB := by
 def MatchAt (G : ByteArray) (p : Nat) (R : ByteArray) (s : Nat) : Prop :=
   p + q ≤ G.size ∧ ∀ k, k < q → G.get! (p + k) = R.get! (s + k)
 
-theorem checkComplete_spec (ix : HIdx) (G : ByteArray) :
-    ∀ k p fill, checkComplete ix G fill k p = true → ∀ p', p ≤ p' → p' < p + k →
-      allACGT G p' (p' + q) = true →
-      ∃ t, ix.offs[bucketOf (hashAt G p')]!.toNat ≤ t ∧ t < ix.offs[bucketOf (hashAt G p') + 1]!.toNat ∧
-        ix.ent[2 * t]!.toNat = p' ∧ ix.ent[2 * t + 1]! = keyOf (hashAt G p') := by
-  intro k
-  induction k with
-  | zero => intro p fill _ p' h1 h2; omega
-  | succ k ih =>
-    intro p fill h p' h1 h2 ha
-    unfold checkComplete at h
-    by_cases hp : p' = p
-    · subst hp
-      rw [if_pos ha] at h
-      simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
-      exact ⟨_, h.1.1.1.1, h.1.1.1.2, h.1.1.2, h.1.2⟩
-    · split at h
-      · simp only [Bool.and_eq_true] at h
-        exact ih _ _ h.2 p' (by omega) (by omega) ha
-      · exact ih _ _ h p' (by omega) (by omega) ha
-
-theorem checkBucket_spec (ix : HIdx) (G : ByteArray) (b hi : Nat) :
-    ∀ k t, checkBucket ix G b hi k t = true → ∀ t', t ≤ t' → t' < t + k → entryOk ix G b hi t' = true := by
-  intro k
-  induction k with
-  | zero => intro t _ t' h1 h2; omega
-  | succ k ih =>
-    intro t h t' h1 h2
-    simp only [checkBucket, Bool.and_eq_true] at h
-    by_cases ht : t' = t
-    · subst ht; exact h.1
-    · exact ih (t + 1) h.2 t' (by omega) (by omega)
-
-theorem checkSound_spec (ix : HIdx) (G : ByteArray) :
-    ∀ k b, checkSound ix G k b = true → ∀ b', b ≤ b' → b' < b + k → ∀ t,
-      ix.offs[b']!.toNat ≤ t → t < ix.offs[b' + 1]!.toNat → entryOk ix G b' ix.offs[b' + 1]!.toNat t = true := by
-  intro k
-  induction k with
-  | zero => intro b _ b' h1 h2; omega
-  | succ k ih =>
-    intro b h b' h1 h2 t ht1 ht2
-    simp only [checkSound, Bool.and_eq_true] at h
-    by_cases hb : b' = b
-    · subst hb; exact checkBucket_spec ix G _ _ _ _ h.1 t ht1 (by omega)
-    · exact ih (b + 1) h.2 b' (by omega) (by omega) t ht1 ht2
-
-theorem entryOk_spec (ix : HIdx) (G : ByteArray) (b hi t : Nat) (h : entryOk ix G b hi t = true) :
-    ix.ent[2 * t]!.toNat + q ≤ G.size ∧ allACGT G ix.ent[2 * t]!.toNat (ix.ent[2 * t]!.toNat + q) = true ∧
-      bucketOf (hashAt G ix.ent[2 * t]!.toNat) = b ∧ keyOf (hashAt G ix.ent[2 * t]!.toNat) = ix.ent[2 * t + 1]! ∧
-      (t + 1 < hi → ix.ent[2 * t]!.toNat < ix.ent[2 * t + 2]!.toNat) := by
-  unfold entryOk at h
-  simp only [Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq] at h
-  exact ⟨h.1.1.1.1, h.1.1.1.2, h.1.1.2, h.1.2, fun ht => by rcases h.2 with h2 | h2 <;> omega⟩
-
 theorem checkOdd_spec (ix : HIdx) (G : ByteArray) :
     ∀ k p cur, checkOdd ix G cur k p = true → ∀ p', p ≤ p' → p' < p + k → acgt (G.get! p') = false →
       ∃ t, t < ix.odd[(G.get! p').toNat]!.size ∧ ix.odd[(G.get! p').toNat]![t]! = p' := by
@@ -307,23 +259,224 @@ theorem chain_lt (f : Nat → Nat) (lo hi : Nat) (h : ∀ t, lo ≤ t → t + 1 
     have := h (t + d + 1) (by omega) (by omega)
     subst e; rw [show t + (d + 1) + 1 = t + d + 1 + 1 by omega]; omega
 
+/-! ### The rolling scan -/
+
+theorem wN_snoc (B : ByteArray) (i m : Nat) : wN B i (m + 1) = wN B i m * 4 + c2N (B.get! (i + m)) := by
+  induction m generalizing i with
+  | zero => simp [wN]
+  | succ m ih =>
+    rw [wN, ih (i + 1), wN, Nat.pow_succ, show i + 1 + m = i + (m + 1) by omega]
+    simp only [Nat.add_mul, Nat.mul_assoc]; omega
+
+theorem getElem!_set! (a : Array Nat) (i j : Nat) (v : Nat) :
+    (a.set! i v)[j]! = if i = j ∧ i < a.size then v else a[j]! := by
+  rw [Array.set!_eq_setIfInBounds]
+  simp only [getElem!_def, Array.getElem?_setIfInBounds]
+  by_cases h1 : i = j
+  · subst h1; by_cases h2 : i < a.size <;> simp [h2]
+  · simp [h1]
+
+/-- Entry `t` of bucket `b` was checked against a word before `e`. -/
+def Good (ix : HIdx) (G : ByteArray) (b t e : Nat) : Prop :=
+  (u32 ix.ent (2 * t)) + q ≤ e ∧ allACGT G (u32 ix.ent (2 * t)) ((u32 ix.ent (2 * t)) + q) = true ∧
+    bucketOf (hashAt G (u32 ix.ent (2 * t))) = b ∧ keyOf (hashAt G (u32 ix.ent (2 * t))) = (u32 ix.ent (2 * t + 1)) ∧
+    ((u32 ix.offs (b)) < t → (u32 ix.ent (2 * (t - 1))) < (u32 ix.ent (2 * t)))
+
+/-- Every ACGT word ending before `e` is in its bucket. -/
+def Found (ix : HIdx) (G : ByteArray) (e : Nat) : Prop :=
+  ∀ p, p + q ≤ e → allACGT G p (p + q) = true →
+    ∃ t, (u32 ix.offs (bucketOf (hashAt G p))) ≤ t ∧ t < (u32 ix.offs (bucketOf (hashAt G p) + 1)) ∧
+      (u32 ix.ent (2 * t)) = p ∧ (u32 ix.ent (2 * t + 1)) = keyOf (hashAt G p)
+
+def Filled (ix : HIdx) (G : ByteArray) (e : Nat) (fill : Array Nat) : Prop :=
+  ∀ b, b < NB → (u32 ix.offs (b)) ≤ fill[b]! ∧ ∀ t, (u32 ix.offs (b)) ≤ t → t < fill[b]! → Good ix G b t e
+
+def Run (G : ByteArray) (e : Nat) (x : UInt64) (r : Nat) : Prop :=
+  r ≤ q ∧ r ≤ e ∧ (∀ k, e - r ≤ k → k < e → acgt (G.get! k) = true) ∧
+    (r < q → r = e ∨ acgt (G.get! (e - r - 1)) = false) ∧ x.toNat = wN G (e - r) r
+
+theorem good_mono (ix : HIdx) (G : ByteArray) (b t e e' : Nat) (h : Good ix G b t e) (he : e ≤ e') :
+    Good ix G b t e' := ⟨by have := h.1; omega, h.2⟩
+
+theorem roll_toNat (x : UInt64) (v : UInt8) (hx : x.toNat < 2 ^ 50) :
+    ((x * 4 + c2 v) &&& 0x3FFFFFFFFFFFF).toNat = (x.toNat * 4 + c2N v) % 2 ^ 50 := by
+  rw [UInt64.toNat_and, show (0x3FFFFFFFFFFFF : UInt64).toNat = 2 ^ 50 - 1 from rfl,
+    Nat.and_two_pow_sub_one_eq_mod, UInt64.toNat_add, UInt64.toNat_mul, c2_toNat,
+    show (4 : UInt64).toNat = 4 from rfl]
+  have := c2N_lt v
+  rw [Nat.mod_eq_of_lt (show x.toNat * 4 < 2 ^ 64 by omega), Nat.mod_eq_of_lt (show x.toNat * 4 + c2N v < 2 ^ 64 by omega)]
+
+theorem scanIdx_spec (ix : HIdx) (G : ByteArray) :
+    ∀ k e x r fill fill', e + k ≤ G.size → Run G e x r → Filled ix G e fill → Found ix G e →
+      scanIdx ix G k e x r fill = some fill' → Filled ix G (e + k) fill' ∧ Found ix G (e + k) := by
+  have hq25 : q = 25 := rfl
+  intro k
+  induction k with
+  | zero =>
+    intro e x r fill fill' _ _ hf hfo h
+    simp only [scanIdx, Option.some.injEq] at h
+    subst h; exact ⟨hf, hfo⟩
+  | succ k ih =>
+    intro e x r fill fill' hk hrun hf hfo h
+    obtain ⟨hr1, hr2, hr3, hr4, hr5⟩ := hrun
+    unfold scanIdx at h
+    simp only [] at h
+    rw [show e + (k + 1) = (e + 1) + k by omega]
+    by_cases hv : acgt (G.get! e) = true
+    · rw [if_pos hv] at h
+      have hx50 : x.toNat < 2 ^ 50 := by
+        rw [hr5]; have := wN_lt G (e - r) r
+        have : 4 ^ r ≤ 4 ^ 25 := Nat.pow_le_pow_right (by omega) (by simp [q] at hr1; omega)
+        simp at *; omega
+      have hroll := roll_toNat x (G.get! e) hx50
+      -- the new run
+      have hrun' : Run G (e + 1) ((x * 4 + c2 (G.get! e)) &&& 0x3FFFFFFFFFFFF) (min (r + 1) q) := by
+        refine ⟨by omega, by omega, fun k h1 h2 => ?_, fun h1 => ?_, ?_⟩
+        · by_cases hke : k = e
+          · subst hke; exact hv
+          · exact hr3 k (by omega) (by omega)
+        · rcases hr4 (by omega) with h2 | h2
+          · left; omega
+          · right; rw [show e + 1 - min (r + 1) q - 1 = e - r - 1 by omega]; exact h2
+        · rw [hroll]
+          by_cases hr25 : r < q
+          · rw [show min (r + 1) q = r + 1 by omega, show e + 1 - (r + 1) = e - r by omega, wN_snoc,
+              show e - r + r = e by omega, ← hr5]
+            apply Nat.mod_eq_of_lt
+            have := wN_snoc G (e - r) r
+            have := wN_lt G (e - r) (r + 1)
+            rw [show e - r + r = e by omega, ← hr5] at *
+            have : 4 ^ (r + 1) ≤ 4 ^ 25 := Nat.pow_le_pow_right (by omega) (by simp [q] at hr25; omega)
+            simp at *; omega
+          · have hr' : r = q := by omega
+            subst hr'
+            rw [show min (q + 1) q = q by simp [q], hr5]
+            have e1 := wN_snoc G (e - q) q
+            have e2 : wN G (e - q) (q + 1) = c2N (G.get! (e - q)) * 4 ^ q + wN G (e - q + 1) q := rfl
+            have l := wN_lt G (e - q + 1) q
+            rw [show e - q + q = e by omega] at e1
+            rw [show e + 1 - q = e - q + 1 by omega]
+            simp only [q] at *
+            omega
+      by_cases hq : min (r + 1) q = q
+      · rw [if_pos hq] at h
+        -- the word ending at `e`
+        have hp : e + 1 - q + q = e + 1 := by simp [q] at hq ⊢; omega
+        have hall : allACGT G (e + 1 - q) (e + 1 - q + q) = true := by
+          rw [allACGT_word]; intro k hk
+          exact hrun'.2.2.1 _ (by rw [hq]; omega) (by omega)
+        have hy : mix ((x * 4 + c2 (G.get! e)) &&& 0x3FFFFFFFFFFFF) = hashAt G (e + 1 - q) := by
+          unfold hashAt; congr 1
+          apply UInt64.toNat_inj.mp
+          rw [hashWord_toNat, hrun'.2.2.2.2, hq, show e + 1 - q = e + 1 - q from rfl]
+        rw [hy] at h
+        generalize hb : bucketOf (hashAt G (e + 1 - q)) = b at h
+        split at h
+        · next hc =>
+          simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hc
+          obtain ⟨⟨⟨hc1, hc2⟩, hc3⟩, hc4⟩ := hc
+          have hbN : b < NB := by rw [← hb]; exact bucketOf_lt _ (mix_lt _)
+          refine ih (e + 1) _ _ _ fill' (by omega) hrun' ?_ ?_ h
+          · intro b' hb'
+            rw [getElem!_set!]
+            by_cases hbb : b = b' ∧ b < fill.size
+            · obtain ⟨rfl, hbs⟩ := hbb
+              rw [if_pos ⟨rfl, hbs⟩]
+              refine ⟨by omega, fun t h1 h2 => ?_⟩
+              by_cases ht : t = fill[b]!
+              · subst ht
+                refine ⟨by rw [hc3]; omega, by rw [hc3]; exact hall, by rw [hc3]; exact hb,
+                  by rw [hc3, hc4], fun hlt => ?_⟩
+                have := ((hf b hbN).2 (fill[b]! - 1) (by omega) (by omega)).1
+                rw [hc3]; omega
+              · exact good_mono ix G b t e (e + 1) ((hf b hbN).2 t h1 (by omega)) (by omega)
+            · rw [if_neg hbb]
+              exact ⟨(hf b' hb').1, fun t h1 h2 => good_mono ix G b' t e (e + 1) ((hf b' hb').2 t h1 h2) (by omega)⟩
+          · intro p hp' hpa
+            by_cases hpe : p + q = e + 1
+            · rw [show p = e + 1 - q by omega, hb]
+              exact ⟨_, hc1, hc2, by rw [hc3], by rw [hc4]⟩
+            · exact hfo p (by omega) hpa
+        · cases h
+      · rw [if_neg hq] at h
+        refine ih (e + 1) _ _ _ fill' (by omega) hrun' ?_ ?_ h
+        · intro b hb; exact ⟨(hf b hb).1, fun t h1 h2 => good_mono ix G b t e (e + 1) ((hf b hb).2 t h1 h2) (by omega)⟩
+        · intro p hp' hpa
+          by_cases hpe : p + q = e + 1
+          · exfalso; apply hq
+            have : ∀ k, p ≤ k → k ≤ e → acgt (G.get! k) = true := by
+              intro k h1 h2
+              have := (allACGT_word G p).1 hpa (k - p) (by omega)
+              rwa [Nat.add_sub_cancel' h1] at this
+            by_cases hr' : r + 1 < q
+            · rcases hr4 (by omega) with h2 | h2
+              · omega
+              · have := this (e - r - 1) (by omega) (by omega); rw [this] at h2; cases h2
+            · omega
+          · exact hfo p (by omega) hpa
+    · rw [if_neg hv] at h
+      refine ih (e + 1) _ _ _ fill' (by omega) ⟨by simp [q], by omega, fun k h1 h2 => by omega,
+        fun _ => Or.inr (by simpa using hv), by simp [wN]⟩ ?_ ?_ h
+      · intro b hb; exact ⟨(hf b hb).1, fun t h1 h2 => good_mono ix G b t e (e + 1) ((hf b hb).2 t h1 h2) (by omega)⟩
+      · intro p hp' hpa
+        by_cases hpe : p + q = e + 1
+        · exfalso; apply hv
+          have := (allACGT_word G p).1 hpa (e - p) (by omega)
+          rwa [show p + (e - p) = e by omega] at this
+        · exact hfo p (by omega) hpa
+
+theorem fillOk_spec (ix : HIdx) (fill : Array Nat) :
+    ∀ k b, fillOk ix fill k b = true → ∀ b', b ≤ b' → b' < b + k → fill[b']! = (u32 ix.offs (b' + 1)) := by
+  intro k
+  induction k with
+  | zero => intro b _ b' h1 h2; omega
+  | succ k ih =>
+    intro b h b' h1 h2
+    simp only [fillOk, Bool.and_eq_true, beq_iff_eq] at h
+    by_cases hb : b' = b
+    · subst hb; exact h.1
+    · exact ih (b + 1) h.2 b' (by omega) (by omega)
+
+/-- What `checkIdx` certifies about entry `t` of bucket `b`. -/
+def EntryGood (ix : HIdx) (G : ByteArray) (b t : Nat) : Prop :=
+  (u32 ix.ent (2 * t)) + q ≤ G.size ∧ allACGT G (u32 ix.ent (2 * t)) ((u32 ix.ent (2 * t)) + q) = true ∧
+    bucketOf (hashAt G (u32 ix.ent (2 * t))) = b ∧ keyOf (hashAt G (u32 ix.ent (2 * t))) = (u32 ix.ent (2 * t + 1)) ∧
+    (t + 1 < (u32 ix.offs (b + 1)) → (u32 ix.ent (2 * t)) < (u32 ix.ent (2 * t + 2)))
+
 /-- The four facts `checkIdx` certifies. -/
 theorem checkIdx_spec (ix : HIdx) (G : ByteArray) (h : checkIdx ix G = true) :
     (∀ p, p + q ≤ G.size → allACGT G p (p + q) = true →
-      ∃ t, ix.offs[bucketOf (hashAt G p)]!.toNat ≤ t ∧ t < ix.offs[bucketOf (hashAt G p) + 1]!.toNat ∧
-        ix.ent[2 * t]!.toNat = p ∧ ix.ent[2 * t + 1]! = keyOf (hashAt G p)) ∧
-    (∀ b, b < NB → ∀ t, ix.offs[b]!.toNat ≤ t → t < ix.offs[b + 1]!.toNat →
-      entryOk ix G b ix.offs[b + 1]!.toNat t = true) ∧
+      ∃ t, (u32 ix.offs (bucketOf (hashAt G p))) ≤ t ∧ t < (u32 ix.offs (bucketOf (hashAt G p) + 1)) ∧
+        (u32 ix.ent (2 * t)) = p ∧ (u32 ix.ent (2 * t + 1)) = keyOf (hashAt G p)) ∧
+    (∀ b, b < NB → ∀ t, (u32 ix.offs (b)) ≤ t → t < (u32 ix.offs (b + 1)) → EntryGood ix G b t) ∧
     (∀ p, p < G.size → acgt (G.get! p) = false →
       ∃ t, t < ix.odd[(G.get! p).toNat]!.size ∧ ix.odd[(G.get! p).toNat]![t]! = p) ∧
     (∀ v, v < 256 → ∀ i, i + 1 < ix.odd[v]!.size → ix.odd[v]![i]! < ix.odd[v]![i + 1]!) := by
   unfold checkIdx at h
   simp only [Bool.and_eq_true, List.all_eq_true, List.mem_range] at h
-  obtain ⟨⟨⟨hc, hs⟩, ho⟩, hi⟩ := h
-  refine ⟨fun p hp ha => checkComplete_spec ix G _ 0 _ hc p (by omega) (by simp [q] at hp ⊢; omega) ha,
-    fun b hb t h1 h2 => checkSound_spec ix G _ 0 hs b (by omega) (by omega) t h1 h2,
-    fun p hp ha => checkOdd_spec ix G _ 0 _ ho p (by omega) (by omega) ha,
-    fun v hv i hi' => increasing_spec _ _ 0 (hi v hv) i (by omega) (by omega)⟩
+  obtain ⟨⟨hs, ho⟩, hi⟩ := h
+  split at hs
+  · next fill hfill =>
+    obtain ⟨hF, hFo⟩ := scanIdx_spec ix G _ 0 0 0 _ fill (by omega)
+      ⟨by simp [q], Nat.le_refl _, fun k _ h2 => by omega, fun _ => Or.inl rfl, by simp [wN]⟩
+      (fun b hb => by
+        have e : ((Array.range NB).map (u32 ix.offs))[b]! = u32 ix.offs b := by
+          rw [getElem!_pos _ b (by simpa using hb)]; simp
+        rw [e]; exact ⟨Nat.le_refl _, fun t h1 h2 => by omega⟩) (fun p hp _ => by simp [q] at hp)
+      hfill
+    rw [Nat.zero_add] at hF hFo
+    have hfo := fillOk_spec ix fill _ 0 hs
+    refine ⟨hFo, fun b hb t h1 h2 => ?_,
+      fun p hp ha => checkOdd_spec ix G _ 0 _ ho p (by omega) (by omega) ha,
+      fun v hv i hi' => increasing_spec _ _ 0 (hi v hv) i (by omega) (by omega)⟩
+    have hfb := hfo b (by omega) (by simp [NB] at hb ⊢; omega)
+    have hg := (hF b hb).2 t h1 (by rw [hfb]; exact h2)
+    refine ⟨hg.1, hg.2.1, hg.2.2.1, hg.2.2.2.1, fun ht => ?_⟩
+    have hg' := (hF b hb).2 (t + 1) (by omega) (by rw [hfb]; exact ht)
+    have := hg'.2.2.2.2 (by omega)
+    rw [show 2 * (t + 1 - 1) = 2 * t by omega, show 2 * (t + 1) = 2 * t + 2 by omega] at this
+    exact this
+  · cases hs
 
 /-! ## Lookups -/
 
@@ -370,10 +523,10 @@ theorem firstOdd_spec (B : ByteArray) (stop : Nat) :
       exact ⟨Nat.le_refl _, hi, fun k h1 h2 => by omega, fun _ => by simpa using ha⟩
 
 
-theorem scanBucket_toList (ent : Array UInt32) (key : UInt32) (base bit hi : Nat) :
+theorem scanBucket_toList (ent : ByteArray) (key : Nat) (base bit hi : Nat) :
     ∀ d t acc, hi - t = d → (scanBucket ent key base bit hi t acc).toList = acc.toList ++
-      (List.range' t (hi - t)).filterMap (fun t => if ent[2 * t + 1]! == key then
-        some ((ent[2 * t]!.toNat + base) * 16 + bit) else none) := by
+      (List.range' t (hi - t)).filterMap (fun t => if u32 ent (2 * t + 1) == key then
+        some ((u32 ent (2 * t) + base) * 16 + bit) else none) := by
   intro d
   induction d with
   | zero => intro t acc hd; unfold scanBucket; rw [if_neg (by omega), hd]; simp
@@ -382,7 +535,7 @@ theorem scanBucket_toList (ent : Array UInt32) (key : UInt32) (base bit hi : Nat
     unfold scanBucket
     rw [if_pos (by omega), ih (t + 1) _ (by omega), show hi - t = (hi - (t + 1)) + 1 by omega,
       List.range'_succ, List.filterMap_cons]
-    by_cases hk : (ent[2 * t + 1]! == key) = true
+    by_cases hk : (u32 ent (2 * t + 1) == key) = true
     · rw [if_pos hk, if_pos hk, Array.toList_push, List.append_assoc]; rfl
     · rw [if_neg hk, if_neg hk]
 
@@ -437,13 +590,14 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
     have hb : bucketOf y < NB := by rw [← hy]; exact bucketOf_lt _ (mix_lt _)
     rw [scanBucket_toList _ _ _ _ _ _ _ _ rfl, show (#[] : Array Nat).toList = [] from rfl, List.nil_append]
     have hent := hS _ hb
-    generalize hlo : ix.offs[bucketOf y]!.toNat = lo at hent
-    generalize hhi : ix.offs[bucketOf y + 1]!.toNat = hi at hent
-    have hpos : ∀ t t', lo ≤ t → t < t' → t' < hi → ix.ent[2 * t]!.toNat < ix.ent[2 * t']!.toNat := by
+    unfold EntryGood at hent
+    generalize hlo : (u32 ix.offs (bucketOf y)) = lo at hent
+    generalize hhi : (u32 ix.offs (bucketOf y + 1)) = hi at hent
+    have hpos : ∀ t t', lo ≤ t → t < t' → t' < hi → (u32 ix.ent (2 * t)) < (u32 ix.ent (2 * t')) := by
       intro t t' h1 h2 h3
-      apply chain_lt (fun t => ix.ent[2 * t]!.toNat) lo hi _ (t' - t - 1) t t' (by omega) h1 h3
+      apply chain_lt (fun t => (u32 ix.ent (2 * t))) lo hi _ (t' - t - 1) t t' (by omega) h1 h3
       intro u hu1 hu2
-      have := (entryOk_spec ix G _ _ u (hent u hu1 (by omega))).2.2.2.2 hu2
+      have := (hent u hu1 (by omega)).2.2.2.2 hu2
       rwa [show 2 * u + 2 = 2 * (u + 1) by omega] at this
     constructor
     · apply List.Pairwise.filterMap _ _ (range'_pairwise_in lo (hi - lo))
@@ -460,7 +614,7 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
         rw [List.mem_range'_1] at ht
         simp only [Option.ite_none_right_eq_some, Option.some.injEq, beq_iff_eq] at he
         obtain ⟨hk, rfl⟩ := he
-        obtain ⟨h1, h2, h3, h4, -⟩ := entryOk_spec ix G _ _ t (hent t ht.1 (by omega))
+        obtain ⟨h1, h2, h3, h4, -⟩ := hent t ht.1 (by omega)
         refine ⟨_, ⟨h1, ?_⟩, rfl⟩
         have := hash_inj G R _ (j * q) h2 hacgt (by rw [h3, hy]) (by rw [h4, hk, hy])
         exact this
