@@ -105,3 +105,11 @@ lean_exe map_bench where              -- benchmark only; prints to stdout
 lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "bench"
   root := `Proto
+
+lean_exe map_dump where               -- benchmark only; per-read results of the proved mapper
+  srcDir := "bench"
+  root := `MapDump
+
+lean_exe proto0 where                 -- first speed prototype, kept for comparisons (unproved)
+  srcDir := "bench"
+  root := `Proto0
