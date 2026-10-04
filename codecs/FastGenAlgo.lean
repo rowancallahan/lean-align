@@ -37,11 +37,13 @@ namespace MapSpec.Fast
 
 open MapSpec AlignmentSpec
 
-/-- Add window `(st, len)` scored by the kernel when its penalty is `≤ lim`. -/
+/-- Add window `(st, len)` scored by the kernel capped at `min lim best` (a window
+above the best cannot change it). -/
 @[inline] def addK (R G : ByteArray) (c lim : Nat) (st len : Int) (b : Best) : Best :=
   if 0 ≤ st ∧ 0 ≤ len then
-    let r := kerG R G st.toNat len.toNat lim
-    if r ≤ lim then b.add c st.toNat len.toNat r else b
+    let l := min lim b.pen
+    let r := kerG R G st.toNat len.toNat l
+    if r ≤ l then b.add c st.toNat len.toNat r else b
   else b
 
 /-- Penalty through the banded kernel: exact at `T = −P` (`P + 1` = not a hit). -/
@@ -72,9 +74,14 @@ def phase1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R G : ByteArray) 
 @[inline] def wst (n e : Nat) (sh : Int × Int) : Int := ((e / 16 : Nat) : Int) - n - sh.1
 @[inline] def wlen (n : Nat) (sh : Int × Int) : Int := (n : Int) + sh.1 + sh.2
 
-def stageK (R G : ByteArray) (c lim : Nat) (shs : List (Int × Int)) (acc : List (Array Nat)) (b : Best) : Best :=
-  acc.foldl (fun b arr => arr.foldl (fun b e => shs.foldl (fun b sh =>
-    addK R G c lim (wst R.size e sh) (wlen R.size sh) b) b) b) b
+/-- The distinct diagonals of the anchors. -/
+def diags (acc : List (Array Nat)) : List Nat := (acc.flatMap fun arr => arr.toList.map (· / 16)).eraseDups
+
+/-- Window of diagonal `D` and shape `sh`: start and length. -/
+@[inline] def dst (n D : Nat) (sh : Int × Int) : Int := (D : Int) - n - sh.1
+
+def stageK (R G : ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
+  ds.foldl (fun b D => shs.foldl (fun b sh => addK R G c lim (dst R.size D sh) (wlen R.size sh) b) b) b
 
 /-- Penalty of window `(·, len)` from the banded rows `opt` ending where it ends
 (`fits`: the window fits the chromosome); `bandPenE_eq`: this is `bandPen`. -/
@@ -118,7 +125,7 @@ def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
 
 /-- The distinct diagonals of the anchors, supported by at least `need` seeds within `r`. -/
 def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=
-  ((acc.flatMap fun arr => arr.toList.map (· / 16)).eraseDups).filter fun D => decide (need ≤ suppA acc D r)
+  (diags acc).filter fun D => decide (need ≤ suppA acc D r)
 
 /-- End shifts `−d … d`. -/
 def shifts (d : Nat) : List Int := (List.range (2 * d + 1)).map fun (i : Nat) => (i : Int) - d
@@ -137,7 +144,7 @@ def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (g
   let acc := r1.2.1
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageK R G c lim ((shapesAt Q1).filter (· != (0, 0))) acc b1 else b1
+      stageK R G c lim ((shapesAt Q1).filter (· != (0, 0))) (diags acc) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
     stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int))))

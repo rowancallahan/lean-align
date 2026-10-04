@@ -145,35 +145,35 @@ section adds
 variable (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : ByteArray)
   (hg : GenomeBytes gbs g) (hr : Encodes R read)
 
-/-- The window `addK` would add. -/
+/-- The window `(st, len)` of chromosome `c`, when its penalty is `≤ lim`. -/
 def KX (c lim : Nat) (st len : Int) (w : Window) : Prop :=
-  0 ≤ st ∧ 0 ≤ len ∧ kerG R gbs[c]! st.toNat len.toNat lim ≤ lim ∧ w = ⟨c, st.toNat, len.toNat⟩
+  0 ≤ st ∧ 0 ≤ len ∧ w = ⟨c, st.toNat, len.toNat⟩ ∧ cwT P read g w ≤ lim
 
 def BX (c : Nat) (st len : Int) (w : Window) : Prop :=
   0 ≤ st ∧ 0 ≤ len ∧ w = ⟨c, st.toNat, len.toNat⟩
 
 include hg hr
 
+/-- `addK` adds the window when its penalty is `≤ min lim best`; a window between
+`best` and `lim` cannot change the result, so it counts as added (`inv_skipP`). -/
 theorem addK_inv (c lim : Nat) (hc : c < gbs.size) (h1 : lim ≤ P) (h2 : lim ≤ 15) (st len : Int)
     (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g) S b) :
-    InvP P (cwT P read g) (fun w => S w ∨ KX gbs R c lim st len w) (addK R gbs[c]! c lim st len b) := by
+    InvP P (cwT P read g) (fun w => S w ∨ KX P read g c lim st len w) (addK R gbs[c]! c lim st len b) := by
   unfold addK
   by_cases hp : 0 ≤ st ∧ 0 ≤ len
   · rw [if_pos hp]
     dsimp only
-    by_cases hk : kerG R gbs[c]! st.toNat len.toNat lim ≤ lim
+    have hm := cwT_ker P read g gbs R hg hr c st.toNat len.toNat (min lim b.pen) hc (by omega) (by omega)
+    by_cases hk : kerG R gbs[c]! st.toNat len.toNat (min lim b.pen) ≤ min lim b.pen
     · rw [if_pos hk]
-      have hm := cwT_ker P read g gbs R hg hr c st.toNat len.toNat lim hc h1 h2
-      have hex : kerG R gbs[c]! st.toNat len.toNat lim = cwT P read g ⟨c, st.toNat, len.toNat⟩ := by omega
+      have hex : kerG R gbs[c]! st.toNat len.toNat (min lim b.pen) = cwT P read g ⟨c, st.toNat, len.toNat⟩ := by omega
       apply inv_congrP P _ _ _ _ (inv_addP P (cwT P read g) (cwT_le P read g) S b h c st.toNat len.toNat _ (Or.inl hex))
       intro w; unfold KX; constructor
-      · rintro (hw | rfl); exact Or.inl hw; exact Or.inr ⟨hp.1, hp.2, hk, rfl⟩
-      · rintro (hw | ⟨-, -, -, rfl⟩); exact Or.inl hw; exact Or.inr rfl
+      · rintro (hw | rfl); exact Or.inl hw; exact Or.inr ⟨hp.1, hp.2, rfl, by omega⟩
+      · rintro (hw | ⟨-, -, rfl, -⟩); exact Or.inl hw; exact Or.inr rfl
     · rw [if_neg hk]
-      apply inv_congrP P _ _ _ _ h
-      intro w; unfold KX; constructor
-      · intro hw; exact Or.inl hw
-      · rintro (hw | ⟨-, -, hk', -⟩); exact hw; exact absurd hk' hk
+      apply inv_skipP P (cwT P read g) (cwT_le P read g) S _ b h
+      rintro w ⟨-, -, rfl, hw⟩; left; omega
   · rw [if_neg hp]
     apply inv_congrP P _ _ _ _ h
     intro w; unfold KX; constructor
@@ -223,7 +223,7 @@ def arrOf (j : Nat) : Array Nat := LookG.look ix gbs[c]! R (j * Ls) (R.size - j 
 
 /-- The same-length window `phase1` adds for anchor `e`. -/
 def GX (lim e : Nat) (w : Window) : Prop :=
-  KX gbs R c lim (((e / 16 : Nat) : Int) - (R.size : Int)) (R.size : Int) w
+  KX P read g c lim (((e / 16 : Nat) : Int) - (R.size : Int)) (R.size : Int) w
 
 include hg hr
 
@@ -237,7 +237,7 @@ theorem phase1_spec (hc : c < gbs.size) :
         (sbound (min (phase1 ix R gbs[c]! c P (min P 15) Ls ps ord J acc b).1.pen P) <
             (phase1 ix R gbs[c]! c P (min P 15) Ls ps ord J acc b).2.2.length ∨ pre = ord) ∧
         InvP P (cwT P read g) (fun w => S w ∨ ∃ j ∈ pre, ∃ e ∈ (arrOf gbs R ix c Ls ps j).toList,
-          GX gbs R c (min P 15) e w) (phase1 ix R gbs[c]! c P (min P 15) Ls ps ord J acc b).1 ∧
+          GX P read g R c (min P 15) e w) (phase1 ix R gbs[c]! c P (min P 15) Ls ps ord J acc b).1 ∧
         (phase1 ix R gbs[c]! c P (min P 15) Ls ps ord J acc b).1.pen ≤ b.pen := by
   intro ord
   induction ord with
@@ -248,7 +248,7 @@ theorem phase1_spec (hc : c < gbs.size) :
     intro J acc b S h
     have hf := foldl_invP P (cwT P read g)
       (fun b e => addK R gbs[c]! c (min P 15) ((e / 16 : Nat) - (R.size : Int)) R.size b)
-      (fun e w => GX gbs R c (min P 15) e w)
+      (fun e w => GX P read g R c (min P 15) e w)
       (fun e S b h => addK_inv P read g gbs R hg hr c (min P 15) hc (Nat.min_le_left _ _)
         (Nat.min_le_right _ _) _ _ S b h)
       (arrOf gbs R ix c Ls ps j).toList S b h
@@ -272,36 +272,26 @@ theorem phase1_spec (hc : c < gbs.size) :
       · exact Or.inl h3
       · exact Or.inr (by rw [h3])
 
-/-- The windows a stage looks at. -/
-def StageX (X : Int → Int → Window → Prop) (shs : List (Int × Int)) (acc : List (Array Nat)) (w : Window) : Prop :=
-  ∃ arr ∈ acc, ∃ e ∈ arr.toList, ∃ sh ∈ shs, X (wst R.size e sh) (wlen R.size sh) w
+/-- The windows stage K looks at. -/
+def StageK (lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (w : Window) : Prop :=
+  ∃ D ∈ ds, ∃ sh ∈ shs, KX P read g c lim (dst R.size D sh) (wlen R.size sh) w
 
-theorem stageK_spec (hc : c < gbs.size) (shs : List (Int × Int)) (acc : List (Array Nat)) (b : Best)
+theorem stageK_spec (hc : c < gbs.size) (shs : List (Int × Int)) (ds : List Nat) (b : Best)
     (S : Window → Prop) (h : InvP P (cwT P read g) S b) :
-    InvP P (cwT P read g) (fun w => S w ∨ StageX R (KX gbs R c (min P 15)) shs acc w)
-      (stageK R gbs[c]! c (min P 15) shs acc b) ∧ (stageK R gbs[c]! c (min P 15) shs acc b).pen ≤ b.pen := by
-  have hsh : ∀ (e : Nat) S b, InvP P (cwT P read g) S b →
-      InvP P (cwT P read g) (fun w => S w ∨ ∃ sh ∈ shs, KX gbs R c (min P 15) (wst R.size e sh) (wlen R.size sh) w)
-        (shs.foldl (fun b sh => addK R gbs[c]! c (min P 15) (wst R.size e sh) (wlen R.size sh) b) b) :=
-    fun e => foldl_invP P (cwT P read g) _ (fun sh w => KX gbs R c (min P 15) (wst R.size e sh) (wlen R.size sh) w)
+    InvP P (cwT P read g) (fun w => S w ∨ StageK P read g R c (min P 15) shs ds w)
+      (stageK R gbs[c]! c (min P 15) shs ds b) ∧ (stageK R gbs[c]! c (min P 15) shs ds b).pen ≤ b.pen := by
+  have hsh : ∀ (D : Nat) S b, InvP P (cwT P read g) S b →
+      InvP P (cwT P read g) (fun w => S w ∨ ∃ sh ∈ shs, KX P read g c (min P 15) (dst R.size D sh) (wlen R.size sh) w)
+        (shs.foldl (fun b sh => addK R gbs[c]! c (min P 15) (dst R.size D sh) (wlen R.size sh) b) b) :=
+    fun D => foldl_invP P (cwT P read g) _ (fun sh w => KX P read g c (min P 15) (dst R.size D sh) (wlen R.size sh) w)
       (fun sh S b h => addK_inv P read g gbs R hg hr c (min P 15) hc (Nat.min_le_left _ _)
         (Nat.min_le_right _ _) _ _ S b h) shs
-  have harr : ∀ (arr : Array Nat) S b, InvP P (cwT P read g) S b →
-      InvP P (cwT P read g) (fun w => S w ∨ ∃ e ∈ arr.toList, ∃ sh ∈ shs,
-          KX gbs R c (min P 15) (wst R.size e sh) (wlen R.size sh) w)
-        (arr.foldl (fun b e => shs.foldl (fun b sh =>
-          addK R gbs[c]! c (min P 15) (wst R.size e sh) (wlen R.size sh) b) b) b) := by
-    intro arr S b h
-    rw [← Array.foldl_toList]
-    exact foldl_invP P (cwT P read g) _ _ (fun e S b h => hsh e S b h) arr.toList S b h
-  have hp1 : ∀ (e : Nat) b, (shs.foldl (fun b sh => addK R gbs[c]! c (min P 15) (wst R.size e sh) (wlen R.size sh) b) b).pen ≤ b.pen :=
-    fun e => foldl_pen _ (fun b sh => addK_pen _ _ _ _ _ _ b) shs
-  have hp2 : ∀ (arr : Array Nat) b, (arr.foldl (fun b e => shs.foldl (fun b sh =>
-      addK R gbs[c]! c (min P 15) (wst R.size e sh) (wlen R.size sh) b) b) b).pen ≤ b.pen := by
-    intro arr b; rw [← Array.foldl_toList]; exact foldl_pen _ (fun b e => hp1 e b) arr.toList b
+  have hp1 : ∀ (D : Nat) b, (shs.foldl (fun b sh => addK R gbs[c]! c (min P 15) (dst R.size D sh) (wlen R.size sh) b) b).pen
+      ≤ b.pen :=
+    fun D => foldl_pen _ (fun b sh => addK_pen _ _ _ _ _ _ b) shs
   unfold stageK
-  exact ⟨inv_congrP P _ _ _ _ (foldl_invP P (cwT P read g) _ _ (fun arr S b h => harr arr S b h) acc S b h)
-    (fun w => by unfold StageX; rfl), foldl_pen _ (fun b arr => hp2 arr b) acc b⟩
+  exact ⟨inv_congrP P _ _ _ _ (foldl_invP P (cwT P read g) _ _ (fun D S b h => hsh D S b h) ds S b h)
+    (fun w => by unfold StageK; rfl), foldl_pen _ (fun b D => hp1 D b) ds b⟩
 
 theorem bandPenE_eq (c st len : Nat) (hc : c < gbs.size) :
     bandPenE P R.size len (decide (st + len ≤ gbs[c]!.size))
@@ -444,22 +434,22 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
   -- stage K
   generalize hQ1 : min b1.pen P = Q1
   generalize hshK : (shapesAt Q1).filter (· != (0, 0)) = shK
-  have hK := stageK_spec P read g gbs R hg hr c hc shK acc b1 _ hinv1
+  have hK := stageK_spec P read g gbs R hg hr c hc shK (diags acc) b1 _ hinv1
   have h2 : InvP P (cwT P read g) (fun w => (S w ∨ ∃ j ∈ pre, ∃ e ∈ (arrOf gbs R ix c Ls ps j).toList,
-        GX gbs R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageX R (KX gbs R c (min P 15)) shK acc w))
-      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK acc b1 else b1) ∧
-      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK acc b1 else b1).pen ≤ b1.pen := by
+        GX P read g R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageK P read g R c (min P 15) shK (diags acc) w))
+      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK (diags acc) b1 else b1) ∧
+      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK (diags acc) b1 else b1).pen ≤ b1.pen := by
     split
     · next hk => exact ⟨inv_congrP P _ _ _ _ hK.1 (fun w => by simp [hk]), hK.2⟩
     · next hk => exact ⟨inv_congrP P _ _ _ _ hinv1 (fun w => by simp [hk]), Nat.le_refl _⟩
-  generalize hb2 : (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK acc b1 else b1) = b2 at h2
+  generalize hb2 : (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK (diags acc) b1 else b1) = b2 at h2
   -- stage B
   generalize hQ2 : min b2.pen P = Q2
   generalize hdsv : diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int))) = ds
   have hB := stageB_spec P read g gbs R hg hr c hc (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 _ h2.1
   have hBp := stageB_pen P read g gbs R hg hr c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2
   have h3 : InvP P (cwT P read g) (fun w => ((S w ∨ ∃ j ∈ pre, ∃ e ∈ (arrOf gbs R ix c Ls ps j).toList,
-        GX gbs R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageX R (KX gbs R c (min P 15)) shK acc w)) ∨
+        GX P read g R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageK P read g R c (min P 15) shK (diags acc) w)) ∨
         (min P 15 < Q2 ∧ BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds w))
       (if min P 15 < Q2 then stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 else b2) ∧
       (if min P 15 < Q2 then stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 else b2).pen
@@ -520,10 +510,6 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
     intro sh h1 h2; unfold wlen; rw [h1, h2]
   have hwin : w = ⟨c, ((p : Int) - (j * Ls : Nat) - a).toNat, ((R.size : Int) + a + bb).toNat⟩ := by
     cases w; simp only at hwc hst hwl; rw [hwc, hst, hwl, hn]
-  -- the kernel value of the window
-  have hker : min x (min P 15 + 1) =
-      kerG R gbs[c]! ((p : Int) - (j * Ls : Nat) - a).toNat ((R.size : Int) + a + bb).toNat (min P 15) := by
-    rw [← cwT_ker P read g gbs R hg hr c _ _ (min P 15) hc (Nat.min_le_left _ _) (Nat.min_le_right _ _), ← hx, hwin]
   -- the band stage covers the windows above `lim`
   have hband : min P 15 < x → BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds w := by
     intro hlx
@@ -532,7 +518,7 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
     refine ⟨e / 16, ?_, bb, ?_, ?_, (a, bb), shapesAt_mem x Q2 hx2 a bb hshape, rfl, ?_, ?_, ?_⟩
     · -- the diagonal is one of the stage's: an anchor's, and supported
       rw [← hdsv]
-      unfold diagsB
+      unfold diagsB diags
       rw [List.mem_filter, List.mem_eraseDups, List.mem_flatMap]
       refine ⟨⟨_, harr, List.mem_map.2 ⟨e, he, rfl⟩⟩, decide_eq_true ?_⟩
       -- seeds without an anchor near the window: at most `sbound x` of them
@@ -600,9 +586,8 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
       have e1 : ((p + (R.size - j * Ls) : Nat) : Int) - (R.size : Int) = (p : Int) - (j * Ls : Nat) - 0 := by omega
       have e2 : (R.size : Int) = (R.size : Int) + 0 + 0 := by omega
       rw [e1]
-      refine ⟨by omega, by omega, ?_, ?_⟩
-      · rw [e2, ← hker]; omega
-      · rw [e2]; exact hwin
+      refine ⟨by omega, by omega, ?_, by rw [hx]; omega⟩
+      rw [e2]; exact hwin
     · right; exact ⟨by omega, hband (by omega)⟩
   · -- a gapped shape: stage K, or the band stage
     have hab : 1 ≤ a.natAbs + bb.natAbs := by omega
@@ -610,13 +595,17 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
       have := gapBound_mono x Q1 hx1; have := hshape.1; omega
     by_cases hxl : x ≤ min P 15
     · left; right
-      refine ⟨hgb, _, harr, e, he, (a, bb), ?_, ?_⟩
+      refine ⟨hgb, e / 16, ?_, (a, bb), ?_, ?_⟩
+      · unfold diags
+        rw [List.mem_eraseDups, List.mem_flatMap]
+        exact ⟨_, harr, List.mem_map.2 ⟨e, he, rfl⟩⟩
       · rw [← hshK, List.mem_filter]
         refine ⟨shapesAt_mem x Q1 hx1 a bb hshape, ?_⟩
         simp only [bne_iff_ne, ne_eq, Prod.mk.injEq]; omega
-      · rw [hwst (a, bb) rfl, hwlen (a, bb) rfl rfl]
-        refine ⟨by omega, by omega, ?_, hwin⟩
-        rw [← hker]; omega
+      · have hd : dst R.size (e / 16) (a, bb) = (p : Int) - (j * Ls : Nat) - a := by
+          unfold dst; rw [he16]; push_cast; omega
+        rw [hd, hwlen (a, bb) rfl rfl]
+        exact ⟨by omega, by omega, hwin, by rw [hx]; omega⟩
     · right; exact ⟨by omega, hband (by omega)⟩
 
 end chrom2
