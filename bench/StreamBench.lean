@@ -29,12 +29,13 @@ def fmt (r : Nat × UInt64) : String :=
   let v := r.2
   s!"{r.1}\t{v}\t{v * 3}\t{v * 7}\t{v * 11}\t{v * 13}\n"
 
-/-- Write the texts in order; each task is dropped once written. -/
+/-- Write the texts' UTF-8 bytes in order (the chunks of `ParMap.bytesOf`);
+each task is dropped once written. -/
 def writeAll (h : IO.FS.Handle) : List (Task String) → Nat → IO Nat
   | [], n => pure n
   | t :: ts, n => do
     let s := t.get
-    h.putStr s
+    h.write s.toUTF8
     writeAll h ts (n + s.utf8ByteSize)
 
 def main (args : List String) : IO UInt32 := do
