@@ -158,7 +158,15 @@ def mapReadsLowError (l0 : Nat) (sc : Scoring) (T : Int) (g : Genome) (reads : L
         = mapSpec sc T g read                                               (mapLowError_eq_mapSpec)
     mapReadsLowError l0 sc T g reads = reads.map (mapSpec sc T g)          (mapReadsLowError_eq_mapSpec)
 
-for every scoring with `ValidScoring sc`.  They are at the end of this file. -/
+for every scoring with `ValidScoring sc`.  They are at the end of this file.
+The facts they rest on (pool/mapper/MapperGapless.lean, MapperOneIndel.lean):
+
+    walkScore_diags       equal lengths: all-diagonal walk = match·(n − hamming) + mismatch·hamming
+    scoreWalk_gap_le      a valid walk with a gap scores ≤ gapOpen + gapExtend
+    best_gapless          optimum > gapOpen + gapExtend → equal lengths, optimum = gapless score
+    gapless_clean_seed    gapless walk ≥ T → a seed is clean at exactly its own offset
+    one_gap_structure     matchScore = 0, walk with a gap ≥ gapOpen + gapExtend → one-letter deletion
+    delOk_walk(')         a one-letter deletion gives a walk scoring gapOpen + gapExtend -/
 
 /-! ## Proof -/
 
