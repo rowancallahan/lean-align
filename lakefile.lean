@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper]
+  roots := #[`WfaU3, `SeedMapper, `ParMap]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -105,3 +105,7 @@ lean_exe map_bench where              -- benchmark only; prints to stdout
 lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "bench"
   root := `Proto
+
+lean_exe par_bench where              -- parMap threads / shared-memory check only
+  srcDir := "bench"
+  root := `ParBench
