@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenCoverW, `PairGen, `ReadTrim]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `ReadTrim]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -169,6 +169,10 @@ lean_exe map_dump where               -- benchmark only; per-read results of the
 lean_exe proto0 where                 -- first speed prototype, kept for comparisons (unproved)
   srcDir := "bench"
   root := `Proto0
+
+lean_exe gen_pair_bench where         -- proved general-path pair mapper (pairFastGB) over a concatenated index (unproved IO)
+  srcDir := "bench"
+  root := `GenPairBench
 
 lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
   srcDir := "bench"

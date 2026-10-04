@@ -153,13 +153,9 @@ def shifts (d : Nat) : List Int := (List.range (2 * d + 1)).map fun (i : Nat) =>
 @[inline] def shapesAt (x : Nat) : List (Int × Int) :=
   shapes (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int)))
 
-/-- One chromosome. -/
-def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (gbs : Array ByteArray)
-    (c P Ls : Nat) (ps : Array Pp) (ord : List Nat) (b : Best) : Best :=
+/-- Stages K and B of chromosome `c`, from phase 1's anchor arrays `acc` and best `b1`. -/
+def chromKB (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
   let lim := min P 16
-  let r1 := phase1 ix R gbs c P lim Ls ps ord [] [] b
-  let b1 := r1.1
-  let acc := r1.2.1
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
       stageK R gbs c lim ((shapesAt Q1).filter (· != (0, 0)))
@@ -169,6 +165,12 @@ def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (g
     stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
+
+/-- One chromosome. -/
+def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (gbs : Array ByteArray)
+    (c P Ls : Nat) (ps : Array Pp) (ord : List Nat) (b : Best) : Best :=
+  let r1 := phase1 ix R gbs c P (min P 16) Ls ps ord [] [] b
+  chromKB R gbs c P r1.2.1 r1.1
 
 /-- Seeds `0 … m-1`, smallest `size` first. -/
 @[inline] def ordG (ks : Array Nat) (m : Nat) : List Nat :=
