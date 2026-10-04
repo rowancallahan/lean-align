@@ -79,6 +79,11 @@ minibwa is the only comparison so far. Before claiming "faster than the fastest"
 - Multi-mappers / low MAPQ can be dropped (goal is genotyping), already what `mapSpec` does on ties.
 - Kernel: plain banded DP (Smith-Waterman/Gotoh-style loop) may compile better than WFA in Lean; low-error Hamming fast path already removes most DP.
 
+## Direction (Rowan, 2026-10-04)
+- Goal now: WGS with cheap paired-end short reads (≤ 250 bp), as fast as possible. Output users keep: uniquely mapped reads in proper pairs; algorithms may exploit that (proved pre-filter: `PreFilterMapper`), with fallbacks later.
+- Long run: guarantee that any placement whose surrogate-score errors are ≤ ~3% of the read length is found, so it extends to long reads. Several fast algorithms switched by read length are fine if they share the same/similar index. Note: 25-letter seeds give n/25 = 4%·n disjoint seeds, so ≤ 3%·n spoiling coordinates leave ≥ 1%·n clean seeds (≥ 1 for n ≥ 100) — the 25-mer index's pigeonhole guarantee holds up to ~4% errors at every length.
+- Long-read mapping is a later goal, not now.
+
 ## Read lengths (Rowan, 2026-10-04)
 Must work for reads up to ~250 bp. Fast path today: 100–103 letters only (`fastOk`), others take the slow proved path. In progress on `speed/fast-proved`: m = ⌊n/25⌋ disjoint 25-letter seeds (≥ m − 3 clean), multi-word Hamming. Rowan's decision: allow T = −16 (≤ 4 spoiling coordinates: 4 mismatches, two 1-bp indels, one gap ≤ 5, …) so ~250 bp reads at 0.5% error mostly map (reads will be trimmed). Being generalized on `speed/fast-proved`: fast path parameterised by T; two-gap windows go through the proved banded scorer (`BandScore`); ≥ 5 seeds needed at −16 (n ≥ 125 with 25-letter seeds). Builders, IO and the both-strand combine stay trusted.
 
