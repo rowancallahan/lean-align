@@ -1,6 +1,7 @@
 import FastMapperPar
 import FastMapperMz
 import FastGenAlgo
+import MzCheckPar
 
 /-!
 Fast mapper benchmark (IO only, unproved).
@@ -128,7 +129,10 @@ def main (args : List String) : IO UInt32 := do
       let T := ((← IO.getEnv "FAST_MZ_T").getD (toString mz)).toNat!   -- t-words pick the minimizer
       let idxs ← timed "index" fun t => gbs.map fun g => Mz.buildW (if t == 1 then g.push 0 else g) mz B C W T
       IO.println s!"minimizer k={mz} B={B} C={C} W={W} T={T} kf={idxs.toList.map (·.kf)} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.sl.size + 8 * ix.runs.size) 0}"
-      let ok ← timed "check" fun t => Fast.checkAllMz (if t == 1 then #[] else idxs) gbs
+      -- FAST_CHECK_PAR=P: a task per chromosome, P tasks for its entries (checkAllMzPar_eq)
+      let cpar := ((← IO.getEnv "FAST_CHECK_PAR").getD "0").toNat!
+      let ok ← timed "check" fun t =>
+        (if cpar > 0 then Fast.checkAllMzPar cpar else Fast.checkAllMz) (if t == 1 then #[] else idxs) gbs
       IO.println s!"index check: {ok}"
       assert! ok
       let best R := Fast.mapChroms Fast.mzL R gbs idxs
