@@ -3,6 +3,7 @@ import MapperGenBest
 import MapperGenScore
 import MapperGenLook
 import MapperGenSearch
+import MapperGen16
 import SeedMapper2
 
 /-!
@@ -39,20 +40,33 @@ namespace MapSpec.Fast
 
 open MapSpec AlignmentSpec
 
-/-- Add window `(st, len)` scored by the kernel capped at `min lim best` (a window
-above the best cannot change it). -/
-@[inline] def addK (R G : ByteArray) (c lim : Nat) (st len : Int) (b : Best) : Best :=
-  if 0 ≤ st ∧ 0 ≤ len then
-    let l := min lim b.pen
-    let r := kerG R G st.toNat len.toNat l
-    if r ≤ l then b.add c st.toNat len.toNat r else b
-  else b
-
 /-- Penalty through the banded kernel: exact at `T = −P` (`P + 1` = not a hit). -/
 @[inline] def bandPen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (w : Window) : Nat :=
   match bandScore sc0 (-(P : Int)) (bandOf sc0 (-(P : Int))) R gbs w with
   | some s => if -(P : Int) ≤ s then (-s).toNat else P + 1
   | none => P + 1
+
+/-- The kernel capped at `17`: exact up to `15` by `kerG`; above, `16` for four
+mismatches at the same length, else `16` only when `filt16` passes, and then the
+banded kernel decides. -/
+@[inline] def ker16 (R : ByteArray) (gbs : Array ByteArray) (c st len : Nat) : Nat :=
+  let k := kerG R gbs[c]! st len 15
+  if k ≤ 15 then k
+  else if st + len ≤ gbs[c]!.size ∧ len = R.size ∧ hamming R gbs[c]! st 4 0 R.size 0 = 4 then 16
+  else if filt16 R gbs[c]! st len then bandPen 16 R gbs ⟨c, st, len⟩ else 17
+
+/-- The kernel capped at `l + 1` (`l ≤ 16`). -/
+@[inline] def kerH (R : ByteArray) (gbs : Array ByteArray) (c st len l : Nat) : Nat :=
+  if l ≤ 15 then kerG R gbs[c]! st len l else ker16 R gbs c st len
+
+/-- Add window `(st, len)` scored by the kernel capped at `min lim best` (a window
+above the best cannot change it). -/
+@[inline] def addK (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (b : Best) : Best :=
+  if 0 ≤ st ∧ 0 ≤ len then
+    let l := min lim b.pen
+    let r := kerH R gbs c st.toNat len.toNat l
+    if r ≤ l then b.add c st.toNat len.toNat r else b
+  else b
 
 @[inline] def addB (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (st len : Int) (b : Best) : Best :=
   if 0 ≤ st ∧ 0 ≤ len then b.add c st.toNat len.toNat (bandPen P R gbs ⟨c, st.toNat, len.toNat⟩) else b
@@ -63,14 +77,14 @@ penalty `x` can spoil. -/
 
 /-- Look up the seeds of `ord`; each anchor's same-length window goes through the
 kernel.  Returns the best, the anchor arrays and the seeds looked up (newest first). -/
-def phase1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R G : ByteArray) (c P lim Ls : Nat)
+def phase1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (gbs : Array ByteArray) (c P lim Ls : Nat)
     (ps : Array Pp) : (ord : List Nat) → List Nat → List (Array Nat) → Best → Best × List (Array Nat) × List Nat
   | [], J, acc, b => (b, acc, J)
   | j :: rest, J, acc, b =>
-    let arr := LookG.look ix G R (j * Ls) (R.size - j * Ls) ps[j]!
-    let b := arr.foldl (fun b e => addK R G c lim ((e / 16 : Nat) - (R.size : Int)) R.size b) b
+    let arr := LookG.look ix gbs[c]! R (j * Ls) (R.size - j * Ls) ps[j]!
+    let b := arr.foldl (fun b e => addK R gbs c lim ((e / 16 : Nat) - (R.size : Int)) R.size b) b
     if sbound (min b.pen P) < J.length + 1 ∧ (b.pen ≤ lim ∨ lim = P) then (b, arr :: acc, j :: J)
-    else phase1 ix R G c P lim Ls ps rest (j :: J) (arr :: acc) b
+    else phase1 ix R gbs c P lim Ls ps rest (j :: J) (arr :: acc) b
 
 /-- Window of anchor `e` and shape `sh`: start and length. -/
 @[inline] def wst (n e : Nat) (sh : Int × Int) : Int := ((e / 16 : Nat) : Int) - n - sh.1
@@ -83,8 +97,8 @@ def diags (acc : List (Array Nat)) : List Nat :=
 /-- Window of diagonal `D` and shape `sh`: start and length. -/
 @[inline] def dst (n D : Nat) (sh : Int × Int) : Int := (D : Int) - n - sh.1
 
-def stageK (R G : ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
-  ds.foldl (fun b D => shs.foldl (fun b sh => addK R G c lim (dst R.size D sh) (wlen R.size sh) b) b) b
+def stageK (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
+  ds.foldl (fun b D => shs.foldl (fun b sh => addK R gbs c lim (dst R.size D sh) (wlen R.size sh) b) b) b
 
 /-- Penalty of window `(·, len)` from the banded rows `opt` ending where it ends
 (`fits`: the window fits the chromosome); `bandPenE_eq`: this is `bandPen`. -/
@@ -140,14 +154,13 @@ def shifts (d : Nat) : List Int := (List.range (2 * d + 1)).map fun (i : Nat) =>
 /-- One chromosome. -/
 def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (gbs : Array ByteArray)
     (c P Ls : Nat) (ps : Array Pp) (ord : List Nat) (b : Best) : Best :=
-  let G := gbs[c]!
-  let lim := min P 15
-  let r1 := phase1 ix R G c P lim Ls ps ord [] [] b
+  let lim := min P 16
+  let r1 := phase1 ix R gbs c P lim Ls ps ord [] [] b
   let b1 := r1.1
   let acc := r1.2.1
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageK R G c lim ((shapesAt Q1).filter (· != (0, 0)))
+      stageK R gbs c lim ((shapesAt Q1).filter (· != (0, 0)))
         (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
