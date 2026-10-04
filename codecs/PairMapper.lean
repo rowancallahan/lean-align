@@ -2,17 +2,21 @@ import FastMapper
 import PairSpec
 
 /-!
-# Both strands and proper pairs for the fast mapper — PROOF SKELETON (work in progress)
+# Codec `pairFast`: both strands and proper pairs, through the proved fast mapper
 
-Top theorems are proved here FROM the `sorry` lemmas below; each `sorry` lemma is
-an independent task.  When a lemma is proved it moves to `pool/mapper/` and the
-`sorry` disappears.  Nothing in this file is counted as proved until no `sorry`
-is left (`scripts/check.sh` does not scan `wip/`).
+The read and its reverse complement are each mapped by the proved fast mapper
+(`mapChroms`, whose `Best` carries the proved `Inv`); `combineBest` keeps the
+strictly better strand (equal penalties on the two strands tie → unmapped).
+`pairFast` maps mate 1, skips mate 2 when mate 1 is unmapped, and keeps the pair
+only if `properPair` holds.  Against the DRAFT spec `spec/PairSpec.lean`
+(Rowan to review): fast path (`fastOk`, 100–103 letters), scoring `sc0`, T = −12.
 
-Design: run the proved fast mapper once on the read and once on its reverse
-complement (each gives a `Best` with its proved `Inv`), then `combineBest`.
-(The joint, interleaved strand search is a later speed step with the same
-`combineBest` interface.)
+    GenomeBytes gbs g → Encodes R read → LookAll lk gbs idxs → fastOk R →
+      mapFastBoth lk gbs idxs R = mapSpecBoth sc0 (-12) g read      (mapFastBoth_eq_mapSpecBoth)
+    … → pairFast lk lo hi gbs idxs R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2   (pairFast_eq_pairSpec)
+
+Strands are searched one after the other here; the joint (interleaved) search
+is a later speed step behind the same `combineBest`.
 -/
 
 namespace MapSpec.Fast
@@ -52,7 +56,7 @@ def pairFast {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (lo hi : N
     | some b => if properPair lo hi a.1 b.1 then some (a, b) else none
     | none => none
 
-/-! ## Lemmas (each `sorry` is one task) -/
+/-! ## Lemmas -/
 
 theorem complB_toNat_all : ∀ n, n < 256 →
     (complB n.toUInt8).toNat = (complement (Char.ofNat n)).toNat := by
@@ -71,7 +75,7 @@ theorem revCompB_size_aux (R : ByteArray) : (revCompB R).size = R.size := by
   simp
 
 
-/-- TASK L1: byte reverse complement encodes the list reverse complement. -/
+/-- byte reverse complement encodes the list reverse complement. -/
 theorem revCompB_encodes (R : ByteArray) (read : List Char) (h : Encodes R read) :
     Encodes (revCompB R) (revComp read) := by
   obtain ⟨hs, he⟩ := h
@@ -90,7 +94,7 @@ theorem revCompB_encodes (R : ByteArray) (read : List Char) (h : Encodes R read)
   simp only [hRs]; exact key
 
 
-/-- TASK L2: size is kept. -/
+/-- size is kept. -/
 theorem revCompB_size (R : ByteArray) : (revCompB R).size = R.size :=
   revCompB_size_aux R
 
@@ -160,7 +164,7 @@ theorem strandScore_allWindows (g : Genome) (read : List Char) (st : Strand) (w 
   apply (mem_allWindows g w).2
   cases st <;> (unfold strandScore windowScore at h; cases hw : windowSeq g w <;> simp_all)
 
-/-- TASK L3: `mapSpecBoth` is the unique best placement over both strands
+/-- `mapSpecBoth` is the unique best placement over both strands
 (the analogue of `mapSpec_iff` in codecs/FastMapper.lean). -/
 theorem mapSpecBoth_iff (g : Genome) (read : List Char) (p : Placement) (s : Int) :
     mapSpecBoth sc0 (-12) g read = some (p, s) ↔
@@ -184,7 +188,17 @@ theorem mapSpecBoth_iff (g : Genome) (read : List Char) (p : Placement) (s : Int
     rw [mem_hitsBoth_sc0] at hb
     exact h3 p' s' hb.2.1 hb.2.2
 
-/-- TASK L4: `combineBest` of two strands' bests (each with its proved `Inv`
+/-- With `Inv` covering every window of penalty ≤ 12 and `amb = false`, the best
+window is strictly better than every other window of penalty ≤ 12. -/
+theorem inv_amb_false (cw : Window → Nat) (S : Window → Prop) (b : Best) (h : Inv cw S b)
+    (hall : ∀ w, cw w ≤ 12 → S w) (hp : b.pen ≤ 12) (ha : b.amb = false) (w : Window)
+    (hw : cw w ≤ 12) (hne : w ≠ b.win) : b.pen < cw w := by
+  rcases Nat.lt_or_eq_of_le (h.min w (hall w hw)) with h2 | h2
+  · exact h2
+  · have := (h.amb hp).mpr ⟨w, hall w hw, hne, h2.symm⟩
+    rw [ha] at this; cases this
+
+/-- `combineBest` of two strands' bests (each with its proved `Inv`
 covering every window of penalty ≤ 12) is the unique best placement. -/
 theorem combineBest_spec (cwf cwr : Window → Nat) (Sf Sr : Window → Prop) (bf br : Best)
     (hf : Inv cwf Sf bf) (hr : Inv cwr Sr br)
@@ -194,7 +208,103 @@ theorem combineBest_spec (cwf cwr : Window → Nat) (Sf Sr : Window → Prop) (b
     combineBest bf br = some (p, s) ↔
       (cw p.2 p.1 ≤ 12 ∧ s = -(cw p.2 p.1 : Int)) ∧
       ∀ p', cw p'.2 p'.1 ≤ 12 → p' ≠ p → cw p.2 p.1 < cw p'.2 p'.1 := by
-  sorry
+  obtain ⟨w, st⟩ := p
+  unfold combineBest
+  constructor
+  · intro hc
+    split at hc
+    · next hlt =>
+      split at hc
+      · next hc2 =>
+        replace hc2 : bf.pen ≤ 12 ∧ bf.amb = false := by
+          simp only [Bool.and_eq_true, Bool.not_eq_true'] at hc2; exact ⟨of_decide_eq_true hc2.1, hc2.2⟩
+        simp only [Option.some.injEq, Prod.mk.injEq] at hc
+        obtain ⟨⟨rfl, rfl⟩, rfl⟩ := hc
+        have hh := hf.hit hc2.1
+        simp only [hcwf, hh]
+        refine ⟨⟨hc2.1, by simp⟩, ?_⟩
+        rintro ⟨w', st'⟩ h1 h2
+        cases st' with
+        | fwd =>
+          simp only [hcwf] at h1 ⊢
+          exact inv_amb_false cwf Sf bf hf hallf hc2.1 hc2.2 w' h1 (fun e => h2 (by rw [e]))
+        | rev =>
+          simp only [hcwr] at h1 ⊢
+          have := hr.min w' (hallr w' h1)
+          omega
+      · cases hc
+    · split at hc
+      · next hge hlt =>
+        split at hc
+        · next hc2 =>
+          replace hc2 : br.pen ≤ 12 ∧ br.amb = false := by
+            simp only [Bool.and_eq_true, Bool.not_eq_true'] at hc2; exact ⟨of_decide_eq_true hc2.1, hc2.2⟩
+          simp only [Option.some.injEq, Prod.mk.injEq] at hc
+          obtain ⟨⟨rfl, rfl⟩, rfl⟩ := hc
+          have hh := hr.hit hc2.1
+          simp only [hcwr, hh]
+          refine ⟨⟨hc2.1, by simp⟩, ?_⟩
+          rintro ⟨w', st'⟩ h1 h2
+          cases st' with
+          | rev =>
+            simp only [hcwr] at h1 ⊢
+            exact inv_amb_false cwr Sr br hr hallr hc2.1 hc2.2 w' h1 (fun e => h2 (by rw [e]))
+          | fwd =>
+            simp only [hcwf] at h1 ⊢
+            have := hf.min w' (hallf w' h1)
+            omega
+        · cases hc
+      · cases hc
+  · rintro ⟨⟨h1, rfl⟩, h3⟩
+    cases st with
+    | fwd =>
+      simp only [hcwf] at h1 ⊢
+      have hmin := hf.min w (hallf w h1)
+      have hp : bf.pen ≤ 12 := by omega
+      have hbw : bf.win = w := by
+        apply Classical.byContradiction
+        intro hne
+        have := h3 (bf.win, .fwd) (by simp only [hcwf, hf.hit hp]; omega)
+          (fun e => hne (by cases e; rfl))
+        simp only [hcwf, hf.hit hp] at this; omega
+      have hpen : bf.pen = cwf w := by rw [← hbw, hf.hit hp]
+      have hamb : bf.amb = false := by
+        cases ha : bf.amb
+        · rfl
+        · obtain ⟨w', _, hne, he⟩ := (hf.amb hp).mp ha
+          have := h3 (w', .fwd) (by simp only [hcwf]; omega)
+            (fun e => hne (by cases e; exact hbw.symm))
+          simp only [hcwf] at this; omega
+      have hlt : bf.pen < br.pen := by
+        by_cases hq : br.pen ≤ 12
+        · have := h3 (br.win, .rev) (by simp only [hcwr, hr.hit hq]; omega) (fun e => by cases e)
+          simp only [hcwr, hcwf, hr.hit hq] at this; omega
+        · omega
+      rw [if_pos hlt, if_pos (by simp [cap, hamb, hp]), hbw, hpen]
+    | rev =>
+      simp only [hcwr] at h1 ⊢
+      have hmin := hr.min w (hallr w h1)
+      have hp : br.pen ≤ 12 := by omega
+      have hbw : br.win = w := by
+        apply Classical.byContradiction
+        intro hne
+        have := h3 (br.win, .rev) (by simp only [hcwr, hr.hit hp]; omega)
+          (fun e => hne (by cases e; rfl))
+        simp only [hcwr, hr.hit hp] at this; omega
+      have hpen : br.pen = cwr w := by rw [← hbw, hr.hit hp]
+      have hamb : br.amb = false := by
+        cases ha : br.amb
+        · rfl
+        · obtain ⟨w', _, hne, he⟩ := (hr.amb hp).mp ha
+          have := h3 (w', .rev) (by simp only [hcwr]; omega)
+            (fun e => hne (by cases e; exact hbw.symm))
+          simp only [hcwr] at this; omega
+      have hlt : br.pen < bf.pen := by
+        by_cases hq : bf.pen ≤ 12
+        · have := h3 (bf.win, .fwd) (by simp only [hcwf, hf.hit hq]; omega) (fun e => by cases e)
+          simp only [hcwf, hcwr, hf.hit hq] at this; omega
+        · have := hf.le13; omega
+      rw [if_neg (by omega), if_pos hlt, if_pos (by simp [cap, hamb, hp]), hbw, hpen]
 
 /-! ## Top theorems (proved from the lemmas above) -/
 
@@ -251,3 +361,6 @@ theorem pairFast_eq_pairSpec {L P : Type} [Inhabited L] [Inhabited P] (lk : Look
   cases mapSpecBoth sc0 (-12) g m1 <;> cases mapSpecBoth sc0 (-12) g m2 <;> rfl
 
 end MapSpec.Fast
+
+#print axioms MapSpec.Fast.mapFastBoth_eq_mapSpecBoth
+#print axioms MapSpec.Fast.pairFast_eq_pairSpec
