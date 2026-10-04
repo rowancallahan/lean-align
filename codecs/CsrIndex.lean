@@ -38,11 +38,12 @@ namespace MapSpec
   ((((B.set! j v.toUInt8).set! (j + 1) (v >>> 8).toUInt8).set! (j + 2) (v >>> 16).toUInt8).set!
     (j + 3) (v >>> 24).toUInt8)
 
-/-- `n` zero bytes. -/
+/-- `n` zero bytes (by doubling, so `memcpy` does the work). -/
 def zeroBytes (n : Nat) : ByteArray := Id.run do
-  let mut B := ByteArray.emptyWithCapacity n
-  for _ in [0:n] do B := B.push 0
-  return B
+  let mut B := ByteArray.mk (Array.replicate 4096 0)
+  for _ in [0:64] do
+    if B.size < n then B := B ++ B
+  return B.extract 0 n
 
 structure CsrIndex where
   l0 : Nat
@@ -52,6 +53,7 @@ structure CsrIndex where
   offs : ByteArray
   /-- LE `UInt32` global coordinates -/
   pos : ByteArray
+deriving Inhabited
 
 /-- Largest `c` in `lo ..< hi` with `starts[c] ≤ x` (binary search, fuel-bounded). -/
 def locateAux (starts : Array Nat) (x : Nat) : (fuel lo hi : Nat) → Nat
@@ -63,7 +65,7 @@ def locateAux (starts : Array Nat) (x : Nat) : (fuel lo hi : Nat) → Nat
       if starts[mid]! ≤ x then locateAux starts x fuel mid hi else locateAux starts x fuel lo mid
 
 /-- Global coordinate ↦ (chromosome, start). -/
-def locate (starts : Array Nat) (x : Nat) : Nat × Nat :=
+@[inline] def locate (starts : Array Nat) (x : Nat) : Nat × Nat :=
   let c := locateAux starts x 64 0 starts.size
   (c, x - starts[c]!)
 
@@ -93,33 +95,47 @@ def chromStarts (gb : ByteGenome) : Array Nat := Id.run do
     x := x + bc.bytes.size
   return s
 
+@[inline] def bumpU32 (B : ByteArray) (i : Nat) : ByteArray := setU32 B i (getU32 B i + 1)
+
+/-- Count the words at places `p .. p+k` into slot `h+1` (`h` rolling). -/
+def countRun (B : ByteArray) (l0 M : Nat) (offs : ByteArray) : (k p h : Nat) → ByteArray
+  | 0, _, h => bumpU32 offs (h + 1)
+  | k + 1, p, h =>
+    countRun B l0 M (bumpU32 offs (h + 1)) k (p + 1) ((h * 4 + byteCode (B.get! (p + l0))) % M)
+
+/-- Place the words at `p .. p+k` (global coordinate `base + p`) into their buckets. -/
+def fillRun (B : ByteArray) (l0 M base : Nat) (fill pos : ByteArray) :
+    (k p h : Nat) → ByteArray × ByteArray
+  | 0, p, h =>
+    let t := getU32 fill h
+    (setU32 fill h (t + 1), setU32 pos t (base + p))
+  | k + 1, p, h =>
+    let t := getU32 fill h
+    fillRun B l0 M base (setU32 fill h (t + 1)) (setU32 pos t (base + p)) k (p + 1)
+      ((h * 4 + byteCode (B.get! (p + l0))) % M)
+
+def prefixSum (offs : ByteArray) : (k h : Nat) → ByteArray
+  | 0, _ => offs
+  | k + 1, h => prefixSum (setU32 offs (h + 1) (getU32 offs (h + 1) + getU32 offs h)) k (h + 1)
+
 def buildCsr (l0 : Nat) (gb : ByteGenome) : CsrIndex := Id.run do
+  assert! 0 < l0
   let M := 4 ^ l0
   let starts := chromStarts gb
-  -- counts in slot h+1
   let mut offs := zeroBytes (4 * (M + 1))
   let mut total := 0
   for bc in gb do
     let B := bc.bytes
     if l0 ≤ B.size then
-      let mut h := initCode B l0
-      for p in [0:B.size + 1 - l0] do
-        if p > 0 then h := (h * 4 + byteCode (B.get! (p - 1 + l0))) % M
-        offs := setU32 offs (h + 1) (getU32 offs (h + 1) + 1)
-        total := total + 1
-  for h in [0:M] do
-    offs := setU32 offs (h + 1) (getU32 offs (h + 1) + getU32 offs h)
+      offs := countRun B l0 M offs (B.size - l0) 0 (initCode B l0)
+      total := total + (B.size + 1 - l0)
+  offs := prefixSum offs M 0
   let mut fill := offs
   let mut pos := zeroBytes (4 * total)
   for c in [0:gb.size] do
     let B := gb[c]!.bytes
     if l0 ≤ B.size then
-      let mut h := initCode B l0
-      for p in [0:B.size + 1 - l0] do
-        if p > 0 then h := (h * 4 + byteCode (B.get! (p - 1 + l0))) % M
-        let t := getU32 fill h
-        pos := setU32 pos t (starts[c]! + p)
-        fill := setU32 fill h (t + 1)
+      (fill, pos) := fillRun B l0 M starts[c]! fill pos (B.size - l0) 0 (initCode B l0)
   return { l0, starts, offs, pos }
 
 /-! ### Checker -/
@@ -127,7 +143,8 @@ def buildCsr (l0 : Nat) (gb : ByteGenome) : CsrIndex := Id.run do
 /-- Place `(c, p)`, whose word has code `h`, is the entry `inv[p]` of bucket `h`. -/
 @[inline] def checkAt (idx : CsrIndex) (c : Nat) (inv : ByteArray) (p h : Nat) : Bool :=
   let t := getU32 inv p
-  decide (idx.lo h ≤ t) && decide (t < idx.hi h) && decide (idx.entry t = (c, p))
+  let e := idx.entry t
+  decide (idx.lo h ≤ t) && decide (t < idx.hi h) && decide (e.1 = c) && decide (e.2 = p)
 
 /-- `checkAt` at places `p .. p+k` of one chromosome, rolling the code `h`. -/
 def verifyRun (idx : CsrIndex) (c : Nat) (B inv : ByteArray) (M : Nat) : (k p h : Nat) → Bool
@@ -145,13 +162,15 @@ def verifyChrom (idx : CsrIndex) (c : Nat) (B inv : ByteArray) : Bool :=
 def verifyIndex (idx : CsrIndex) (gb : ByteGenome) (invs : Array ByteArray) : Bool :=
   decide (0 < idx.l0) && (List.range gb.size).all fun c => verifyChrom idx c gb[c]!.bytes invs[c]!
 
+def inverseRun (idx : CsrIndex) (invs : Array ByteArray) : (k t : Nat) → Array ByteArray
+  | 0, _ => invs
+  | k + 1, t =>
+    let e := idx.entry t
+    inverseRun idx (invs.modify e.1 fun inv => setU32 inv e.2 t) k (t + 1)
+
 /-- Inverse positions from the index itself (not trusted). -/
-def inversePositions (idx : CsrIndex) (gb : ByteGenome) : Array ByteArray := Id.run do
-  let mut invs : Array ByteArray := gb.map fun bc => zeroBytes (4 * bc.bytes.size)
-  for t in [0:idx.pos.size / 4] do
-    let (c, p) := idx.entry t
-    invs := invs.modify c fun inv => setU32 inv p t
-  return invs
+def inversePositions (idx : CsrIndex) (gb : ByteGenome) : Array ByteArray :=
+  inverseRun idx (gb.map fun bc => zeroBytes (4 * bc.bytes.size)) (idx.pos.size / 4) 0
 
 def checkIndex (idx : CsrIndex) (gb : ByteGenome) : Bool :=
   verifyIndex idx gb (inversePositions idx gb)
@@ -190,7 +209,7 @@ end CsrIndex
 theorem checkAt_spec (idx : CsrIndex) (c : Nat) (inv : ByteArray) (p h : Nat)
     (hc : checkAt idx c inv p h = true) : idx.InBucket h c p := by
   simp only [checkAt, Bool.and_eq_true, decide_eq_true_eq] at hc
-  exact ⟨_, hc.1.1, hc.1.2, hc.2⟩
+  exact ⟨_, hc.1.1.1, hc.1.1.2, Prod.ext hc.1.2 hc.2⟩
 
 theorem verifyRun_spec (idx : CsrIndex) (c : Nat) (B inv : ByteArray) (M : Nat)
     (hM : M = 4 ^ idx.l0) (hl : 0 < idx.l0) :

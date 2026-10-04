@@ -12,24 +12,29 @@ corrupted index is rejected.  Prints times, file size and peak RSS.
 
 open MapSpec
 
+/-- First `\n` at or after `i` (or `raw.size`). -/
+def nextNL (raw : ByteArray) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  while j < raw.size && raw.get! j != 10 do j := j + 1
+  return j
+
 def readFasta (path : String) : IO ByteGenome := do
   let raw ← IO.FS.readBinFile path
   let mut gb : ByteGenome := #[]
   let mut name := ""
-  let mut cur := ByteArray.emptyWithCapacity raw.size
+  let mut cur := ByteArray.empty
   let mut i := 0
   while i < raw.size do
-    let b := raw.get! i
-    if b == 62 then  -- '>'
+    let j := nextNL raw i
+    if raw.get! i == 62 then  -- '>'
       if name != "" then gb := gb.push { name, bytes := cur }
-      let mut j := i + 1
-      while raw.get! j != 10 do j := j + 1
       name := String.fromUTF8! (raw.extract (i + 1) j)
+      assert! name != ""
       cur := ByteArray.emptyWithCapacity (raw.size - j)
-      i := j + 1
     else
-      if b != 10 then cur := cur.push b
-      i := i + 1
+      assert! name != ""
+      cur := raw.copySlice i cur cur.size (j - i)
+    i := j + 1
   assert! name != ""
   return gb.push { name, bytes := cur }
 
@@ -55,18 +60,28 @@ def saveIndex (path : String) (idx : CsrIndex) : IO Unit := do
     h.write idx.offs
     h.write idx.pos
 
+def readExact (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
+  let mut B := ByteArray.emptyWithCapacity n
+  while B.size < n do
+    let chunk ← h.read (min (n - B.size) (1 <<< 26)).toUSize
+    assert! chunk.size > 0
+    B := B ++ chunk
+  return B
+
 def loadIndex (path : String) : IO CsrIndex := do
-  let B ← IO.FS.readBinFile path
-  assert! B.extract 0 4 == "CSR1".toUTF8
-  let l0 := rd64 B 4
-  let n := rd64 B 12
-  let starts := (Array.range n).map fun c => rd64 B (20 + 8 * c)
-  let o := 20 + 8 * n
-  let no := rd64 B o
-  let np := rd64 B (o + 8)
-  let o := o + 16
-  assert! B.size == o + no + np
-  return { l0, starts, offs := B.extract o (o + no), pos := B.extract (o + no) (o + no + np) }
+  IO.FS.withFile path .read fun h => do
+    let hd ← readExact h 20
+    assert! hd.extract 0 4 == "CSR1".toUTF8
+    let l0 := rd64 hd 4
+    let n := rd64 hd 12
+    let sb ← readExact h (8 * n + 16)
+    let starts := (Array.range n).map fun c => rd64 sb (8 * c)
+    let no := rd64 sb (8 * n)
+    let np := rd64 sb (8 * n + 8)
+    let offs ← readExact h no
+    let pos ← readExact h np
+    assert! (← h.read 1).size == 0
+    return { l0, starts, offs, pos }
 
 def secs (t0 t1 : Nat) : Float := Float.ofNat (t1 - t0) / 1e9
 
@@ -103,7 +118,8 @@ def main (args : List String) : IO UInt32 := do
   let same ← timed "compare" fun t => idx2.l0 == idx.l0 + (if t == 1 then 1 else 0) &&
     idx2.starts == idx.starts && idx2.offs == idx.offs && idx2.pos == idx.pos
   assert! same
-  let ok ← timed "check" fun t => checkIndex (if t == 1 then idx else idx2) gb
+  let invs ← timed "inverse" fun t => inversePositions (if t == 1 then idx else idx2) gb
+  let ok ← timed "verify" fun t => verifyIndex (if t == 1 then idx else idx2) gb invs
   IO.println s!"check: {ok}"
   assert! ok
   -- a corrupted index must be rejected: entry 0 overwritten by entry 1
