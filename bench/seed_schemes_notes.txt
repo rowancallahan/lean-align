@@ -3,6 +3,9 @@ Seed / sketch schemes for the proved mapper: minimizers, syncmers, variable-leng
 Branch speed/seed-schemes.  Lean: pool/mapper/MapperSketch.lean, codecs/SketchMapper.lean.
 Prototype (unproved): bench/ProtoSketch.lean (lake exe proto_sketch), sweep bench/seed_schemes.sh.
 
+No web reading was done for this work; literature claims are from memory and marked
+"TO VERIFY ONLINE".  All numbers in section 3 are measured here.
+
 Question: can the index hold fewer positions than "every 25-mer" and still be provably
 complete (every window scoring >= T is reached from some seed hit)?  Short answer: yes.
 Any (w,k) minimizer scheme with w + k - 1 <= 25, and any closed (k,s) syncmer scheme with
@@ -103,20 +106,21 @@ speed/fast-proved).
   * More, shorter seeds: j segments of ⌊n/j⌋ letters give ≥ j − 3 clean ones (5 × 20 → 2
     clean; 8 × 12 → 5).  This allows L ≤ 20 with a "≥ 2 hits on a diagonal" filter
     (q-gram-lemma style), at more lookups per read.
-  * Index size: density ≈ 2/(w+1) for a random order: (19,7) 0.25, (17,9) 0.20, (15,11)
+  * Index size: density ≈ 2/(w+1) for a random order [literature value, TO VERIFY ONLINE; matches the measured numbers here]: (19,7) 0.25, (17,9) 0.20, (15,11)
     0.17, (13,13) 0.14 per ACGT base (measured 0.24/0.19/0.16/0.14, every-25-mer 0.95).
     Lookup cost is unchanged in count (one per seed).  Shorter k means more repeat
     occurrences of the k-mer outside the 25-mer context, i.e. more bucket entries per
     lookup (table, "key matches" vs "verified").
   * Order: free for correctness (proved for all ord).  Low-density orders (decycling-based,
-    miniception, mod-minimizer) would cut density a further ~10-25% at these w; not
-    implemented.  A frequency-weighted order (k-mers of crowded buckets last, kind 4)
+    miniception, mod-minimizer) would cut density a further ~10-25% at these w [from memory,
+    TO VERIFY ONLINE]; not implemented.  A frequency-weighted order (k-mers of crowded buckets last, kind 4)
     cuts bucket entries per lookup, see table.
 
 (2) Syncmers / skipmers.  Closed syncmers are context-free, so every syncmer inside a clean
   seed is conserved.  The mapper can therefore pick ANY of them (smallest bucket, or best
   context cover).  Window guarantee: 2k − s − 1 letters (proved), so (15,4), (17,8), (19,12)
-  and (21,16) all give L = 25.  Density ≈ 2/(k − s + 1).  Proofs are NOT easier than
+  and (21,16) all give L = 25.  Density ≈ 2/(k − s + 1) [literature value, TO VERIFY ONLINE;
+  measured 0.27/0.21/0.17/0.15 per base here].  Proofs are NOT easier than
   minimizers: minimizers need no lemma at all, syncmers need the hitting lemma.  Being
   context-free buys choice among several conserved keys.  Minimizers with w + k − 1 < 25
   give the same choice, because every window inside the seed is conserved.
