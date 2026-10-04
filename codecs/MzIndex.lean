@@ -4,26 +4,29 @@ import MapperMzWords              -- pool: word codes, hash bijection, loops
 /-!
 # Codec `MzIndex`: minimizer index of 25-letter seeds, certified by a checker
 
-Memory: only the *minimizer place* of each ACGT 25-letter window is indexed
-(0.34 / 0.41 / 0.51 of the places for `k = 21 / 22 / 23` on chr1 and chr21),
-one 8-byte slot per indexed place (place and tag, kept as the bits of a
-`Float` in a `FloatArray`), so 2.7–4.1 bytes per letter plus the bucket
-offsets, instead of 8–16.  A lookup reads one bucket and never the genome
-(except near non-ACGT letters).
+Memory: only the *minimizer place* of each ACGT 25-letter window is indexed, one
+`sw`-byte slot (place and tag) per indexed place plus 4 bytes per bucket.  Plain
+minimizers (`t = k`) index 0.34 / 0.41 / 0.51 of the places for `k = 21 / 22 / 23`;
+mod-minimizers (`t ≡ k mod w`, `mini`) fewer (`k = 22, t = 6`: 0.29; `k = 17, t = 8`: 0.16).
+Measured (chr1, 249 M letters, `pair_bench`): `k = 22`, 8-byte slots with full context
+3.28 bytes/letter; `k = 22, t = 6`, 4-byte slots, `c = 0`: 1.20–1.34; `k = 17, t = 8`,
+4-byte slots: 0.74.  A lookup reads one bucket; it reads the genome for a candidate
+entry only where the stored context and key do not decide the seed.
 
-* Seed code `v = wc R s 25`.  `mini ix v` = leftmost offset `o < w`
-  (`w = 26 - k`) minimizing `hsh` (a bijection on `[0, 4^k)`) of the k-word
-  at `o` — a function of the seed's letters only.  Every place `p` where an
+* Seed code `v = wc R s 25`.  `mini ix v` = offset `o < w` (`w = 26 - k`)
+  of the minimizer: `x mod w` for the leftmost t-word at `x` of least hash
+  — a function of the seed's letters only.  Every place `p` where an
   ACGT seed occurs thus has its minimizer place `p + o` indexed (`checkComp`).
 * Buckets: CSR over `h >>> kb` (`2^B` buckets, `offs` = LE `UInt32`s),
-  `h = hsh (k-word)`, `kb = 2k - B`.  Slot = `pos · 2^T + tag`, tag fields:
-  `key = h mod 2^kb`, `bef`/`aft` = codes of the `w-1` letters before/after
-  the k-word, `flag` (0 when those letters are ACGT inside the chromosome).
+  `h = hsh (k-word)`, `kb = 2k - B`.  Slot = `pos · 2^T + tag` (`sw` LE bytes), tag
+  fields: `key = h mod 2^kf` (`kf ≤ kb`, as many bits as fit), `bef`/`aft` = codes
+  of the `c ≤ w-1` letters before/after the k-word, `flag` (0 when those letters
+  are ACGT inside the chromosome).
 * Lookup of an ACGT seed: entries of bucket `h >>> kb` whose key equals
-  `h mod 2^kb` (so the k-word equals the seed's, by the bijection), whose
-  last `o` letters of `bef` equal the seed's first `o` letters and whose
-  first `w-1-o` letters of `aft` equal the seed's last ones; flagged
-  entries are compared with the genome instead.  A seed with another
+  `h mod 2^kf` (when `kf = kb` the k-word equals the seed's, by the bijection),
+  whose stored context letters equal the seed's; flagged entries are compared
+  with the genome instead, and so are the seed letters the `c` context letters
+  do not cover, and the k-word itself when `kf < kb`.  A seed with another
   letter is looked up through the maximal runs of non-ACGT letters (`runs`):
   its first such letter, if not its first letter, is where a run starts;
   else its first ACGT letter is where a run ends; else it lies in a run.

@@ -21,6 +21,8 @@ answers identical to the hashed index and the prototype):
     minimizer k=21 B=22   119.1 MB     176k
     minimizer k=22 B=22   140.7 MB     170k–199k    313k reads/s
     minimizer k=23 B=24   223.4 MB     204k
+    k=22 B=23, mod-minimizer t=6, 4-byte slots, c=0
+                          77.4 MB      347k (k=22 B=24 8-byte full context: 191.0 MB, 365k)
 
 `Mz.check2` (= `Mz.check`, rolling completeness pass, `codecs/MzCheckFast.lean`) 17 s
 (`Mz.check` 27–34 s), `Mz.build` 33–39 s.
