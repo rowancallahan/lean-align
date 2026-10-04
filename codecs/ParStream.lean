@@ -25,6 +25,11 @@ namespace ParMap
 def formatAll {β : Type} (fmt : β → String) (ys : Array β) : String :=
   String.join (ys.toList.map fmt)
 
+/-- The bytes handed to the writer: the UTF-8 bytes of each text, appended
+in order. -/
+def bytesOf (texts : List String) : ByteArray :=
+  texts.foldl (fun acc s => acc ++ s.toUTF8) ByteArray.empty
+
 /-- The text of batch `t`, mapped. -/
 def chunkText {α β : Type} (b : Nat) (f : α → β) (fmt : β → String) (xs : Array α) (t : Nat) : String :=
   formatAll fmt ((batch b xs t).map f)
@@ -58,6 +63,12 @@ end ParMap
     (∀ r, f r = mapSpec sc T g r) →
     String.join ((streamTasks w b f fmt reads).toList.map Task.get)
       = formatAll fmt (reads.map (mapSpec sc T g))                 (streamTasks_text_mapSpec)
+
+    bytesOf ((streamTasks w b f fmt xs).toList.map Task.get) = (formatAll fmt (xs.map f)).toUTF8
+                                                                   (streamTasks_bytes)
+    (∀ r, f r = mapSpec sc T g r) →
+    bytesOf ((streamTasks w b f fmt reads).toList.map Task.get)
+      = (formatAll fmt (reads.map (mapSpec sc T g))).toUTF8        (streamTasks_bytes_mapSpec)
 
 For every number of workers, batch size (0 included), function and format. -/
 
@@ -111,6 +122,22 @@ theorem streamTasks_text {α β : Type} (w b : Nat) (f : α → β) (fmt : β �
     simp [numBatches, Nat.max_def]; split <;> simp_all
   rw [Array.extract_eq_self_of_le (h ▸ size_le_numBatches b xs.size)]
 
+theorem foldl_toUTF8 (init : ByteArray) (l : List String) :
+    l.foldl (fun acc s => acc ++ s.toUTF8) init = init ++ (String.join l).toUTF8 := by
+  induction l generalizing init with
+  | nil => simp
+  | cons s l ih =>
+    rw [List.foldl_cons, ih, String.join_cons, String.toUTF8, String.toUTF8, String.toUTF8,
+      String.toByteArray_append, ByteArray.append_assoc]
+
+theorem bytesOf_eq (l : List String) : bytesOf l = (String.join l).toUTF8 := by
+  rw [bytesOf, foldl_toUTF8, ByteArray.empty_append]
+
+/-- **The bytes handed to the writer are the bytes of the whole mapped input's text.** -/
+theorem streamTasks_bytes {α β : Type} (w b : Nat) (f : α → β) (fmt : β → String) (xs : Array α) :
+    bytesOf ((streamTasks w b f fmt xs).toList.map Task.get) = (formatAll fmt (xs.map f)).toUTF8 := by
+  rw [bytesOf_eq, streamTasks_text]
+
 end ParMap
 
 namespace MapSpec
@@ -127,7 +154,18 @@ theorem streamTasks_text_mapSpec (w b : Nat) (sc : Scoring) (T : Int) (g : Genom
   rw [streamTasks_text]
   exact congrArg _ (Array.map_congr_left (fun r _ => hf r))
 
+/-- **Streamed bytes of any per-read function equal to `mapSpec`** are the
+bytes of the text of the specification's answers. -/
+theorem streamTasks_bytes_mapSpec (w b : Nat) (sc : Scoring) (T : Int) (g : Genome)
+    (f : List Char → Option (Window × Int)) (hf : ∀ read, f read = mapSpec sc T g read)
+    (fmt : Option (Window × Int) → String) (reads : Array (List Char)) :
+    bytesOf ((streamTasks w b f fmt reads).toList.map Task.get) =
+      (formatAll fmt (reads.map (mapSpec sc T g))).toUTF8 := by
+  rw [bytesOf_eq, streamTasks_text_mapSpec w b sc T g f hf]
+
 end MapSpec
 
 #print axioms ParMap.streamTasks_text
+#print axioms ParMap.streamTasks_bytes
 #print axioms MapSpec.streamTasks_text_mapSpec
+#print axioms MapSpec.streamTasks_bytes_mapSpec
