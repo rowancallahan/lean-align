@@ -28,7 +28,7 @@ Why each step is exact:
   under the cap, read off the first two / last two mismatches (`gappedPen`).
 * Pigeonhole: a seed looked up but not clean at an anchor costs ≥ 1 mismatch;
   after k seeds are looked up, any window none of whose clean seeds was looked
-  up costs ≥ 4k (`mapCore`), so lookups stop once 4k > best; gapped windows
+  up costs ≥ 4k (`mapStreams`), so lookups stop once 4k > best; gapped windows
   (≥ 8) are only scored when best ≥ 8 and only near diagonals carrying ≥ 2
   clean seeds (≥ 3 when the bound is < 10).
 -/
@@ -285,7 +285,7 @@ partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
 /-- Gapped windows near the anchors `as` with penalty ≤ min(b.pen, cap).  They cost
 ≥ 8 and their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9); supports come
 from the masks and, for seeds not looked up, the genome. -/
-def gappedStage (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q : Nat) (as : Array Nat) (looked : Nat) (b : Best) : Best := Id.run do
+def gappedStage (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q : Nat) (as : Array Nat) (looked tag : Nat) (b : Best) : Best := Id.run do
   let n := r.size
   let mut b := b
   for i in [0:as.size] do
@@ -297,14 +297,14 @@ def gappedStage (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q
       let sp := supAt idx vs plain r g q as looked i (A + L)
       -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
       if c + sp ≥ need && A ≥ BIAS && A - BIAS + n + L ≤ g.size then
-        b := b.add (A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
+        b := b.add (tag + A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
       if c + sm ≥ need && A ≥ BIAS && A - BIAS + n - L ≤ g.size then
-        b := b.add (A - BIAS) (n - L) (gappedPen r g (A - BIAS) (n - L) (min b.pen cap))
+        b := b.add (tag + A - BIAS) (n - L) (gappedPen r g (A - BIAS) (n - L) (min b.pen cap))
       -- (A-L, n+L) and (A+L, n-L) end on A: gap before the seed
       if c + sm ≥ need && A ≥ BIAS + L && A - BIAS + n ≤ g.size then
-        b := b.add (A - BIAS - L) (n + L) (gappedPen r g (A - BIAS - L) (n + L) (min b.pen cap))
+        b := b.add (tag + A - BIAS - L) (n + L) (gappedPen r g (A - BIAS - L) (n + L) (min b.pen cap))
       if c + sp ≥ need && A - BIAS + n ≤ g.size then
-        b := b.add (A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
+        b := b.add (tag + A - BIAS + L) (n - L) (gappedPen r g (A - BIAS + L) (n - L) (min b.pen cap))
   return b
 
 /-- Anchors of `y` whose diagonal is not in `x` (both increasing). -/
@@ -317,45 +317,85 @@ partial def newOnly (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat 
     else newOnly x y i (j + 1) (acc.push y[j])
   else acc
 
-/-- Seeds are looked up one at a time, smallest bucket first.  After k seeds,
-a window none of whose clean seeds was looked up has penalty ≥ 4k (its k
-looked-up seeds are spoiled: by ≥ k mismatches, or by one gap of length L
-spoiling ≤ min(L, 2) seeds plus mismatches: 6 + 2L + 4(k - min(L, 2)) ≥ 4k),
-so the search stops once 4k > best.  Same-length windows are scored when their
-anchor first appears (later seeds cannot change their penalty); gapped ones
-only when best ≥ 8, which needs k ≥ 3. -/
-def mapCore (idx : Idx) (g r : ByteArray) (init : Best) : Best × Nat := Id.run do
-  let n := r.size
+/-- One read variant being searched (the read, or its reverse complement);
+its windows are told apart from other streams' by adding `tag` to the start. -/
+structure Strand where
+  r : ByteArray
+  vs : Array Nat
+  plain : Bool
+  sizes : Array Nat
+  order : Array Nat
+  as : Array Nat := #[]
+  looked : Nat := 0
+  k : Nat := 0          -- seeds looked up
+  tag : Nat
+deriving Inhabited
+
+def TAG : Nat := 1 <<< 40
+
+def mkStream (idx : Idx) (r : ByteArray) (tag : Nat) : Strand :=
   let q := idx.q
-  assert! n / 4 == q && n + 3 ≤ BIAS
   let vs := #[(seedCode r 0 0 q 0 0).toNat, (seedCode r q 0 q 0 0).toNat,
     (seedCode r (2 * q) 0 q 0 0).toNat, (seedCode r (3 * q) 0 q 0 0).toNat]
-  assert! vs.all (· >>> 61 == 0)
-  let plain := vs.all (· >>> 60 == 0) && n == 4 * q
   let sizes := vs.map fun v =>
     if v >>> 60 != 0 then 0 else
     let b := (mix v.toUInt64 >>> (50 - BBITS)).toNat
     (get32 idx.offs (b + 1)).toNat - (get32 idx.offs b).toNat
-  let order := #[0, 1, 2, 3].insertionSort (fun i j => sizes[i]! < sizes[j]!)
-  let mut as : Array Nat := #[]
-  let mut b : Best := init
-  let mut looked := 0
+  { r, vs, plain := vs.all (· >>> 60 == 0) && r.size == 4 * q, sizes, tag,
+    order := #[0, 1, 2, 3].insertionSort (fun i j => sizes[i]! < sizes[j]!) }
+
+/-- Look up the stream's next seed (smallest bucket first), score the
+same-length windows of its new anchors, and its gapped windows when best ≥ 8
+and ≥ 3 seeds are in. -/
+def step (idx : Idx) (g : ByteArray) (s : Strand) (b : Best) : Strand × Best := Id.run do
+  let n := s.r.size
+  let q := idx.q
+  let j := s.order[s.k]!
+  let looked := s.looked ||| (1 <<< j)
+  let lj := lookup idx g s.r j s.vs[j]!.toUInt64
+  let fresh := newOnly s.as lj 0 0 #[]
+  let as := merge s.as lj 0 0 #[]
+  let mut b := b
+  for e in fresh do
+    let A := e / 16
+    if A ≥ BIAS && A - BIAS + n ≤ g.size && !(b.pen == 0 && b.amb) then
+      let m := hamSeeds idx s.vs s.plain s.r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
+      if 4 * m ≤ cap then b := b.add (s.tag + A - BIAS) n (4 * m)
+  if s.k ≥ 2 && b.pen ≥ 8 then b := gappedStage idx s.vs s.plain s.r g q as looked s.tag b
+  return ({ s with as, looked, k := s.k + 1 }, b)
+
+/-! `mapStreams`: seeds of all streams are looked up one at a time.  After a
+stream has looked up k seeds, a window of it none of whose clean seeds was
+looked up has penalty ≥ 4k (its k looked-up seeds are spoiled: by ≥ k
+mismatches, or by one gap of length L spoiling ≤ min(L, 2) seeds plus
+mismatches: 6 + 2L + 4(k - min(L, 2)) ≥ 4k), so a stream is done once
+4k > best (shared best: windows of all streams compete).  The next lookup goes
+to the stream with fewest lookups, then smallest bucket.  Same-length windows
+are scored when their anchor first appears (later seeds cannot change their
+penalty, and best only decreases); gapped ones (≥ 8) at every lookup with
+k ≥ 3 while best ≥ 8: if the final best is ≥ 8, every stream ended with such a
+lookup, over all its anchors. -/
+def mapStreams (idx : Idx) (g : ByteArray) (rs : Array ByteArray) : Best × Nat := Id.run do
+  assert! rs.all fun r => r.size / 4 == idx.q && r.size + 3 ≤ BIAS && r.size == 4 * idx.q
+  let mut ss : Array Strand := (List.range rs.size).toArray.map fun i => mkStream idx rs[i]! (i * TAG)
+  assert! ss.all fun s => s.vs.all (· >>> 61 == 0)
+  let mut b : Best := {}
   let mut lookups := 0
-  for k in [0:4] do
-    let j := order[k]!
-    looked := looked ||| (1 <<< j)
+  for _ in [0:4 * rs.size] do
+    if b.pen == 0 && b.amb then break
+    let mut pick := ss.size
+    for i in [0:ss.size] do
+      let s := ss[i]!
+      if s.k < 4 && 4 * s.k ≤ b.pen then
+        if pick == ss.size then pick := i
+        else
+          let t := ss[pick]!
+          if s.k < t.k || (s.k == t.k && s.sizes[s.order[s.k]!]! < t.sizes[t.order[t.k]!]!) then pick := i
+    if pick == ss.size then break
+    let (s', b') := step idx g ss[pick]! b
+    ss := ss.set! pick s'
+    b := b'
     lookups := lookups + 1
-    let lj := lookup idx g r j vs[j]!.toUInt64
-    let fresh := newOnly as lj 0 0 #[]
-    as := merge as lj 0 0 #[]
-    -- same-length windows of the new anchors
-    for e in fresh do
-      let A := e / 16
-      if A ≥ BIAS && A - BIAS + n ≤ g.size && !(b.pen == 0 && b.amb) then
-        let m := hamSeeds idx vs plain r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
-        if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
-    if k ≥ 2 && b.pen ≥ 8 then b := gappedStage idx vs plain r g q as looked b
-    if 4 * (k + 1) > b.pen then break
   return (b, lookups)
 
 /-- Reverse complement (letters other than ACGT kept). -/
@@ -366,24 +406,12 @@ def revComp (r : ByteArray) : ByteArray := Id.run do
     o := o.push (if c == 65 then 84 else if c == 84 then 65 else if c == 67 then 71 else if c == 71 then 67 else c)
   return o
 
-/-- Placeholder start for "the best so far is on the other strand". -/
-def OTHER : Nat := 1 <<< 62
-
-/-- Unique best window (start, len, penalty, reverse?) and the number of seed
-lookups.  With `both`, the reverse complement is mapped too, starting from the
-forward best: a reverse window that only ties it makes the read ambiguous
-(different strand = different window), one that beats it wins.  Exact given
-that each strand's search is exact for windows with penalty ≤ its start best. -/
-def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × Nat × Bool) × Nat := Id.run do
-  let (f, kf) := mapCore idx g r {}
-  if !both then
-    return (if f.pen ≤ cap && !f.amb then some (f.st, f.len, f.pen, false) else none, kf)
-  let (b, kr) := mapCore idx g (revComp r) { f with st := OTHER, len := 0 }
-  -- b.amb covers f.amb and reverse windows tying the forward best
-  let res := if b.st == OTHER then
-      (if b.pen ≤ cap && !b.amb then some (f.st, f.len, f.pen, false) else none)
-    else (if b.pen ≤ cap && !b.amb then some (b.st, b.len, b.pen, true) else none)
-  return (res, kf + kr)
+/-- Unique best window (start, len, penalty, reverse?) over the read (and
+with `both` its reverse complement: a different strand is a different window),
+and the number of seed lookups. -/
+def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × Nat × Bool) × Nat :=
+  let (b, k) := mapStreams idx g (if both then #[r, revComp r] else #[r])
+  (if b.pen ≤ cap && !b.amb then some (b.st % TAG, b.len, b.pen, b.st ≥ TAG) else none, k)
 
 def rss : IO String := do
   let st ← IO.FS.readFile "/proc/self/status"
