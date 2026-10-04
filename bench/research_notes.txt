@@ -386,14 +386,14 @@ Two-pass 2x50 then 4x25:
 Q10. Aeneas: hot path in safe Rust, translated to Lean and proved
 -----------------------------------------------------------------
 (Written offline from memory.  Everything about Aeneas's feature set is
-TO VERIFY ONLINE.)
+TO VERIFY ONLINE [checked 2026-10-04, see Q12].)
 What Aeneas is: Charon extracts rustc MIR, and Aeneas translates SAFE Rust
 into a pure functional model in Lean 4 (also F*, Coq/Rocq, HOL4).  Mutable
 borrows become "backward functions".  Fallible operations (indexing, integer
 overflow, division) return Result, so each proof also shows no panic.  It
 has been used on production cryptographic code (SymCrypt), which suggests
-the loop and slice support is real.  TO VERIFY ONLINE.
-Supported subset (as I remember it; TO VERIFY ONLINE):
+the loop and slice support is real.  TO VERIFY ONLINE [checked 2026-10-04, see Q12].
+Supported subset (as I remember it; TO VERIFY ONLINE [checked 2026-10-04, see Q12]):
 - yes: structs/enums, generics, traits (incl. trait-bound generics), u8..u64/
   usize with checked arithmetic, arrays, slices, Vec (through a model
   library), shared and mutable borrows incl. returning mutable borrows,
@@ -444,46 +444,46 @@ on thread scaling and on the whole-genome index, not on per-read compute.
 
 Q11. Is minibwa still among the fastest?  Other mappers (from memory only)
 ------------------------------------------------------------------------
-Every number and characterisation here is TO VERIFY ONLINE; nothing was
+Every number and characterisation here is TO VERIFY ONLINE [checked 2026-10-04, see Q12]; nothing was
 read or run tonight.
   minibwa       lh3, 2024-25; bwa-mem seeding (SMEM) + minimap2 chaining +
                 ksw2.  Heuristic (seed occurrence caps, chain filtering,
                 repeat down-weighting).  Measured here: 54-62 k reads/s
                 single-thread on chr21 (mapping only).  The README claims
                 it is several times faster than bwa-mem at similar
-                accuracy: TO VERIFY ONLINE.
+                accuracy: TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   BWA-MEM3      I know of no tool by that name.  bwa-mem2 (Vasimuddin et al.
                 2019) is the AVX-512/AVX2 rewrite of bwa-mem with identical
                 output, reported ~2-3x faster than bwa-mem.  Heuristic like
                 bwa-mem.  "BWA-MEM3" may be a confusion with bwa-mem2 or
-                minibwa: TO VERIFY ONLINE.
+                minibwa: TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   minimap2 -x sr  Minimizer seeding + chaining + ksw2; reported ~2-3x faster
                 than bwa-mem on short reads, slightly lower accuracy in
-                repeats.  Heuristic.  TO VERIFY ONLINE.
+                repeats.  Heuristic.  TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   strobealign   Sahlin 2022/2024, randstrobe seeds; reported among the
                 fastest short-read mappers (several x bwa-mem, faster than
                 minimap2 -x sr) with competitive accuracy.  Heuristic: speed
                 reference only, not like-for-like with an exact spec.
-                TO VERIFY ONLINE.
+                TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   Bowtie2       FM-index, multi-seed with randomised extension; generally
                 slower than bwa-mem on human reads in end-to-end mode.
-                Heuristic.  TO VERIFY ONLINE.
+                Heuristic.  TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   SNAP          Zaharia et al. 2011; hash index of long seeds, edit-distance
                 verification with a max-distance parameter; reported 3-20x
                 faster than BWA at the time, large index (tens of GB).
                 Heuristic in practice (seed count limits, popular-seed
-                skipping).  TO VERIFY ONLINE.
+                skipping).  TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   URMAP         Edgar 2020; "boost words" (long unique-ish k-mers) for
                 ultra-fast mapping; reported ~10x faster than bwa-mem, with
-                lower sensitivity in some tests.  Heuristic.  TO VERIFY ONLINE.
+                lower sensitivity in some tests.  Heuristic.  TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   Accel-Align   Yan et al. 2021, seed-embed-extend (CGK embedding to skip
                 most DP); reported fast; heuristic (embedding filter).
-                TO VERIFY ONLINE.
+                TO VERIFY ONLINE [checked 2026-10-04, see Q12].
   Full-sensitivity mappers (closest to our guarantee: every location within
   an error bound): RazerS 3, Yara, mrsFAST/mrFAST, GEM (strata, exhaustive
   mode).  These are the like-for-like comparison: same "all hits within k
   errors, then choose" semantics.  Typically much slower than bwa-mem class
-  tools.  TO VERIFY ONLINE.
+  tools.  TO VERIFY ONLINE [checked 2026-10-04, see Q12].
 Recommendation for tomorrow's benchmarks (same machine, same reads,
 mapping time and peak RSS, 1 and 4 threads):
   1. minibwa (have it; state-of-the-art bwa-style, heuristic).
@@ -617,3 +617,102 @@ Consequence for the ranked list: the per-read compute target is met by a
 wide margin.  The remaining work is the proofs (items 1-4), the
 whole-genome index (item 6), threads (item 7), and index load time (minibwa
 loads a prebuilt index in 0.17-0.6 s; the prototypes rebuild it each run).
+
+
+Q12. Online verification (2026-10-04, reading only) and reported mapper throughput
+-------------------------------------------------------------------------------
+Method: two research agents read papers, READMEs and PubMed/PMC full text.
+The proxy blocked arxiv.org, biorxiv, biomedcentral, academic.oup, dl.acm,
+seqan.de and the SNAP site.  Numbers taken from a search-engine snippet of a
+blocked page are marked (snippet) and remain unverified.
+"Derived" = reads/s/thread computed here as reads / seconds / threads, or
+Gbp/h * 1e9 / 3600 / read_len / threads, with each mate counted as a read.
+Hardware, read length and genome differ between sources, so cross-source
+numbers are order-of-magnitude only.
+
+Corrections to Q10/Q11 (my offline text):
+- BWA-MEM3 EXISTS: a fork of bwa-mem2 by Fulcrum Genomics,
+  github.com/fg-labs/bwa-mem3, on bioconda and PyPI, v0.14.0, no paper.
+  Default output is byte-identical to bwa-mem2 v2.2.1.  `--fast` changes
+  alignments (about 85% of re-placed reads are MAPQ 0; accuracy within
+  +-0.02 pp).  Heuristic (inherits bwa-mem).
+- minibwa (arXiv 2606.15357, README): "over three times as fast as bwa-mem
+  and twice as fast as bwa-mem2 at comparable accuracy".  Paper and tweet:
+  ~4x / 2-2.5x.  Strobealign is reported ~10% faster than minibwa (snippet).
+  On HG002 minibwa has the fewest SNP/indel FN+FP among minibwa, BWA-MEM and
+  strobealign.
+- URMAP was published in PeerJ 2020 (doi 10.7717/peerj.9338), not BMC
+  Bioinformatics.  ~10x BWA (URMAPv ~28x), 24-mer hash index of ~25 GB,
+  heuristic (slots occurring >32 times dropped, stops at the first good hit).
+- Yara is full-sensitivity (all co-optimal hits within 5% edit-distance
+  error rate) only with `--sensitivity full`; the default is reportedly
+  "high" (snippet).  RazerS 3 is lossless only with `-rr 100` (default 99 is
+  lossy).  mrsFAST is full-sensitivity for mismatches only (no indels);
+  mrFAST is near-full.  GEM claims exhaustive search when so configured
+  (not checked).
+- minimap2 -x sr: "3-4x as fast as BWA-MEM and Bowtie2, 1.3x slower than
+  SNAP" (paper, 150 bp pairs).  Masks the top 2e-4 most frequent
+  minimizers: heuristic.
+- SNAP: MSR page says "2-5x faster than BWA-mem2 and Bowtie2", needs >= 48 GB
+  RAM.  The 2011 arXiv reports 28,400 reads/s single-core at 100 bp (snippet).
+  Heuristic (pruning, early termination).
+- Aeneas: (a) CONFIRMED.  Charon produces LLBC from MIR; backends F*, Coq,
+  HOL4 and Lean, with Lean and HOL4 the most mature.  (b) CONFIRMED (backward
+  functions; Result with integerOverflow/arrayOutOfBounds/...).
+  (c) CONFIRMED: ML-KEM and SHA3 Rust code in SymCrypt fully proved (MSR
+  blog).  (d) mostly confirmed (Vec/Array/Slice/scalars/Range models; loops
+  become recursive functions).  Current README limits: no `return` inside
+  NESTED loops, no break/continue to OUTER loops, no instantiating generics
+  with &mut.  (e) CORRECTED: closures are now supported but immature (issue
+  #86 closed 2026-02, bugs still open); a large class of nested borrows is
+  supported; iterator models exist for Range/Slice/Vec.  (f) unsafe and
+  concurrency CONFIRMED unsupported (README: future separation-logic work);
+  interior mutability unsupported per the ICFP'22 abstract; nothing found
+  about Send/Sync/rayon or IO specifically.  Consequence for Q10: the
+  per-read hot path (flat loops, slices, u64) fits the supported subset;
+  avoid nested-loop early exits; the thread pool and IO stay in trusted Rust.
+
+Reported throughput (all tools except the full-sensitivity modes are heuristic):
+  tool          guarantee     reported (as stated; source)                   derived reads/s/thread
+  bwa-mem       heuristic     baseline; 194.9 s for 5M pairs, 16 thr, AMD     ~3.2k (bwa-mem3 bench)
+                              m8a (github.com/fg-labs/bwa-mem3)
+  bwa-mem2      heuristic     1.3-3.1x bwa-mem (README); 85.0 s same bench    ~7.4k (bench)
+  BWA-MEM3      heuristic     24.2 s stock / 13.1 s --fast, same bench        ~25.9k / ~47.8k (bench)
+  minibwa       heuristic     30.4 s same bench; ~100-135 Gbp/h at 32 thr     ~20.6k (bench);
+                              (paper, snippet)                               ~5.8-7.8k (paper, if 150 bp)
+  strobealign   heuristic     4.5-7x bwa-mem2, 7x bwa-mem (GB 2022,           ~8.1k (third-party PR,
+                              doi 10.1186/s13059-022-02831-7)                 64 thr, ARM)
+  minimap2 sr   heuristic     3-4x bwa-mem (doi 10.1093/bioinformatics/bty191) ~4.5k (PR); 4.7k
+                              02:50 per 10M 100 bp single-end, 4 thr          (Accel-Align table)
+  Bowtie2       heuristic     09:35 per 10M 100 bp single-end, 4 thr i5-7500  ~4.3k
+                              (doi 10.1186/s12859-021-04162-z)
+  SNAP          heuristic     28.4k reads/s single core, 100 bp (2011,        ~28k (snippet)
+                              snippet); 2-5x bwa-mem2 (MSR)
+  URMAP         heuristic     ~10x BWA, 2x150 on i7-7820X (relative only)     n/a
+  Accel-Align   heuristic     01:01 per 10M 100 bp single-end, 4 thr i5-7500; ~41k align; ~66k map-only
+                              "66,000 reads/s/thread" map-only (stated)
+  Yara          full only w/  no absolute numbers found                       n/a
+                --sens. full
+  RazerS 3      full only w/  ~12,010 s per 5M 100 bp all-mapping, 8 thr       ~52
+                -rr 100       (PEANUT paper, PMC4184027, default -rr 99)
+  mrFAST        near-full     ~105 min per 5M 100 bp, 8 instances (PEANUT)    ~100
+  ours: speed/proto-tune      0.335-0.377 s per 100k 100 bp single-end         265-298k
+  (forward strand only,       on chr21 (this machine, same box as minibwa
+  exact = mapSpec)            54-62k).  Both-strand prototype ~50-55k
+                              (reported by the coordinating session, not
+                              measured here)
+Caveats on "ours" vs the table: our number is chr21 (46 Mb index, cache-
+friendly), single-end and forward-strand.  The published numbers are whole-
+genome human, mostly paired-end with pairing/rescue, including IO and SAM
+output.  The fair comparison is minibwa on the same box and reads (done:
+~5x forward-strand), and the exact tools (RazerS 3 -rr 100, Yara
+--sensitivity full), which are 2-4 orders of magnitude slower in the
+reports.
+Recommended benchmarks, all on one machine with the same reads, mapping
+time and RSS, 1 and 4 threads:
+  1. minibwa (already done here).
+  2. strobealign and Accel-Align: the fastest reported heuristics, speed
+     reference only.
+  3. Yara --sensitivity full (or RazerS 3 -rr 100): the like-for-like
+     full-sensitivity comparison.
+  4. Optionally BWA-MEM3 or bwa-mem2, as the widely recognised baseline.
