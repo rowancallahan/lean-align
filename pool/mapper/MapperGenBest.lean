@@ -45,6 +45,18 @@ theorem foldl_invP {α : Type} (P : Nat) (cw : Window → Nat) (f : Best → α 
     exact inv_congrP P cw _ _ _ this (fun w => by
       simp only [List.mem_cons, exists_eq_or_imp]; exact or_assoc)
 
+/-- Folding adds, the step known on the members only. -/
+theorem foldl_invP_mem {α : Type} (P : Nat) (cw : Window → Nat) (f : Best → α → Best) (X : α → Window → Prop)
+    (l : List α) (hstep : ∀ a ∈ l, ∀ S b, InvP P cw S b → InvP P cw (fun w => S w ∨ X a w) (f b a)) :
+    ∀ S b, InvP P cw S b → InvP P cw (fun w => S w ∨ ∃ a ∈ l, X a w) (l.foldl f b) := by
+  induction l with
+  | nil => intro S b h; exact inv_congrP P cw _ _ b h (fun w => by simp)
+  | cons a l ih =>
+    intro S b h
+    have := ih (fun a' ha' => hstep a' (List.mem_cons_of_mem _ ha')) _ _ (hstep a List.mem_cons_self S b h)
+    exact inv_congrP P cw _ _ _ this (fun w => by
+      simp only [List.mem_cons, exists_eq_or_imp]; exact or_assoc)
+
 theorem foldl_pen {α : Type} (f : Best → α → Best) (hf : ∀ b a, (f b a).pen ≤ b.pen) :
     ∀ (l : List α) b, (l.foldl f b).pen ≤ b.pen := by
   intro l

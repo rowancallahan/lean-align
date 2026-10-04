@@ -22,8 +22,11 @@ Per chromosome (`chromG`), with `lim = min P 15`:
 2. `stageK`: when one gap fits (`gapBound > 0`), every anchor's windows of the
    shapes allowed at the best (`shapes`, without `(0, 0)`), kernel-scored.
 3. `stageB`: when the best is still above `lim` (`P ≥ 16` and nothing `≤ 15`
-   found), every anchor's windows of the allowed shapes, scored exactly by the
-   banded kernel (`bandScore`), which also covers windows with two gap runs.
+   found; phase 1 then looks up every seed), the windows of the allowed shapes
+   of the anchors supported by at least `#seeds − sbound P` seeds within
+   `2·gapBound` diagonals, scored exactly by the banded kernel (`bandScore`),
+   which also covers windows with two gap runs.  (A window within penalty `P`
+   leaves at most `sbound P` looked-up seeds without a clean anchor near it.)
 
 The best is carried over the chromosomes (`mapChromsG`); `mapFastTG` falls
 back to the slow proved path when the read has too few seeds
@@ -62,7 +65,7 @@ def phase1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R G : ByteArray) 
   | j :: rest, J, acc, b =>
     let arr := LookG.look ix G R (j * Ls) (R.size - j * Ls) ps[j]!
     let b := arr.foldl (fun b e => addK R G c lim ((e / 16 : Nat) - (R.size : Int)) R.size b) b
-    if sbound (min b.pen P) < J.length + 1 then (b, arr :: acc, j :: J)
+    if sbound (min b.pen P) < J.length + 1 ∧ (b.pen ≤ lim ∨ lim = P) then (b, arr :: acc, j :: J)
     else phase1 ix R G c P lim Ls ps rest (j :: J) (arr :: acc) b
 
 /-- Window of anchor `e` and shape `sh`: start and length. -/
@@ -73,10 +76,52 @@ def stageK (R G : ByteArray) (c lim : Nat) (shs : List (Int × Int)) (acc : List
   acc.foldl (fun b arr => arr.foldl (fun b e => shs.foldl (fun b sh =>
     addK R G c lim (wst R.size e sh) (wlen R.size sh) b) b) b) b
 
+/-- Penalty of window `(·, len)` from the banded rows `opt` ending where it ends
+(`fits`: the window fits the chromosome); `bandPenE_eq`: this is `bandPen`. -/
+@[inline] def bandPenE (P n len : Nat) (fits : Bool) (opt : Option (Array Int)) : Nat :=
+  if fits ∧ n ≤ len + bandOf sc0 (-(P : Int)) ∧ len ≤ n + bandOf sc0 (-(P : Int)) then
+    match opt with
+    | some A =>
+      let s := A[len + bandOf sc0 (-(P : Int)) - n + 1]!
+      if -(P : Int) ≤ s then (-s).toNat else P + 1
+    | none => P + 1
+  else P + 1
+
+/-- Banded rows ending at `D + bb` (`D` a diagonal, `bb` an end shift). -/
+@[inline] def bandEndAt (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c D : Nat) (bb : Int) :
+    Option (Array Int) :=
+  bandEnd2 sc0 (-(P : Int)) (bandOf sc0 (-(P : Int))) R gbs[c]! ((D : Int) + bb).toNat
+
+/-- Add the window of diagonal `D` and shape `sh`, read from the rows `opt`. -/
+@[inline] def addBS (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c D : Nat) (opt : Option (Array Int))
+    (b : Best) (sh : Int × Int) : Best :=
+  let st : Int := (D : Int) - R.size - sh.1
+  let len : Int := (R.size : Int) + sh.1 + sh.2
+  if 0 ≤ st ∧ 0 ≤ len then
+    b.add c st.toNat len.toNat (bandPenE P R.size len.toNat (decide (st.toNat + len.toNat ≤ gbs[c]!.size)) opt)
+  else b
+
+/-- One diagonal and end shift: one banded pass, every shape with that end. -/
+@[inline] def stageBD (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (shs : List (Int × Int))
+    (D : Nat) (b : Best) (bb : Int) : Best :=
+  if 0 ≤ (D : Int) + bb then (shs.filter (·.2 == bb)).foldl (addBS P R gbs c D (bandEndAt P R gbs c D bb)) b
+  else b
+
+/-- The band stage over diagonals `ds` and end shifts `bs`. -/
 def stageB (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (shs : List (Int × Int))
-    (acc : List (Array Nat)) (b : Best) : Best :=
-  acc.foldl (fun b arr => arr.foldl (fun b e => shs.foldl (fun b sh =>
-    addB P R gbs c (wst R.size e sh) (wlen R.size sh) b) b) b) b
+    (bs : List Int) (ds : List Nat) (b : Best) : Best :=
+  ds.foldl (fun b D => bs.foldl (stageBD P R gbs c shs D) b) b
+
+/-- Seeds (anchor arrays) with an anchor within `r` diagonals of `D`. -/
+def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
+  (acc.filter fun arr => arr.any fun e => decide (D ≤ e / 16 + r) && decide (e / 16 ≤ D + r)).length
+
+/-- The distinct diagonals of the anchors, supported by at least `need` seeds within `r`. -/
+def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=
+  ((acc.flatMap fun arr => arr.toList.map (· / 16)).eraseDups).filter fun D => decide (need ≤ suppA acc D r)
+
+/-- End shifts `−d … d`. -/
+def shifts (d : Nat) : List Int := (List.range (2 * d + 1)).map fun (i : Nat) => (i : Int) - d
 
 /-- Shapes allowed within penalty `x`. -/
 @[inline] def shapesAt (x : Nat) : List (Int × Int) :=
@@ -94,7 +139,10 @@ def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (g
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
       stageK R G c lim ((shapesAt Q1).filter (· != (0, 0))) acc b1 else b1
   let Q2 := min b2.pen P
-  if lim < Q2 then stageB P R gbs c (shapesAt Q2) acc b2 else b2
+  if lim < Q2 then
+    stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+      (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
+  else b2
 
 /-- Seeds `0 … m-1`, smallest `size` first. -/
 @[inline] def ordG (ks : Array Nat) (m : Nat) : List Nat :=
