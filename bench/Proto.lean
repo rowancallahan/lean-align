@@ -26,46 +26,81 @@ penalty cap 12 (mismatch 4, gap of length L costs 6 + 2L).  Why each step is exa
 
 def cap : Nat := 12
 
-def code (b : UInt8) : UInt32 :=
+def code (b : UInt8) : UInt64 :=
   if b == 65 then 0 else if b == 67 then 1 else if b == 71 then 2 else if b == 84 then 3 else 4
 
-def wordCode (a : ByteArray) (p l0 : Nat) : UInt32 := Id.run do
-  let mut h : UInt32 := 0
-  for i in [0:l0] do
-    let c := code (a.get! (p + i))
-    assert! c < 4
-    h := h * 4 + c
-  return h
+/-- Bijection on 50-bit values (odd multiplier mod 2^50): bucket = top 24
+bits, key = low 26 bits, so (bucket, key) determines the 25-letter word. -/
+def mix (x : UInt64) : UInt64 := (x * 0x9E3779B97F4A7C15) &&& 0x3FFFFFFFFFFFF
+def BBITS : UInt64 := 24
+def KMASK : UInt64 := 0x3FFFFFF
 
+/-- Index of every ACGT-only q-letter word (q = 25): CSR over 2^24 buckets,
+entries (pos, key) in increasing pos.  `odd` = starts of the q-windows that
+contain a letter other than ACGTN (looked up directly). -/
 structure Idx where
-  l0 : Nat
+  q : Nat
   offs : Array UInt32
-  pos : Array UInt32
+  ent : Array UInt32
+  odd : Array Nat
+deriving Inhabited
 
-/-- CSR index of every ACGT-only l0-word (words with other letters can never
-equal an ACGT read word). -/
-def buildIdx (g : ByteArray) (l0 : Nat) : Idx := Id.run do
-  let nb := 4 ^ l0
-  let mask : UInt32 := (4 ^ l0 - 1).toUInt32
+def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
+  assert! q == 25
+  let nb := 1 <<< BBITS.toNat
+  let wmask : UInt64 := (1 <<< (2 * q.toUInt64)) - 1
   let mut cnt : Array UInt32 := Array.replicate (nb + 1) 0
-  let mut h : UInt32 := 0
-  let mut good := 0          -- ACGT letters in a row ending at p
+  let mut x : UInt64 := 0
+  let mut good := 0
+  let mut odd : Array Nat := #[]
+  let mut lastOdd : Int := -1000
   for p in [0:g.size] do
     let c := code (g.get! p)
-    if c < 4 then h := (h * 4 + c) &&& mask; good := good + 1 else good := 0
-    if good ≥ l0 then cnt := cnt.modify (h.toNat + 1) (· + 1)
+    if c < 4 then x := ((x <<< 2) ||| c) &&& wmask; good := good + 1 else good := 0
+    if c == 4 && g.get! p != 78 then lastOdd := p
+    if p + 1 ≥ q && lastOdd + q > p then odd := odd.push (p + 1 - q)
+    if good ≥ q then
+      let b := (mix x >>> (50 - BBITS)).toNat
+      cnt := cnt.modify (b + 1) (· + 1)
   for b in [0:nb] do cnt := cnt.set! (b + 1) (cnt[b + 1]! + cnt[b]!)
   let mut fill := cnt
-  let mut pos : Array UInt32 := Array.replicate cnt[nb]!.toNat 0
-  h := 0; good := 0
+  let mut ent : Array UInt32 := Array.replicate (2 * cnt[nb]!.toNat) 0
+  x := 0; good := 0
   for p in [0:g.size] do
     let c := code (g.get! p)
-    if c < 4 then h := (h * 4 + c) &&& mask; good := good + 1 else good := 0
-    if good ≥ l0 then
-      let i := fill[h.toNat]!
-      pos := pos.set! i.toNat (p + 1 - l0).toUInt32
-      fill := fill.set! h.toNat (i + 1)
-  return { l0, offs := cnt, pos }
+    if c < 4 then x := ((x <<< 2) ||| c) &&& wmask; good := good + 1 else good := 0
+    if good ≥ q then
+      let y := mix x
+      let b := (y >>> (50 - BBITS)).toNat
+      let i := fill[b]!.toNat
+      ent := (ent.set! (2 * i) (p + 1 - q).toUInt32).set! (2 * i + 1) (y &&& KMASK).toUInt32
+      fill := fill.set! b (i + 1).toUInt32
+  return { q, offs := cnt, ent, odd }
+
+/-- Starts p with g[p, p+q) = r[o, o+q). -/
+def lookup (idx : Idx) (g r : ByteArray) (o : Nat) (acc : Array Int) (shift : Nat) : Array Int := Id.run do
+  let q := idx.q
+  let mut x : UInt64 := 0
+  let mut plain := true
+  for i in [0:q] do
+    let c := code (r.get! (o + i))
+    assert! r.get! (o + i) != 78
+    if c == 4 then plain := false
+    x := (x <<< 2) ||| (c &&& 3)
+  let mut acc := acc
+  if plain then
+    let y := mix x
+    let b := (y >>> (50 - BBITS)).toNat
+    let key := (y &&& KMASK).toUInt32
+    for t in [idx.offs[b]!.toNat:idx.offs[b + 1]!.toNat] do
+      if idx.ent[2 * t + 1]! == key then acc := acc.push ((idx.ent[2 * t]!.toNat : Int) - shift)
+  else
+    for p in idx.odd do
+      let mut ok := true
+      for u in [0:q] do
+        if g.get! (p + u) != r.get! (o + u) then ok := false; break
+      if ok then acc := acc.push ((p : Int) - shift)
+  return acc
 
 /-- Mismatches of `r` against `g[a ..]`, stopping once above `lim`. -/
 def hamming (r g : ByteArray) (a lim : Nat) : Nat := Id.run do
@@ -83,7 +118,7 @@ def gappedPen (r g : ByteArray) (st len lim : Nat) : Nat := Id.run do
   if lim < 6 + 2 * L then return lim + 1
   let mmax := (lim - 6 - 2 * L) / 4
   let skip := if len < n then L else 0
-  -- read r < i ↔ g[st + r];  read r ≥ i + skip ↔ g[st + r + len - n]
+  -- read k < i ↔ g[st + k];  read k ≥ i + skip ↔ g[st + k + len - n]
   let mut suf := 0
   for k in [skip:n] do
     if r.get! k != g.get! (st + len + k - n) then suf := suf + 1
@@ -108,36 +143,47 @@ structure Best where
   else if pen == b.pen && (st != b.st || len != b.len) then { b with amb := true }
   else b
 
+/-- Support of anchor `a`: how many seeds are clean on its diagonal (sorted `as`). -/
+def supOf (as : Array (Int × Nat)) (a : Int) : Nat := Id.run do
+  let mut lo := 0
+  let mut hi := as.size
+  while lo < hi do
+    let mid := (lo + hi) / 2
+    if as[mid]!.1 < a then lo := mid + 1 else hi := mid
+  if lo < as.size && as[lo]!.1 == a then return as[lo]!.2
+  return 0
+
 def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run do
   let n := r.size
-  let q := n / 4
-  assert! idx.l0 ≤ q
-  let mut anchors : Array Int := #[]
-  for j in [0:4] do
-    let h := wordCode r (j * q) idx.l0
-    for t in [idx.offs[h.toNat]!.toNat:idx.offs[h.toNat + 1]!.toNat] do
-      let p := idx.pos[t]!.toNat
-      if p + q ≤ g.size then
-        let mut ok := true
-        for u in [idx.l0:q] do
-          if g.get! (p + u) != r.get! (j * q + u) then ok := false; break
-        if ok then
-          let a : Int := (p : Int) - (j * q : Nat)
-          if !(anchors.contains a) then anchors := anchors.push a
+  let q := idx.q
+  assert! n / 4 == q
+  let mut raw : Array Int := #[]
+  for j in [0:4] do raw := lookup idx g r (j * q) raw (j * q)
+  let sorted := raw.qsort (· < ·)
+  -- anchors with support = number of seeds clean on that diagonal
+  let mut as : Array (Int × Nat) := #[]
+  for a in sorted do
+    if as.size > 0 && as.back!.1 == a then as := as.modify (as.size - 1) fun (x, c) => (x, c + 1)
+    else as := as.push (a, 1)
   let mut b : Best := {}
-  for a in anchors do
-    if a ≥ 0 && a.toNat + n ≤ g.size then
-      let m := hamming r g a.toNat 3
-      if m ≤ 3 then b := b.add a.toNat n (4 * m)
+  -- same-length windows: penalty ≥ 4·(4 - support); best first
+  for sup in [0:4] do
+    let sup := 4 - sup
+    if 4 * (4 - sup) ≤ b.pen && !(b.pen == 0 && b.amb) then
+      for (a, c) in as do
+        if c == sup && a ≥ 0 && a.toNat + n ≤ g.size then
+          let m := hamming r g a.toNat (min 3 (b.pen / 4))
+          if 4 * m ≤ cap then b := b.add a.toNat n (4 * m)
+  -- gapped windows cost ≥ 8; their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9)
   if b.pen ≥ 8 then
-    for a in anchors do
+    for (a, _) in as do
       for L in [1:4] do
-        -- (a, n ± L): gap after the seed; (a ∓ L, n ± L): gap before it
         for (s, len) in [((0 : Int), n + L), (0, n - L), (-(L : Int), n + L), ((L : Int), n - L)] do
           let st := a + s
-          if st ≥ 0 && st.toNat + len ≤ g.size then
-            let lim := min b.pen cap
-            b := b.add st.toNat len (gappedPen r g st.toNat len lim)
+          let d2 := st + len - n
+          let need := if min b.pen cap < 10 then 3 else 2
+          if st ≥ 0 && st.toNat + len ≤ g.size && supOf as st + supOf as d2 ≥ need then
+            b := b.add st.toNat len (gappedPen r g st.toNat len (min b.pen cap))
   if b.pen ≤ cap && !b.amb then return some (b.st, b.len, b.pen)
   return none
 
@@ -151,7 +197,8 @@ def main (args : List String) : IO UInt32 := do
   for i in [0:rlines.length / 2] do reads := reads.push rlines[2*i+1]!.toUTF8
   let t0 ← IO.monoNanosNow
   let idx := buildIdx g l0
-  IO.println s!"index entries: {idx.pos.size}"
+  assert! l0 == 25
+  IO.println s!"index entries: {idx.ent.size / 2}"
   let t1 ← IO.monoNanosNow
   let mut res : Array (Option (Nat × Nat × Nat)) := #[]
   for r in reads do res := res.push (mapRead idx g r)
