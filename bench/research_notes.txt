@@ -1,0 +1,338 @@
+Research notes: making the proved mapper fast (branch speed/research, 2026-10-04)
+==============================================================================
+
+Setup used for every number below
+---------------------------------
+- Machine: 4 vCPU cloud container, 15 GB RAM, no perf (callgrind + gprof used).
+- Genome: hg38 chr21 (46,709,886 letters, 8.67 M of them N, a few R/M).
+- Reads: scripts/sim_reads.py, 100,000 forward reads of 100 bp, err 0.005,
+  indel_frac 0.1, seed 1 ("sim").  Stress set: 20,000 reads, err 0.02,
+  indel_frac 0.4, seed 7 ("stress").  One read per set has an IUPAC letter
+  copied from the genome; the Lean benchmarks drop it.
+- minibwa r427 built with its Makefile (-O3, SSE4.2), default "adap" preset.
+- New files: bench/Proto2.lean (prototype 2, unproved), bench/Micro.lean
+  (Lean pattern micro-benchmarks).  Both are lake exes (proto2, micro), not
+  default targets.
+
+Headline measurements (single thread unless stated, chr21, mapping time only)
+-------------------------------------------------------------------------------
+  minibwa map -t 1          44 k reads/s  (2.26 s for 100k; 2.86 s incl. 0.6 s index load)
+  minibwa map -t 4         139 k reads/s including index load (0.72 s wall)
+  bench/Proto.lean          0.74-1.1 k reads/s (banded capped Gotoh, boxed Nat arrays)
+  bench/Proto2.lean         58-63 k reads/s on sim, 36.5 k reads/s on stress
+  Proto2 vs Proto answers   0 disagreements on 99,999 sim + 19,999 stress reads
+                            (`proto2 ... check` runs Proto's mapper on every read and
+                            asserts equality; same 93,114 mapped, 92,989 at the true
+                            position)
+
+Ablations of Proto2 on sim (100k reads):
+  everything on                                   58-60 k reads/s
+  no exact-match shortcut (noexact)               23.5 k reads/s
+  seed check reads the genome, not the index (noext)
+                                    (measured before the scan rewrite) 34.7 k vs 39.8 k
+  closed form with byte scans (before packed scans) 34-42 k reads/s
+  4 Lean tasks (Task.spawn)                       55-58 k reads/s (1 task: 33 k; see Q5)
+
+So the unproved prototype already beats the "within 3x of minibwa per thread"
+target on chr21.  The work left is proving the pieces, and the whole-genome index.
+
+
+Q1. Where minibwa spends its time, and why it is fast
+------------------------------------------------------
+callgrind (20k reads, instructions; 88.7 k instructions/read):
+  seeding (SMEM finding, FM-index rank/extend)    49%   (bwt_rank1a/2a, smem_batch)
+  SA lookup (positions of seed hits)               6%
+  base alignment (ksw2 extd2 SSE + glue)          35%   (ksw_extd2_sse alone 24%)
+  chaining (lchain)                              2.4%
+  output (SAM formatting)                        3.5%
+  index load (10-mer interval cache)             10% of the whole run, once
+gprof (100k reads, time): rank1a 27%, rank2a 16%, sa_batch 16%, ksw_extd2 9%,
+  extend 4%, mimalloc page init 11% (load), everything else < 3%.
+=> Time is ~2/3 FM-index random memory access (seeding + SA), ~10-25%
+   alignment, the rest small.
+
+Design choices that make it fast (read in bwt.c, seed.c, align.c, dev.md):
+- FM-index SMEMs with a precomputed table of the SA intervals of all 10-mers
+  (`mb_bwt_cache`): the first 10 backward steps of every seed are one lookup.
+- Batching across reads with software prefetch (`mb_bwt_smem_batch`: a queue
+  of reads, each step issues `__builtin_prefetch` for the next occ block and
+  moves to another read).  dev.md credits this with 2.5x on SMEM finding.
+  SA lookups are batched the same way (`mb_bwt_sa_batch`).
+- Skipping DP when it cannot matter (`mb_align_pair`): for equal-length
+  query/target it scores the ungapped diagonal; with <= 3 mismatches (or a
+  score no gapped alignment can beat) it returns without SIMD DP.  The
+  mismatch count also narrows the DP band.
+- SIMD ksw2 (SSE, 16 cells per instruction) for the rest.
+- Down-weighting highly repetitive regions (`max seed occurrences` 250).
+  This is a heuristic.  We cannot copy it: the spec says ties make a read
+  unmapped, so repeats must be decided exactly.
+- k-mer cache, 2-bit packed reference (l2bit), mimalloc, kalloc arenas.
+
+
+Q2. Fastest exact strategy for our problem
+------------------------------------------
+Key fact (the basis of Proto2): with match 0, mismatch -4, gap 6+2L and
+T = -12, every window with penalty <= 12 is one of
+   (a) length n, Hamming distance h <= 3, penalty 4h
+       (any gapped alignment of equal lengths needs >= 2 gaps = >= 16);
+   (b) length n+L or n-L, L in {1,2,3}, exactly one gap run of L letters,
+       penalty 6+2L, plus at most one mismatch when L = 1 (8+4 = 12).
+Also every window with penalty < 12 is ungapped or a single gap with no
+mismatch.  So no DP is needed.  For an anchor diagonal d (where an exact
+seed puts the read's start), the candidate windows are
+   (d, n); (s, n+L) for s in {d, d-L}; (s, n-L) for s in {d, d+L}
+and each is decided by forward/backward mismatch scans on diagonals d-3..d+3:
+   deletion window (s, n+L): a0(s) + b0(s+L) >= n, or for the 1-mismatch case
+       a1(s)+b0(s+L) >= n or a0(s)+b1(s+L) >= n;
+   insertion window (s, n-L): the same with + L on the left side and s-L,
+where a0/a1 = length of the read prefix with 0/<=1 mismatches on a diagonal,
+b0/b1 the same for suffixes.  That is 7 forward + 7 backward scans per anchor.
+This is the WFA recurrence specialised to a score cap of 12 (the scans are
+WFA's "extend" steps), with every window end at once.
+
+Exact-match shortcut: any window of penalty 0 equals the read, so it contains
+all 4 seeds at fixed offsets.  The hits of the RAREST seed (smallest index
+bucket) therefore list every exact copy: 1 copy => mapped at penalty 0
+(nothing can beat 0), >= 2 copies => unmapped (tie at the best possible
+score), stop after 2.  On sim this decides 60.8% of reads (57.3% unique,
+3.5% repeated) with no other seed and no scan; measured 2.4x overall.
+Generalisation (tiers): an alignment with penalty p has at most E(p) events
+(E = 0 for p < 4, 1 for p < 8, 2 for p < 12, 3 at 12) and each event spoils
+at most one of the 4 disjoint seeds.  So if two distinct windows tie at p,
+or one window has penalty p, only windows with <= E(p) events can compete,
+and they all show up in the E(p)+1 rarest seeds.  This bounds the work in
+repeats exactly.
+
+k-mer CSR vs FM-index for 25 bp pigeonhole seeds:
+- Lookup: CSR = 1 offset read + 1 contiguous range (1-2 cache misses).
+  FM backward search = 25 dependent LF steps, ~2 misses each (minibwa needs
+  the 10-mer cache, batching and prefetch to make that cheap).  For fixed
+  seeds the hash/CSR index is cheaper per lookup, and it is far easier to
+  prove: completeness of a table built by one pass over the genome, versus
+  BWT/SA correctness.
+- Repeats: FM gives the number of exact copies of a whole read in ~100 LF
+  steps without listing them.  The CSR only lists them, but the rarest-seed
+  rule plus stopping at 2 copies makes the exact case cheap anyway.  For
+  non-exact reads in repeats both must enumerate candidates.
+- Memory: chr21 12-mer CSR = 38 M entries; at 4 B each (ByteArray) 152 MB,
+  as Array UInt32 (boxed, 8 B) 304 MB, plus 64 MB of offsets.  minibwa chr21
+  index: 93 MB FM + 12 MB 2-bit genome, 0.2 GB RSS.  See Q4 for the whole
+  genome.
+- Measured problem with 12-mer keys: 327 bucket hits per non-exact read
+  (82 per seed, because reads land in repeats more than the mean bucket of
+  2.3), each verified by a random genome access.  Storing the next 13
+  letters (26 bits) with each index entry removes those misses
+  (34.7 k -> 39.8 k reads/s before the scan rewrite).  On the whole genome a
+  12-mer key is hopeless (~77x more hits per bucket); key on the full 25-mer
+  (Q4).
+
+Non-ACGT letters: Proto.lean codes N as A, so ~8.6 M N positions land in the
+poly-A 12-mer bucket.  Proto2 leaves words containing a non-ACGT letter out of
+the index and ORs a non-ACGT mask into the packed mismatch mask.  That is
+exact for ACGT reads.  A proved mapper also needs a fallback for reads with
+non-ACGT letters (rare: 1 in 100 k here, ~0.1% in real Illumina data), for
+example a small index of the genome's non-ACGT positions, or scanning those
+seeds as unusable while the remaining seeds still satisfy the pigeonhole.
+
+
+Q3. Kernel: WFA vs banded DP vs bit-parallel
+--------------------------------------------
+- Banded DP as in Proto.lean: 7 window starts x 100 rows x 7 cells = 4,900
+  cells per anchor, ~14 anchors per non-exact read => ~69 k cells per read.
+  Measured ~1 k reads/s => roughly 15-30 ns/cell in Lean with boxed Nat
+  arrays and 3 fresh arrays per row.  A tight unboxed loop would be ~2-5
+  ns/cell, still ~50-300 us per read; SIMD (ksw2: ~0.1 ns/cell) is not
+  available in Lean without @[extern].
+- WFA at a cap of 12: the reachable penalties are 0,4,8,10,12, at most 7
+  diagonals, and each extend is one LCP.  That is ~100 word ops per window
+  start.  The closed form above is that computation with every window end
+  done at once: 14 scans per anchor, each 1-4 64-bit XOR/popcount steps on
+  a 2-bit packed genome.  Measured in Lean: 100-letter Hamming with packed
+  words + USize/uget = 21 ns (hot cache), against 662 ns for a
+  `for i in [0:n]`/`get!`/Nat byte loop.
+  If the scoring or T must stay generic, a capped, ends-free WFA is the
+  generic form of the same thing.  It needs a new proof: the repo's proved
+  WFA is global for one window pair, so it would cost 49 runs per anchor.
+- Bit-parallel Myers / BitPAl: unit-cost or linear-gap edit distance, not
+  affine with open 6.  It would have to be used as a lower-bound filter and
+  is not exact for this spec by itself.  Not worth it here.
+- Cells/read: closed form = 14 scans x ~4 words x ~14 anchors ~= 800 word ops
+  per non-exact read, about 0 for the 61% exact reads.  Proto2 spends ~1/3 of
+  its time here after the rewrite; the rest is index lookups (cache misses).
+
+
+Q4. Index layout at chr21 and whole-genome scale
+------------------------------------------------
+- chr21, 12-mer CSR, all positions: fine.  Offsets 64 MB, positions 152 MB
+  packed.  Lookups are 1-2 misses.  Add the 13 extension letters (another
+  152 MB) or use longer keys.
+- Whole genome (3.1 G letters, 2.94 G ACGT): all-positions CSR of 12-mers =
+  11.8 GB packed, 23.5 GB as Array UInt32, with ~175 hits per bucket.  Not
+  viable.
+- Recommended: exact SAMPLED index keyed on longer words.  Index the k-mers
+  at genome positions p = 0 mod s, with k + s - 1 <= 25 (e.g. s = 4, k = 22,
+  or s = 8, k = 18).  Look up the s k-mers at offsets 0..s-1 inside each
+  25 bp seed.  If the seed occurs at g0, one of g0..g0+s-1 is sampled, so the
+  lookup stays complete.  That is exact, unlike a heuristic minimizer
+  sketch.  Hash buckets (2^28 x 4 B = 1 GB) plus entries of (pos 4 B,
+  32-bit fingerprint of the rest of the key, so false bucket hits never
+  touch the genome).  s = 4: 735 M entries x 8 B = 5.9 GB; s = 8: 2.9 GB.
+  Packed genome 0.78 GB plus non-ACGT mask (0.78 GB as a bitmap, or a short
+  list of N runs).  Total ~4-8 GB, the same range as minibwa
+  (~2.25 B/letter on chr21 => ~7 GB).  Cost is 4s lookups per read before
+  the rarest-seed early exit; batch them across reads (rank 8).
+- Minimizers give a slightly better density per lookup but need a lemma
+  about window minima and tie-breaking.  Fixed sampling (p mod s) has the
+  same density guarantee and an arithmetic proof.  Prefer sampling.
+- Positions must be 4-byte packed in a ByteArray, not Array UInt32 (8 B,
+  boxed) or Array UInt64 (each element a heap object).  The genome must be
+  2-bit packed (Proto2 `pack`), not one byte per letter, and not List Char.
+- Build or load: Proto2 builds the chr21 index in 7-26 s per run (prototype
+  code).  minibwa loads a prebuilt index in 0.6 s.  Serialize the index
+  (IO.FS.readBinFile -> ByteArray is a memcpy) and prove the checker or
+  builder once.
+
+
+Q5. Lean code patterns (bench/Micro.lean, `lake exe micro`, IR in .lake/build/ir)
+------------------------------------------------------------------------------
+Measured (ns per call, 10 M calls):
+  random gather, Array UInt32 (boxed, 8 B/entry)          96-107  (cache-miss bound)
+  random gather, ByteArray 4-byte little-endian            82-91   (half the memory)
+  Hamming 100 B, for/get!/Nat                    hot 662   cold 830
+  Hamming 100 B, USize + uget, tail recursion    hot 211   cold 274
+  Hamming 100 letters, 2-bit packed, Nat get!    hot 102   cold 176
+  Hamming 100 letters, 2-bit packed, USize+uget  hot  21   cold  35
+  returning (Nat x Nat) (allocates a ctor)            10
+  returning a packed UInt64                           3.7
+  harness loop overhead                               4.5
+Findings from the generated C:
+- Nat indices compile to lean_nat_add/mul/shiftr with overflow checks and a
+  lean_dec after each.  `get!` adds a bounds check and a panic path.  Use
+  USize indices with `uget`/`a[i]'h` and discharge bounds with small lemmas
+  (Proto2 `idx_le`: (i + ofNat k).toNat <= i.toNat + k, 3 lines).  clang then
+  merges the 8 byte loads of a little-endian word into wide loads (checked
+  with objdump).
+- UInt64.log2 is a LOOP in lean.h (`while (a >= 2) a /= 2`).  Using it for
+  ctz/clz made the packed scans no faster than bytes.  Use popcount-based
+  ctz/msb (Proto2 `ctz`, `msb`; SWAR popcount, since leanc has no -mpopcnt).
+- `while` loops and `for` loops with several `mut` variables carry their
+  state as boxed objects (repeatM_erased / forIn loops take lean_object*).
+  A mutable UInt64 in such a loop is heap-allocated on every iteration.
+  Rewriting the scans as tail-recursive functions with UInt64 arguments and a
+  Nat fuel parameter took Proto2 from 40 k to 58-60 k reads/s (stress: 19 k
+  -> 36.5 k).
+- Tuples, Option and small structures returned from hot functions allocate
+  unless inlined.  Pack them into UInt64 or mark the function @[inline].
+  Array UInt64 elements are heap boxes; ByteArray and FloatArray are the only
+  unboxed arrays in core.
+- Proto.lean's DP allocates 3 arrays per row (Array.replicate) and its loop
+  state tuples (74 lean_alloc_ctor sites in Proto.c).  Arrays updated in
+  place are fine when the reference is unique (`set!` on a `let mut` array
+  compiles to an in-place update after the first copy).
+- Input: String.splitOn plus UTF-8 validation of the 46 MB FASTA is 19% of
+  Proto's instructions at load.  Read with IO.FS.readBinFile and parse bytes.
+- Pure code is moved across IO.monoNanosNow by the compiler (lets are sunk to
+  their use).  Benchmarks must make the work depend on the clock or run it
+  through an IO action (see Proto2's par mode).
+- Threads: Task.spawn over 4 chunks reaches 55-58 k reads/s.  One task alone
+  is only 33 k against 58-60 k for the same loop on the main thread.  Marking
+  the hot functions' parameters @& (borrowed) did not change it.  My
+  untested guess: objects reachable from a task become multi-threaded, so
+  their reference-count updates turn atomic.  Not resolved.  Next step:
+  callgrind the 1-task run, look for lean_inc/lean_dec on idx/g/pk in the
+  hot path, or run one process per core.
+- No prefetch intrinsic and no SIMD without @[extern], which is banned in
+  codecs/pool/spec.  Latency hiding has to come from issuing independent
+  loads together (batching lookups across reads, so out-of-order execution
+  overlaps the misses).
+
+
+RANKED LIST OF CHANGES
+======================
+(speedup = measured on chr21/100k reads unless marked "est."; the proof is what
+remains to do; "exact" = why the answer equals mapSpec)
+
+1. Closed-form scoring instead of DP (Proto2 `closedForm`).
+   Speedup: Proto 1.1 k -> 23.5 k reads/s with the shortcut off (~20x),
+   0 disagreements on 120 k reads.
+   Proof: medium-hard.  A characterisation lemma over AlignmentSpec
+   alignments: with (0,-4,-6,-2) and T = -12, a window scores >= T iff case
+   (a) or (b) of Q2, with that score.  Plus the window-candidate lemma
+   (s in {d, d +- L}) and the scan lemmas (a0/a1/b0/b1 = first mismatch
+   positions).  It can be stated for any ValidScoring by bounding the number
+   of events from gapOpen/mismatch/T, but the default-scoring version is
+   much smaller.
+   Exact: it is a theorem about the scoring, not a heuristic.
+
+2. Exact-match shortcut on the rarest seed, stop at 2 copies.
+   Speedup: 2.4x on top of 1 (23.5 k -> 58 k reads/s); decides 61% of reads.
+   Proof: easy-medium.  Penalty 0 <-> window = read (match score 0, every
+   other column < 0).  Every exact copy contains every seed, so the rarest
+   seed's hits are complete.  0 is the maximum score, so the unique-best
+   rule settles the read (1 copy mapped, >= 2 unmapped).
+   Exact: pigeonhole with zero errors.
+
+3. Event-based error bound (prerequisite for 1, 2, 9).
+   The proved mapper uses errBound = 12/min(4,2) = 6: 7 seeds of 14 bp and
+   13 x 13 windows per hit.  The real bound is 3 events (each gap run costs
+   >= 8), giving 4 seeds of 25 bp and a shift of <= 3.  This is what
+   Proto/Proto2 assume; the speed/bounds branch is doing it.
+   Speedup: est. 5-20x fewer candidates and DP calls in the proved mapper,
+   and 25 bp seeds make lookups selective.
+   Proof: medium (in progress on speed/bounds).
+
+4. Unboxed data and loops: 2-bit packed genome in a ByteArray, USize/uget
+   with bound lemmas, tail recursion with UInt64 arguments instead of
+   while/for with mut state, no UInt64.log2, packed UInt64 returns.
+   Speedup: Hamming 662 -> 21 ns (micro, 30x); Proto2 end to end 40 k ->
+   58-60 k (the loop rewrite), stress 19 k -> 36.5 k.  Genome memory /4.
+   Proof: medium.  One packing lemma (letters32 of the packed genome = the
+   codes of 32 letters) plus mask/popcount/ctz lemmas.  bv_decide may
+   discharge the bit tricks.  The non-ACGT mask needs one lemma.
+   Exact: same values, different representation.
+
+5. Index entries carry the seed's remaining letters (or a fingerprint).
+   Speedup: 34.7 k -> 39.8 k reads/s (+15%; removes ~300 random genome
+   reads per non-exact read).  Essential at whole-genome scale.
+   Proof: easy.  ext[t] is a function of the genome at pos[t]; equality of
+   codes <-> equality of ACGT letters; LookupComplete unchanged.
+
+6. Whole-genome index: sampled k-mers (p mod s = 0, k + s - 1 <= 25),
+   4-byte packed positions plus fingerprints in ByteArrays, serialized to
+   disk.
+   Speedup: needed to run at all (12-mer CSR would be 12-24 GB with
+   ~175 hits per bucket); est. 4-8 GB total.
+   Proof: medium.  New completeness lemma: a seed occurring at g0 has a
+   sampled k-mer at offset (s - g0 mod s) mod s.
+   Exact: completeness, not a sketch.
+
+7. Threads with Task.spawn over read chunks (mapReadsPar on
+   speed/dedup-parallel).
+   Speedup: measured 1.75x from 1 to 4 tasks, but 1 task runs at 0.55x the
+   main-thread loop, so the net gain over sequential is ~0 today.  Fix the
+   single-task slowdown first (see Q5); minibwa gets ~2.7x at 4 threads
+   (33 k -> 88 k in the task statement; here 2.86 s -> 0.72 s wall).
+   Proof: trivial (= reads.map f).
+
+8. Batch index lookups across reads (compute all bucket offsets for 8-16
+   reads, then all ranges, then verify), so cache misses overlap.
+   Speedup: est. 1.3-2x on the miss-bound part (minibwa: 2.5x on seeding
+   with real prefetch; we only get out-of-order overlap).
+   Proof: trivial (reordering pure maps); costs code complexity.
+
+9. Tiered seeds for non-exact reads: after finding the best penalty p (or a
+   tie at p), only the E(p)+1 rarest seeds can hold better windows.
+   Speedup: est. 10-30% on chr21, more in whole-genome repeats.
+   Proof: medium (seeds spoiled <= events, pigeonhole over rarest seeds).
+
+10. Correct non-ACGT handling: leave N-words out of the index, mask non-ACGT
+    genome letters as mismatches, fallback for reads with non-ACGT letters.
+    Speedup: avoids an 8.6 M-entry poly-A bucket on chr21 (Proto.lean codes
+    N as A).  Required for exactness on real data anyway.
+    Proof: small.
+
+Not recommended: FM-index/suffix array (large proof, 25+ dependent misses per
+seed; its one advantage, counting repeats, is covered by 2 and 9);
+bit-parallel Myers/BitPAl (not affine, not exact); SIMD or prefetch (needs
+@[extern], banned in codecs/pool/spec); minibwa's repeat down-weighting
+(heuristic, changes answers).

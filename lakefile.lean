@@ -105,3 +105,11 @@ lean_exe map_bench where              -- benchmark only; prints to stdout
 lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "bench"
   root := `Proto
+
+lean_exe proto2 where                 -- speed prototype 2: closed-form scoring (unproved)
+  srcDir := "bench"
+  root := `Proto2
+
+lean_exe micro where                  -- micro-benchmarks of Lean code patterns
+  srcDir := "bench"
+  root := `Micro
