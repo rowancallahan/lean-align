@@ -28,46 +28,51 @@ lean_lib AlignmentSpecLib where
 -- ──────────────────────────── codecs ────────────────────────────
 
 @[default_target]
-lean_lib CodecGotoh where            -- gotohFusedAlign (full equality with the spec)
-  srcDir := "codecs/gotoh"
+lean_lib PoolGotoh where            -- gotohFusedAlign (full equality with the spec)
+  srcDir := "pool/gotoh"
   roots := #[`AlignmentAlgorithms]
 
 @[default_target]
-lean_lib CodecBand where             -- bandDoublingAlign (full equality with the spec)
-  srcDir := "codecs/band"
+lean_lib PoolBand where             -- bandDoublingAlign (full equality with the spec)
+  srcDir := "pool/band"
   roots := #[`AlignmentWavefront]
 
 @[default_target]
-lean_lib CodecWfa where              -- wfaAlign: the proven wavefront (score + sound + total)
-  srcDir := "codecs/wfa"
+lean_lib PoolWfa where              -- wfaAlign: the proven wavefront (score + sound + total)
+  srcDir := "pool/wfa"
   roots := #[`AlignmentExchange, `AlignmentWfa]
 
 @[default_target]
-lean_lib CodecWfaFast where          -- wfaAlignI/F/L: executed paths proven = wfaAlign
-  srcDir := "codecs/wfa_fast"
+lean_lib PoolWfaFast where          -- wfaAlignI/F/L: executed paths proven = wfaAlign
+  srcDir := "pool/wfa_fast"
   roots := #[`AlignmentWfaFused, `AlignmentWfaLazy, `AlignmentWfaLazyLevel, `AlignmentWfaFast]
 
 @[default_target]
-lean_lib CodecWfaOffsets where       -- wfaAlignC / wfaAlignCA: offsets-only fronts + certified traceback
-  srcDir := "codecs/wfa_offsets"
+lean_lib PoolWfaOffsets where       -- wfaAlignC / wfaAlignCA: offsets-only fronts + certified traceback
+  srcDir := "pool/wfa_offsets"
   roots := #[`AlignmentWfaOff, `AlignmentWfaOffLoop, `AlignmentWfaOffR, `AlignmentWfaView,
              `AlignmentWfaPoint, `AlignmentWfaDirect, `AlignmentWfaLcp, `AlignmentWfaCertified,
              `AlignmentWfaArray]
 
 @[default_target]
-lean_lib CodecWfaSmallErrors where   -- wfaAlignH / wfaAlignHC: exact ≤2-substitution shortcut + compact output
-  srcDir := "codecs/wfa_small_errors"
+lean_lib PoolWfaSmallErrors where   -- wfaAlignH / wfaAlignHC: exact ≤2-substitution shortcut + compact output
+  srcDir := "pool/wfa_small_errors"
   roots := #[`AlignmentSmallErrors, `AlignmentCompact]
 
 @[default_target]
-lean_lib CodecWfaRuns where          -- wfaAlignK: direct run-length traceback with scalar checker
-  srcDir := "codecs/wfa_runs"
+lean_lib PoolWfaRuns where          -- wfaAlignK: direct run-length traceback with scalar checker
+  srcDir := "pool/wfa_runs"
   roots := #[`AlignmentCigarCheck, `AlignmentCigarCheckFast, `AlignmentTraceRuns, `AlignmentWfaRuns, `AlignmentWfaRunsFast, `AlignmentWfaRunsVsWfa]
 
 @[default_target]
-lean_lib CodecWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the one the tool runs)
-  srcDir := "codecs/wfa_u32"
+lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the one the tool runs)
+  srcDir := "pool/wfa_u32"
   roots := #[`ProbeU32, `AlignmentWfaU32Level, `AlignmentWfaU32Step, `AlignmentWfaU32Loop, `AlignmentWfaU32, `AlignmentWfaU32Fill, `AlignmentWfaU32Run2, `AlignmentWfaU32Ext, `AlignmentWfaU32FillSpec, `AlignmentWfaU32Single, `AlignmentWfaU32Level2, `AlignmentWfaU32Lattice, `AlignmentWfaU32Kernel2, `AlignmentWfaU32FillS, `AlignmentWfaU32FillSSpec, `AlignmentWfaU32LevelS, `AlignmentWfaU32Fill3, `AlignmentWfaU32Run3, `AlignmentWfaU32FillSpec3, `AlignmentWfaU32Loop3, `AlignmentWfaU32Level3, `AlignmentWfaU32Kernel3]
+
+@[default_target]
+lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
+  srcDir := "codecs"
+  roots := #[`WfaU3]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 

@@ -1,4 +1,4 @@
-import AlignmentWfaU32Kernel3
+import WfaU3
 
 /-!
 # Bytes in, bytes out (pure)
@@ -27,7 +27,7 @@ def scoring : Scoring :=
   { matchScore := 0, mismatchScore := -4, gapOpen := -6, gapExtend := -2 }
 
 /-- The kernel the tool runs.  Its theorems: `wfaAlignU3_score`,
-`wfaAlignU3_sound`, `wfaAlignU3_isSome` (codecs/wfa_u32). -/
+`wfaAlignU3_sound`, `wfaAlignU3_isSome` (codecs/WfaU3.lean). -/
 def alignPair (sc : Scoring) (a b : Array Char) : Option (Array (Step × Nat) × Int) :=
   wfaAlignU3 sc a b
 

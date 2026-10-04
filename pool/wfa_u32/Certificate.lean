@@ -6,6 +6,7 @@ import AlignmentWfaU32FillSpec
 import AlignmentWfaU32FillSpec3
 import AlignmentWfaU32Kernel2
 import AlignmentWfaU32Kernel3
+import WfaU3
 import AlignmentWfaU32Lattice
 import AlignmentWfaU32Level
 import AlignmentWfaU32Level2

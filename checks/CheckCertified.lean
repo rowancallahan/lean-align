@@ -5,6 +5,7 @@ import AlignmentWfaRuns
 import AlignmentWfaU32
 import AlignmentWfaU32Kernel2
 import AlignmentWfaU32Kernel3
+import WfaU3
 open AlignmentSpec
 
 def wordsC : Nat → List (List Char)

@@ -17,7 +17,7 @@ step "lake build"
 lake build >"$tmp/lean_align_build.log" 2>&1 && echo "build ok" || { tail -20 "$tmp/lean_align_build.log"; fail=1; }
 
 step "certificates and spec theorems (axioms)"
-for c in codecs/*/Certificate.lean spec/Certificate.lean trimmer/Certificate.lean spec/Cli.lean spec/Run.lean; do
+for c in codecs/*.lean pool/*/Certificate.lean spec/Certificate.lean trimmer/Certificate.lean spec/Cli.lean spec/Run.lean; do
   log="$tmp/lean_align_$(echo "$c" | tr '/' '_').log"
   lake env lean "$c" >"$log" 2>&1
   rc=$?

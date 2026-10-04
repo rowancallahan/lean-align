@@ -4,7 +4,7 @@ import AlignmentWfaU32Run2
 /-!
 # The third UInt32 kernel: general path in the block layout (definitions)
 
-`wfaAlignU3` is `wfaAlignU2` with the general (five-source) path replaced by
+`wfaAlignU3` (codecs/WfaU3.lean) is `wfaAlignU2` with the general (five-source) path replaced by
 the block-layout builder `uLevel3` (AlignmentWfaU32Fill3.lean): one array of
 three blocks `M | X | Y` per level, one allocation per level, array history.
 The single-source path (all divided penalties 1) is unchanged.
@@ -126,17 +126,8 @@ def certifiedRunsU3 (sc : Scoring) (xa ya : Array Char) : Option (Array (Step ×
         acceptRuns sc xa ya (g * k) (uTraceRuns3 xa.size ya.size pe po px (max pe (max po px) + 2) hist k)
   else none
 
-/-- The kernel: exact shortcut, UInt32 fast path, proven fallback. -/
-def wfaAlignU3 (sc : Scoring) (xa ya : Array Char) : Option (Array (Step × Nat) × Int) :=
-  match compactSmall sc xa ya with
-  | some r => some r
-  | none =>
-    match certifiedRunsU3 sc xa ya with
-    | some r => some r
-    | none => wfaAlignK sc xa ya
-
 end AlignmentSpec.U32Proof
 
 namespace AlignmentSpec
-export U32Proof (wfaAlignU3 certifiedRunsU3)
+export U32Proof (certifiedRunsU3)
 end AlignmentSpec
