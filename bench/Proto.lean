@@ -48,6 +48,8 @@ structure Idx where
   offs : Array UInt32
   ent : Array UInt32
   odd : Array Nat
+  pk : ByteArray      -- genome, 2 bits per letter, first letter in the top bits (non-ACGT ↦ 0)
+  amb : ByteArray     -- per 32-letter block: 1 when it holds a letter other than ACGT
 deriving Inhabited
 
 def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
@@ -80,7 +82,39 @@ def buildIdx (g : ByteArray) (q : Nat) : Idx := Id.run do
       let i := fill[b]!.toNat
       ent := (ent.set! (2 * i) (p + 1 - q).toUInt32).set! (2 * i + 1) (y &&& KMASK).toUInt32
       fill := fill.set! b (i + 1).toUInt32
-  return { q, offs := cnt, ent, odd }
+  let mut pk := ByteArray.mk (Array.replicate (g.size / 4 + 9) 0)
+  let mut amb := ByteArray.mk (Array.replicate (g.size / 32 + 1) 0)
+  for p in [0:g.size] do
+    let c := code (g.get! p)
+    if c < 4 then pk := pk.set! (p / 4) (pk.get! (p / 4) ||| (c.toUInt8 <<< (6 - 2 * (p % 4)).toUInt8))
+    else amb := amb.set! (p / 32) 1
+  return { q, offs := cnt, ent, odd, pk, amb }
+
+/-- 2-bit code of the 25 letters g[p, p+25), first letter in the top bits (as `seedCode`). -/
+@[inline] def gword (pk : ByteArray) (p : Nat) : UInt64 :=
+  let k := p / 4
+  let w := (pk.get! k).toUInt64 <<< 48 ||| (pk.get! (k + 1)).toUInt64 <<< 40 |||
+    (pk.get! (k + 2)).toUInt64 <<< 32 ||| (pk.get! (k + 3)).toUInt64 <<< 24 |||
+    (pk.get! (k + 4)).toUInt64 <<< 16 ||| (pk.get! (k + 5)).toUInt64 <<< 8 ||| (pk.get! (k + 6)).toUInt64
+  (w <<< (8 + 2 * (p % 4)).toUInt64) >>> 14
+
+def M1 : UInt64 := 0x5555555555555555
+def M2 : UInt64 := 0x3333333333333333
+def M4 : UInt64 := 0x0F0F0F0F0F0F0F0F
+def H01 : UInt64 := 0x0101010101010101
+
+/-- Number of nonzero 2-bit groups of x (mismatching letters of an XOR). -/
+@[inline] def pop2 (x : UInt64) : Nat :=
+  let y := (x ||| (x >>> 1)) &&& M1
+  let y := (y &&& M2) + ((y >>> 2) &&& M2)
+  let y := (y + (y >>> 4)) &&& M4
+  ((y * H01) >>> 56).toNat
+
+/-- g[p, p+len) is all ACGT (so the packed genome is exact there). -/
+@[inline] def clean (idx : Idx) (p len : Nat) : Bool := Id.run do
+  for k in [p / 32 : (p + len - 1) / 32 + 1] do
+    if idx.amb.get! k != 0 then return false
+  return true
 
 /-- Anchors are stored biased by `BIAS` (≥ n) so they are `Nat`s. -/
 def BIAS : Nat := 128
@@ -130,9 +164,14 @@ def hamming (r g : ByteArray) (a i stop lim m : Nat) : Nat :=
 termination_by stop - i
 
 /-- Mismatches of the read against g[a ..] (≥ lim + 1 means > lim), only over the
-seeds not in `mask` (seeds in `mask` are clean there) and the tail past 4·q. -/
-def hamSeeds (r g : ByteArray) (q a mask lim : Nat) : Nat := Id.run do
+seeds not in `mask` (seeds in `mask` are clean there) and the tail past 4·q.
+Word compares when read (`plain`) and window are all ACGT. -/
+def hamSeeds (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q a mask lim : Nat) : Nat := Id.run do
   let mut m := hamming r g a (4 * q) r.size lim 0
+  if plain && clean idx a r.size then
+    for j in [0:4] do
+      if m ≤ lim && (mask >>> j) % 2 == 0 then m := m + pop2 (vs[j]!.toUInt64 ^^^ gword idx.pk (a + j * q))
+    return m
   for j in [0:4] do
     if m ≤ lim && (mask >>> j) % 2 == 0 then m := hamming r g a (j * q) (j * q + q) lim m
   return m
@@ -197,12 +236,14 @@ of the increasing packed anchors `as` (entries A·16 + mask). -/
 
 /-- Number of seeds clean on biased diagonal `A`: the looked-up ones from the
 masks, the others (not in `looked`) checked in the genome. -/
-def supAt (r g : ByteArray) (q : Nat) (as : Array Nat) (looked i A : Nat) : Nat := Id.run do
+def supAt (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q : Nat) (as : Array Nat) (looked i A : Nat) : Nat := Id.run do
   let mut c := pop4 (maskNear as i A)
   if A < BIAS then return c
   for j in [0:4] do
     let p := A - BIAS + j * q
-    if (looked >>> j) % 2 == 0 && p + q ≤ g.size && eqRun g r p (j * q) (p + q) then c := c + 1
+    if (looked >>> j) % 2 == 0 && p + q ≤ g.size &&
+        (if plain && clean idx p q then gword idx.pk p == vs[j]!.toUInt64 else eqRun g r p (j * q) (p + q)) then
+      c := c + 1
   return c
 
 /-- Merge two increasing packed anchor lists (A·16 + mask), joining masks of equal A. -/
@@ -221,16 +262,16 @@ partial def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
 /-- Gapped windows near the anchors `as` with penalty ≤ min(b.pen, cap).  They cost
 ≥ 8 and their two diagonals carry ≥ 2 clean seeds (≥ 3 when ≤ 9); supports come
 from the masks and, for seeds not looked up, the genome. -/
-def gappedStage (r g : ByteArray) (q : Nat) (as : Array Nat) (looked : Nat) (b : Best) : Best := Id.run do
+def gappedStage (idx : Idx) (vs : Array Nat) (plain : Bool) (r g : ByteArray) (q : Nat) (as : Array Nat) (looked : Nat) (b : Best) : Best := Id.run do
   let n := r.size
   let mut b := b
   for i in [0:as.size] do
     let A := as[i]! / 16
-    let c := supAt r g q as looked i A
+    let c := supAt idx vs plain r g q as looked i A
     for L in [1:4] do
       let need := if min b.pen cap < 10 then 3 else 2
-      let sm := supAt r g q as looked i (A - L)
-      let sp := supAt r g q as looked i (A + L)
+      let sm := supAt idx vs plain r g q as looked i (A - L)
+      let sp := supAt idx vs plain r g q as looked i (A + L)
       -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
       if c + sp ≥ need && A ≥ BIAS && A - BIAS + n + L ≤ g.size then
         b := b.add (A - BIAS) (n + L) (gappedPen r g (A - BIAS) (n + L) (min b.pen cap))
@@ -267,6 +308,7 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
   let vs := #[(seedCode r 0 0 q 0 0).toNat, (seedCode r q 0 q 0 0).toNat,
     (seedCode r (2 * q) 0 q 0 0).toNat, (seedCode r (3 * q) 0 q 0 0).toNat]
   assert! vs.all (· >>> 61 == 0)
+  let plain := vs.all (· >>> 60 == 0) && n == 4 * q
   let sizes := vs.map fun v =>
     if v >>> 60 != 0 then 0 else
     let b := (mix v.toUInt64 >>> (50 - BBITS)).toNat
@@ -285,9 +327,9 @@ def mapRead (idx : Idx) (g r : ByteArray) : Option (Nat × Nat × Nat) := Id.run
     for e in fresh do
       let A := e / 16
       if A ≥ BIAS && A - BIAS + n ≤ g.size && !(b.pen == 0 && b.amb) then
-        let m := hamSeeds r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
+        let m := hamSeeds idx vs plain r g q (A - BIAS) (e % 16) (min 3 (b.pen / 4))
         if 4 * m ≤ cap then b := b.add (A - BIAS) n (4 * m)
-    if k ≥ 2 && b.pen ≥ 8 then b := gappedStage r g q as looked b
+    if k ≥ 2 && b.pen ≥ 8 then b := gappedStage idx vs plain r g q as looked b
     if 4 * (k + 1) > b.pen then break
   if b.pen ≤ cap && !b.amb then return some (b.st, b.len, b.pen)
   return none

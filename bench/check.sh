@@ -16,7 +16,7 @@ for r in hard_1m:c21_1m hard_chr21:chr21.1l rep:rep; do
   cmp $D/out_${r%:*}.tsv $D/ref_${r%:*}.tsv && echo "same as ref_${r%:*}"
 done
 for s in $D/spec*.tsv; do
-  case $s in *hard2*) R=hard2_100k G=c21_100k ;; *hard*) R=hard_100k G=c21_100k ;; *rep2*) R=rep2 G=rep2 ;; *rep*) R=rep G=rep ;; *) R=c21_100k.r10k G=c21_100k ;; esac
+  case $s in *hard2*) R=hard2_100k G=c21_100k ;; *hard*) R=hard_100k G=c21_100k ;; *rep2*) R=rep2 G=rep2 ;; *iupac*) R=iupac G=iupac ;; *rep*) R=rep G=rep ;; *) R=c21_100k.r10k G=c21_100k ;; esac
   $B/proto $D/$G.fa $D/$R.reads.txt $L - $D/out_spec.tsv > /dev/null
   k=$(wc -l < $s); head -n $k $D/out_spec.tsv | cmp - $s && echo "same as $(basename $s) ($k reads)"
 done
