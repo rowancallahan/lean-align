@@ -1,4 +1,5 @@
 import PairMapper
+import FastMapperMz
 
 /-!
 # Codec `pairFastJ`: joint strand search (one shared `Best`) and proper pairs
@@ -300,7 +301,20 @@ theorem pairFastJ_eq_pairSpec {L P : Type} [Inhabited L] [Inhabited P] (lk : Loo
     rw [mapFastJ_eq_mapSpecBoth lk g m2 gbs idxs R2 _ hg h2 hlk hok2]
     cases mapSpecBoth sc0 (-12) g m2 <;> rfl
 
+/-- The same through minimizer indexes that pass the checker (smaller index). -/
+theorem pairFastJ_mz_eq_pairSpec (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
+    (idxs : Array Mz.MzIdx) (R1 R2 : ByteArray) (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1)
+    (h2 : Encodes R2 m2) (hchk : checkAllMz idxs gbs = true)
+    (hok1 : fastOk R1 = true) (hok2 : fastOk R2 = true) :
+    pairFastJ mzL lo hi gbs idxs R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 := by
+  apply pairFastJ_eq_pairSpec mzL lo hi g m1 m2 gbs idxs R1 R2 hg h1 h2 _ hok1 hok2
+  intro c hc R' j hj
+  unfold checkAllMz at hchk
+  simp only [List.all_eq_true, List.mem_range] at hchk
+  exact mzLook_ok _ _ _ _ hj (by rw [← Mz.check2_eq]; exact hchk c hc)
+
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.mapFastJ_eq_mapSpecBoth
 #print axioms MapSpec.Fast.pairFastJ_eq_pairSpec
+#print axioms MapSpec.Fast.pairFastJ_mz_eq_pairSpec
