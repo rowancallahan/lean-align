@@ -434,22 +434,23 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
   -- stage K
   generalize hQ1 : min b1.pen P = Q1
   generalize hshK : (shapesAt Q1).filter (· != (0, 0)) = shK
-  have hK := stageK_spec P read g gbs R hg hr c hc shK (diags acc) b1 _ hinv1
+  generalize hdsK : diagsB acc (acc.length - sbound (min (min P 15) Q1)) (2 * gapBound sc0 (-(Q1 : Int))) = dsK
+  have hK := stageK_spec P read g gbs R hg hr c hc shK dsK b1 _ hinv1
   have h2 : InvP P (cwT P read g) (fun w => (S w ∨ ∃ j ∈ pre, ∃ e ∈ (arrOf gbs R ix c Ls ps j).toList,
-        GX P read g R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageK P read g R c (min P 15) shK (diags acc) w))
-      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK (diags acc) b1 else b1) ∧
-      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK (diags acc) b1 else b1).pen ≤ b1.pen := by
+        GX P read g R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageK P read g R c (min P 15) shK dsK w))
+      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK dsK b1 else b1) ∧
+      (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK dsK b1 else b1).pen ≤ b1.pen := by
     split
     · next hk => exact ⟨inv_congrP P _ _ _ _ hK.1 (fun w => by simp [hk]), hK.2⟩
     · next hk => exact ⟨inv_congrP P _ _ _ _ hinv1 (fun w => by simp [hk]), Nat.le_refl _⟩
-  generalize hb2 : (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK (diags acc) b1 else b1) = b2 at h2
+  generalize hb2 : (if 0 < gapBound sc0 (-(Q1 : Int)) then stageK R gbs[c]! c (min P 15) shK dsK b1 else b1) = b2 at h2
   -- stage B
   generalize hQ2 : min b2.pen P = Q2
   generalize hdsv : diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int))) = ds
   have hB := stageB_spec P read g gbs R hg hr c hc (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 _ h2.1
   have hBp := stageB_pen P read g gbs R hg hr c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2
   have h3 : InvP P (cwT P read g) (fun w => ((S w ∨ ∃ j ∈ pre, ∃ e ∈ (arrOf gbs R ix c Ls ps j).toList,
-        GX P read g R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageK P read g R c (min P 15) shK (diags acc) w)) ∨
+        GX P read g R c (min P 15) e w) ∨ (0 < gapBound sc0 (-(Q1 : Int)) ∧ StageK P read g R c (min P 15) shK dsK w)) ∨
         (min P 15 < Q2 ∧ BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds w))
       (if min P 15 < Q2 then stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 else b2) ∧
       (if min P 15 < Q2 then stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 else b2).pen
@@ -510,6 +511,55 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
     intro sh h1 h2; unfold wlen; rw [h1, h2]
   have hwin : w = ⟨c, ((p : Int) - (j * Ls : Nat) - a).toNat, ((R.size : Int) + a + bb).toNat⟩ := by
     cases w; simp only at hwc hst hwl; rw [hwc, hst, hwl, hn]
+  -- seeds without a clean anchor near the window: at most `sbound x` of them
+  have hsuppG : ∀ r, 2 * gapBound sc0 (-(x : Int)) ≤ r → acc.length - sbound x ≤ suppA acc (e / 16) r := by
+    intro r hrx
+    have hsa := hshape.1
+    generalize hpred : (fun arr : Array Nat => anyNear arr (e / 16 - r) (e / 16 + r)) = pred
+    have hsupp : suppA acc (e / 16) r = (pre.filter (pred ∘ arrOf gbs R ix c Ls ps)).length := by
+      unfold suppA; rw [← hpred, hacc, List.filter_reverse, List.length_reverse, List.filter_map, List.length_map]
+    rw [hsupp]
+    have hcnt : ∀ (l : List Nat) (f : Nat → Bool),
+        (l.filter f).length + (l.filter (fun x => !f x)).length = l.length := by
+      intro l f; induction l with
+      | nil => rfl
+      | cons y l ih => by_cases hy : f y = true <;> simp [hy] <;> omega
+    have hc2 := hcnt pre (pred ∘ arrOf gbs R ix c Ls ps)
+    have hJ' : (pre.filter (fun j' => !(pred ∘ arrOf gbs R ix c Ls ps) j')).length ≤ sbound x := by
+      apply Classical.byContradiction; intro hlt'
+      have hsub := List.filter_sublist (p := fun j' => !(pred ∘ arrOf gbs R ix c Ls ps) j') (l := pre)
+      obtain ⟨j', hj', p', a', bb', -, hmatch', hshape', ha1', -, hst', -⟩ :=
+        cover g read gbs R hg hr (-(x : Int)) (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
+          _ (hsub.nodup hpnd)
+          (fun j hj => by have := hlt j (hpre.sublist.subset (hsub.subset hj)); omega)
+          (by unfold sbound at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
+      rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch' ha1' hst'
+      rw [hwc] at hmatch'
+      have hj'pre := hsub.subset hj'
+      have hj'm := hlt j' (hpre.sublist.subset hj'pre)
+      have hj'L : j' * Ls + Ls ≤ R.size := by
+        have : j' * Ls + Ls ≤ m * Ls := by rw [← Nat.succ_mul]; exact Nat.mul_le_mul_right _ (by omega)
+        omega
+      have he2 : (p' + (R.size - j' * Ls)) * 16 + 0 ∈ (arrOf gbs R ix c Ls ps j').toList := by
+        unfold arrOf
+        rw [hps j' hj'm]
+        exact ((hlook (j' * Ls) _ (by omega)).2 _).2 ⟨p', hmatch', rfl⟩
+      have hsort : (arrOf gbs R ix c Ls ps j').toList.Pairwise (· < ·) := by
+        unfold arrOf
+        rw [hps j' hj'm]
+        exact (hlook (j' * Ls) _ (by omega)).1
+      have hpj : (pred ∘ arrOf gbs R ix c Ls ps) j' = true := by
+        simp only [Function.comp, ← hpred]
+        rw [anyNear_spec _ hsort]
+        refine ⟨_, he2, ?_⟩
+        have hsa' := hshape'.1
+        have e1 : ((p' + (R.size - j' * Ls)) * 16 + 0) / 16 = p' + (R.size - j' * Ls) := by omega
+        rw [e1, he16]
+        omega
+      have := (List.mem_filter.1 hj').2
+      rw [hpj] at this; cases this
+    have hal : acc.length = pre.length := by rw [hacc]; simp
+    omega
   -- the band stage covers the windows above `lim`
   have hband : min P 15 < x → BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds w := by
     intro hlx
@@ -519,54 +569,10 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
     · -- the diagonal is one of the stage's: an anchor's, and supported
       rw [← hdsv]
       unfold diagsB diags
-      rw [List.mem_filter, List.mem_eraseDups, List.mem_flatMap]
+      rw [List.mem_filter, mem_dedupAdj, List.mem_mergeSort, List.mem_flatMap]
       refine ⟨⟨_, harr, List.mem_map.2 ⟨e, he, rfl⟩⟩, decide_eq_true ?_⟩
-      -- seeds without an anchor near the window: at most `sbound x` of them
-      generalize hr2 : 2 * gapBound sc0 (-(Q2 : Int)) = r
-      generalize hpred : (fun arr : Array Nat => arr.any fun e' =>
-        decide (e / 16 ≤ e' / 16 + r) && decide (e' / 16 ≤ e / 16 + r)) = pred
-      have hsupp : suppA acc (e / 16) r = (pre.filter (pred ∘ arrOf gbs R ix c Ls ps)).length := by
-        unfold suppA; rw [← hpred, hacc, List.filter_reverse, List.length_reverse, List.filter_map, List.length_map]
-      rw [hsupp]
-      have hcnt : ∀ (l : List Nat) (f : Nat → Bool),
-          (l.filter f).length + (l.filter (fun x => !f x)).length = l.length := by
-        intro l f; induction l with
-        | nil => rfl
-        | cons y l ih => by_cases hy : f y = true <;> simp [hy] <;> omega
-      have hc2 := hcnt pre (pred ∘ arrOf gbs R ix c Ls ps)
-      have hJ' : (pre.filter (fun j' => !(pred ∘ arrOf gbs R ix c Ls ps) j')).length ≤ sbound x := by
-        apply Classical.byContradiction; intro hlt'
-        have hsub := List.filter_sublist (p := fun j' => !(pred ∘ arrOf gbs R ix c Ls ps) j') (l := pre)
-        obtain ⟨j', hj', p', a', bb', -, hmatch', hshape', ha1', -, hst', -⟩ :=
-          cover g read gbs R hg hr (-(x : Int)) (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
-            _ (hsub.nodup hpnd)
-            (fun j hj => by have := hlt j (hpre.sublist.subset (hsub.subset hj)); omega)
-            (by unfold sbound at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
-        rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch' ha1' hst'
-        rw [hwc] at hmatch'
-        have hj'pre := hsub.subset hj'
-        have hj'm := hlt j' (hpre.sublist.subset hj'pre)
-        have hj'L : j' * Ls + Ls ≤ R.size := by
-          have : j' * Ls + Ls ≤ m * Ls := by rw [← Nat.succ_mul]; exact Nat.mul_le_mul_right _ (by omega)
-          omega
-        have he2 : (p' + (R.size - j' * Ls)) * 16 + 0 ∈ (arrOf gbs R ix c Ls ps j').toList := by
-          unfold arrOf
-          rw [hps j' hj'm]
-          exact ((hlook (j' * Ls) _ (by omega)).2 _).2 ⟨p', hmatch', rfl⟩
-        have hpj : (pred ∘ arrOf gbs R ix c Ls ps) j' = true := by
-          simp only [Function.comp, ← hpred]
-          rw [← Array.any_toList, List.any_eq_true]
-          refine ⟨_, he2, ?_⟩
-          have hsa' := hshape'.1
-          have hd' := gapBound_mono x Q2 hx2
-          simp only [Bool.and_eq_true, decide_eq_true_eq]
-          have e1 : ((p' + (R.size - j' * Ls)) * 16 + 0) / 16 = p' + (R.size - j' * Ls) := by omega
-          rw [e1, he16]
-          omega
-        have := (List.mem_filter.1 hj').2
-        rw [hpj] at this; cases this
+      have := hsuppG (2 * gapBound sc0 (-(Q2 : Int))) (by omega)
       have := sbound_mono x P hxP
-      have hal : acc.length = pre.length := by rw [hacc]; simp
       omega
     · unfold shifts
       rw [List.mem_map]
@@ -596,9 +602,13 @@ theorem chromG_cover (S : Window → Prop) (b : Best) (h : InvP P (cwT P read g)
     by_cases hxl : x ≤ min P 15
     · left; right
       refine ⟨hgb, e / 16, ?_, (a, bb), ?_, ?_⟩
-      · unfold diags
-        rw [List.mem_eraseDups, List.mem_flatMap]
-        exact ⟨_, harr, List.mem_map.2 ⟨e, he, rfl⟩⟩
+      · rw [← hdsK]
+        unfold diagsB diags
+        rw [List.mem_filter, mem_dedupAdj, List.mem_mergeSort, List.mem_flatMap]
+        refine ⟨⟨_, harr, List.mem_map.2 ⟨e, he, rfl⟩⟩, decide_eq_true ?_⟩
+        have := hsuppG (2 * gapBound sc0 (-(Q1 : Int))) (by have := gapBound_mono x Q1 hx1; omega)
+        have := sbound_mono x (min (min P 15) Q1) (by omega)
+        omega
       · rw [← hshK, List.mem_filter]
         refine ⟨shapesAt_mem x Q1 hx1 a bb hshape, ?_⟩
         simp only [bne_iff_ne, ne_eq, Prod.mk.injEq]; omega

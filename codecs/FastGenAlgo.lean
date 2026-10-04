@@ -2,6 +2,7 @@ import FastMapper
 import MapperGenBest
 import MapperGenScore
 import MapperGenLook
+import MapperGenSearch
 import SeedMapper2
 
 /-!
@@ -19,8 +20,9 @@ Per chromosome (`chromG`), with `lim = min P 15`:
    window is scored by the kernel `kerG` (exact up to `lim`).  Stop once
    `seedBound sc0 (−min best P)` is below the number of seeds looked up: a
    window that ties or beats the best has a clean seed among them.
-2. `stageK`: when one gap fits (`gapBound > 0`), every anchor's windows of the
-   shapes allowed at the best (`shapes`, without `(0, 0)`), kernel-scored.
+2. `stageK`: when one gap fits (`gapBound > 0`), the windows of the shapes
+   allowed at the best (`shapes`, without `(0, 0)`), kernel-scored, of the distinct
+   anchor diagonals supported by enough seeds (as in stage 3, for `min lim best`).
 3. `stageB`: when the best is still above `lim` (`P ≥ 16` and nothing `≤ 15`
    found; phase 1 then looks up every seed), the windows of the allowed shapes
    of the anchors supported by at least `#seeds − sbound P` seeds within
@@ -75,7 +77,8 @@ def phase1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R G : ByteArray) 
 @[inline] def wlen (n : Nat) (sh : Int × Int) : Int := (n : Int) + sh.1 + sh.2
 
 /-- The distinct diagonals of the anchors. -/
-def diags (acc : List (Array Nat)) : List Nat := (acc.flatMap fun arr => arr.toList.map (· / 16)).eraseDups
+def diags (acc : List (Array Nat)) : List Nat :=
+  dedupAdj ((acc.flatMap fun arr => arr.toList.map (· / 16)).mergeSort fun a b => decide (a ≤ b))
 
 /-- Window of diagonal `D` and shape `sh`: start and length. -/
 @[inline] def dst (n D : Nat) (sh : Int × Int) : Int := (D : Int) - n - sh.1
@@ -121,7 +124,7 @@ def stageB (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (shs : Li
 
 /-- Seeds (anchor arrays) with an anchor within `r` diagonals of `D`. -/
 def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
-  (acc.filter fun arr => arr.any fun e => decide (D ≤ e / 16 + r) && decide (e / 16 ≤ D + r)).length
+  (acc.filter fun arr => anyNear arr (D - r) (D + r)).length
 
 /-- The distinct diagonals of the anchors, supported by at least `need` seeds within `r`. -/
 def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=
@@ -144,7 +147,8 @@ def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (g
   let acc := r1.2.1
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageK R G c lim ((shapesAt Q1).filter (· != (0, 0))) (diags acc) b1 else b1
+      stageK R G c lim ((shapesAt Q1).filter (· != (0, 0)))
+        (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
     stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int))))

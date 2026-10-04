@@ -2,6 +2,7 @@ import FastMapperPar
 import FastMapperMz
 import FastGenAlgo
 import MzCheckPar
+import FastGenMz
 
 /-!
 Fast mapper benchmark (IO only, unproved).
@@ -63,10 +64,12 @@ def revComp (r : ByteArray) : ByteArray := Id.run do
     o := o.push (if c == 65 then 84 else if c == 84 then 65 else if c == 67 then 71 else if c == 71 then 67 else c)
   return o
 
-/-- Unique best over both strands (`true` = reverse); a tie between strands: none. -/
-def bothOf (f r : Fast.Best) : Option (Window × Int × Bool) :=
-  let one (b : Fast.Best) (rv : Bool) := if b.pen ≤ 12 && !b.amb then some (⟨b.chr, b.st, b.len⟩, -(b.pen : Int), rv) else none
+/-- Unique best over both strands (`true` = reverse), cap `P`; a tie between strands: none. -/
+def bothOfP (P : Nat) (f r : Fast.Best) : Option (Window × Int × Bool) :=
+  let one (b : Fast.Best) (rv : Bool) := if b.pen ≤ P && !b.amb then some (⟨b.chr, b.st, b.len⟩, -(b.pen : Int), rv) else none
   if f.pen < r.pen then one f false else if r.pen < f.pen then one r true else none
+
+def bothOf (f r : Fast.Best) : Option (Window × Int × Bool) := bothOfP 12 f r
 
 def say (s : String) : IO Unit := do IO.println s; (← IO.getStdout).flush
 
@@ -118,7 +121,9 @@ def main (args : List String) : IO UInt32 := do
           let bad := (reads.extract 0 k).foldl (fun n R => if Fast.mapFastTG P gbs idxs R == ref R then n else n + 1) 0
           say s!"reference check (bandMapper) on {min k reads.size} reads at T = -{P}: {bad} differ ({secs t0 (← IO.monoNanosNow)} s)"
           assert! bad == 0
-      pure fun rs => if let some P := tP then par (fun R => (Fast.mapFastTG P gbs idxs R).map fun (w, s) => (w, s, false)) rs
+      pure fun rs => if let some P := tP then
+          (if both then par (fun R => bothOfP P (Fast.mapChromsG P R gbs idxs) (Fast.mapChromsG P (revComp R) gbs idxs)) rs
+           else par (fun R => (Fast.mapAuto P gbs idxs R).map fun (w, s) => (w, s, false)) rs)
         else if both then par (fun R => bothOf (best R) (best (revComp R))) rs
         else (if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs).map
           (·.map fun (w, s) => (w, s, false))
@@ -136,7 +141,11 @@ def main (args : List String) : IO UInt32 := do
       IO.println s!"index check: {ok}"
       assert! ok
       let best R := Fast.mapChroms Fast.mzL R gbs idxs
-      pure fun rs => if both then par (fun R => bothOf (best R) (best (revComp R))) rs
+      let tP : Option Nat := (← IO.getEnv "FAST_T").map String.toNat!
+      pure fun rs => if let some P := tP then
+          (if both then par (fun R => bothOfP P (Fast.mapChromsG P R gbs idxs) (Fast.mapChromsG P (revComp R) gbs idxs)) rs
+           else par (fun R => (Fast.mapAutoMz P gbs idxs R).map fun (w, s) => (w, s, false)) rs)
+        else if both then par (fun R => bothOf (best R) (best (revComp R))) rs
         else (if tasks ≤ 1 then rs.map (Fast.mapFastMz gbs idxs) else Fast.mapFastMzPar tasks gbs idxs rs).map
           (·.map fun (w, s) => (w, s, false))
   let fast := reads.foldl (fun k r => if Fast.fastOk r then k + 1 else k) 0
