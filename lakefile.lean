@@ -177,3 +177,7 @@ lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate f
 lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
   srcDir := "bench"
   root := `PackedBench
+
+lean_exe trim_map where               -- trimmed FASTQ pairs → proved trimmer → proved pair mapper (unproved IO)
+  srcDir := "bench"
+  root := `TrimMap

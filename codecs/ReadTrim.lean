@@ -11,11 +11,11 @@ contract (`get_best_window`, trimmer/ReadWindowTrimmer/Contract.lean), computed
 by the packed trimmer (`getBestWindowPacked`).
 
     trimRead seq qual = get_best_window [] (scoresOf seq qual) (·.map perBase)
-                                                          (trimRead_eq_contract)
+      for every read with an A/C/G/T letter               (trimRead_eq_contract)
     trimRead seq qual = some (s, e) → e ≤ seq.size ∧ s < e ∧
       ∀ i, s ≤ i → i < e → isACGT seq[i]! = true          (trimRead_acgt)
 
-Reads with no A/C/G/T or longer than 10 000 letters are not trimmed (`none`).
+Reads with no A/C/G/T or longer than 10 000 letters give `none`.
 
 Chunked output: the texts of the chunks, in order, are the text of the whole
 input mapped (`chunks_text`), however the input is cut.
@@ -34,10 +34,20 @@ def isACGT (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84
 
 def scoresOf (seq qual : ByteArray) : List Int := (List.range seq.size).map fun i => enc seq[i]! qual[i]!
 
-/-- The kept window `[s, e)`, or `none` (nothing worth keeping). -/
+/-- The packed trimmer's fold over `scoresOf`, run on the bytes from the end
+(no list; `winLoop_eq`). -/
+def winLoop (seq qual : ByteArray) : Nat → PackedFoldState → PackedFoldState
+  | 0, st => st
+  | i + 1, st => winLoop seq qual i (packedFoldStep perBase (enc seq[i]! qual[i]!) st)
+
+/-- The kept window `[s, e)`, or `none` (nothing worth keeping: the best window
+starts with a non-A/C/G/T letter only when the read has no A/C/G/T at all). -/
 def trimRead (seq qual : ByteArray) : Option (Nat × Nat) :=
-  if seq.size ≤ 10000 && (List.range seq.size).any (fun i => isACGT seq[i]!) then
-    getBestWindowPacked (scoresOf seq qual) perBase
+  if seq.size ≤ 10000 then
+    match (winLoop seq qual seq.size (initialPackedFoldState seq.size)).result.map
+        (fun r => (r.bestStart, r.bestEnd)) with
+    | some (s, e) => if isACGT seq[s]! then some (s, e) else none
+    | none => none
   else none
 
 /-! ## Proof -/
@@ -78,22 +88,23 @@ theorem sum_le_neg (l : List Int) (h : ∀ x ∈ l, x ≤ 93) (hn : ∃ x ∈ l,
       · have := ih (fun y hy => h y (List.mem_cons_of_mem _ hy)) ⟨y, hy, hy0⟩
         rw [perBase_pos x hx0]; omega
 
-theorem trimRead_eq_contract (seq qual : ByteArray) (h : seq.size ≤ 10000)
-    (ha : (List.range seq.size).any (fun i => isACGT seq[i]!) = true) :
-    trimRead seq qual = get_best_window [] (scoresOf seq qual) (fun ws => ws.map perBase) := by
-  unfold trimRead
-  rw [if_pos (by simp [h, ha])]
-  exact getBestWindowPacked_equals_frozen_get_best_window [] _ _
+theorem winLoop_eq (seq qual : ByteArray) (k : Nat) (st : PackedFoldState) :
+    winLoop seq qual k st = ((List.range k).map (fun i => enc seq[i]! qual[i]!)).foldr (packedFoldStep perBase) st := by
+  induction k generalizing st with
+  | zero => rfl
+  | succ k ih => rw [winLoop, ih, List.range_succ]; simp
 
-/-- **The kept window is inside the read, non-empty, and A/C/G/T only.** -/
-theorem trimRead_acgt (seq qual : ByteArray) (s e : Nat) (ht : trimRead seq qual = some (s, e)) :
+theorem winLoop_packed (seq qual : ByteArray) :
+    (winLoop seq qual seq.size (initialPackedFoldState seq.size)).result.map (fun r => (r.bestStart, r.bestEnd)) =
+      getBestWindowPacked (scoresOf seq qual) perBase := by
+  rw [winLoop_eq]; unfold getBestWindowPacked scoresOf; simp
+
+/-- The contract's best window, when the read has an A/C/G/T letter: inside the
+read, non-empty, A/C/G/T only. -/
+theorem best_acgt (seq qual : ByteArray) (s e : Nat) (hsz : seq.size ≤ 10000) (j : Nat) (hj : j < seq.size)
+    (hjA : isACGT seq[j]! = true)
+    (ht : get_best_window [] (scoresOf seq qual) (fun ws => ws.map perBase) = some (s, e)) :
     e ≤ seq.size ∧ s < e ∧ ∀ i, s ≤ i → i < e → isACGT seq[i]! = true := by
-  unfold trimRead at ht
-  split at ht
-  · next hc =>
-    simp only [Bool.and_eq_true, decide_eq_true_eq, List.any_eq_true, List.mem_range] at hc
-    obtain ⟨hsz, j, hj, hjA⟩ := hc
-    rw [getBestWindowPacked_equals_frozen_get_best_window []] at ht
     have hlen : (scoresOf seq qual).length = seq.size := by simp [scoresOf]
     have hget : ∀ i (hi : i < (scoresOf seq qual).length), (scoresOf seq qual)[i] = enc seq[i]! qual[i]! := by
       intro i hi; simp [scoresOf]
@@ -134,7 +145,46 @@ theorem trimRead_acgt (seq qual : ByteArray) (s e : Nat) (ht : trimRead seq qual
     have := sum_le_neg w hw93 hneg
     rw [perBase_pos _ (by omega)] at hmax
     omega
+
+theorem trimRead_packed (seq qual : ByteArray) (s e : Nat) (ht : trimRead seq qual = some (s, e)) :
+    seq.size ≤ 10000 ∧ isACGT seq[s]! = true ∧
+      get_best_window [] (scoresOf seq qual) (fun ws => ws.map perBase) = some (s, e) := by
+  unfold trimRead at ht
+  split at ht
+  · next hsz =>
+    split at ht
+    · next s' e' hw =>
+      split at ht
+      · next hA =>
+        cases ht
+        rw [winLoop_packed, getBestWindowPacked_equals_frozen_get_best_window []] at hw
+        exact ⟨hsz, hA, hw⟩
+      · cases ht
+    · cases ht
   · cases ht
+
+/-- **The kept window is inside the read, non-empty, and A/C/G/T only.** -/
+theorem trimRead_acgt (seq qual : ByteArray) (s e : Nat) (ht : trimRead seq qual = some (s, e)) :
+    e ≤ seq.size ∧ s < e ∧ ∀ i, s ≤ i → i < e → isACGT seq[i]! = true := by
+  obtain ⟨hsz, hA, hw⟩ := trimRead_packed seq qual s e ht
+  have hv := get_best_window_returns_a_valid_window [] _ _ _ hw
+  simp only [scoresOf, List.length_map, List.length_range] at hv
+  exact best_acgt seq qual s e hsz s (by omega) hA hw
+
+/-- **The trimmer is the frozen contract** for every read with an A/C/G/T letter
+(at most 10 000 letters). -/
+theorem trimRead_eq_contract (seq qual : ByteArray) (h : seq.size ≤ 10000) (j : Nat) (hj : j < seq.size)
+    (hjA : isACGT seq[j]! = true) :
+    trimRead seq qual = get_best_window [] (scoresOf seq qual) (fun ws => ws.map perBase) := by
+  have hc := (winLoop_packed seq qual).trans (getBestWindowPacked_equals_frozen_get_best_window [] _ _)
+  unfold trimRead
+  rw [if_pos h, hc]
+  cases hw : get_best_window [] (scoresOf seq qual) (fun ws => ws.map perBase) with
+  | none => rfl
+  | some w =>
+    obtain ⟨s, e⟩ := w
+    have := best_acgt seq qual s e h j hj hjA hw
+    simp [this.2.2 s (Nat.le_refl _) this.2.1]
 
 end ReadTrim
 
