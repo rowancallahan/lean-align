@@ -74,13 +74,14 @@ structure St where
   bigAnc : Nat := 0      -- anchors from lookups returning > 64
   doneLk : Nat := 0      -- lookups made when the best was already two penalty-0 hits
   doneAnc : Nat := 0     -- their anchors
+  redo : Nat := 0        -- gap-stage anchors re-walked in a later pass (not new this lookup)
   mode : Nat := 0        -- 0: assert = proved mapper; 1: no assert; 2: no assert, gap stage off (unsound)
 deriving Inhabited
 
 def St.add (a b : St) : St :=
   ⟨a.reads + b.reads, a.lookups + b.lookups, a.anchors + b.anchors, a.fresh + b.fresh, a.gapRuns + b.gapRuns,
    a.gapAnchors + b.gapAnchors, a.zeroLk + b.zeroLk, a.bigLk + b.bigLk, max a.maxLk b.maxLk,
-   a.loops + b.loops, a.idle + b.idle, a.bigAnc + b.bigAnc, a.doneLk + b.doneLk, a.doneAnc + b.doneAnc, a.mode⟩
+   a.loops + b.loops, a.idle + b.idle, a.bigAnc + b.bigAnc, a.doneLk + b.doneLk, a.doneAnc + b.doneAnc, a.redo + b.redo, a.mode⟩
 
 def adv {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (ix : L) (ps : Array P)
     (s : LzS) (b : Best) (st : St) : LzS × Best × St :=
@@ -98,6 +99,7 @@ def adv {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (
       lookups := st.lookups + 1, anchors := st.anchors + lj.size,
       fresh := st.fresh + fresh.size, gapRuns := st.gapRuns + (if g then 1 else 0),
       gapAnchors := st.gapAnchors + (if g then as.size else 0),
+      redo := st.redo + (if g && 3 ≤ s.k then as.size - fresh.size else 0),
       zeroLk := st.zeroLk + (if lj.size == 0 then 1 else 0), bigLk := st.bigLk + (if lj.size > 64 then 1 else 0),
       maxLk := max st.maxLk lj.size, bigAnc := st.bigAnc + (if lj.size > 64 then lj.size else 0),
       doneLk := st.doneLk + (if b.pen == 0 && b.amb then 1 else 0),
@@ -158,6 +160,7 @@ def report (st : St) (pairs : Nat) : IO Unit := do
   IO.println s!"diag: pairs {pairs}, reads mapped {st.reads}"
   IO.println s!"diag: per read: lookups {f st.lookups / r}  anchors {f st.anchors / r}  same-len scored {f st.fresh / r}  gap passes {f st.gapRuns / r}  gap anchors {f st.gapAnchors / r}  (chrom,strand) loops {f st.loops / r}  chroms leaving best unchanged {f st.idle / r}"
   IO.println s!"diag: per lookup: anchors {f st.anchors / f st.lookups}  empty {f st.zeroLk / f st.lookups}  >64 {f st.bigLk / f st.lookups}  max {st.maxLk}  anchors from >64 lookups {f st.bigAnc / f st.anchors}"
+  IO.println s!"diag: gap-stage anchors re-walked in a later pass: {f st.redo / r} per read"
   IO.println s!"diag: lookups made after two penalty-0 hits: {f st.doneLk / r} per read, {f st.doneAnc / f st.anchors} of anchors"
 
 end Diag
