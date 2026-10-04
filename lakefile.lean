@@ -105,3 +105,7 @@ lean_exe map_bench where              -- benchmark only; prints to stdout
 lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "bench"
   root := `Proto
+
+lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark only)
+  srcDir := "bench"
+  root := `BandBench
