@@ -195,6 +195,11 @@ def mapTask (m : PairMapper) (multi : Bool) (ps : Array Prep) : IO (ByteArray ×
   let t1 ← IO.monoNanosNow
   return (txt, outs, t1 - t0)
 
+def peakRssMB : IO Nat := do
+  let st ← IO.FS.readFile "/proc/self/status"
+  let line := ((st.splitOn "\n").find? (·.startsWith "VmHWM:")).get!
+  return ((line.splitOn " ").filter (· ≠ "")).getD 1 "0" |>.toNat! |> (· / 1024)
+
 def getEnvNat (k : String) (d : Nat) : IO Nat := do
   return ((← IO.getEnv k).getD (toString d)).toNat!
 
@@ -318,5 +323,5 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"prep (task time):   {secs s.prepNs} s  ({n / secs s.prepNs} pairs/s per core)"
   IO.println s!"map (task time):    {secs s.mapNs} s  ({n / secs s.mapNs} pairs/s per core)"
   IO.println s!"write (task time):  {secs s.writeNs} s"
-  IO.println s!"overall: {secs (tEnd - tStart)} s wall  {n / secs (tEnd - tStart)} pairs/s (startup {secs (t1 - t0)} s excluded)"
+  IO.println s!"overall: {secs (tEnd - tStart)} s wall  {n / secs (tEnd - tStart)} pairs/s (startup {secs (t1 - t0)} s excluded)  peak RSS {← peakRssMB} MB"
   return 0

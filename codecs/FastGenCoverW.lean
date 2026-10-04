@@ -437,3 +437,5 @@ theorem chromG_coverW (S : Window → Prop) (b : Best) (h : InvP P cw S b) :
 end chrom2
 
 end MapSpec.Fast
+
+#print axioms MapSpec.Fast.chromG_coverW
