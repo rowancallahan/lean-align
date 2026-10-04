@@ -129,3 +129,7 @@ lean_exe stream_bench where           -- writer overlapped with mapping, benchma
 lean_exe lowerr_bench where           -- benchmark only: low-error fast path vs mapWith
   srcDir := "bench"
   root := `LowErrBench
+
+lean_exe group_bench where            -- dedup / sort / binned pipelines vs plain streaming, benchmark only
+  srcDir := "bench"
+  root := `GroupBench
