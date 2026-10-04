@@ -101,6 +101,7 @@ Diagnosis (`PAIR_DIAG=1 pair_bench`, Mz k=22, per mapped read): chr21 3.09 looku
 Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest bucket first + early stop); 3 tighter bound (4 × 25); 5 stored seed rest / context; 7 threads (mark_mt fix); 9 rarest-first + P/4+1 stop + gaps only ≥ 8; 10 non-ACGT (per-letter place lists, N = mismatch). Partly: 4 unboxed (proved code uses ByteArray/fixed-width/tail recursion, but not yet the 2-bit packed genome + popcount → `speed/seed-schemes` proving a packed-Hamming kernel); 6 sampled whole-genome index (minimizer / mod-minimizer proved, whole genome not built). Not done: 8 batch lookups across reads (→ `speed/proto-tune` prototype).
 
 ## Specs Rowan plans to write
+- **TODO Rowan: set up read trimming** — reads will always be trimmed (trimmer/ReadWindowTrimmer), so mapped reads are ACGT-only; then every genome N is a mismatch under the current spec (spec counts N=N as a match; hg38 is 5.33% N in 944 runs, no other non-ACGT) and fast paths may require ACGT-only reads.
 - **TODO Rowan: redo `spec/PairSpec.lean`** — current file is a draft written by Claude so the paired proofs could start (both strands via reverse complement, unique best over placements, proper pair = same chromosome, opposite strands, facing, fragment in [lo, hi]). Proofs on `speed/fast-proved` target this draft for now.
 - FASTQ input spec, SAM output spec (CIGAR for the chosen window), CLI with filter options; later SAM→BAM with BAM checked as the inverse of SAM (fuzzing over BAM instead of a full BAM spec).
 
