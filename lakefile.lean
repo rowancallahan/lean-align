@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper]
+  roots := #[`WfaU3, `SeedMapper, `CsrIndex]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
