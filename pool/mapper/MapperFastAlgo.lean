@@ -53,18 +53,30 @@ def MIXC : UInt64 := 0x9E3779B97F4A7C15
 @[inline] def bucketOf (y : UInt64) : Nat := (y >>> 26).toNat
 
 /-- Low 26 of the 50 bits. -/
-@[inline] def keyOf (y : UInt64) : UInt32 := (y &&& 0x3FFFFFF).toUInt32
+@[inline] def keyOf (y : UInt64) : Nat := (y &&& 0x3FFFFFF).toNat
 
 /-- Hash of the 25-letter word at `p`. -/
 @[inline] def hashAt (B : ByteArray) (p : Nat) : UInt64 := mix (wcode B p (p + q) 0)
 
 /-! ## Index -/
 
-/-- `offs`: `2^24 + 1` bucket offsets; bucket `b` is entries `offs[b] ..< offs[b+1]`.
-`ent`: entry `t` is position `ent[2t]`, key `ent[2t+1]`. -/
+/-- Little-endian `UInt32` number `i` of a byte array. -/
+@[inline] def u32 (B : ByteArray) (i : Nat) : Nat :=
+  let j := 4 * i
+  ((B.get! j).toUInt32 ||| ((B.get! (j + 1)).toUInt32 <<< 8) |||
+    ((B.get! (j + 2)).toUInt32 <<< 16) ||| ((B.get! (j + 3)).toUInt32 <<< 24)).toNat
+
+@[inline] def setU32 (B : ByteArray) (i v : Nat) : ByteArray :=
+  let j := 4 * i
+  let v := v.toUInt32
+  ((((B.set! j v.toUInt8).set! (j + 1) (v >>> 8).toUInt8).set! (j + 2) (v >>> 16).toUInt8).set!
+    (j + 3) (v >>> 24).toUInt8)
+
+/-- `offs`: `2^24 + 1` bucket offsets (LE `UInt32`s); bucket `b` is entries
+`offs[b] ..< offs[b+1]`.  `ent`: entry `t` is position `ent[2t]`, key `ent[2t+1]`. -/
 structure HIdx where
-  offs : Array UInt32
-  ent : Array UInt32
+  offs : ByteArray
+  ent : ByteArray
   /-- `odd[v]`: the places of byte `v` (not A, C, G, T), increasing -/
   odd : Array (Array Nat)
 deriving Inhabited
@@ -86,7 +98,7 @@ def buildIdx (g : ByteArray) : HIdx := Id.run do
       cnt := cnt.modify (b + 1) (· + 1)
   for b in [0:NB] do cnt := cnt.set! (b + 1) (cnt[b + 1]! + cnt[b]!)
   let mut fill := cnt
-  let mut ent : Array UInt32 := Array.replicate (2 * cnt[NB]!.toNat) 0
+  let mut ent := ByteArray.mk (Array.replicate (8 * cnt[NB]!.toNat) 0)
   x := 0; good := 0
   for p in [0:g.size] do
     let v := g.get! p
@@ -95,13 +107,15 @@ def buildIdx (g : ByteArray) : HIdx := Id.run do
       let y := mix x
       let b := bucketOf y
       let i := fill[b]!.toNat
-      ent := (ent.set! (2 * i) (p + 1 - q).toUInt32).set! (2 * i + 1) (keyOf y)
+      ent := setU32 (setU32 ent (2 * i) (p + 1 - q)) (2 * i + 1) (keyOf y)
       fill := fill.set! b (i + 1).toUInt32
+  let mut offs := ByteArray.mk (Array.replicate (4 * (NB + 1)) 0)
+  for b in [0:NB + 1] do offs := setU32 offs b cnt[b]!.toNat
   let mut odd : Array (Array Nat) := Array.replicate 256 #[]
   for p in [0:g.size] do
     let v := g.get! p
     if !acgt v then odd := odd.modify v.toNat (·.push p)
-  return { offs := cnt, ent, odd }
+  return { offs, ent, odd }
 
 /-! ### Checker -/
 
@@ -109,8 +123,8 @@ def buildIdx (g : ByteArray) : HIdx := Id.run do
 last `r ≤ 25` letters, all ACGT (`r` = the ACGT run ending before `e`, capped).
 Each ACGT word must be the next entry `fill[b]` of its bucket `b`, with its
 place and key; `none` if one is not. -/
-def scanIdx (ix : HIdx) (G : ByteArray) : (k e : Nat) → (x : UInt64) → (r : Nat) → Array UInt32 →
-    Option (Array UInt32)
+def scanIdx (ix : HIdx) (G : ByteArray) : (k e : Nat) → (x : UInt64) → (r : Nat) → Array Nat →
+    Option (Array Nat)
   | 0, _, _, _, fill => some fill
   | k + 1, e, x, r, fill =>
     let v := G.get! e
@@ -120,18 +134,18 @@ def scanIdx (ix : HIdx) (G : ByteArray) : (k e : Nat) → (x : UInt64) → (r : 
       if r = q then
         let y := mix x
         let b := bucketOf y
-        let t := fill[b]!.toNat
-        if ix.offs[b]!.toNat ≤ t && t < ix.offs[b + 1]!.toNat && ix.ent[2 * t]!.toNat == e + 1 - q &&
-            ix.ent[2 * t + 1]! == keyOf y then
-          scanIdx ix G k (e + 1) x r (fill.set! b (t + 1).toUInt32)
+        let t := fill[b]!
+        if u32 ix.offs b ≤ t && t < u32 ix.offs (b + 1) && u32 ix.ent (2 * t) == e + 1 - q &&
+            u32 ix.ent (2 * t + 1) == keyOf y then
+          scanIdx ix G k (e + 1) x r (fill.set! b (t + 1))
         else none
       else scanIdx ix G k (e + 1) x r fill
     else scanIdx ix G k (e + 1) 0 0 fill
 
 /-- After the scan every bucket was used up exactly. -/
-def fillOk (ix : HIdx) (fill : Array UInt32) : (k b : Nat) → Bool
+def fillOk (ix : HIdx) (fill : Array Nat) : (k b : Nat) → Bool
   | 0, _ => true
-  | k + 1, b => fill[b]! == ix.offs[b + 1]! && fillOk ix fill k (b + 1)
+  | k + 1, b => fill[b]! == u32 ix.offs (b + 1) && fillOk ix fill k (b + 1)
 
 /-- Every place `p, p+1, …` (`k` of them) holding a byte `v` other than ACGT is
 entry `cur[v]` of `odd[v]` (`cur` is only a hint). -/
@@ -148,7 +162,7 @@ def increasing (a : Array Nat) : (k i : Nat) → Bool
 
 /-- The runtime checker. -/
 def checkIdx (ix : HIdx) (G : ByteArray) : Bool :=
-  (match scanIdx ix G G.size 0 0 0 ix.offs with
+  (match scanIdx ix G G.size 0 0 0 ((Array.range NB).map (u32 ix.offs)) with
    | some fill => fillOk ix fill NB 0
    | none => false) &&
     checkOdd ix G (Array.replicate 256 0) G.size 0 &&
@@ -157,11 +171,11 @@ def checkIdx (ix : HIdx) (G : ByteArray) : Bool :=
 /-! ## Anchors -/
 
 /-- Packed anchors `(ent[2t] + base)·16 + bit` of the entries `t ∈ [t, hi)` with this key. -/
-def scanBucket (ent : Array UInt32) (key : UInt32) (base bit hi : Nat) (t : Nat) (acc : Array Nat) :
+def scanBucket (ent : ByteArray) (key : Nat) (base bit hi : Nat) (t : Nat) (acc : Array Nat) :
     Array Nat :=
   if t < hi then
     scanBucket ent key base bit hi (t + 1)
-      (if ent[2 * t + 1]! == key then acc.push ((ent[2 * t]!.toNat + base) * 16 + bit) else acc)
+      (if u32 ent (2 * t + 1) == key then acc.push ((u32 ent (2 * t) + base) * 16 + bit) else acc)
   else acc
 termination_by hi - t
 
@@ -194,7 +208,7 @@ def lookupSeed (ix : HIdx) (G R : ByteArray) (j : Nat) : Array Nat :=
   if o == s + q then
     let y := hashAt R s
     let b := bucketOf y
-    scanBucket ix.ent (keyOf y) (BIAS - s) (2 ^ j) ix.offs[b + 1]!.toNat ix.offs[b]!.toNat #[]
+    scanBucket ix.ent (keyOf y) (BIAS - s) (2 ^ j) (u32 ix.offs (b + 1)) (u32 ix.offs b) #[]
   else
     scanOdd G R ix.odd[(R.get! o).toNat]! (o - s) s (BIAS - s) (2 ^ j) 0 #[]
 

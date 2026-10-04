@@ -62,7 +62,7 @@ def main (args : List String) : IO UInt32 := do
   let reads := (Array.range (rl.size / 2)).map fun i => rl[2 * i + 1]!
   IO.println s!"chromosomes: {gbs.size}  letters: {gbs.foldl (· + ·.size) 0}  reads: {reads.size}"
   let idxs ← timed "index" fun t => gbs.map fun g => Fast.buildIdx (if t == 1 then g.push 0 else g)
-  IO.println s!"entries: {idxs.foldl (· + ·.ent.size / 2) 0}"
+  IO.println s!"entries: {idxs.foldl (· + ·.ent.size / 8) 0}"
   let ok ← timed "check" fun t => Fast.checkAll (if t == 1 then #[] else idxs) gbs
   IO.println s!"index check: {ok}"
   assert! ok
