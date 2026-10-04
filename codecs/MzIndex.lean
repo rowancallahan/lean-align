@@ -787,7 +787,80 @@ theorem lookupSeed_sorted (R : ByteArray) (s : Nat) :
 
 end
 
+/-! ## Byte genome: `LookupComplete` and the mapping theorem -/
+
+/-- One byte per letter. -/
+def wordBytes (word : List Char) : ByteArray := (word.map fun ch => ch.val.toUInt8).toByteArray
+
+/-- Every place `(c, p)` where the 25-letter `word` occurs (one index per chromosome). -/
+def mzLookup (idxs : Array MzIdx) (gb : ByteGenome) (word : List Char) : List (Nat × Nat) :=
+  (List.range gb.size).flatMap fun c =>
+    (lookupSeed idxs[c]! gb[c]!.bytes (wordBytes word) 0).toList.map (c, ·)
+
+def checkAll (idxs : Array MzIdx) (gb : ByteGenome) : Bool :=
+  (List.range gb.size).all fun c => check idxs[c]! gb[c]!.bytes
+
+/-- Map one read through minimizer indexes (seeds looked up in the index,
+windows scored by the proved codec). -/
+def mapWithMz (sc : AlignmentSpec.Scoring) (T : Int) (gb : ByteGenome) (idxs : Array MzIdx)
+    (read : List Char) : Option (Window × Int) :=
+  mapWith (mzLookup idxs gb) (kernelScore sc read (decodeGenome gb)) q T (errBound sc T)
+    (decodeGenome gb) read
+
+theorem toChar_inj (a b : UInt8) (h : toChar a = toChar b) : a = b := by
+  have := congrArg (fun ch : Char => ch.val.toNat) h
+  simp only [toChar_val_toNat] at this
+  exact UInt8.toNat_inj.mp this
+
+/-- The bytes of a word of a decoded chromosome are the chromosome's bytes. -/
+theorem wordBytes_get (B : ByteArray) (p : Nat) (hp : p + q ≤ B.size) (i : Nat) (hi : i < q) :
+    (wordBytes (wordAt (decodeBytes B) q p)).get! i = B.get! (p + i) := by
+  have hw := wordAt_decodeBytes B p q hp
+  have hasc : ∀ ch ∈ wordAt (decodeBytes B) q p, ch.val.toNat < 256 := by
+    intro ch hch
+    rw [hw, List.mem_map] at hch
+    obtain ⟨j, -, rfl⟩ := hch
+    rw [toChar_val_toNat]; exact UInt8.toNat_lt _
+  have hdec := decodeBytes_toByteArray _ hasc
+  have hlen : i < (decodeBytes (wordBytes (wordAt (decodeBytes B) q p))).length := by
+    unfold wordBytes; rw [hdec, hw]; simp [hi]
+  apply toChar_inj
+  rw [← getElem_decodeBytes _ i hlen]
+  have : (decodeBytes (wordBytes (wordAt (decodeBytes B) q p)))[i] =
+      (wordAt (decodeBytes B) q p)[i]'(by rw [hw]; simp [hi]) := by
+    unfold wordBytes; simp only [hdec]
+  rw [this]
+  simp only [hw, List.getElem_map, List.getElem_range]
+
+/-- **Completeness.**  Indexes that pass the checker report every place every
+25-letter word of the genome occurs. -/
+theorem checkAll_complete (idxs : Array MzIdx) (gb : ByteGenome) (hchk : checkAll idxs gb = true) :
+    LookupComplete (decodeGenome gb) q (mzLookup idxs gb) := by
+  intro c chromosome p hch hp
+  rw [getElem?_decodeGenome] at hch
+  split at hch
+  · next hc =>
+    cases hch
+    simp only [checkAll, List.all_eq_true, List.mem_range] at hchk
+    have hcc := hchk c hc
+    rw [getElem!_pos gb c hc] at hcc
+    simp only [length_decodeBytes] at hp
+    simp only [mzLookup, List.mem_flatMap, List.mem_range, List.mem_map]
+    refine ⟨c, hc, p, ?_, rfl⟩
+    rw [getElem!_pos gb c hc, lookupSeed_mem hcc]
+    exact ⟨hp, fun i hi => by rw [Nat.zero_add, ← wordAt, wordBytes_get _ p hp i hi]⟩
+  · cases hch
+
+/-- **Mapping.**  Through minimizer indexes that pass the checker, the mapper
+gives the specification's answer. -/
+theorem mapWithMz_eq_mapSpec (sc : AlignmentSpec.Scoring) (hv : ValidScoring sc) (T : Int)
+    (gb : ByteGenome) (idxs : Array MzIdx) (hchk : checkAll idxs gb = true) (read : List Char) :
+    mapWithMz sc T gb idxs read = mapSpec sc T (decodeGenome gb) read :=
+  mapWith_eq_mapSpec _ _ q sc hv T _ read (checkAll_complete idxs gb hchk) (kernelScore_eq sc read _)
+
 end MapSpec.Mz
 
 #print axioms MapSpec.Mz.lookupSeed_mem
 #print axioms MapSpec.Mz.lookupSeed_sorted
+#print axioms MapSpec.Mz.checkAll_complete
+#print axioms MapSpec.Mz.mapWithMz_eq_mapSpec
