@@ -1,4 +1,5 @@
 import FastMapperPar
+import FastMapperMz
 
 /-!
 Fast mapper benchmark (IO only, unproved).
@@ -7,7 +8,8 @@ Fast mapper benchmark (IO only, unproved).
 
 Reads the FASTA (one or more chromosomes) and the reads, builds the hashed
 index of every chromosome, runs the proved checker on it, maps every read with
-the proved `mapFast` (`FAST_TASKS=n`: `mapFastPar` over n tasks), prints times and reads/s, and optionally writes
+the proved `mapFast` (`FAST_TASKS=n`: `mapFastPar` over n tasks; `FAST_MZ=k`
+[`FAST_MZ_B=B`]: minimizer index, `mapFastMz`/`mapFastMzPar`), prints times and reads/s, and optionally writes
 `name \t start \t len \t score` (or `name \t none`) per read, the format of
 `proto`'s dump.
 -/
@@ -61,22 +63,33 @@ def main (args : List String) : IO UInt32 := do
   let names := (Array.range (rl.size / 2)).map fun i => String.fromUTF8! (rl[2 * i]!.extract 1 rl[2 * i]!.size)
   let reads := (Array.range (rl.size / 2)).map fun i => rl[2 * i + 1]!
   IO.println s!"chromosomes: {gbs.size}  letters: {gbs.foldl (· + ·.size) 0}  reads: {reads.size}"
-  let idxs ← timed "index" fun t => gbs.map fun g => Fast.buildIdx (if t == 1 then g.push 0 else g)
-  IO.println s!"entries: {idxs.foldl (· + ·.ent.size / 8) 0}"
-  let ok ← timed "check" fun t => Fast.checkAll (if t == 1 then #[] else idxs) gbs
-  IO.println s!"index check: {ok}"
-  assert! ok
+  let tasks := ((← IO.getEnv "FAST_TASKS").getD "1").toNat!   -- 1 = no tasks
+  let mz := ((← IO.getEnv "FAST_MZ").getD "0").toNat!          -- 0 = hashed index
+  let mapAll : Array ByteArray → Array (Option (Window × Int)) ← if mz == 0 then do
+      let idxs ← timed "index" fun t => gbs.map fun g => Fast.buildIdx (if t == 1 then g.push 0 else g)
+      IO.println s!"index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + ix.ent.size + ix.odd.foldl (· + ·.size) 0) 0}"
+      let ok ← timed "check" fun t => Fast.checkAll (if t == 1 then #[] else idxs) gbs
+      IO.println s!"index check: {ok}"
+      assert! ok
+      pure fun rs => if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs
+    else do
+      let B := ((← IO.getEnv "FAST_MZ_B").getD "24").toNat!
+      let idxs ← timed "index" fun t => gbs.map fun g => Mz.build (if t == 1 then g.push 0 else g) mz B
+      IO.println s!"minimizer k={mz} B={B} index_bytes: {idxs.foldl (fun n ix => n + ix.offs.size + 8 * ix.sl.size + 8 * ix.runs.size) 0}"
+      let ok ← timed "check" fun t => Fast.checkAllMz (if t == 1 then #[] else idxs) gbs
+      IO.println s!"index check: {ok}"
+      assert! ok
+      pure fun rs => if tasks ≤ 1 then rs.map (Fast.mapFastMz gbs idxs) else Fast.mapFastMzPar tasks gbs idxs rs
   let fast := reads.foldl (fun k r => if Fast.fastOk r then k + 1 else k) 0
   IO.println s!"fast-path reads: {fast}"
   assert! fast == reads.size   -- other read lengths take the proved slow fallback
   let reps := ((← IO.getEnv "FAST_REPS").getD "1").toNat!   -- repeat the mapping (timing only)
   let t0 ← IO.monoNanosNow
   let mut res := #[]
-  let tasks := ((← IO.getEnv "FAST_TASKS").getD "1").toNat!   -- 1 = no tasks
   for k in [0:reps] do
     let rs := if t0 + k == 1 then #[] else reads
     let ta ← IO.monoNanosNow
-    res := if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs
+    res ← (← IO.mkRef (mapAll rs)).get   -- forced before the clock is read again
     IO.println s!"rep {k}: {secs ta (← IO.monoNanosNow)} s ({res.size})"
   let mapped := res.foldl (fun k x => if x.isSome then k + 1 else k) 0
   let t1 ← IO.monoNanosNow
