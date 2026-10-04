@@ -304,21 +304,22 @@ structure Best where
 @[inline] def addGap (R G : ByteArray) (c st len : Nat) (b : Best) : Best :=
   b.add c st len (gappedPen R G st len (min b.pen cap))
 
-/-- The four windows with a gap of length `L` next to anchor `A` (support `cs`). -/
+/-- Window `(st, len)` (one gap; its two diagonals carry `s` clean seeds) when
+`ok` and it fits and its support can reach the current best. -/
+@[inline] def gapW (R G : ByteArray) (c st len s : Nat) (ok : Bool) (b : Best) : Best :=
+  if need b ≤ s && ok && st + len ≤ G.size then addGap R G c st len b else b
+
+/-- The four windows with a gap of length `L` next to anchor `A` (support `cs`):
+`(A, n+L)` ends on `A+L`, `(A, n-L)` on `A-L` (gap after the seed);
+`(A-L, n+L)` and `(A+L, n-L)` end on `A` (gap before the seed). -/
 @[inline] def gapL (R G : ByteArray) (c : Nat) (as : Array Nat) (i A cs L : Nat) (b : Best) : Best :=
   let n := R.size
   let sm := supNear as i (A - L)
   let sp := supNear as i (A + L)
-  -- (A, n+L) ends on A+L; (A, n-L) ends on A-L: gap after the seed
-  let b := if need b ≤ cs + sp && BIAS ≤ A && A - BIAS + (n + L) ≤ G.size then
-    addGap R G c (A - BIAS) (n + L) b else b
-  let b := if need b ≤ cs + sm && BIAS ≤ A && A - BIAS + (n - L) ≤ G.size then
-    addGap R G c (A - BIAS) (n - L) b else b
-  -- (A-L, n+L) and (A+L, n-L) end on A: gap before the seed
-  let b := if need b ≤ cs + sm && BIAS + L ≤ A && A - L - BIAS + (n + L) ≤ G.size then
-    addGap R G c (A - L - BIAS) (n + L) b else b
-  if need b ≤ cs + sp && BIAS ≤ A + L && A + L - BIAS + (n - L) ≤ G.size then
-    addGap R G c (A + L - BIAS) (n - L) b else b
+  gapW R G c (A + L - BIAS) (n - L) (cs + sp) (BIAS ≤ A + L) <|
+  gapW R G c (A - L - BIAS) (n + L) (cs + sm) (BIAS + L ≤ A) <|
+  gapW R G c (A - BIAS) (n - L) (cs + sm) (BIAS ≤ A) <|
+  gapW R G c (A - BIAS) (n + L) (cs + sp) (BIAS ≤ A) b
 
 /-- One-gap windows of anchors `i, i+1, …` (`k` of them). -/
 def gapAll (R G : ByteArray) (c : Nat) (as : Array Nat) : (k i : Nat) → Best → Best
