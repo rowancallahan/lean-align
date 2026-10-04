@@ -330,6 +330,14 @@ def miniScan (v km : UInt64) (sh : UInt64) (d cnt best : Nat) (bv : UInt64) : Na
     let h := ordH ((v >>> sh) &&& km)
     if h < bv then miniScan v km (sh - 2) (d + 1) c d h else miniScan v km (sh - 2) (d + 1) c best bv
 
+/-- `miniScan` under the weighted order `ordW fr k`. -/
+def miniScanW (fr : ByteArray) (k : Nat) (v km : UInt64) (sh : UInt64) (d cnt best : Nat) (bv : UInt64) : Nat :=
+  match cnt with
+  | 0 => best
+  | c + 1 =>
+    let h := ordW fr k ((v >>> sh) &&& km)
+    if h < bv then miniScanW fr k v km (sh - 2) (d + 1) c d h else miniScanW fr k v km (sh - 2) (d + 1) c best bv
+
 /-- Offsets (in the seed) of the k-mers the scheme selects inside the seed,
 seen from the seed alone.  Each of them is selected at the matching place of
 every genome occurrence of the seed. -/
@@ -348,7 +356,9 @@ def seedOffsets (sch : Scheme) (q : Nat) (v : UInt64) (fr : ByteArray) : Array N
   | 4 =>
     let mut ds : Array Nat := #[]
     for i in [0 : q - sch.L + 1] do
-      let m := argminH (fun d => ordW fr k (subCode v q k d)) i sch.w
+      let km : UInt64 := (1 <<< (2 * k.toUInt64)) - 1
+      let sh := (2 * (q - k - i)).toUInt64
+      let m := miniScanW fr k v km (sh - 2) (i + 1) (sch.w - 1) i (ordW fr k ((v >>> sh) &&& km))
       if !ds.contains m then ds := ds.push m
     return ds
   | _ =>

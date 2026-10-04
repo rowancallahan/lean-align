@@ -1,0 +1,250 @@
+Seed / sketch schemes for the proved mapper: minimizers, syncmers, variable-length keys
+=====================================================================================
+Branch speed/seed-schemes.  Lean: pool/mapper/MapperSketch.lean, codecs/SketchMapper.lean.
+Prototype (unproved): bench/ProtoSketch.lean (lake exe proto_sketch), sweep bench/seed_schemes.sh.
+
+Question: can the index hold fewer positions than "every 25-mer" and still be provably
+complete (every window scoring >= T is reached from some seed hit)?  Short answer: yes.
+Any (w,k) minimizer scheme with w + k - 1 <= 25, and any closed (k,s) syncmer scheme with
+2k - s - 1 <= 25, is complete.  The proof covers every order on k-mers / s-mers and needs
+nothing beyond what the mapper proof already has.  On chr21 the index shrinks 3-6x
+(entries per base 0.81 -> 0.27..0.12).  Single-thread reads/s in the Lean prototype
+drop 10-25% for minimizers and 35-50% for syncmers.  Answers are identical to the every-25-mer prototype on all 100k
+reads.
+
+------------------------------------------------------------------------------------------
+1. The abstraction (item 4) — what is proved
+------------------------------------------------------------------------------------------
+SeedSketch κ  (pool/mapper/MapperSketch.lean)
+  L : Nat
+  sketch : List Char → List (κ × Nat)              -- (key, offset) summaries of a string
+  conserved : b + |x| ≤ |y| → (y.drop b).take |x| = x →
+              ∀ e ∈ sketch x, (e.1, b + e.2) ∈ sketch y
+  nonempty  : L ≤ |x| → sketch x ≠ []
+
+SeedSketch.anchored (derived): (x.drop a).take L = (y.drop b).take L (both in range) →
+  ∃ key d, (key, a+d) ∈ sketch x ∧ (key, b+d) ∈ sketch y.
+  "An exact match of length ≥ L shares a key at a computable offset."
+
+Mapper (codecs/SketchMapper.lean), for any κ and any S : SeedSketch κ:
+  the read is cut into seedBound sc T + 1 = 4 seeds of q = 25 letters; for each seed,
+  pick ONE summary (key, i) of the seed (any choice: PickOk pick); every place p the lookup
+  reports for key gives seed start p − i; keep may drop the place (KeepComplete); emit
+  the shapes (19 windows) around it.  Seeds shorter than S.L fall back to all windows.
+
+  mapWithSketch_eq_mapSpec :
+    ValidScoring sc → SketchLookupComplete g S.sketch lookup → PickOk pick →
+    KeepComplete g keep → (∀ w, score w = windowScore sc read g w) →
+    mapWithSketch S pick keep lookup score T (seedBound sc T) (gapBound sc T) (gapBound2 sc T) g read
+      = mapSpec sc T g read
+  sketchMapper_eq_mapSpec, mapReadsSketch_eq_mapSpec: hash-table sketch index built from
+  the genome (buildSketchIndex_complete), pick = smallest bucket (pickMin_ok), keep =
+  whole seed occurs (seedOccurs_complete), scorer = wfaAlignU3.  Statements are for every
+  S; minimizerMapper_eq_mapSpec / syncmerMapper_eq_mapSpec are the instances.
+  lettersAgree_complete: a keep that compares seed letters with genome letters at any
+  set of offsets accepts every occurrence.  This is the formal reason the stored-context
+  filter below is exact (the index must store the true genome letters, checkable at load
+  like CsrIndex.checkIndex).
+
+Proof shape: the completeness step uses ONLY conserved + nonempty + S.L ≤ q.  A hit window
+has a clean seed j sitting at o in the window (exists_clean_seed2, unchanged).  The pick
+returns a summary e of that seed (nonempty).  e is a summary of the chromosome at
+w.start + o + e.2 (conserved).  The lookup reports that place, and the shape (o − jq, ·)
+gives back exactly w.start.  It is mem_candidatesK with jq replaced by jq + e.2.
+
+Instances proved:
+  windowSketch L sel — ANY function sel from an L-letter window to (key, offset).
+    conserved/nonempty hold with no condition on sel (each window of x is a window of y).
+    kmerSketch k        = windowSketch k (w ↦ (w, 0))
+    minimizerSketch k w ord = windowSketch (w+k−1) (leftmost argmin of ord over the w
+      k-mers).  Correct for EVERY ord (random hash, decycling, frequency-weighted, ...):
+      the order only changes density, which settles item 1's "order choice" point.
+    minimizerSketch_key / kmerSketch_key: key = genome letters at the offset, so an index
+      may store positions only (keys recomputed from the genome).
+  ctxSketch sel L hp hh — context-free: whether a key of length ℓ starts at a position is
+    decided by those ℓ letters (PrefixDet sel), plus a hitting property Hits sel L
+    (every L-letter string contains a selected key).
+    fixedSel k P (fixed length, any predicate P), dictSel D lmax (shortest prefix in
+    any dictionary D: variable length), extSel k P ext (P-selected k-mer, key extended
+    by ext(z) ≤ emax letters).  PrefixDet is proved for all three.
+    closedSyncmer_hits: s < k → every string of 2k − s − 1 letters has a closed (k,s)
+      syncmer, for every order on s-mers (value-based definition, so ties are harmless).
+      Proof: take the leftmost least s-mer J among the 2(k−s) s-mers; if J < k − s the
+      k-mer starting at J has it first, else the k-mer starting at J − (k−s) has it last.
+    extSel_hits: Hits (fixedSel k P) L → ext ≤ emax → Hits (extSel k P ext) (L + emax).
+    syncmerSketch k s ord hs (L = 2k−s−1), syncmerExtSketch (L = 2k−s−1+emax).
+  All proofs close, standard axioms only (sh scripts/check.sh passes: see bottom).
+
+Proof difficulty, ranked: window sketches (k-mer, minimizer, any order) ≈ free — determinism
+is the whole proof.  Context-free fixed length needs a hitting lemma: about 40 lines for
+closed syncmers.  Variable-length context-free adds PrefixDet (about 20 lines) plus a
+hitting lemma for the specific rule; that is hard for a genome-derived dictionary D,
+easy for extSel.  The mapper theorem itself is written once for all of them.
+
+Not yet proved (next step, same pattern as CsrIndex): a byte-level CSR sketch index with a
+runtime checker "every window-minimizer of the genome is in its bucket" → SketchLookupComplete;
+the prototype's early-stop / mask logic (shared with the every-k-mer prototype; still open on
+speed/fast-proved).
+
+------------------------------------------------------------------------------------------
+2. Theory answers
+------------------------------------------------------------------------------------------
+(1) Minimizers.  A spoiling coordinate (mismatch, gap-in-y column, gap-in-x run) lies in one
+  read letter or between two letters.  T = −12 allows at most 3 of them.
+  * Fixed partition (what the mapper uses): 4 seeds of 25, ≥ 1 clean (pigeonhole,
+    exists_clean_seed2).  A clean seed is an exact 25-letter match, so it shares a minimizer
+    with the genome whenever w + k − 1 ≤ 25.  With w + k − 1 = 25 the seed holds exactly ONE
+    window, so one lookup per seed, the same count as today.
+  * Free position (sketching the whole read): each coordinate kills ≤ L of the n − L + 1
+    L-windows, so ≥ n − L + 1 − eL windows are clean: for n = 100, e = 3 that is 1 window
+    at L = 25, 21 at L = 20 and 41 at L = 15.  The longest clean stretch is
+    ≥ ⌈(n − e)/(e + 1)⌉ = 25, no better than the fixed partition, so the free position
+    gives no stronger guarantee and costs more lookups.
+  * More, shorter seeds: j segments of ⌊n/j⌋ letters give ≥ j − 3 clean ones (5 × 20 → 2
+    clean; 8 × 12 → 5).  This allows L ≤ 20 with a "≥ 2 hits on a diagonal" filter
+    (q-gram-lemma style), at more lookups per read.
+  * Index size: density ≈ 2/(w+1) for a random order: (19,7) 0.25, (17,9) 0.20, (15,11)
+    0.17, (13,13) 0.14 per ACGT base (measured 0.24/0.19/0.16/0.14, every-25-mer 0.95).
+    Lookup cost is unchanged in count (one per seed).  Shorter k means more repeat
+    occurrences of the k-mer outside the 25-mer context, i.e. more bucket entries per
+    lookup (table, "key matches" vs "verified").
+  * Order: free for correctness (proved for all ord).  Low-density orders (decycling-based,
+    miniception, mod-minimizer) would cut density a further ~10-25% at these w; not
+    implemented.  A frequency-weighted order (k-mers of crowded buckets last, kind 4)
+    cuts bucket entries per lookup, see table.
+
+(2) Syncmers / skipmers.  Closed syncmers are context-free, so every syncmer inside a clean
+  seed is conserved.  The mapper can therefore pick ANY of them (smallest bucket, or best
+  context cover).  Window guarantee: 2k − s − 1 letters (proved), so (15,4), (17,8), (19,12)
+  and (21,16) all give L = 25.  Density ≈ 2/(k − s + 1).  Proofs are NOT easier than
+  minimizers: minimizers need no lemma at all, syncmers need the hitting lemma.  Being
+  context-free buys choice among several conserved keys.  Minimizers with w + k − 1 < 25
+  give the same choice, because every window inside the seed is conserved.
+  Open syncmers have no window guarantee.  Measured: (15,4,t=5) leaves 17.4% of read seeds
+  with no open syncmer, so they are not complete per seed.  Rejected.
+  Skipmers / spaced seeds change the key shape, not the selection.  Their point is
+  tolerating mismatches at skipped positions.  Completeness would need a spaced-seed
+  pigeonhole (some seed whose errors fall only on don't-care positions) instead of
+  exists_clean_seed2.  Not done.
+
+(3) Variable-length keys.  Context-free variable length is covered by ctxSketch + PrefixDet
+  (dictSel: any dictionary; extSel: syncmer selection with keys lengthened by the k-mer's own
+  letters).  Completeness = a hitting property; extSel inherits it with emax letters of slack.
+  Within the per-seed design the read always holds the whole 25-letter seed.  The cheaper
+  equivalent measured here: store the genome letters around each key in the spare key bits
+  of the entry (CTX=1: 3-7 letters per side) and compare them under a mask before touching
+  the genome.  That is a keep filter (lettersAgree_complete), so completeness is
+  untouched, and it cuts genome checks to ≈ true occurrences.
+
+(4) See section 1.
+
+------------------------------------------------------------------------------------------
+3. Measurements (chr21, 46.7M bases / 40.1M ACGT, 100k simulated 100 bp reads at 0.5%
+   error, single thread, index build excluded, PROTO_REPS=3, idle 4-core box)
+------------------------------------------------------------------------------------------
+Every row's 100k per-read answers are byte-identical to every-25-mer (0:25), which equals
+the speed/proto-tune prototype dump.  The reason: each lookup checks the whole 25-letter seed
+at the anchor, so a seed's anchor list (and with it the early stop and masks) is the same as
+with the 25-mer index.
+
+scheme: 0:k every k-mer (pick rarest of 25−k+1 offsets) | 1:k:w minimizer | 2:k:s closed
+syncmer | 4:k:w:thr weighted minimizer (thr = bucket count above which k-mers sort last).
+CTX = genome letters per side stored in the entry.  PICK 0 = smallest bucket, 1 = best
+context cover.  Per seed (all 4 seeds, no early stop): scanned = bucket entries, keyhit =
+entries with the key, k+ctx = also matching the stored context, gchk = genome checks
+(true occurrences: 4.99 per seed for every scheme).  MB = 8 B/entry + 64 MB offsets
+(2^24 buckets).
+
+scheme        CTX PICK entries/base  MB   scanned keyhit k+ctx  gchk   reads/s (sweep3; rerun)
+0:25           0   0   0.814       371     7.3     5.0    5.0    0.0   280k; 290k   baseline
+0:21           0   0   0.814       371     7.0     6.3    6.3    6.3   189k
+1:21:5         0   0   0.272       169    10.5     9.8    9.8    9.8   222k
+1:21:5         3   0   0.272       169    10.5     9.8    5.3    2.5   231k
+1:19:7         0   0   0.204       143    15.3    14.7   14.7   14.7   233k
+1:19:7         4   0   0.204       143    15.3    14.7    5.8    4.0   255k; 235k
+1:17:9         0   0   0.163       128    21.9    21.4   21.4   21.4   227k
+1:17:9         5   0   0.163       128    21.9    21.4    6.5    4.9   245k
+1:15:11        0   0   0.136       118    39.2    38.8   38.8   38.8   188k
+1:15:11        6   0   0.136       118    39.2    38.8    7.1    6.0   237k; 231k
+1:13:13        7   0   0.117       111    69.1    68.9    8.1    7.1   219k
+4:19:7:8       4   0   0.207       144    12.7    12.2    5.7    3.9   215k; 233k
+4:17:9:8       5   0   0.167       130    16.3    15.9    6.3    4.8   198k; 218k
+4:15:11:8      6   0   0.141       120    24.3    23.9    7.0    5.8   198k; 205k
+4:15:11:24     6   0   0.140       119    19.6    19.3    6.7    5.6   188k; 200k
+2:21:16        0   0   0.273       169     9.0     8.5    8.5    8.5   191k
+2:21:16        3   1   0.273       169    10.9    10.2    5.1    1.2   191k
+2:19:12        0   0   0.206       144    11.9    11.6   11.6   11.6   159k
+2:19:12        4   1   0.206       144    15.9    15.3    5.5    2.2   166k
+2:17:8         5   0   0.165       129    15.7    15.4    6.3    5.0   155k
+2:15:4         6   0   0.145       121    20.9    20.7    6.9    5.8   146k
+2:15:4         6   1   0.145       121    38.7    38.3    5.9    3.3   139k
+3:15:4:5 (open syncmer)  0.073 per base; 69 545 / 399 999 read seeds (17.4%) contain no
+                         open syncmer → incomplete, not mapped.
+("rerun": second clean run of selected rows after the weighted order got the fast scan;
+run-to-run noise is about ±8%.  0:25 here = speed/proto-tune Proto.lean speed, same dump.)
+
+Reading the table:
+* Every minimizer/syncmer row is complete and exact.  The size/speed knob is k: smaller k
+  gives a smaller index but bigger buckets in repeats.
+* Where the time goes: the slowdown of minimizers vs 0:25 is mostly per-seed key selection
+  in Lean (hashing w k-mers with Nat shift arithmetic), not bucket scanning.  After moving
+  it to UInt64 shifts (miniScan) the gap shrank.  Syncmers hash k − s + 1 s-mers for each
+  of 25 − k + 1 k-mers, about 0.3 µs/seed in this Lean code, which is why they trail the
+  minimizers despite scanning fewer entries.  In C or SIMD this cost is negligible.  In a
+  proved Lean version, a van Herk sliding minimum over the 22 s-mers would cut it.
+* The context filter cuts false key matches (1:15:11: 38.8 key matches → 7.1 per seed) and
+  gives +5-25% reads/s.  The gain grows as k shrinks: each false match it removes was a
+  random genome access.
+* Weighted order (k-mers of crowded buckets last) cuts scanned entries 15-50% but is not
+  faster: the per-k-mer bitset lookup during selection costs about what it saves.
+* PICK 1 (best context cover) cuts genome checks for syncmers but scans bigger buckets,
+  so it is a wash.
+* Every k-mer with k < 25 (0:21) is strictly worse: same size, more genome checks.
+
+Whole-genome extrapolation (hg38, ~2.94G ACGT bases, 8 B/entry; positions need 32 bits, so
+the prototype's bit-31 "dirty context" flag must move into the key word):
+  every 25-mer ≈ 2.8G entries ≈ 22 GB; minimizer (19,7) ≈ 0.70G ≈ 5.6 GB; (17,9) ≈ 4.5 GB;
+  (15,11) ≈ 3.7 GB; closed syncmer (15,4) ≈ 4.0 GB.  Positions-only entries (4 B; key
+  recomputed from the genome, justified by minimizerSketch_key) halve these, at one genome
+  access per scanned entry.
+
+------------------------------------------------------------------------------------------
+4. Ranking
+------------------------------------------------------------------------------------------
+Ranked for this mapper (index size, speed, proof difficulty, what is proved):
+1. (19,7) or (17,9) minimizers + stored context (CTX), random order.  Index 0.20 / 0.16
+   entries per base (25% / 20% of every-25-mer; whole genome ≈ 5.6 / 4.5 GB), reads/s
+   235-255k / 245k vs 280-290k (≈ 85-90%), answers identical.  Proof: free; completeness
+   is proved in Lean for every order (minimizerMapper_eq_mapSpec via
+   mapWithSketch_eq_mapSpec), the context filter by lettersAgree_complete.  Missing: a
+   byte-level CSR sketch index + runtime index checker, and the prototype's early-stop /
+   mask logic (shared with the every-k-mer prototype).
+2. (15,11) minimizers + CTX.  Index 0.136 per base (17%; ≈ 3.7 GB whole genome), 231-237k
+   reads/s (≈ 82%).  Same proofs.  Repeats make the buckets ~5x bigger, so it is more
+   sensitive to repetitive genomes.  (13,13) goes to 0.117 per base at 219k.
+3. Every 25-mer (today).  0.81 per base, fastest (280-290k).  Already proved (CsrIndex /
+   SeedMapper2).  Too big for the whole genome at 8 B/entry (≈ 22 GB).
+4. Closed syncmers (21,16) … (15,4) + CTX.  Same sizes as the minimizers of equal density
+   (0.27 … 0.145), but 139-191k reads/s in this Lean code (s-mer selection per seed).
+   Proof: hitting lemma closedSyncmer_hits (done) + the generic theorem
+   (syncmerMapper_eq_mapSpec).  The advantage of a free choice among conserved keys did
+   not pay off here.
+5. Weighted minimizers.  Same sizes as (1), smaller buckets in repeats, no speed gain
+   here.  Proof identical to (1): order-agnostic.  Worth revisiting for whole-genome repeats.
+6. Variable-length context-free keys (dictSel / extSel).  Proved framework (PrefixDet,
+   extSel_hits), not measured on its own; the stored context gives its filtering benefit
+   with no completeness cost.  A genome-built dictionary with sampling needs its own
+   hitting proof (open).
+7. Every k-mer with k < 25 and open syncmers: rejected.  The first is no smaller and
+   slower; the second is incomplete per seed (17% of seeds have none).
+
+------------------------------------------------------------------------------------------
+5. Reproduce
+------------------------------------------------------------------------------------------
+  lake build proto_sketch
+  sh bench/seed_schemes.sh                        # full sweep, ~25 min
+  CTX=1 PICK=0 .lake/build/bin/proto_sketch chr21.1l.fa chr21.r100k.reads.txt 1:19:7 - out.tsv
+  lake env lean codecs/SketchMapper.lean          # theorems + axioms
+
+sh scripts/check.sh → ALL CHECKS PASSED (codecs/SketchMapper.lean: 6 theorems, standard axioms
+only; pool/mapper/MapperSketch.lean builds with no sorry/axiom/native_decide/partial).
