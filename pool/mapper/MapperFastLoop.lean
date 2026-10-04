@@ -156,7 +156,7 @@ theorem gapW_inv (S : Window → Prop) (b : Best) (h : Inv cw S b) (st len s : N
     obtain ⟨⟨hneed, hok⟩, hfit⟩ := hcond
     rw [if_pos hfit] at hcwv
     unfold addGap
-    rw [gappedPen_spec R G st len _ hne hL (by omega)]
+    rw [gappedPen2_spec R G st len _ hne (by omega)]
     apply inv_congr cw _ _ _ (inv_add cw hc13 S b h c st len _ (by
       rw [hcwv]; split <;> omega))
     intro w; simp [hok]
@@ -394,33 +394,5 @@ theorem cwG_le (R : ByteArray) (gbs : Array ByteArray) (w : Window) : cwG R gbs 
   · exact penB_le _ _ _ _
   · exact Nat.le_refl _
 
-/-- **All chromosomes.**  `mapChroms` ends with the invariant over a set containing every hit. -/
-theorem mapChroms_inv (R : ByteArray) (gbs : Array ByteArray) (idxs : Array HIdx) (hn : 100 ≤ R.size)
-    (hchk : ∀ c, c < gbs.size → checkIdx idxs[c]! gbs[c]! = true) :
-    ∃ S, Inv (cwG R gbs) S (mapChroms R gbs idxs) ∧ ∀ w, cwG R gbs w ≤ 12 → S w := by
-  have step : ∀ (l : List Nat) S b, (∀ c ∈ l, c < gbs.size) → Inv (cwG R gbs) S b →
-      ∃ S', Inv (cwG R gbs) S' (l.foldl (fun b c => mapChrom R gbs[c]! c idxs[c]! b) b) ∧
-        (∀ w, S w → S' w) ∧ ∀ c ∈ l, ∀ st len, cwG R gbs ⟨c, st, len⟩ ≤ 12 → S' ⟨c, st, len⟩ := by
-    intro l
-    induction l with
-    | nil => intro S b _ h; exact ⟨S, h, fun w hw => hw, fun c hc => by simp at hc⟩
-    | cons c l ih =>
-      intro S b hl h
-      have hc : c < gbs.size := hl c List.mem_cons_self
-      obtain ⟨S1, h1, s1, c1⟩ := mapChrom_inv (cwG R gbs) (cwG_le R gbs) R gbs[c]! c
-        (fun st len => by unfold cwG; simp [hc]) hn idxs[c]! (hchk c hc) S b h
-      obtain ⟨S2, h2, s2, c2⟩ := ih S1 _ (fun c' h' => hl c' (List.mem_cons_of_mem _ h')) h1
-      refine ⟨S2, h2, fun w hw => s2 w (s1 w hw), fun c' hc' st len hw => ?_⟩
-      rcases List.mem_cons.mp hc' with rfl | hc'
-      · exact s2 _ (c1 st len hw)
-      · exact c2 c' hc' st len hw
-  obtain ⟨S, h, -, hcov⟩ := step (List.range gbs.size) (fun _ => False) {} (fun c hc => List.mem_range.mp hc)
-    (inv_init _ (cwG_le R gbs))
-  refine ⟨S, h, fun ⟨c, st, len⟩ hw => ?_⟩
-  by_cases hc : c < gbs.size
-  · exact hcov c (List.mem_range.mpr hc) st len hw
-  · unfold cwG at hw; simp [hc] at hw
-
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.mapChroms_inv

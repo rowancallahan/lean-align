@@ -200,17 +200,33 @@ def scanOdd (G R : ByteArray) (ps : Array Nat) (o s base bit : Nat) (t : Nat) (a
   else acc
 termination_by ps.size - t
 
-/-- Seed `j` (letters `R[j·q, j·q+q)`): packed anchors `(p + BIAS − j·q)·16 + 2^j`
-of the places `p` where it occurs, increasing. -/
-def lookupSeed (ix : HIdx) (G R : ByteArray) (j : Nat) : Array Nat :=
+/-- One pass over `B[i, stop)`: base-4 code appended to `x`, and `f` counts the
+letters other than ACGT; the result is `code + f·2^56`. -/
+def seedCode (B : ByteArray) (i stop : Nat) (x f : UInt64) : UInt64 :=
+  if i < stop then
+    let c := (codeTab.get! (B.get! i).toNat).toUInt64
+    seedCode B (i + 1) stop (x * 4 + (c &&& 3)) (f + (c >>> 2))
+  else x + (f <<< 56)
+termination_by stop - i
+
+/-- Hash of seed `j` when all its letters are ACGT. -/
+def seedHash (R : ByteArray) (j : Nat) : Option UInt64 :=
+  let v := seedCode R (j * q) (j * q + q) 0 0
+  if v >>> 56 == 0 then some (mix v) else none
+
+/-- Seed `j` (letters `R[j·q, j·q+q)`), `h = seedHash R j`: packed anchors
+`(p + BIAS − j·q)·16 + 2^j` of the places `p` where it occurs, increasing. -/
+def lookupH (ix : HIdx) (G R : ByteArray) (j : Nat) (h : Option UInt64) : Array Nat :=
   let s := j * q
-  let o := firstOdd R s (s + q)
-  if o == s + q then
-    let y := hashAt R s
+  match h with
+  | some y =>
     let b := bucketOf y
-    scanBucket ix.ent (keyOf y) (BIAS - s) (2 ^ j) (u32 ix.offs (b + 1)) (u32 ix.offs b) #[]
-  else
-    scanOdd G R ix.odd[(R.get! o).toNat]! (o - s) s (BIAS - s) (2 ^ j) 0 #[]
+    scanBucket ix.ent (keyOf y) (BIAS - s) (1 <<< j) (u32 ix.offs (b + 1)) (u32 ix.offs b) #[]
+  | none =>
+    let o := firstOdd R s (s + q)
+    scanOdd G R ix.odd[(R.get! o).toNat]! (o - s) s (BIAS - s) (1 <<< j) 0 #[]
+
+def lookupSeed (ix : HIdx) (G R : ByteArray) (j : Nat) : Array Nat := lookupH ix G R j (seedHash R j)
 
 /-- Merge two increasing packed anchor lists, adding the masks of equal anchors. -/
 def merge (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
@@ -294,6 +310,40 @@ def gappedPen (r g : ByteArray) (st len lim : Nat) : Nat :=
   let best := gapScan r g st len skip mmax (n - skip) 0 0 suf suf
   if mmax < best then lim + 1 else 6 + 2 * L + 4 * best
 
+/-- Position of the `k`-th mismatch (`k ≥ 1`) of `r[i, stop)` against `g[st + i ..]`, or `stop`. -/
+def fwdMis (r g : ByteArray) (st stop : Nat) (i k : Nat) : Nat :=
+  if i < stop then
+    if r.get! i != g.get! (st + i) then (if k ≤ 1 then i else fwdMis r g st stop (i + 1) (k - 1))
+    else fwdMis r g st stop (i + 1) k
+  else stop
+termination_by stop - i
+
+/-- One past the `k`-th mismatch from the right (`k ≥ 1`) of `r[lo, e)` against the end
+diagonal (read letter `x` ↔ `g[st + len + x - n]`), or `lo` when there are fewer. -/
+def bwdMis (r g : ByteArray) (st len lo : Nat) (e k : Nat) : Nat :=
+  if lo < e then
+    if r.get! (e - 1) != g.get! (st + len + (e - 1) - r.size) then
+      (if k ≤ 1 then e else bwdMis r g st len lo (e - 1) (k - 1))
+    else bwdMis r g st len lo (e - 1) k
+  else lo
+termination_by e - lo
+
+/-- Penalty of window `(st, len)`, `len ≠ n`, `|len − n| ≤ 3`, if `≤ lim ≤ 12`; else `lim + 1`.
+At most one mismatch fits, so only the first two mismatches of the prefix diagonal
+(`F1`, `F2`) and the last two of the suffix diagonal (`E1`, `E2`) matter. -/
+def gappedPen2 (r g : ByteArray) (st len lim : Nat) : Nat :=
+  let n := r.size
+  let L := if len > n then len - n else n - len
+  if lim < 6 + 2 * L then lim + 1 else
+  let skip := if len < n then L else 0
+  let F1 := fwdMis r g st (n - skip) 0 1
+  let E1 := bwdMis r g st len skip n 1
+  if E1 - skip ≤ F1 then 6 + 2 * L else
+  if lim < 10 + 2 * L then lim + 1 else
+  let F2 := fwdMis r g st (n - skip) 0 2
+  let E2 := bwdMis r g st len skip n 2
+  if E1 - skip ≤ F2 || E2 - skip ≤ F1 then 10 + 2 * L else lim + 1
+
 /-! ## Best window -/
 
 structure Best where
@@ -324,7 +374,7 @@ structure Best where
 
 /-- Add window `(st, len)` scored by `gappedPen` with the current cap. -/
 @[inline] def addGap (R G : ByteArray) (c st len : Nat) (b : Best) : Best :=
-  b.add c st len (gappedPen R G st len (min b.pen cap))
+  b.add c st len (gappedPen2 R G st len (min b.pen cap))
 
 /-- Window `(st, len)` (one gap; its two diagonals carry `s` clean seeds) when
 `ok` and it fits and its support can reach the current best. -/
@@ -358,11 +408,106 @@ def mapChrom (R G : ByteArray) (c : Nat) (ix : HIdx) (b : Best) : Best :=
   -- gapped windows cost ≥ 8: skipped when the best so far is below that
   if 8 ≤ b.pen then gapAll R G c as as.size 0 b else b
 
+/-! ## Lazy seed lookups (the prototype's `mapCore`)
+
+Seeds are looked up one at a time, smallest bucket first.  After `k` lookups a
+hit none of whose clean seeds was looked up costs `≥ 4k`, so the search stops
+once the best is below `4k`.  A same-length window is scored when its anchor
+first appears; one-gap windows only after 3 lookups and when the best is `≥ 8`. -/
+
+/-- Anchors of `y` whose diagonal is not in `x` (both increasing). -/
+def newOnly (x y : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
+  if h : j < y.size then
+    if h' : i < x.size then
+      if x[i] / 16 < y[j] / 16 then newOnly x y (i + 1) j acc
+      else if x[i] / 16 == y[j] / 16 then newOnly x y (i + 1) (j + 1) acc
+      else newOnly x y i (j + 1) (acc.push y[j])
+    else newOnly x y i (j + 1) (acc.push y[j])
+  else acc
+termination_by (x.size - i) + (y.size - j)
+
+/-- Same-length window of a new anchor. -/
+@[inline] def sameStep2 (R G : ByteArray) (c : Nat) (b : Best) (e : Nat) : Best :=
+  let A := e / 16
+  if BIAS ≤ A && A - BIAS + R.size ≤ G.size && !(b.pen == 0 && b.amb) then
+    let m := hamSeeds R G (A - BIAS) (e % 16) (min 3 (b.pen / 4))
+    if 4 * m ≤ cap then b.add c (A - BIAS) R.size (4 * m) else b
+  else b
+
+/-- Is seed `j` (not looked up) clean on diagonal `A`? -/
+@[inline] def seedOn (G R : ByteArray) (looked j A : Nat) : Nat :=
+  if (looked >>> j) % 2 == 0 && BIAS ≤ A + j * q && A + j * q - BIAS + q ≤ G.size &&
+      eqRun G R (A + j * q - BIAS) (j * q) q then 1 else 0
+
+/-- Number of seeds clean on diagonal `A`: looked-up ones from the anchors near
+index `i`, the others checked in the genome. -/
+@[inline] def supAt (G R : ByteArray) (as : Array Nat) (looked i A : Nat) : Nat :=
+  supNear as i A + seedOn G R looked 0 A + seedOn G R looked 1 A + seedOn G R looked 2 A +
+    seedOn G R looked 3 A
+
+@[inline] def gapL2 (R G : ByteArray) (c : Nat) (as : Array Nat) (looked i A cs L : Nat) (b : Best) : Best :=
+  let n := R.size
+  let sm := supAt G R as looked i (A - L)
+  let sp := supAt G R as looked i (A + L)
+  gapW R G c (A + L - BIAS) (n - L) (cs + sp) (BIAS ≤ A + L) <|
+  gapW R G c (A - L - BIAS) (n + L) (cs + sm) (BIAS + L ≤ A) <|
+  gapW R G c (A - BIAS) (n - L) (cs + sm) (BIAS ≤ A) <|
+  gapW R G c (A - BIAS) (n + L) (cs + sp) (BIAS ≤ A) b
+
+def gapAll2 (R G : ByteArray) (c : Nat) (as : Array Nat) (looked : Nat) : (k i : Nat) → Best → Best
+  | 0, _, b => b
+  | k + 1, i, b =>
+    let A := as[i]! / 16
+    let cs := supAt G R as looked i A
+    gapAll2 R G c as looked k (i + 1)
+      (gapL2 R G c as looked i A cs 3 (gapL2 R G c as looked i A cs 2 (gapL2 R G c as looked i A cs 1 b)))
+
+/-- Entries in the seed's bucket (0 for a seed with a letter other than ACGT). -/
+@[inline] def sizeH (ix : HIdx) (h : Option UInt64) : Nat :=
+  match h with
+  | some y => u32 ix.offs (bucketOf y + 1) - u32 ix.offs (bucketOf y)
+  | none => 0
+
+/-- Look up the seeds of `ord` in turn (`k` done, anchors `as`, `looked` mask);
+`hs` holds the seed hashes. -/
+def lazyLoop (R G : ByteArray) (c : Nat) (ix : HIdx) (hs : Array (Option UInt64)) :
+    (ord : List Nat) → (k : Nat) → Array Nat → Nat → Best → Best
+  | [], _, _, _, b => b
+  | j :: rest, k, as, looked, b =>
+    let lj := lookupH ix G R j hs[j]!
+    let fresh := newOnly as lj 0 0 #[]
+    let as := merge as lj 0 0 #[]
+    let looked := looked + (1 <<< j)
+    let b := fresh.foldl (sameStep2 R G c) b
+    let b := if 2 ≤ k && 8 ≤ b.pen then gapAll2 R G c as looked as.size 0 b else b
+    if b.pen < 4 * (k + 1) then b else lazyLoop R G c ix hs rest (k + 1) as looked b
+
+def seedHashes (R : ByteArray) : Array (Option UInt64) :=
+  #[seedHash R 0, seedHash R 1, seedHash R 2, seedHash R 3]
+
+/-- Insert `x` before the first element with a larger key. -/
+def insKey (key : Nat → Nat) (x : Nat) : List Nat → List Nat
+  | [] => [x]
+  | y :: ys => if key x ≤ key y then x :: y :: ys else y :: insKey key x ys
+
+/-- Seeds, smallest bucket first (insertion sort of `[0, 1, 2, 3]`). -/
+def seedOrder (ix : HIdx) (hs : Array (Option UInt64)) : List Nat :=
+  let s0 := sizeH ix hs[0]!
+  let s1 := sizeH ix hs[1]!
+  let s2 := sizeH ix hs[2]!
+  let s3 := sizeH ix hs[3]!
+  let key := fun j => if j = 0 then s0 else if j = 1 then s1 else if j = 2 then s2 else s3
+  insKey key 3 (insKey key 2 (insKey key 1 [0]))
+
+def mapChrom2 (R G : ByteArray) (c : Nat) (ix : HIdx) (b : Best) : Best :=
+  let hs := seedHashes R
+  lazyLoop R G c ix hs (seedOrder ix hs) 0 #[] 0 b
+
 /-- Reads the fast path handles: `100 .. 103` letters. -/
 def fastOk (R : ByteArray) : Bool := R.size / 4 == q
 
 def mapChroms (R : ByteArray) (gbs : Array ByteArray) (idxs : Array HIdx) : Best :=
-  (List.range gbs.size).foldl (fun b c => mapChrom R gbs[c]! c idxs[c]! b) {}
+  (List.range gbs.size).foldl (fun b c => mapChrom2 R gbs[c]! c idxs[c]! b) {}
 
 def result (b : Best) : Option (Nat × Nat × Nat × Nat) :=
   if b.pen ≤ cap && !b.amb then some (b.chr, b.st, b.len, b.pen) else none

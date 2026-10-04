@@ -79,6 +79,22 @@ theorem same_lower (R G : ByteArray) (st : Nat) (hn : 100 ≤ R.size) (hfit : st
   rw [pop4_maskAt]
   split <;> split <;> split <;> split <;> simp_all <;> omega
 
+/-- If none of the seeds in `J` is clean on the diagonal, at least `|J|` mismatches. -/
+theorem same_lower_J (R G : ByteArray) (st : Nat) (hn : 100 ≤ R.size) (hfit : st + R.size ≤ G.size) (J : Nat)
+    (hz : ∀ j, j < 4 → J / 2 ^ j % 2 = 1 → seedBit G R j (st + BIAS) = 0) :
+    pop4 J ≤ preB R G st R.size := by
+  have hp := preB_seeds R G st hn
+  have b : ∀ j, j < 4 → J / 2 ^ j % 2 = 1 → 1 ≤ hc R G st (j * q) q := by
+    intro j hj hb
+    apply Nat.pos_of_ne_zero
+    intro h; exact (seedBit_start G R st j hj (by simp [q]; omega)).2 h (hz j hj hb)
+  have b0 := b 0 (by omega); have b1 := b 1 (by omega); have b2 := b 2 (by omega); have b3 := b 3 (by omega)
+  simp only [q, Nat.reduceMul, Nat.reducePow, Nat.div_one] at b0 b1 b2 b3
+  unfold pop4
+  have hb : ∀ x : Nat, x % 2 ≤ 1 := fun x => Nat.le_of_lt_succ (Nat.mod_lt _ (by omega))
+  have := hb J; have := hb (J / 2); have := hb (J / 4); have := hb (J / 8)
+  omega
+
 theorem same_hit_mask (R G : ByteArray) (st : Nat) (hn : 100 ≤ R.size) (hfit : st + R.size ≤ G.size)
     (h : penSame R G st ≤ 12) : maskAt G R (st + BIAS) ≠ 0 := by
   have hl := same_lower R G st hn hfit
@@ -215,6 +231,97 @@ theorem gap_support (R G : ByteArray) (st len : Nat) (hn : 100 ≤ R.size) (hfit
   rcases s0 with ⟨a0, b0⟩ | ⟨a0, b0⟩ | ⟨a0, b0⟩ <;> rcases s1 with ⟨a1, b1⟩ | ⟨a1, b1⟩ | ⟨a1, b1⟩ <;>
     rcases s2 with ⟨a2, b2⟩ | ⟨a2, b2⟩ | ⟨a2, b2⟩ <;> rcases s3 with ⟨a3, b3⟩ | ⟨a3, b3⟩ | ⟨a3, b3⟩ <;>
     split <;> omega
+
+set_option maxHeartbeats 4000000 in
+/-- **Lower bound for one-gap hits.**  If none of the seeds in `J` is clean on
+either diagonal, the penalty is at least `4·|J|`. -/
+theorem gap_lower (R G : ByteArray) (st len : Nat) (hn : 100 ≤ R.size) (hfit : st + len ≤ G.size)
+    (hne : len ≠ R.size) (h3 : gapLen R.size len ≤ 3) (hp : penGap R G st len ≤ 12) (J : Nat)
+    (hz : ∀ j, j < 4 → J / 2 ^ j % 2 = 1 →
+      seedBit G R j (st + BIAS) = 0 ∧ seedBit G R j (st + len + BIAS - R.size) = 0) :
+    4 * pop4 J ≤ penGap R G st len := by
+  have hL1 : 1 ≤ gapLen R.size len := by unfold gapLen; split <;> omega
+  have hsk : skipOf R.size len = 0 ∧ R.size < len ∧ len = R.size + gapLen R.size len ∨
+      skipOf R.size len = gapLen R.size len ∧ len < R.size ∧ len + gapLen R.size len = R.size := by
+    unfold skipOf gapLen; split <;> split <;> omega
+  have hpg : penGap R G st len = 6 + 2 * gapLen R.size len + 4 * minMis R G st len := by
+    unfold penGap at hp ⊢; split <;> simp_all
+  rw [hpg] at hp ⊢
+  generalize hL : gapLen R.size len = L at *
+  generalize hskv : skipOf R.size len = skip at *
+  obtain ⟨i, hi, hiM⟩ := minUpTo_mem (misB R G st len skip) (R.size - skip)
+  have hM : minMis R G st len = misB R G st len skip i := by unfold minMis; rw [hskv, hiM]
+  rw [hM] at hp ⊢
+  -- the mismatch indicator of the alignment with its gap at `i`
+  let F : Nat → Bool := fun k => if k < i then (R.get! k != G.get! (st + k))
+    else if i + skip ≤ k then (R.get! k != G.get! (st + len + k - R.size)) else false
+  have hmis : cntP F 0 R.size = misB R G st len skip i := by
+    have e : R.size = i + (skip + (R.size - i - skip)) := by omega
+    conv => lhs; rw [e]
+    rw [cntP_add, cntP_add]
+    unfold misB preB sufB
+    rw [show R.size - (i + skip) = R.size - i - skip by omega, Nat.zero_add]
+    rw [cntP_congr F (fun k => R.get! k != G.get! (st + k)) 0 i (fun k _ h2 => by simp only [F, if_pos (show k < i by omega)])]
+    rw [cntP_congr F (fun _ => false) i skip (fun k h1 h2 => by
+      simp only [F, if_neg (show ¬ k < i by omega), if_neg (show ¬ i + skip ≤ k by omega)])]
+    rw [cntP_zero_of (fun _ => false) i skip (fun _ _ _ => rfl)]
+    rw [cntP_congr F (fun k => R.get! k != G.get! (st + len + k - R.size)) (i + skip) (R.size - i - skip) (fun k h1 _ => by
+      simp only [F, if_neg (show ¬ k < i by omega), if_pos (show i + skip ≤ k by omega)])]
+    omega
+  have hseeds : cntP F 0 25 + cntP F 25 25 + cntP F 50 25 + cntP F 75 25 ≤ cntP F 0 R.size := by
+    have e : R.size = 25 + (25 + (25 + (25 + (R.size - 100)))) := by omega
+    conv => rhs; rw [e]
+    simp only [cntP_add, Nat.zero_add, Nat.reduceAdd]
+    omega
+  -- each seed: clean on the start diagonal, clean on the end diagonal, or touched by the gap
+  have seed : ∀ j, j < 4 →
+      (j * q + q ≤ i ∧ (cntP F (j * q) q = 0 → seedBit G R j (st + BIAS) ≠ 0)) ∨
+      (i + skip ≤ j * q ∧ (cntP F (j * q) q = 0 → seedBit G R j (st + len + BIAS - R.size) ≠ 0)) ∨
+      (i < j * q + q ∧ j * q < i + skip) := by
+    intro j hj
+    by_cases hb : j * q + q ≤ i
+    · left
+      refine ⟨hb, fun h0 => (seedBit_start G R st j hj (by simp [q] at hb ⊢; omega)).2 ?_⟩
+      rw [← h0]; unfold hc
+      exact cntP_congr _ _ _ _ (fun k _ h2 => by simp only [F, if_pos (show k < i by omega)])
+    · by_cases ha : i + skip ≤ j * q
+      · right; left
+        refine ⟨ha, fun h0 => ?_⟩
+        apply seedBit_at G R j _ (st + len + j * q - R.size) (by simp [BIAS, q] at ha ⊢; omega)
+          (by simp [BIAS, q] at ha ⊢; omega) (by simp [q] at ha ⊢; omega)
+        intro k hk
+        have := cntP_eq_zero _ _ _ h0 (j * q + k) (by omega) (by omega)
+        simp only [F, if_neg (show ¬ j * q + k < i by omega), if_pos (show i + skip ≤ j * q + k by omega)] at this
+        simp at this
+        rw [show st + len + j * q - R.size + k = st + len + (j * q + k) - R.size by omega]
+        exact this.symm
+      · right; right; omega
+  have s0 := seed 0 (by omega); have s1 := seed 1 (by omega); have s2 := seed 2 (by omega); have s3 := seed 3 (by omega)
+  have w : ∀ j, j < 4 → J / 2 ^ j % 2 = 1 →
+      (1 ≤ cntP F (j * q) q ∨ (i < j * q + q ∧ j * q < i + skip)) := by
+    intro j hj hb
+    obtain ⟨hu, hv⟩ := hz j hj hb
+    rcases seed j hj with ⟨-, h⟩ | ⟨-, h⟩ | h
+    · left; apply Nat.pos_of_ne_zero; intro h0; exact h h0 hu
+    · left; apply Nat.pos_of_ne_zero; intro h0; exact h h0 hv
+    · right; exact h
+  have w0 := w 0 (by omega); have w1 := w 1 (by omega); have w2 := w 2 (by omega); have w3 := w 3 (by omega)
+  simp only [q, Nat.reduceMul, Nat.zero_mul, Nat.reducePow, Nat.div_one] at w0 w1 w2 w3
+  rw [← hmis] at hp ⊢
+  have hb : ∀ x : Nat, x % 2 ≤ 1 := fun x => Nat.le_of_lt_succ (Nat.mod_lt _ (by omega))
+  have := hb J; have := hb (J / 2); have := hb (J / 4); have := hb (J / 8)
+  clear s0 s1 s2 s3 seed hz w
+  unfold pop4
+  generalize cntP F 0 25 = f0 at *
+  generalize cntP F 25 25 = f1 at *
+  generalize cntP F 50 25 = f2 at *
+  generalize cntP F 75 25 = f3 at *
+  generalize cntP F 0 R.size = m at *
+  generalize J % 2 = b0 at *
+  generalize J / 2 % 2 = b1 at *
+  generalize J / 4 % 2 = b2 at *
+  generalize J / 8 % 2 = b3 at *
+  omega
 
 end MapSpec.Fast
 

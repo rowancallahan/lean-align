@@ -1,4 +1,5 @@
 import MapperFastAlgo
+import MapperFastBytes
 
 /-!
 The hashed 25-mer index: what `checkIdx` certifies, and what `lookupSeed`
@@ -559,6 +560,95 @@ theorem scanOdd_toList (G R : ByteArray) (ps : Array Nat) (o s base bit : Nat) :
     · rw [if_neg hk, if_neg hk]
 
 
+/-! ### The fused seed encoder -/
+
+/-- Count of letters other than ACGT, as `seedCode` accumulates it. -/
+def cntU (B : ByteArray) (i stop : Nat) (f : UInt64) : UInt64 :=
+  if i < stop then cntU B (i + 1) stop (f + ((codeTab.get! (B.get! i).toNat).toUInt64 >>> 2)) else f
+termination_by stop - i
+
+theorem seedCode_eq (B : ByteArray) (stop : Nat) :
+    ∀ d i x f, stop - i = d → seedCode B i stop x f = wcode B i stop x + (cntU B i stop f <<< 56) := by
+  intro d
+  induction d with
+  | zero => intro i x f hd; unfold seedCode wcode cntU; simp only [if_neg (show ¬ i < stop by omega)]
+  | succ d ih =>
+    intro i x f hd
+    unfold seedCode wcode cntU
+    simp only [if_pos (show i < stop by omega)]
+    exact ih (i + 1) _ _ (by omega)
+
+set_option maxRecDepth 100000 in
+theorem tab_shift : ∀ n, n < 256 → ((codeTab.get! n).toUInt64 >>> 2).toNat = if codeTab.get! n < 4 then 0 else 1 := by
+  decide +kernel
+
+theorem cntU_toNat (B : ByteArray) (stop : Nat) :
+    ∀ d i f, stop - i = d → f.toNat + d < 2 ^ 64 →
+      (cntU B i stop f).toNat = f.toNat + cntP (fun k => !acgt (B.get! k)) i d := by
+  intro d
+  induction d with
+  | zero => intro i f hd _; unfold cntU; rw [if_neg (by omega)]; rfl
+  | succ d ih =>
+    intro i f hd hf
+    unfold cntU
+    rw [if_pos (by omega)]
+    have ht := tab_shift _ (UInt8.toNat_lt (B.get! i))
+    have hu : (f + (codeTab.get! (B.get! i).toNat).toUInt64 >>> 2).toNat =
+        f.toNat + (if acgt (B.get! i) then 0 else 1) := by
+      rw [UInt64.toNat_add, ht]
+      unfold acgt
+      by_cases ha : codeTab.get! (B.get! i).toNat < 4
+      · rw [if_pos ha, if_pos (by simpa using ha)]; simp
+      · rw [if_neg ha, if_neg (by simpa using ha)]; apply Nat.mod_eq_of_lt; omega
+    rw [ih (i + 1) _ (by omega) (by rw [hu]; split <;> omega), hu, cntP]
+    cases acgt (B.get! i) <;> simp <;> omega
+
+theorem wcode_lt (B : ByteArray) (p : Nat) : (wcode B p (p + q) 0).toNat < 2 ^ 50 := by
+  rw [hashWord_toNat]; have := wN_lt B p q; simp only [q] at *; omega
+
+theorem allACGT_cnt (B : ByteArray) (i m : Nat) :
+    allACGT B i (i + m) = true ↔ cntP (fun k => !acgt (B.get! k)) i m = 0 := by
+  rw [allACGT_spec B _ _ i rfl]
+  constructor
+  · intro h; apply cntP_zero_of; intro k h1 h2; simp [h k h1 h2]
+  · intro h k h1 h2
+    have := cntP_eq_zero _ _ _ h k h1 h2
+    simpa using this
+
+/-- `seedHash` is the seed's hash exactly when the seed is ACGT. -/
+theorem seedHash_spec (R : ByteArray) (j : Nat) :
+    seedHash R j = if allACGT R (j * q) (j * q + q) then some (hashAt R (j * q)) else none := by
+  unfold seedHash
+  simp only []
+  rw [seedCode_eq R _ _ (j * q) 0 0 rfl]
+  have hc := cntU_toNat R (j * q + q) _ (j * q) 0 rfl (by simp [q])
+  have hw := wcode_lt R (j * q)
+  have hle := cntP_le (fun k => !acgt (R.get! k)) (j * q) (j * q + q - j * q)
+  simp only [UInt64.toNat_zero, Nat.zero_add, show j * q + q - j * q = q by omega] at hc hle
+  generalize hW : wcode R (j * q) (j * q + q) 0 = W at *
+  generalize hC : cntU R (j * q) (j * q + q) 0 = C at *
+  generalize hn : cntP (fun k => !acgt (R.get! k)) (j * q) q = n at *
+  have hq : q = 25 := rfl
+  have hv : (W + C <<< 56).toNat = W.toNat + n * 2 ^ 56 := by
+    rw [UInt64.toNat_add, UInt64.toNat_shiftLeft, show (56 : UInt64).toNat % 64 = 56 from rfl,
+      Nat.shiftLeft_eq, hc]
+    rw [hq] at hle
+    rw [Nat.mod_eq_of_lt (by omega), Nat.mod_eq_of_lt (by omega)]
+  have hsh : ((W + C <<< 56) >>> 56).toNat = n := by
+    rw [UInt64.toNat_shiftRight, show (56 : UInt64).toNat % 64 = 56 from rfl, Nat.shiftRight_eq_div_pow, hv]
+    omega
+  have hiff := allACGT_cnt R (j * q) q
+  rw [hn] at hiff
+  by_cases h0 : n = 0
+  · have hv0 : W + C <<< 56 = W := UInt64.toNat_inj.mp (by rw [hv, h0]; simp)
+    have hz : ((W + C <<< 56) >>> 56 == 0) = true := by
+      rw [beq_iff_eq, ← UInt64.toNat_inj, hsh, h0]; rfl
+    rw [if_pos hz, if_pos (hiff.2 h0), hv0]
+    unfold hashAt; rw [hW]
+  · have hz : ¬ ((W + C <<< 56) >>> 56 == 0) = true := by
+      rw [beq_iff_eq, ← UInt64.toNat_inj, hsh]; simpa using h0
+    rw [if_neg hz, if_neg (fun h => h0 (hiff.1 h))]
+
 /-- Packed anchor of seed `j` at genome place `p`. -/
 def anchorOf (j p : Nat) : Nat := (p + (BIAS - j * q)) * 16 + 2 ^ j
 
@@ -569,6 +659,14 @@ theorem range'_pairwise_in (lo n : Nat) :
   rw [List.mem_range'_1] at ha hb
   omega
 
+theorem lookupH_some (ix : HIdx) (G R : ByteArray) (j : Nat) (y : UInt64) :
+    lookupH ix G R j (some y) = scanBucket ix.ent (keyOf y) (BIAS - j * q) (1 <<< j)
+      (u32 ix.offs (bucketOf y + 1)) (u32 ix.offs (bucketOf y)) #[] := rfl
+
+theorem lookupH_none (ix : HIdx) (G R : ByteArray) (j : Nat) :
+    lookupH ix G R j none = scanOdd G R ix.odd[(R.get! (firstOdd R (j * q) (j * q + q))).toNat]!
+      (firstOdd R (j * q) (j * q + q) - j * q) (j * q) (BIAS - j * q) (1 <<< j) 0 #[] := rfl
+
 /-- **Lookup.**  Through a certified index, seed `j`'s anchors are increasing and
 are exactly the anchors of the places where the seed occurs. -/
 theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx ix G = true) :
@@ -576,16 +674,12 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
     ∀ e, e ∈ (lookupSeed ix G R j).toList ↔ ∃ p, MatchAt G p R (j * q) ∧ e = anchorOf j p := by
   obtain ⟨hC, hS, hO, hI⟩ := checkIdx_spec ix G hchk
   unfold lookupSeed
-  simp only []
+  rw [seedHash_spec]
   have hfo := firstOdd_spec R (j * q + q) _ (j * q) rfl (by omega)
   generalize ho : firstOdd R (j * q) (j * q + q) = o at hfo
-  split
+  by_cases hacgt : allACGT R (j * q) (j * q + q) = true
   · -- every letter of the seed is ACGT: the hashed buckets
-    next hall =>
-    have hoe : o = j * q + q := by simpa using hall
-    have hacgt : allACGT R (j * q) (j * q + q) = true := by
-      rw [allACGT_spec R _ _ _ rfl]
-      intro k h1 h2; exact hfo.2.2.1 k h1 (by omega)
+    rw [if_pos hacgt, lookupH_some, Nat.one_shiftLeft]
     generalize hy : hashAt R (j * q) = y
     have hb : bucketOf y < NB := by rw [← hy]; exact bucketOf_lt _ (mix_lt _)
     rw [scanBucket_toList _ _ _ _ _ _ _ _ rfl, show (#[] : Array Nat).toList = [] from rfl, List.nil_append]
@@ -629,8 +723,11 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hchk : checkIdx
         simp only [ht4, beq_self_eq_true, if_true, ht3]
         rfl
   · -- a letter other than ACGT at `o`: the places of that letter
-    next hall =>
-    have hoe : o < j * q + q := by have := hfo.2.1; simp at hall; omega
+    rw [if_neg hacgt, lookupH_none, Nat.one_shiftLeft, ho]
+    have hoe : o < j * q + q := by
+      apply Classical.byContradiction; intro hlt
+      apply hacgt; rw [allACGT_spec R _ _ _ rfl]
+      intro k h1 h2; exact hfo.2.2.1 k h1 (by omega)
     have hodd := hfo.2.2.2 hoe
     rw [scanOdd_toList _ _ _ _ _ _ _ _ _ _ rfl, show (#[] : Array Nat).toList = [] from rfl, List.nil_append,
       Nat.sub_zero]

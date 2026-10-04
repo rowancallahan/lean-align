@@ -3,7 +3,7 @@ import SeedMapper                 -- mapWith, kernelScore, LookupComplete (slow 
 import BandScore                  -- Encodes, GenomeBytes
 import MapperBytes                -- decodeBytes
 import MapperFastAlgo             -- the fast code
-import MapperFastLoop             -- its invariant: every hit looked at
+import MapperFastLazy             -- its invariant: every hit looked at
 
 /-!
 # Codec `mapFast`: the fast proved read mapper
