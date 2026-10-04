@@ -418,56 +418,60 @@ def gapAll2 (R G : ByteArray) (c : Nat) (as : Array Nat) (looked : Nat) : (k i :
   | some y => u32 ix.offs (bucketOf y + 1) - u32 ix.offs (bucketOf y)
   | none => 0
 
-/-- A seed lookup: `look ix G R j (seedHash R j)` must be seed `j`'s packed anchors
-(`LookOk`); `size ix h` only orders the seeds (smallest first). -/
-structure Look (L : Type) where
-  look : L → ByteArray → ByteArray → Nat → Option UInt64 → Array Nat
-  size : L → Option UInt64 → Nat
+/-- A seed lookup.  `prep ix h` is computed once per seed (`h = seedHash R j`);
+`look ix G R j (prep ix (seedHash R j))` must be seed `j`'s packed anchors
+(`LookOk`); `size ix p` only orders the seeds (smallest first). -/
+class Look (L P : Type) where
+  prep : L → Option UInt64 → P
+  size : L → P → Nat
+  look : L → ByteArray → ByteArray → Nat → P → Array Nat
 
 /-- The hashed index as a lookup. -/
-def hLook : Look HIdx := ⟨lookupH, sizeH⟩
+def hLook : Look HIdx (Option UInt64) := ⟨fun _ h => h, sizeH, lookupH⟩
 
 /-- Look up the seeds of `ord` in turn (`k` done, anchors `as`, `looked` mask);
-`hs` holds the seed hashes. -/
-@[specialize] def lazyLoop {L : Type} (R G : ByteArray) (c : Nat) (lk : Look L) (ix : L) (hs : Array (Option UInt64)) :
-    (ord : List Nat) → (k : Nat) → Array Nat → Nat → Best → Best
+`ps` holds the prepared seeds. -/
+@[specialize] def lazyLoop {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (ix : L)
+    (ps : Array P) : (ord : List Nat) → (k : Nat) → Array Nat → Nat → Best → Best
   | [], _, _, _, b => b
   | j :: rest, k, as, looked, b =>
-    let lj := lk.look ix G R j hs[j]!
+    let lj := lk.look ix G R j ps[j]!
     let fresh := newOnly as lj 0 0 #[]
     let as := merge as lj 0 0 #[]
     let looked := looked + pow2 j
     let b := fresh.foldl (sameStep2 R G c) b
     let b := if 2 ≤ k && 8 ≤ b.pen then gapAll2 R G c as looked as.size 0 b else b
-    if b.pen < 4 * (k + 1) then b else lazyLoop R G c lk ix hs rest (k + 1) as looked b
+    if b.pen < 4 * (k + 1) then b else lazyLoop R G c lk ix ps rest (k + 1) as looked b
 
 def seedHashes (R : ByteArray) : Array (Option UInt64) :=
   #[seedHash R 0, seedHash R 1, seedHash R 2, seedHash R 3]
 
-/-- Insert `x` before the first element with a larger key. -/
-def insKey (key : Nat → Nat) (x : Nat) : List Nat → List Nat
+@[inline] def prepAll {L P : Type} (lk : Look L P) (ix : L) (hs : Array (Option UInt64)) : Array P :=
+  #[lk.prep ix hs[0]!, lk.prep ix hs[1]!, lk.prep ix hs[2]!, lk.prep ix hs[3]!]
+
+/-- Insert `x` before the first element with a larger key (`ks[·]`). -/
+def insKey (ks : Array Nat) (x : Nat) : List Nat → List Nat
   | [] => [x]
-  | y :: ys => if key x ≤ key y then x :: y :: ys else y :: insKey key x ys
+  | y :: ys => if ks[x]! ≤ ks[y]! then x :: y :: ys else y :: insKey ks x ys
 
 /-- Seeds, smallest bucket first (insertion sort of `[0, 1, 2, 3]`). -/
-@[inline] def seedOrder {L : Type} (lk : Look L) (ix : L) (hs : Array (Option UInt64)) : List Nat :=
-  let s0 := lk.size ix hs[0]!
-  let s1 := lk.size ix hs[1]!
-  let s2 := lk.size ix hs[2]!
-  let s3 := lk.size ix hs[3]!
-  let key := fun j => if j = 0 then s0 else if j = 1 then s1 else if j = 2 then s2 else s3
-  insKey key 3 (insKey key 2 (insKey key 1 [0]))
+@[inline] def seedOrder {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (ps : Array P) : List Nat :=
+  let ks := #[lk.size ix ps[0]!, lk.size ix ps[1]!, lk.size ix ps[2]!, lk.size ix ps[3]!]
+  insKey ks 3 (insKey ks 2 (insKey ks 1 [0]))
 
-@[inline] def mapChrom2 {L : Type} (lk : Look L) (R G : ByteArray) (c : Nat) (ix : L) (b : Best) : Best :=
-  let hs := seedHashes R
-  lazyLoop R G c lk ix hs (seedOrder lk ix hs) 0 #[] 0 b
+/-- One chromosome; `hs` = `seedHashes R` (computed once per read). -/
+@[inline] def mapChrom2 {L P : Type} [Inhabited P] (lk : Look L P) (R G : ByteArray) (c : Nat) (ix : L)
+    (hs : Array (Option UInt64)) (b : Best) : Best :=
+  let ps := prepAll lk ix hs
+  lazyLoop R G c lk ix ps (seedOrder lk ix ps) 0 #[] 0 b
 
 /-- Reads the fast path handles: `100 .. 103` letters. -/
 def fastOk (R : ByteArray) : Bool := R.size / 4 == q
 
-@[specialize] def mapChroms {L : Type} [Inhabited L] (lk : Look L) (R : ByteArray) (gbs : Array ByteArray)
-    (idxs : Array L) : Best :=
-  (List.range gbs.size).foldl (fun b c => mapChrom2 lk R gbs[c]! c idxs[c]! b) {}
+@[specialize] def mapChroms {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (R : ByteArray)
+    (gbs : Array ByteArray) (idxs : Array L) : Best :=
+  let hs := seedHashes R
+  (List.range gbs.size).foldl (fun b c => mapChrom2 lk R gbs[c]! c idxs[c]! hs b) {}
 
 def result (b : Best) : Option (Nat × Nat × Nat × Nat) :=
   if b.pen ≤ cap && !b.amb then some (b.chr, b.st, b.len, b.pen) else none

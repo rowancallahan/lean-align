@@ -175,12 +175,34 @@ end
 /-- The seed code from its hash: `mix⁻¹ y = y·MIXINV mod 2^50`. -/
 @[inline] def unmix (y : UInt64) : Nat := ((y * MIXINV.toUInt64) &&& 0x3FFFFFFFFFFFF).toNat
 
-/-- Seed `j`'s packed anchors from a minimizer index; an ACGT seed (`h = some y`)
-reuses its code `unmix y` instead of reading its letters again. -/
-def mzLook (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (h : Option UInt64) : Array Nat :=
-  match h with
-  | some y => lookupCodeA ix G R (j * q) (unmix y) (BIAS - j * q) (pow2 j)
-  | none => lookupSeedA ix G R (j * q) (BIAS - j * q) (pow2 j)
+/-- A prepared seed: for an ACGT seed its code `v`, minimizer offset `o`, k-word
+hash `h` and bucket `b`, computed once (order hint and lookup share them). -/
+structure MzP where
+  ok : Bool
+  v : Nat
+  o : Nat
+  h : Nat
+  b : Nat
+deriving Inhabited
+
+@[inline] def mzPrep (ix : Mz.MzIdx) : Option UInt64 → MzP
+  | some y =>
+    let v := unmix y
+    let o := ix.mini v
+    let h := ix.hsh (ix.sub v o)
+    ⟨true, v, o, h, h >>> ix.kb⟩
+  | none => ⟨false, 0, 0, 0, 0⟩
+
+/-- `lookupCodeA` with the prepared values. -/
+@[inline] def lookupP (ix : Mz.MzIdx) (G R : ByteArray) (s : Nat) (p : MzP) (base bit : Nat) : Array Nat :=
+  scanA ix G R s p.o (p.h &&& ix.kbM) (p.v >>> (2 * (Mz.q - p.o))) (p.v &&& ix.pm[ix.w - 1 - p.o]!) ix.pm[p.o]!
+    (2 * p.o) (ix.hiB p.b) base bit (ix.loB p.b) #[]
+
+/-- Seed `j`'s packed anchors from a minimizer index; an ACGT seed reuses its
+prepared code and bucket instead of reading its letters again. -/
+def mzLook (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (p : MzP) : Array Nat :=
+  if p.ok then lookupP ix G R (j * q) p (BIAS - j * q) (pow2 j)
+  else lookupSeedA ix G R (j * q) (BIAS - j * q) (pow2 j)
 
 theorem unmix_mix (x : UInt64) (hx : x.toNat < 2 ^ 50) : unmix (mix x) = x.toNat := by
   unfold unmix
@@ -214,16 +236,11 @@ theorem acgt_mz (b : UInt8) (h : acgt b = true) : Mz.acgt b = true := by
   rcases this with h | h | h | h <;>
     simp [show b = _ from (e _ (by omega)).2 h]
 
-/-- Order hint: size of the bucket of the seed's minimizer (the seed code is
-`mix⁻¹ y = y·MIXINV mod 2^50`); 0 for a seed with a letter other than ACGT. -/
-@[inline] def mzSize (ix : Mz.MzIdx) : Option UInt64 → Nat
-  | some y =>
-    let v := unmix y
-    let b := ix.hsh (ix.sub v (ix.mini v)) >>> ix.kb
-    ix.hiB b - ix.loB b
-  | none => 0
+/-- Order hint: size of the bucket of the seed's minimizer; 0 for a seed with a
+letter other than ACGT. -/
+@[inline] def mzSize (ix : Mz.MzIdx) (p : MzP) : Nat := if p.ok then ix.hiB p.b - ix.loB p.b else 0
 
-def mzL : Look Mz.MzIdx := ⟨mzLook, mzSize⟩
+def mzL : Look Mz.MzIdx MzP := ⟨mzPrep, mzSize, mzLook⟩
 
 def checkAllMz (idxs : Array Mz.MzIdx) (gbs : Array ByteArray) : Bool :=
   (List.range gbs.size).all fun c => Mz.check2 idxs[c]! gbs[c]!
@@ -232,20 +249,27 @@ def mapFastMz (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (R : ByteArray) : 
   mapFastG mzL gbs idxs R
 
 theorem mzLook_eq (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) :
-    mzLook ix G R j (seedHash R j) = (Mz.lookupSeed ix G R (j * q)).map (anc (BIAS - j * q) (pow2 j)) := by
+    mzLook ix G R j (mzPrep ix (seedHash R j)) =
+      (Mz.lookupSeed ix G R (j * q)).map (anc (BIAS - j * q) (pow2 j)) := by
   rw [seedHash_spec]
   split
   · next ha =>
-    unfold mzLook hashAt
-    dsimp only
+    have e : ∀ y, mzLook ix G R j (mzPrep ix (some y)) =
+        lookupCodeA ix G R (j * q) (unmix y) (BIAS - j * q) (pow2 j) := fun y => by
+      unfold mzLook mzPrep lookupP lookupCodeA
+      dsimp only
+      rw [if_pos rfl]
+    rw [e]
+    unfold hashAt
     rw [unmix_mix _ (by rw [hashWord_toNat]; exact Nat.lt_of_lt_of_le (wN_lt R (j * q) q) (by decide)),
       hashWord_toNat, wN_eq, lookupCodeA_eq, Mz.lookupSeed_eq_lookupCode ix G R (j * q)
         (fun i hi => acgt_mz _ ((allACGT_word R (j * q)).1 ha i hi))]
     rfl
-  · unfold mzLook; rw [lookupA_eq]
+  · show lookupSeedA ix G R (j * q) (BIAS - j * q) (pow2 j) = _
+    rw [lookupA_eq]
 
 theorem mzLook_ok (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (hj : j < 4)
-    (hc : Mz.check ix G = true) : LookOk G R j (mzLook ix G R j (seedHash R j)) := by
+    (hc : Mz.check ix G = true) : LookOk G R j (mzLook ix G R j (mzPrep ix (seedHash R j))) := by
   have hf : anc (BIAS - j * q) (pow2 j) = anchorOf j := funext fun p => by
     unfold anc; rw [pow2_eq j hj]; rfl
   unfold LookOk
