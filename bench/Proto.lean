@@ -2,26 +2,34 @@
 Speed prototype only (NOT proved, not part of the tool).  Measures how fast
 the planned fast mapper can go before the proofs are written.
 
-    lake exe proto <genome.fa> <reads.txt> <l0> [truth.tsv|-] [dump.tsv]
+    lake exe proto <genome.fa> <reads.txt> 25 [truth.tsv|-] [dump.tsv]
+    env: PROTO_REPS=k (map k times, profiling), LEAN_ABORT_ON_PANIC=1 (asserts abort)
 
 Same answer as `mapSpec` with scoring (0, -4, -6, -2) and T = -12, i.e.
-penalty cap 12 (mismatch 4, gap of length L costs 6 + 2L).  Why each step is exact:
+penalty cap 12 (mismatch 4, gap of length L costs 6 + 2L); reads of 100
+letters, no N (asserted).  Checked read by read with `bench/check.sh`.
+Why each step is exact:
 
-* Cap 12 < 16 = two gaps, so a hit window has at most one gap, of length
-  L ≤ 3 (6 + 2·3 = 12), and L = |len - n|.
-* Seeds: 4 seeds of q = n/4 letters; a hit window has ≤ 3 edits, so one seed
-  is aligned without edits (proved: `exists_clean_seed`).  The index is
-  `LookupComplete` for ACGT words (reads must be ACGT), the full q-letter
-  seed is then checked, so every hit window has an anchor a = p - j·q.
-* Shape: the one gap is before or after the clean seed, so a hit window is
-  (a, n) (no gap), (a, n+e) (gap after the seed) or (a+s, n-s) (gap before),
-  0 < |e|, |s| ≤ 3: 13 windows per anchor.
-* Same-length window: any gapped alignment needs ≥ 2 gaps (≥ 16), so its
-  penalty is 4·(mismatches) when ≤ 12.
-* Other window, L = |len - n|: penalty = 6 + 2L + 4·m, m = fewest mismatches
-  over the gap position, prefix on the start diagonal, suffix on the end one.
-* Gapped windows cost ≥ 8, so when the best same-length window costs ≤ 4 they
-  cannot tie or beat it and are not scored.
+* One gap: cap 12 < 16 = two gaps, so a hit window has at most one gap, of
+  length L ≤ 3, and L = |len - n|.
+* Seeds and index: 4 seeds of q = 25 letters; a hit window has a seed aligned
+  without edits (proved: `exists_clean_seed`).  The index maps every ACGT-only
+  25-letter word to its starts (CSR over 2^24 buckets of an invertible hash,
+  each entry storing the rest of the hash, so key equality = word equality);
+  words with other letters (not N) are found by a direct scan of `odd`.
+  So the lookup returns exactly the starts where a seed is clean.
+* Shape: the gap is before or after a clean seed, so a hit window with anchor
+  a = p - j·q is (a, n), (a, n±L) (gap after) or (a∓L, n±L) (gap before).
+* Same-length window: a gapped alignment of it needs 2 gaps (≥ 16), so its
+  penalty is 4·mismatches when ≤ 12 (word XOR + popcount on the packed genome).
+* Other window: penalty = 6 + 2L + 4·m, m = fewest mismatches over the gap
+  position (prefix on the start diagonal, suffix on the end diagonal); m ≤ 1
+  under the cap, read off the first two / last two mismatches (`gappedPen`).
+* Pigeonhole: a seed looked up but not clean at an anchor costs ≥ 1 mismatch;
+  after k seeds are looked up, any window none of whose clean seeds was looked
+  up costs ≥ 4k (`mapCore`), so lookups stop once 4k > best; gapped windows
+  (≥ 8) are only scored when best ≥ 8 and only near diagonals carrying ≥ 2
+  clean seeds (≥ 3 when the bound is < 10).
 -/
 
 def cap : Nat := 12
