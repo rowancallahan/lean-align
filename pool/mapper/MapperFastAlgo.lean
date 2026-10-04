@@ -231,14 +231,18 @@ def hamming (r g : ByteArray) (a lim : Nat) (i stop m : Nat) : Nat :=
   else m
 termination_by stop - i
 
+/-- Continue the count over `r[i, stop)` unless already above `lim` or the seed is clean. -/
+@[inline] def hamStep (r g : ByteArray) (a lim i stop : Nat) (clean : Bool) (m : Nat) : Nat :=
+  if m ≤ lim && !clean then hamming r g a lim i stop m else m
+
 /-- Mismatches of the read against `g[a ..]` (capped at `lim + 1`), skipping
 the seeds in `mask` (clean there). -/
 @[inline] def hamSeeds (r g : ByteArray) (a mask lim : Nat) : Nat :=
-  let m := hamming r g a lim (4 * q) r.size 0
-  let m := if m ≤ lim && mask % 2 == 0 then hamming r g a lim 0 q m else m
-  let m := if m ≤ lim && mask / 2 % 2 == 0 then hamming r g a lim q (2 * q) m else m
-  let m := if m ≤ lim && mask / 4 % 2 == 0 then hamming r g a lim (2 * q) (3 * q) m else m
-  if m ≤ lim && mask / 8 % 2 == 0 then hamming r g a lim (3 * q) (4 * q) m else m
+  hamStep r g a lim (3 * q) (4 * q) (mask / 8 % 2 == 1) <|
+  hamStep r g a lim (2 * q) (3 * q) (mask / 4 % 2 == 1) <|
+  hamStep r g a lim q (2 * q) (mask / 2 % 2 == 1) <|
+  hamStep r g a lim 0 q (mask % 2 == 1) <|
+  hamming r g a lim (4 * q) r.size 0
 
 /-- Mismatches of `r[k, stop)` against `g[k + d1 - d0]`, added to `m`. -/
 def misCount (r g : ByteArray) (d1 d0 : Nat) (k stop m : Nat) : Nat :=
