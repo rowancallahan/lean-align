@@ -1,8 +1,7 @@
 import FastMapperPar
 import FastMapperMz
-import FastGenAlgo
-import MzCheckPar
 import FastGenMz
+import MzCheckPar
 
 /-!
 Fast mapper benchmark (IO only, unproved).
