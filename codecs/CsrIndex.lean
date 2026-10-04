@@ -175,6 +175,13 @@ def inversePositions (idx : CsrIndex) (gb : ByteGenome) : Array ByteArray :=
 def checkIndex (idx : CsrIndex) (gb : ByteGenome) : Bool :=
   verifyIndex idx gb (inversePositions idx gb)
 
+/-- Map one read through a CSR index (seeds looked up in the index, windows
+scored by the proved codec). -/
+def mapWithCsr (sc : AlignmentSpec.Scoring) (T : Int) (gb : ByteGenome) (idx : CsrIndex)
+    (read : List Char) : Option (Window × Int) :=
+  mapWith idx.lookup (kernelScore sc read (decodeGenome gb)) idx.l0 T (errBound sc T)
+    (decodeGenome gb) read
+
 /-! ## The theorems
 
     checkIndex idx gb = true →
@@ -185,7 +192,11 @@ def checkIndex (idx : CsrIndex) (gb : ByteGenome) : Bool :=
     (c, p) ∈ idx.lookup word ↔
       ∃ t, idx.lo h ≤ t < idx.hi h ∧ idx.entry t = (c, p),  h = codeOfWord word   (mem_lookup)
 
-for every index `idx` (however built or loaded) and byte genome `gb`.  The
+    checkIndex idx gb = true →
+      mapWithCsr sc T gb idx read = mapSpec sc T (decodeGenome gb) read      (mapWithCsr_eq_mapSpec)
+
+for every index `idx` (however built or loaded), byte genome `gb`, read,
+threshold `T` and scoring with `ValidScoring sc`.  The
 genome they are about is `decodeGenome gb`; for an ASCII genome `g`,
 `decodeGenome (encodeGenome g) = g` (`decodeGenome_encodeGenome`). -/
 
@@ -276,8 +287,17 @@ theorem checkIndex_bucket (idx : CsrIndex) (gb : ByteGenome) (hchk : checkIndex 
     idx.InBucket (byteWordCode gb[c].bytes p idx.l0) c p :=
   verifyIndex_bucket idx gb _ hchk c hc p hp
 
+/-- **Mapping.**  Through an index that passes the checker, the mapper gives
+the specification's answer. -/
+theorem mapWithCsr_eq_mapSpec (sc : AlignmentSpec.Scoring) (hv : ValidScoring sc) (T : Int)
+    (gb : ByteGenome) (idx : CsrIndex) (hchk : checkIndex idx gb = true) (read : List Char) :
+    mapWithCsr sc T gb idx read = mapSpec sc T (decodeGenome gb) read :=
+  mapWith_eq_mapSpec _ _ idx.l0 sc hv T _ read (checkIndex_complete idx gb hchk)
+    (kernelScore_eq sc read _)
+
 end MapSpec
 
+#print axioms MapSpec.mapWithCsr_eq_mapSpec
 #print axioms MapSpec.checkIndex_complete
 #print axioms MapSpec.checkIndex_bucket
 #print axioms MapSpec.CsrIndex.mem_lookup
