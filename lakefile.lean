@@ -142,7 +142,9 @@ lean_exe layout where                 -- index layout bench (unproved)
   srcDir := "bench"
   root := `Layout
 
-lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer index
+lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer / mod-minimizer index
+  srcDir := "bench"
+  root := `ProtoSketch
 
 lean_exe mz_test where                -- randomized test: proved MzIndex lookup vs naive scan
   srcDir := "bench"
