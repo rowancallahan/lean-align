@@ -280,16 +280,18 @@ def zeroBytes (n : Nat) : ByteArray := Id.run do
   for _ in [0:n] do B := B.push 0
   return B
 
+/-- 2^j for j < 4 (`Nat.shiftLeft` is an out-of-line GMP call, even on small numbers). -/
+@[inline] def bit (j : Nat) : Nat := if j == 0 then 1 else if j == 1 then 2 else if j == 2 then 4 else 8
+
 @[inline] def rd32 (B : ByteArray) (j : Nat) : Nat :=
   ((B.get! j).toUInt32 ||| ((B.get! (j + 1)).toUInt32 <<< 8) |||
     ((B.get! (j + 2)).toUInt32 <<< 16) ||| ((B.get! (j + 3)).toUInt32 <<< 24)).toNat
 
 /-- `k` ≤ 4 bytes at `j`, little-endian. -/
 @[inline] def rdK (B : ByteArray) (j k : Nat) : Nat :=
-  if k == 4 then rd32 B j else Id.run do
-    let mut x := 0
-    for i in [0:k] do x := x ||| ((B.get! (j + i)).toNat <<< (8 * i))
-    return x
+  if k == 4 then rd32 B j else if k == 1 then (B.get! j).toNat
+  else if k == 2 then ((B.get! j).toUInt32 ||| ((B.get! (j + 1)).toUInt32 <<< 8)).toNat
+  else ((B.get! j).toUInt32 ||| ((B.get! (j + 1)).toUInt32 <<< 8) ||| ((B.get! (j + 2)).toUInt32 <<< 16)).toNat
 
 def wrK (B : ByteArray) (j k x : Nat) : ByteArray := Id.run do
   let mut B := B
@@ -386,12 +388,168 @@ def Pk.look (ix : Pk) (g r : ByteArray) (j : Nat) (v : UInt64) : Array Nat :=
     for o in [0:ix.s] do
       let x := ix.sub v o
       let b := ix.bucket x
-      let l := scanPk ix g r (ix.key x) (ix.lo b) (ix.hi b) o o0 (1 <<< j) #[]
+      let l := scanPk ix g r (ix.key x) (ix.lo b) (ix.hi b) o o0 (bit j) #[]
       out := if o == 0 then l else merge out l 0 0 #[]
     return out
   else
     ix.odd.foldl (init := #[]) fun acc p =>
-      if eqRun g r p o0 (p + q) then acc.push ((p + BIAS - o0) * 16 + (1 <<< j)) else acc
+      if eqRun g r p o0 (p + q) then acc.push ((p + BIAS - o0) * 16 + bit j) else acc
+
+
+/-- `k` ≤ 8 bytes at `j`, little-endian. -/
+@[inline] def rdT (B : ByteArray) (j k : Nat) : UInt64 :=
+  if k ≤ 4 then (rdK B j k).toUInt64 else (rd32 B j).toUInt64 ||| ((rdK B (j + 4) (k - 4)).toUInt64 <<< 32)
+
+/-- Minimizer index.  For every ACGT-only q-window of the genome, its minimizer
+= leftmost o < w = q - k + 1 minimizing `hk` of the k-word at o, and only
+minimizer places are indexed.  `hk` = multiplication by an odd constant mod
+4^k (a bijection), bucket = top B bits, key = low 2k - B bits.  Entry = LE
+UInt32 place, then `tb` bytes of tag = key | before << kb | after << (kb + 2(w-1))
+| flag << (kb + 4(w-1)), with before/after = 2-bit codes of the w-1 letters
+before / after the k-word (flag = they are not all ACGT inside the genome:
+then the seed is checked against the genome).
+Exactness: if g[p, p+q) = seed (ACGT), the seed's minimizer offset o is a
+function of the seed alone, so p + o is indexed with the seed's k-word code;
+key + flanks then decide g[p, p+q) = seed without reading the genome. -/
+structure Mz where
+  q : Nat
+  k : Nat
+  B : Nat
+  offs : ByteArray
+  ent : ByteArray
+  odd : Array Nat
+deriving Inhabited
+
+@[inline] def Mz.w (ix : Mz) : Nat := ix.q - ix.k + 1
+@[inline] def Mz.kbits (ix : Mz) : Nat := 2 * ix.k - ix.B
+@[inline] def Mz.tb (ix : Mz) : Nat := (ix.kbits + 4 * (ix.w - 1) + 1 + 7) / 8
+@[inline] def Mz.es (ix : Mz) : Nat := 4 + ix.tb
+@[inline] def Mz.hk (ix : Mz) (x : UInt64) : UInt64 :=
+  (x * 0x9E3779B97F4A7C15) &&& (((1 : UInt64) <<< (2 * ix.k).toUInt64) - 1)
+@[inline] def Mz.lo (ix : Mz) (b : Nat) : Nat := rd32 ix.offs (4 * b)
+@[inline] def Mz.hi (ix : Mz) (b : Nat) : Nat := rd32 ix.offs (4 * b + 4)
+@[inline] def lowMask (n : Nat) : UInt64 := ((1 : UInt64) <<< n.toUInt64) - 1
+
+/-- Leftmost o in [o, w) minimizing the hash of the k-word at o, as h·64 + o (best so far `bh`, `bo`). -/
+def miniGo (q k w : Nat) (v : UInt64) (o bo : Nat) (bh : UInt64) : Nat :=
+  if h : o < w then
+    let x := ((v >>> (2 * (q - o - k)).toUInt64) &&& lowMask (2 * k)) * 0x9E3779B97F4A7C15 &&& lowMask (2 * k)
+    if x < bh then miniGo q k w v (o + 1) o x else miniGo q k w v (o + 1) bo bh
+  else bh.toNat * 64 + bo
+termination_by w - o
+
+/-- Minimizer (offset, hash) of the q-word with 2-bit code `v`. -/
+@[inline] def Mz.mini (ix : Mz) (v : UInt64) : Nat × UInt64 :=
+  let m := miniGo ix.q ix.k ix.w v 0 0 (lowMask 62)
+  (m % 64, (m / 64).toUInt64)
+
+/-- 2-bit code of g[i, i+m) and whether all of it is ACGT inside g. -/
+def flank (g : ByteArray) (i m : Int) : Nat × Bool := Id.run do
+  let mut x := 0
+  let mut ok := true
+  for t in [0:m.toNat] do
+    let c := if i + t < 0 || i + t ≥ g.size then 4 else (code (g.get! (i + t).toNat)).toNat
+    if c ≥ 4 then ok := false
+    x := 4 * x + c % 4
+  return (x, ok)
+
+def Mz.tag (ix : Mz) (g : ByteArray) (p : Nat) (h : UInt64) : UInt64 :=
+  let w := ix.w
+  let (bf, ok1) := flank g (p - (w - 1 : Nat) : Int) (w - 1)
+  let (af, ok2) := flank g (p + ix.k) (w - 1)
+  (h &&& lowMask ix.kbits) ||| (bf.toUInt64 <<< ix.kbits.toUInt64) |||
+    (af.toUInt64 <<< (ix.kbits + 2 * (w - 1)).toUInt64) |||
+    ((if ok1 && ok2 then 0 else 1) <<< (ix.kbits + 4 * (w - 1)).toUInt64)
+
+def buildMz (g : ByteArray) (q k B : Nat) : Mz := Id.run do
+  assert! q == 25 && k ≤ q && k ≤ 31 && B ≤ 2 * k && B ≤ 32
+  let ix0 : Mz := { q, k, B, offs := .empty, ent := .empty, odd := #[] }
+  assert! ix0.tb ≤ 8
+  let nb := 1 <<< B
+  let wmask : UInt64 := (1 <<< (2 * q.toUInt64)) - 1
+  let mut cnt := zeroBytes (4 * (nb + 1))
+  let mut x : UInt64 := 0
+  let mut good := 0
+  let mut odd : Array Nat := #[]
+  let mut lastOdd : Int := -1000
+  let mut last := 0   -- 1 + last indexed place
+  for p in [0:g.size] do
+    let c := code (g.get! p)
+    if c < 4 then x := ((x <<< 2) ||| c) &&& wmask; good := good + 1 else good := 0
+    if c == 4 then lastOdd := p
+    if p + 1 ≥ q && lastOdd + q > p then odd := odd.push (p + 1 - q)
+    if good ≥ q then
+      let (o, h) := ix0.mini x
+      let pm := p + 1 - q + o
+      if pm + 1 != last then
+        assert! pm + 1 > last
+        last := pm + 1
+        let j := 4 * ((h >>> (ix0.kbits).toUInt64).toNat + 1)
+        cnt := wrK cnt j 4 (rd32 cnt j + 1)
+  for b in [0:nb] do cnt := wrK cnt (4 * b + 4) 4 (rd32 cnt (4 * b + 4) + rd32 cnt (4 * b))
+  let total := rd32 cnt (4 * nb)
+  let es := ix0.es
+  let mut fill := cnt
+  let mut ent := zeroBytes (es * total)
+  x := 0; good := 0; last := 0
+  for p in [0:g.size] do
+    let c := code (g.get! p)
+    if c < 4 then x := ((x <<< 2) ||| c) &&& wmask; good := good + 1 else good := 0
+    if good ≥ q then
+      let (o, h) := ix0.mini x
+      let pm := p + 1 - q + o
+      if pm + 1 != last then
+        last := pm + 1
+        let b := (h >>> (ix0.kbits).toUInt64).toNat
+        let i := rd32 fill (4 * b)
+        let t := ix0.tag g pm h
+        ent := wrK (wrK (wrK ent (es * i) 4 pm) (es * i + 4) (min 4 ix0.tb) (t &&& 0xFFFFFFFF).toNat) (es * i + 8) (ix0.tb - min 4 ix0.tb) (t >>> 32).toNat
+        fill := wrK fill (4 * b) 4 (i + 1)
+  for b in [0:nb] do assert! rd32 fill (4 * b) == rd32 cnt (4 * b + 4)
+  return { ix0 with offs := cnt, ent, odd }
+
+/-- Hits among entries [t, hi): tag must equal `want` on the bits in `msk`
+(key, the o letters before and w-1-o after); flagged entries are checked in g. -/
+def scanMz (ix : Mz) (g r : ByteArray) (want msk fbit : UInt64) (t hi o o0 bit : Nat) (acc : Array Nat) : Array Nat :=
+  if h : t < hi then
+    let e := ix.es * t
+    let tg := rdT ix.ent (e + 4) ix.tb
+    let acc :=
+      if tg &&& msk != want then acc else
+      let p' := rd32 ix.ent e
+      if p' < o then acc else
+      let p := p' - o
+      if tg &&& fbit == 0 || (p + ix.q ≤ g.size && eqRun g r p o0 (p + ix.q)) then
+        acc.push ((p + BIAS - o0) * 16 + bit) else acc
+    scanMz ix g r want msk fbit (t + 1) hi o o0 bit acc
+  else acc
+termination_by hi - t
+
+def Mz.look (ix : Mz) (g r : ByteArray) (j : Nat) (v : UInt64) : Array Nat :=
+  let q := ix.q
+  let o0 := j * q
+  if v >>> 60 == 0 then
+    let w := ix.w
+    let kb := ix.kbits
+    let (o, h) := ix.mini v
+    let b := (h >>> kb.toUInt64).toNat
+    -- seed letters [0, o) = last o letters of `before`; [o+k, q) = first w-1-o of `after`
+    let bfW := v >>> (2 * (q - o)).toUInt64
+    let afW := v &&& lowMask (2 * (w - 1 - o))
+    let want := (h &&& lowMask kb) ||| (bfW <<< kb.toUInt64) ||| (afW <<< (kb + 2 * (w - 1) + 2 * o).toUInt64)
+    let msk := lowMask kb ||| (lowMask (2 * o) <<< kb.toUInt64) |||
+      (lowMask (2 * (w - 1 - o)) <<< (kb + 2 * (w - 1) + 2 * o).toUInt64)
+    scanMz ix g r want msk (1 <<< (kb + 4 * (w - 1)).toUInt64) (ix.lo b) (ix.hi b) o o0 (bit j) #[]
+  else
+    ix.odd.foldl (init := #[]) fun acc p =>
+      if eqRun g r p o0 (p + q) then acc.push ((p + BIAS - o0) * 16 + bit j) else acc
+
+def Mz.lk (ix : Mz) : Lk where
+  q := ix.q
+  look := ix.look
+  size v := if v >>> 60 != 0 then 0 else
+    let b := ((ix.mini v.toUInt64).2 >>> ix.kbits.toUInt64).toNat; ix.hi b - ix.lo b
+  bucketOf v := ((ix.mini v.toUInt64).2 >>> ix.kbits.toUInt64).toNat
 
 def Pk.lk (ix : Pk) : Lk where
   q := ix.q
@@ -426,6 +584,10 @@ def main (args : List String) : IO UInt32 := do
   let (lk, ibytes, nent) ← if spec == "boxed" then do
       let idx := buildIdx g 25
       pure (idx.lk, 8 * (idx.offs.size + idx.ent.size) + 8 * idx.odd.size, idx.ent.size / 2)
+    else if spec.startsWith "m," then do
+      let [_, k, B] := spec.splitOn "," | throw (IO.userError "spec")
+      let ix := buildMz g 25 k.toNat! B.toNat!
+      pure (ix.lk, ix.offs.size + ix.ent.size + 8 * ix.odd.size, ix.ent.size / ix.es)
     else do
       let [w, s, B, kb] := (spec.splitOn ",").map String.toNat! | throw (IO.userError "spec")
       assert! w == 25
@@ -435,13 +597,23 @@ def main (args : List String) : IO UInt32 := do
   let t1 ← IO.monoNanosNow
   IO.println s!"index_seconds {secs t0 t1}  mem after index: {← memKB}"
   let codes := reads.map fun r => (List.range 4).toArray.map fun j => (seedCode r (j * 25) 0 25 0 0).toNat
-  -- lookup stage alone: all 4 seeds of every read
+  -- lookup stage alone: all 4 seeds of every read; then each read's lookups twice
+  -- in a row (the second time cached): cached cost = t(2x) - t(1x)
+  let lookAll := fun (rep : Nat) => show IO Nat from do
+    let mut hits := 0
+    for i in [0:reads.size] do
+      for _ in [0:rep] do
+        for j in [0:4] do hits := hits + (lk.look g reads[i]! j codes[i]![j]!.toUInt64).size
+    return hits
   let t2 ← IO.monoNanosNow
-  let mut hits := 0
-  for i in [0:reads.size] do
-    for j in [0:4] do hits := hits + (lk.look g reads[i]! j codes[i]![j]!.toUInt64).size
+  let hits ← lookAll 1
   let t3 ← IO.monoNanosNow
-  IO.println s!"lookup_only_seconds {secs t2 t3}  ns/read {Float.ofNat (t3 - t2) / Float.ofNat reads.size}  seed hits {hits}"
+  let hits2 ← lookAll 2
+  let t3' ← IO.monoNanosNow
+  assert! hits2 == 2 * hits
+  let scanned := codes.foldl (init := 0) fun a c => a + (c.map lk.size).foldl (· + ·) 0
+  let per := fun (t : Nat) => Float.ofNat t / Float.ofNat reads.size
+  IO.println s!"lookup ns/read {per (t3 - t2)}  of which cached-compute {per (t3' - t3 - (t3 - t2))}  seed hits {hits}  bucket entries {scanned}"
   let sorted := (← IO.getEnv "SORT") == some "1"
   let t4 ← IO.monoNanosNow
   let order : Array Nat := if sorted then
