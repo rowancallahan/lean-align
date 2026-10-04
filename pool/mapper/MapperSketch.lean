@@ -252,6 +252,42 @@ theorem dictSel_prefixDet (D : List Char → Bool) (lmax : Nat) : PrefixDet (dic
       rw [← Nat.min_eq_left (Nat.le_of_lt hj), ← List.take_take, hw, List.take_take]
     rw [this]; exact hb
 
+/-- Variable-length keys on a fixed-length selection: where `P` selects a
+k-mer `z`, the key is extended by `ext z` letters (longer keys for frequent
+k-mers, so their buckets split). -/
+def extSel (k : Nat) (P : List Char → Bool) (ext : List Char → Nat) (u : List Char) : Option Nat :=
+  if k ≤ u.length ∧ P (u.take k) = true then some (k + ext (u.take k)) else none
+
+theorem extSel_prefixDet (k : Nat) (P : List Char → Bool) (ext : List Char → Nat) :
+    PrefixDet (extSel k P ext) := by
+  intro u v ℓ hs hu hv hw
+  unfold extSel at hs ⊢
+  split at hs
+  · rename_i h
+    have hl : ℓ = k + ext (u.take k) := (Option.some.inj hs).symm
+    have hk : v.take k = u.take k := by
+      rw [← Nat.min_eq_left (show k ≤ ℓ by omega), ← List.take_take, hw, List.take_take]
+    rw [if_pos ⟨by omega, by rw [hk]; exact h.2⟩, hk, hl]
+  · cases hs
+
+/-- Extending keys by at most `emax` letters costs `emax` letters of guarantee. -/
+theorem extSel_hits (k : Nat) (P : List Char → Bool) (ext : List Char → Nat) (L emax : Nat)
+    (hh : Hits (fixedSel k P) L) (he : ∀ z, ext z ≤ emax) : Hits (extSel k P ext) (L + emax) := by
+  intro u hu
+  obtain ⟨i, ℓ, hs, hl⟩ := hh (u.take L) (by simp; omega)
+  unfold fixedSel at hs
+  split at hs
+  · rename_i h
+    have hk : ℓ = k := (Option.some.inj hs).symm
+    subst hk
+    have hw : (u.drop i).take ℓ = ((u.take L).drop i).take ℓ := by
+      rw [List.drop_take, List.take_take, Nat.min_eq_left (by omega)]
+    refine ⟨i, ℓ + ext ((u.drop i).take ℓ), ?_, ?_⟩
+    · unfold extSel
+      rw [if_pos ⟨by simp; omega, by rw [hw]; exact h.2⟩]
+    · have := he ((u.drop i).take ℓ); omega
+  · cases hs
+
 /-! ## Closed syncmers: a k-mer whose least s-mer is its first or its last -/
 
 def closedSyncmer (k s : Nat) (ord : List Char → Nat) (z : List Char) : Bool :=
@@ -306,6 +342,13 @@ def syncmerSketch (k s : Nat) (ord : List Char → Nat) (hs : s < k) : SeedSketc
   ctxSketch (fixedSel k (closedSyncmer k s ord)) (2 * k - s - 1)
     (fixedSel_prefixDet _ _) (closedSyncmer_hits k s ord hs)
 
+/-- Closed syncmers with keys extended by `ext ≤ emax` letters:
+`L = 2k - s - 1 + emax`. -/
+def syncmerExtSketch (k s : Nat) (ord : List Char → Nat) (hs : s < k) (ext : List Char → Nat)
+    (emax : Nat) (he : ∀ z, ext z ≤ emax) : SeedSketch (List Char) :=
+  ctxSketch (extSel k (closedSyncmer k s ord) ext) (2 * k - s - 1 + emax)
+    (extSel_prefixDet _ _ _) (extSel_hits _ _ _ _ _ (closedSyncmer_hits k s ord hs) he)
+
 /-- A context-free key is the letters at its offset. -/
 theorem ctxSketch_key (sel : List Char → Option Nat) (x : List Char) (e : List Char × Nat)
     (he : e ∈ ctxSketchFn sel x) : ∃ ℓ, e.1 = (x.drop e.2).take ℓ ∧ e.2 + ℓ ≤ x.length := by
@@ -320,3 +363,5 @@ end MapSpec
 #print axioms MapSpec.dictSel_prefixDet
 #print axioms MapSpec.closedSyncmer_hits
 #print axioms MapSpec.ctxSketch_key
+#print axioms MapSpec.extSel_prefixDet
+#print axioms MapSpec.extSel_hits
