@@ -1,4 +1,4 @@
-import FastMapper
+import FastMapperPar
 
 /-!
 Fast mapper benchmark (IO only, unproved).
@@ -7,7 +7,7 @@ Fast mapper benchmark (IO only, unproved).
 
 Reads the FASTA (one or more chromosomes) and the reads, builds the hashed
 index of every chromosome, runs the proved checker on it, maps every read with
-the proved `mapFast`, prints times and reads/s, and optionally writes
+the proved `mapFast` (`FAST_TASKS=n`: `mapFastPar` over n tasks), prints times and reads/s, and optionally writes
 `name \t start \t len \t score` (or `name \t none`) per read, the format of
 `proto`'s dump.
 -/
@@ -72,8 +72,10 @@ def main (args : List String) : IO UInt32 := do
   let reps := ((← IO.getEnv "FAST_REPS").getD "1").toNat!   -- repeat the mapping (timing only)
   let t0 ← IO.monoNanosNow
   let mut res := #[]
+  let tasks := ((← IO.getEnv "FAST_TASKS").getD "1").toNat!   -- 1 = no tasks
   for k in [0:reps] do
-    res := reads.map fun r => Fast.mapFast gbs idxs (if t0 + k == 1 then r.push 0 else r)
+    let rs := if t0 + k == 1 then #[] else reads
+    res := if tasks ≤ 1 then rs.map (Fast.mapFast gbs idxs) else Fast.mapFastPar tasks gbs idxs rs
   let mapped := res.foldl (fun k x => if x.isSome then k + 1 else k) 0
   let t1 ← IO.monoNanosNow
   IO.println s!"mapped: {mapped}"
