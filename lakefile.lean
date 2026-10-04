@@ -105,3 +105,7 @@ lean_exe map_bench where              -- benchmark only; prints to stdout
 lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "bench"
   root := `Proto
+
+lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
+  srcDir := "bench"
+  root := `MapBench2
