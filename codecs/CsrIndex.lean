@@ -275,6 +275,8 @@ def mapWithCsr (sc : AlignmentSpec.Scoring) (T : Int) (gb : ByteGenome) (idx : C
     (c, p) ∈ idx.lookup word ↔
       ∃ t, idx.lo h ≤ t < idx.hi h ∧ idx.entry t = (c, p),  h = codeOfWord word   (mem_lookup)
 
+    checkIndexM idx gb = true →
+      LookupComplete (decodeGenome gb) idx.l0 idx.lookup                     (checkIndexM_complete)
     checkIndex idx gb = true →
       mapWithCsr sc T gb idx read = mapSpec sc T (decodeGenome gb) read      (mapWithCsr_eq_mapSpec)
 
@@ -561,6 +563,7 @@ end MapSpec
 #print axioms MapSpec.mapWithCsr_eq_mapSpec
 #print axioms MapSpec.checkIndex_complete
 #print axioms MapSpec.checkIndex_bucket
+#print axioms MapSpec.checkIndexM_complete
 #print axioms MapSpec.CsrIndex.mem_lookup
 #print axioms MapSpec.decodeGenome_encodeGenome
 #print axioms MapSpec.windowSeq_decodeGenome

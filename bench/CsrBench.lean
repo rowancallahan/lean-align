@@ -4,6 +4,7 @@ import CsrIndex
 CSR index benchmark (IO, unproved).
 
     lake exe csr_bench <genome.fa> <l0> <index.csr>
+    lake exe csr_bench check <genome.fa> <index.csr>     (load + check only)
 
 Reads the FASTA into a `ByteGenome`, builds the index, saves it, loads it
 back, compares, runs the proved checker (`checkIndex`), and checks that a
@@ -98,8 +99,23 @@ def timed (label : String) (f : Nat → α) : IO α := do
   IO.println s!"{label}_s: {secs t0 t1}"
   r.get
 
+/-- Load-and-check only (the mapper's start-up): genome + saved index. -/
+def loadCheck (gpath ipath : String) : IO UInt32 := do
+  let gb ← readFasta gpath
+  let t0 ← IO.monoNanosNow
+  let idx ← loadIndex ipath
+  let t1 ← IO.monoNanosNow
+  IO.println s!"load_s: {secs t0 t1}"
+  let ok ← timed "check" fun t => checkIndex (if t == 1 then default else idx) gb
+  IO.println s!"check: {ok}"
+  assert! ok
+  IO.println (← peakRssMb)
+  return 0
+
 def main (args : List String) : IO UInt32 := do
-  let [gpath, l0s, ipath] := args | throw (IO.userError "usage: csr_bench <genome.fa> <l0> <index.csr>")
+  if let ["check", gpath, ipath] := args then return ← loadCheck gpath ipath
+  let [gpath, l0s, ipath] := args
+    | throw (IO.userError "usage: csr_bench <genome.fa> <l0> <index.csr> | csr_bench check <genome.fa> <index.csr>")
   let l0 := l0s.toNat!
   let t0 ← IO.monoNanosNow
   let gb ← readFasta gpath
