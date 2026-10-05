@@ -284,3 +284,9 @@ Stage-B pruning blocks of 8 letters (was 25) — PROVED (same lemmas, `block_ste
 - Each spoiled 8-letter read block (no exact copy in the band) adds 4 to the death threshold; 31 blocks per 250 bp read instead of 10, so dead passes stop earlier.
 - HG002 20k pairs vs chr21, 1 task, GP_K=1, pairs/s (two interleaved runs, dumps identical): T=−24 18.1–18.4k → 20.6–20.7k; T=−32 3.42–3.43k → 4.08–4.34k. Lengths 5/6/10 tried: 8 best or tied.
 - Tried and dropped: band loop restricted to non-saturated cells (identical output, 10–20% slower: live cells fill the band).
+
+Cap-16 two-gap fallback on word scans — PROVED (`twoGap16K_eq`; WgPacked `twoGap16KG`, `twoGap16KG_same`):
+- Profile, repeat-heavy chr21 2×150 at T=−16 (mate 1 at an Alu-like site): phase 1 89% of the search, `ker16K` 73% inclusive, of which the two-gap fallback ~38% (byte first/last-mismatch scans 26%, computed twice when the necessary test passes).
+- Now first/last mismatch once per call by `fwdL`/`bwdL` (word scans, `fwdL_eq`/`bwdL_eq`), passed to the necessary test and `twoGapBP`.
+- Packed path (`whole_genome pmap`, mode PK, chr21 index, 20k pairs, 1 task, CPU s, 3 alternating runs, dumps identical): repeat-heavy 3.57–3.62 → 3.16–3.48; random 2×150 2.46–2.69 → 2.46–3.08 (noise; the fallback is rare there).
+- WFA band pass prototype (gap-affine wavefronts, byte extension): identical dumps, parity speed; core loop 52M Ir vs bandLoopB 108M, but allocation overhead ate the gain. Parked (scratch copy only).

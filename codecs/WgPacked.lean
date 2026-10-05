@@ -192,7 +192,20 @@ def kerGKG (R : ByteArray) (K : RP) (G : Gt) (P : PGen) (st len lim : Nat) : Nat
   (len == n || len == n + 2 || len + 2 == n) &&
     (hamming R G (st + 1) 0 (A + 1) (B - 1) 0 == 0 || st == 0 || hamming R G (st - 1) 0 (A + 1) (B - 1) 0 == 0)
 
+@[inline] def twoGapCABG (R : ByteArray) (G : Gt) (st len A B : Nat) : Bool :=
+  let n := R.size
+  (len == n || len == n + 2 || len + 2 == n) &&
+    (hamming R G (st + 1) 0 (A + 1) (B - 1) 0 == 0 || st == 0 || hamming R G (st - 1) 0 (A + 1) (B - 1) 0 == 0)
+
 variable [Inhabited Gt]
+
+@[inline] def twoGap16KG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st len : Nat) : Nat :=
+  let G := gbs[c]!
+  let A := fwdLG R G K pvs[c]! st R.size 1
+  let B := bwdLG R G K pvs[c]! st len 0 1
+  if !twoGapCABG R G st len A B then 17
+  else if twoGapBP R G st len A B then 16
+  else bandPen 16 R gbs ⟨c, st, len⟩
 
 @[inline] def twoGap16G (R : ByteArray) (gbs : Array Gt) (c st len : Nat) : Nat :=
   let G := gbs[c]!
@@ -205,7 +218,7 @@ def ker16KG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st l
   else if st + len ≤ GRead.size gbs[c]! then
     let r := kerGKG R K gbs[c]! pvs[c]! st len 16
     if r ≤ 16 then r
-    else if len = R.size ∨ len = R.size + 2 ∨ len + 2 = R.size then twoGap16G R gbs c st len
+    else if len = R.size ∨ len = R.size + 2 ∨ len + 2 = R.size then twoGap16KG R K gbs pvs c st len
     else 17
   else 17
 
@@ -332,6 +345,10 @@ theorem kerGKG_same (R : ByteArray) (K : RP) (P : PGen) (st len lim : Nat) :
 theorem twoGapCG_same (R : ByteArray) (st len : Nat) : twoGapCG R x st len = twoGapCG R y st len := by
   simp only [twoGapCG, fwdMis_same' h, bwdMis_same' h, hamming_same' h]
 
+theorem twoGapCABG_same (R : ByteArray) (st len A B : Nat) :
+    twoGapCABG R x st len A B = twoGapCABG R y st len A B := by
+  simp only [twoGapCABG, hamming_same' h]
+
 end
 
 /-- At `ByteArray` the copies are the originals. -/
@@ -349,9 +366,14 @@ theorem twoGap16G_same (R : ByteArray) (c st len : Nat) :
     twoGap16G R xs c st len = twoGap16G R ys c st len := by
   simp only [twoGap16G, twoGapCG_same (h.2 c), twoGapB_same (h.2 c), bandPen_same h]
 
+theorem twoGap16KG_same (R : ByteArray) (K : RP) (pvs : Array PGen) (c st len : Nat) :
+    twoGap16KG R K xs pvs c st len = twoGap16KG R K ys pvs c st len := by
+  simp only [twoGap16KG, fwdLG_same (h.2 c), bwdLG_same (h.2 c), twoGapCABG_same (h.2 c),
+    twoGapBP_same (h.2 c), bandPen_same h]
+
 theorem ker16KG_same (R : ByteArray) (K : RP) (pvs : Array PGen) (c st len : Nat) :
     ker16KG R K xs pvs c st len = ker16KG R K ys pvs c st len := by
-  simp only [ker16KG, h.1, ker16_same h, (h.2 c).1, kerGKG_same (h.2 c), twoGap16G_same h]
+  simp only [ker16KG, h.1, ker16_same h, (h.2 c).1, kerGKG_same (h.2 c), twoGap16KG_same h]
 
 theorem kerHKG_same (R : ByteArray) (K : RP) (pvs : Array PGen) (c st len l : Nat) :
     kerHKG R K xs pvs c st len l = kerHKG R K ys pvs c st len l := by
