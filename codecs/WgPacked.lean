@@ -95,6 +95,27 @@ theorem pairDispatchP_mz_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix :
   exact pairDispatch_eq_pairSpecT lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut)
     (lookOk_pk ix G hchk)
 
+/-- **Byte chromosomes, genome held once as a view, length dispatch.** -/
+theorem pairDispatch_view_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
+    (R1 R2 : ByteArray) (ix : Mz.MzIdx) (V : GV) (offs : Array Nat)
+    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOkV V offs gbs = true)
+    (hchk : Mz.check2V ix V = true) :
+    pairDispatch lo hi (ix, V) ByteArray.empty offs gbs R1 R2 =
+      pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
+  have hr := repV_unpack V
+  have e : pairDispatch lo hi (ix, V) ByteArray.empty offs gbs R1 R2 =
+      pairDispatch lo hi (ix, V) (unpackV V) offs gbs R1 R2 := by
+    unfold pairDispatch
+    rw [mapFastGB_congrG (ix, V) ByteArray.empty (unpackV V) (fun _ _ _ _ => rfl),
+      mapFastGB_congrG (ix, V) ByteArray.empty (unpackV V) (fun _ _ _ _ => rfl)]
+  rw [e]
+  refine pairDispatch_eq_pairSpecT lo hi g m1 m2 gbs R1 R2 (ix, V) (unpackV V) offs hg h1 h2
+    (by rw [← catOkV_eq hr]; exact hcat) ?_
+  intro R' s base _
+  show LookOkS _ R' s base 0 (mzLookSV ix V R' s base (mzPrep ix (seedHashAt R' s)))
+  rw [mzLookSV_eq hr]
+  exact mzLookS_ok ix _ R' s base (by rw [← Mz.check2_eq, ← Mz.check2V_eq]; exact hchk)
+
 /-! ## Word kernels with the chromosome bytes read through `GRead` (copies) -/
 
 section
@@ -485,6 +506,7 @@ end MapSpec.Fast
 
 #print axioms MapSpec.Mz.check3P_eq
 #print axioms MapSpec.Fast.pairDispatchP_mz_eq
+#print axioms MapSpec.Fast.pairDispatch_view_eq
 #print axioms MapSpec.Fast.mapFastGBKP_eq
 #print axioms MapSpec.Fast.pairFastGBKP_mz_eq_pairSpec
 #print axioms MapSpec.Fast.pairDispatchKP_mz_eq
