@@ -3,6 +3,7 @@ import ParMap
 import WgPacked
 import PairRegion
 import ReadTrim
+import PairRouter
 
 /-!
 Benchmark only (unproved IO).  Whole genome with the genome held once
@@ -192,7 +193,21 @@ def readMates (path : String) : IO (Array (Option ByteArray)) := do
       | none => none
   else
     if ls.size % 2 != 0 then throw (IO.userError s!"{path}: odd number of lines")
-    return (Array.range (ls.size / 2)).map fun r => some ls[2 * r + 1]!
+    -- an empty sequence line = trimmed away (as written by `WG_TRIMOUT`)
+    return (Array.range (ls.size / 2)).map fun r =>
+      let s := ls[2 * r + 1]!
+      if s.size == 0 then none else some s
+
+/-- `>r{i}`/sequence text of trimmed mates (empty line = trimmed away). -/
+def writeMates (path : String) (m : Array (Option ByteArray)) : IO Unit := do
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.write
+  for i in [0:m.size] do
+    h.putStr s!">r{i}\n"
+    match m[i]! with
+    | some s => h.write s
+    | none => pure ()
+    h.putStr "\n"
+  h.flush
 
 abbrev PairOut := Option ((Placement × Int) × (Placement × Int))
 
@@ -618,7 +633,8 @@ def parChunk {α β : Type} [Inhabited α] [Inhabited β] (n cs : Nat) (f : α �
 
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
-    (prof : List (String × (ByteArray → Prof → IO Prof))) : IO Unit := do
+    (prof : List (String × (ByteArray → Prof → IO Prof)))
+    (tally : List (String × (ByteArray → ByteArray → String)) := []) : IO Unit := do
   -- WG_TASKS: comma list of `tasks` or `tasks/chunk` (chunk 0 = strided)
   let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map fun s => match s.splitOn "/" with
     | [a, c] => (a.toNat!, some c.toNat!)
@@ -631,6 +647,11 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
     let m1 ← readMates p1
     let m2 ← readMates p2
     if m1.size != m2.size then throw (IO.userError s!"{p1}: {m1.size} records, {p2}: {m2.size}")
+    -- WG_TRIMOUT=prefix: write the trimmed mates once (prefix_R1.txt / _R2.txt) for later runs
+    if let some pre ← IO.getEnv "WG_TRIMOUT" then
+      writeMates s!"{pre}_R1.txt" m1
+      writeMates s!"{pre}_R2.txt" m2
+      say s!"trimmed mates written to {pre}_R1.txt / _R2.txt"
     let n := if lim.toNat! == 0 then m1.size else min m1.size lim.toNat!
     let trimmed := (Array.range n).filter fun i => m1[i]!.isNone || m2[i]!.isNone
     let idx := (Array.range n).filter fun i => match m1[i]!, m2[i]! with
@@ -703,6 +724,18 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
             else
               IO.FS.writeFile path txt
               say s!"dump {path}"
+    -- tallies (e.g. router pass / reason per pair), 4 tasks, timed
+    for (lab, t) in tally do
+      let t3 ← IO.monoNanosNow
+      let ys ← parChunk 4 chunk (fun k => t r1[k]! r2[k]!) rk
+      let t4 ← IO.monoNanosNow
+      let srt := ys.qsort (· < ·)
+      let mut cnt : Array (String × Nat) := #[]
+      for y in srt do
+        match cnt.back? with
+        | some (z, c) => if z == y then cnt := cnt.pop.push (z, c + 1) else cnt := cnt.push (y, 1)
+        | none => cnt := cnt.push (y, 1)
+      say s!"TALLY set {name} {lab} ({secs t3 t4} s, 4 tasks): {cnt.toList.map fun (z, c) => s!"{z}={c}"}"
 
 /-- All chromosomes packed into one genome as they are read; offsets and lengths. -/
 def loadPacked (files : List String) : IO (PGen × Array Nat × Array Nat) := do
@@ -943,8 +976,38 @@ def main (args : List String) : IO UInt32 := do
       let ms := ((← IO.getEnv "WG_MODES").getD "P,PK").splitOn ","
       -- pairRegionKP_mz_eq: the cheaper mate first, the other near it first
       let fR : ByteArray → ByteArray → PairOut := pairRegionKP lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs
+      -- routeKP_ok (codecs/PairRouter.lean): pass 1 = pairRegionKP's kernel with reasons; WG_SHORT=1: mates of
+      -- 50–74 letters at −7, 75–99 at −11 (else < 100 too short); WG_PASS2=1: pairs left without a hit
+      -- (noHit / noPartner / tooShort) get pass 2 at WG_T2 = "minLen:cap,…" (e.g. 150:20; first match wins)
+      let short := (← IO.getEnv "WG_SHORT").getD "0" == "1"
+      let cap1F : Nat → Nat := fun n =>
+        if 150 ≤ n then 16 else if 100 ≤ n then 12 else if short then (if 75 ≤ n then 11 else 7) else 12
+      let t2s := ((← IO.getEnv "WG_T2").getD "150:20").splitOn "," |>.filter (· ≠ "") |>.map fun x =>
+        match x.splitOn ":" with
+        | [a, b] => (a.toNat!, b.toNat!)
+        | _ => (0, 0)
+      let cap2F : Nat → Nat := fun n => match t2s.find? (fun x => x.1 ≤ n) with
+        | some x => x.2
+        | none => 0
+      let rcfg : RouteCfg := { cap1 := cap1F, pass2 := (← IO.getEnv "WG_PASS2").getD "0" == "1", cap2 := cap2F }
+      let route (a b : ByteArray) : Routed :=
+        routeKP rcfg lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs (some a) (some b)
+      let fRT : ByteArray → ByteArray → PairOut := fun a b => (route a b).out.toOpt
+      let showR (r : Routed) : String :=
+        let m (x : Mate) := match x with | .one => "1" | .two => "2"
+        let rs := match r.out with
+          | .mapped _ => "mapped"
+          | .unmapped (.trimmedAway x) _ => s!"trimmed{m x}"
+          | .unmapped (.tooShort x) _ => s!"short{m x}"
+          | .unmapped (.noHit x) _ => s!"noHit{m x}"
+          | .unmapped (.tie x) _ => s!"tie{m x}"
+          | .unmapped (.noPartner x) _ => s!"noPartner{m x}"
+          | .unmapped .notProper _ => "notProper"
+        s!"p{r.pass}:{rs}"
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
-        else if m == "PR" then some ("PR", fR) else none
+        else if m == "PR" then some ("PR", fR) else if m == "RT" then some ("RT", fRT) else none
+      let okLen : ByteArray → Bool := if ms == ["RT"] then (fun _ => true) else okLen
+      let tally := if (← IO.getEnv "WG_REASONS").getD "0" == "1" then [("router", fun a b => showR (route a b))] else []
       -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
       let cfgs := ((← IO.getEnv "WG_PROF").getD "").splitOn "," |>.filter (· ≠ "")
       let prof : List (String × (ByteArray → Prof → IO Prof)) := cfgs.map fun (cf : String) =>
@@ -955,7 +1018,7 @@ def main (args : List String) : IO UInt32 := do
         let XK := (ax[3]?.getD "0").toNat!
         let XL := (ax[4]?.getD "0").toNat!
         (cf, fun (R : ByteArray) (pf : Prof) => profRead XA XN XF XK XL pk offs pgs (if P == 0 then penOf R else P) R pf)
-      runSets modes okLen prof
+      runSets modes okLen prof tally
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
   | _ => throw (IO.userError "usage: whole_genome build|bytes|map|pmap <index_prefix> ...")
