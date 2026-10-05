@@ -329,6 +329,63 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 
   Both-repeat pairs are now 77% of the time; next: shared lookups across rungs.
 
+### Budget experiment: give up on expensive pairs (bench only, unproved, not the default; 2026-10-05)
+- Input for Rowan's spec rewrite.
+  - Bench mode `RTB<N>` = the default router (RT) behind a gate. The pair is reported unmapped (reason gaveUp) when either mate's lookup work after the rarest-seed choice, `costP` at the pass-1 cap (anchors), exceeds N.
+  - Every reported pair is still RT's answer (`pairSpecT`): every dump is a subset of N = ∞'s, and mason has 0 wrong placements at every N. Only recall drops.
+  - `WG_BUDT=N,…` tallies, per N, the pairs given up by what RT gave them. `PRB<N>` / `HB<N>`: the same gate in front of modes PR / H.
+  - The gate preps each mate a second time; this overhead is within noise.
+- 20k pairs per set, 4 tasks, one run each. Kept lost against N = ∞ (as % of ∞'s kept):
+
+  | N | mason | NovaSeq | HiSeq |
+  |---|---|---|---|
+  | 5k | 1,309 (7.25%) | 1,282 (7.76%) | 503 (2.97%) |
+  | 20k | 429 (2.38%) | 491 (2.97%) | 142 (0.84%) |
+  | 30k | 247 (1.37%) | 298 (1.80%) | 112 (0.66%) |
+  | 40k | 142 (0.79%) | 178 (1.08%) | 81 (0.48%) |
+  | 50k | 84 (0.47%) | 101 (0.61%) | 54 (0.32%) |
+  | 60k | 48 (0.27%) | 61 (0.37%) | 37 (0.22%) |
+  | 70k | 29 (0.16%) | 42 (0.25%) | 29 (0.17%) |
+  | 100k | 21 (0.12%) | 29 (0.18%) | 23 (0.14%) |
+  | 200k | 13 (0.07%) | 28 (0.17%) | 19 (0.11%) |
+
+- Smallest budget per recall limit on every set: 1% → **50k**; 0.5% → **60k**; 0.25% → **70k**.
+- At N = 60k:
+  - Pairs given up: mason 58 (0.29% of all pairs), NovaSeq 170 (0.85%), HiSeq 109 (0.55%).
+  - What RT gave the lost pairs (mapped / tie / other): mason 48 / 7 / 3, NovaSeq 61 / 9 / 100, HiSeq 37 / 5 / 67.
+  - Same place, as % of minibwa D0 / D20 (first 20k pairs), ∞ → 60k: mason 92.65 / 93.41 → 92.40 / 93.17; NovaSeq 88.16 / 90.34 → 87.83 / 90.00; HiSeq 89.64 / 91.49 → 89.45 / 91.29.
+  - mason: all 48 lost pairs were correct placements; 0 wrong at any N.
+- CPU, ∞ → N (noisy, 4 tasks):
+
+  | set | ∞ | 60k | 20k | 5k |
+  |---|---|---|---|---|
+  | mason | 5.2–5.3 s | 4.9 s | 3.5 s | 2.1 s |
+  | NovaSeq | 3.1–3.8 s | 3.1 s | 2.3 s | 1.5 s |
+  | HiSeq | 3.8–4.1 s | 3.0 s | 2.9 s | 2.1 s |
+
+  Within ≤ 0.5% recall the budget buys little. The big savings need N ≤ 20k, which loses 1–3% (7–8% at 5k).
+- **200k vs minibwa at N = 60k** (session 5: one BIG.lock hold, 3 interleaved rounds of minibwa / default RT (N = ∞) / RTB60000, 4 tasks; mapping = real − index load).
+  - D_hi round 1 hit the 130 s guard while loading the genome, so HiSeq D is the median of 2. Its dump is session 4's (same kept count, 169,243).
+
+  | set | minibwa (median of 3) | RT, N = ∞ | ×mb | RTB60000 | ×mb | CPU ∞ → 60k |
+  |---|---|---|---|---|---|---|
+  | HiSeq | 34.36 / 22.32 / 23.77 → **23.77 s** | 9.89 / 10.48 → **10.18 s** | 2.33 | 8.48 / 8.47 / 8.50 → **8.48 s** | **2.80** | 39–41 → 33 s |
+  | NovaSeq | 12.36 / 11.78 / 11.90 → **11.90 s** | 11.32 / 10.56 / 11.33 → **11.32 s** | 1.05 | 8.34 / 8.54 / 8.50 → **8.50 s** | **1.40** | 41–44 → 33 s |
+  | mason | 11.23 / 11.32 / 11.32 → **11.32 s** | 13.78 / 13.62 / 13.92 → **13.78 s** | 0.82 | 13.05 / 13.62 / 13.15 → **13.15 s** | **0.86** | 53–54 → 51–53 s |
+
+  minibwa CPU 94–102 s (HiSeq), 52–54 s (NovaSeq and mason); RSS 7.3–7.6 GB vs ours 5.5 GB.
+- Recall at 200k, ∞ → 60k:
+
+  | set | kept | lost (% of ∞'s kept) | same place % D0 / D20 |
+  |---|---|---|---|
+  | HiSeq | 169,243 → 168,831 | 412 (0.24%) | 89.53 / 91.32 → 89.31 / 91.10 |
+  | NovaSeq | 165,140 → 164,427 | 713 (0.43%) | 88.30 / 90.37 → 87.92 / 89.98 |
+  | mason | 180,904 → 180,369 | 535 (0.30%) | 92.96 / 93.69 → 92.69 / 93.41 |
+
+  Every budget dump is a subset of ∞'s. mason: 0 wrong placements, and all 535 lost pairs were correct placements.
+- Reading: the budget takes HiSeq from 2.3× to 2.8× and NovaSeq from 1.05× to 1.4×, but barely moves mason (0.82× → 0.86×). mason's time is not in the repeat mates; it is spread over ordinary pairs (150 bp at cap 16, sbound close to m − 1). A budget alone does not reach 2× on 150 bp mates.
+- Mode H with the same gate (mason 20k): HB1000 kept 15,428, HB2000 15,793, vs PRB1000 15,224 and PRB2000 15,572; PR 17,413 and H 17,859 at ∞. Mode H places 8 of its 17,859 mason pairs wrongly; PR and RT place 0 wrongly.
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.

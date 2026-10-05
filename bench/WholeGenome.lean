@@ -1674,7 +1674,41 @@ def main (args : List String) : IO UInt32 := do
         else if m == "PR" then some ("PR", fR) else if m == "RT" then some ("RT", fRT)
         else if m == "U" then some ("U", fU) else if m == "H" then some ("H", fH)
         else if m == "HN" then some ("HN", fHN) else none
-      let okLen : ByteArray → Bool := if ms == ["RT"] then (fun _ => true) else okLen
+      -- Budget experiment (bench only, unproved, not the default): mode PRB<N> = mode PR, but a pair
+      -- whose mates' lookup work after the rarest-seed choice (`costP` at the cap, anchors) exceeds N
+      -- for either mate is given up (unmapped, reason gaveUp) before any search.  Every reported pair
+      -- is still pairRegionKP's answer (= pairSpecT).  HB<N>: the same gate in front of mode H.
+      let rlB := fun x y => ((pk, x, y) : RgMz)
+      let fRB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b =>
+        let P1 := penOf a
+        let P2 := penOf b
+        let s1 : PrepM MzP := prepMate pk a
+        let s2 : PrepM MzP := prepMate pk b
+        let c1 := costP pk P1 s1
+        let c2 := costP pk P2 s2
+        if N < c1 || N < c2 then none
+        else if c2 < c1 then
+          (pairRegionStep lo hi (mapFastGBKPp P2 pk ByteArray.empty offs pgs b s2)
+            (regionNoHitKP P1 lo hi rlB ByteArray.empty offs pgs a)
+            (fun _ => mapFastGBKPp P1 pk ByteArray.empty offs pgs a s1)).map fun x => (x.2, x.1)
+        else
+          pairRegionStep lo hi (mapFastGBKPp P1 pk ByteArray.empty offs pgs a s1)
+            (regionNoHitKP P2 lo hi rlB ByteArray.empty offs pgs b)
+            (fun _ => mapFastGBKPp P2 pk ByteArray.empty offs pgs b s2)
+      let gaveUp (N : Nat) (a b : ByteArray) : Bool :=
+        N < costP pk (penOf a) (prepMate pk a : PrepM MzP) || N < costP pk (penOf b) (prepMate pk b : PrepM MzP)
+      let fHB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUp N a b then none else fH a b
+      -- RTB<N>: the same gate (caps of pass 1, `cap1F`) in front of mode RT, the default
+      let gaveUpR (N : Nat) (a b : ByteArray) : Bool :=
+        N < costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) || N < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)
+      let fRTB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUpR N a b then none else fRT a b
+      let modes := modes ++ ms.filterMap fun m =>
+        if m.startsWith "RTB" then some (m, fRTB (m.drop 3).toString.toNat!)
+        else if m.startsWith "PRB" then some (m, fRB (m.drop 3).toString.toNat!)
+        else if m.startsWith "HB" then some (m, fHB (m.drop 2).toString.toNat!) else none
+      -- WG_BUDT=N1,N2,…: per pair, given up at N (RTB gate) or not, and what mode RT gave (mapped / tie / other)
+      let budT := ((← IO.getEnv "WG_BUDT").getD "").splitOn "," |>.filter (· ≠ "") |>.map String.toNat!
+      let okLen : ByteArray → Bool := if ms.all (fun m => m == "RT" || m.startsWith "RTB") then (fun _ => true) else okLen
       let tally := if (← IO.getEnv "WG_REASONS").getD "0" == "1" then [("router", fun a b => showR (route a b))] else []
       -- WG_UKIND=1: answer kinds of mode U (mapped / pairTie / none)
       let tally := if (← IO.getEnv "WG_UKIND").getD "0" == "1" then tally ++ [("ukind", fun a b =>
@@ -1682,6 +1716,13 @@ def main (args : List String) : IO UInt32 := do
         | (some _, _) => "mapped"
         | (none, true) => "pairTie"
         | (none, false) => "none")] else tally
+      let tally := tally ++ budT.map fun N => (s!"budget{N}", fun a b =>
+        if gaveUpR N a b then
+          (match (route a b).out with
+            | .mapped _ => "lost:mapped"
+            | .unmapped (.tie _) _ => "lost:tie"
+            | _ => "lost:other")
+        else "in")
       -- WG_HUCHK=1: mode H's answer and flag against mode U's
       let tally := if (← IO.getEnv "WG_HUCHK").getD "0" == "1" then tally ++ [("h=u", fun a b =>
         if decide (hR a b = uR0 a b) then "same" else "diff")] else tally
