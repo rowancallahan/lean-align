@@ -134,25 +134,9 @@ theorem cutAll_get (G : PGen) (offs ns : Array Nat) (c : Nat) (hc : c < ns.size)
     (cutAll G offs ns)[c]! = view G offs[c]! ns[c]! := by
   simp [cutAll, hc]
 
-/-- **Packed concatenated genome + one minimizer index.**  A packed genome whose
-chromosome views spell `g`, cut by `cutOk`, and an index that passes the checker
-on the packed genome give the specification's answer. -/
-theorem pairFastCP_mz_eq_pairSpec (lo hi : Nat) (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (g : Genome)
-    (m1 m2 : List Char) (R1 R2 : ByteArray) (hcut : cutOk G offs ns = true)
-    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g)
-    (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hchk : Mz.check2P ix G = true)
-    (hok1 : fastOk R1 = true) (hok2 : fastOk R2 = true) :
-    pairFastCP mzL mzLookP lo hi ix G offs (cutAll G offs ns) R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 := by
-  have hrep : ∀ c : Nat, Rep (cutAll G offs ns)[c]! ((cutAll G offs ns).map Mz.unpack)[c]! := fun c => by
-    by_cases hc : c < (cutAll G offs ns).size
-    · rw [show ((cutAll G offs ns).map Mz.unpack)[c]! = Mz.unpack (cutAll G offs ns)[c]! by simp [hc]]
-      exact Mz.rep_unpack _
-    · rw [getElem!_neg _ c (by omega), getElem!_neg _ c (by simp at hc ⊢; omega)]
-      exact ⟨rfl, fun i => by rw [get!_out _ i (Nat.zero_le _)]; rfl⟩
-  rw [pairFastCP_eq (by simp) hrep mzL mzLookP (fun ix R j p => mzLookP_eq (Mz.rep_unpack G) ix R j p)]
-  refine pairFastC_mz_eq_pairSpec lo hi ix _ offs g m1 m2 _ R1 R2 hg h1 h2 ?_
-    (by rw [← Mz.check2P_eq (Mz.rep_unpack G)]; exact hchk) hok1 hok2
-  -- every view spells its slice of `G`
+/-- Every view spells its slice of the unpacked genome. -/
+theorem catOk_cut (G : PGen) (offs ns : Array Nat) (hcut : cutOk G offs ns = true) :
+    catOk (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) = true := by
   simp only [cutOk, Bool.and_eq_true, beq_iff_eq, List.all_eq_true, List.mem_range, decide_eq_true_eq] at hcut
   have hu : ∀ P : PGen, (Mz.unpack P).size = P.n := fun P => (Mz.rep_unpack P).1.symm
   have hg' : ∀ P : PGen, ∀ i, (Mz.unpack P).get! i = P.get i := fun P i => ((Mz.rep_unpack P).2 i).symm
@@ -169,6 +153,26 @@ theorem pairFastCP_mz_eq_pairSpec (lo hi : Nat) (ix : Mz.MzIdx) (G : PGen) (offs
   simp only [PGen.get, view, Nat.zero_add] at hm ⊢
   rw [if_pos (by omega), if_pos hm, Nat.add_assoc]
   rfl
+
+
+/-- **Packed concatenated genome + one minimizer index.**  A packed genome whose
+chromosome views spell `g`, cut by `cutOk`, and an index that passes the checker
+on the packed genome give the specification's answer. -/
+theorem pairFastCP_mz_eq_pairSpec (lo hi : Nat) (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (g : Genome)
+    (m1 m2 : List Char) (R1 R2 : ByteArray) (hcut : cutOk G offs ns = true)
+    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g)
+    (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hchk : Mz.check2P ix G = true)
+    (hok1 : fastOk R1 = true) (hok2 : fastOk R2 = true) :
+    pairFastCP mzL mzLookP lo hi ix G offs (cutAll G offs ns) R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 := by
+  have hrep : ∀ c : Nat, Rep (cutAll G offs ns)[c]! ((cutAll G offs ns).map Mz.unpack)[c]! := fun c => by
+    by_cases hc : c < (cutAll G offs ns).size
+    · rw [show ((cutAll G offs ns).map Mz.unpack)[c]! = Mz.unpack (cutAll G offs ns)[c]! by simp [hc]]
+      exact Mz.rep_unpack _
+    · rw [getElem!_neg _ c (by omega), getElem!_neg _ c (by simp at hc ⊢; omega)]
+      exact ⟨rfl, fun i => by rw [get!_out _ i (Nat.zero_le _)]; rfl⟩
+  rw [pairFastCP_eq (by simp) hrep mzL mzLookP (fun ix R j p => mzLookP_eq (Mz.rep_unpack G) ix R j p)]
+  exact pairFastC_mz_eq_pairSpec lo hi ix _ offs g m1 m2 _ R1 R2 hg h1 h2 (catOk_cut G offs ns hcut)
+    (by rw [← Mz.check2P_eq (Mz.rep_unpack G)]; exact hchk) hok1 hok2
 
 end MapSpec.Fast
 

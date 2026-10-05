@@ -258,12 +258,12 @@ include h
 theorem hamSeedsP_eq (r : ByteArray) (a mask lim : Nat) : hamSeedsP r P a mask lim = hamSeeds r G a mask lim := by
   simp only [hamSeedsP, hamSeeds, hamStepP, hamStep, hammingP_eq' h] <;> rfl
 
-theorem gappedPen2P_eq (r : ByteArray) (st len lim : Nat) : gappedPen2Pk r P st len lim = gappedPen2 r G st len lim := by
+theorem gappedPen2Pk_eq (r : ByteArray) (st len lim : Nat) : gappedPen2Pk r P st len lim = gappedPen2 r G st len lim := by
   simp only [gappedPen2Pk, gappedPen2, fwdMisP_eq' h, bwdMisP_eq' h]
 
 theorem gapWP_eq (R : ByteArray) (c st len s : Nat) (ok : Bool) (b : Best) :
     gapWP R P c st len s ok b = gapW R G c st len s ok b := by
-  simp only [gapWP, gapW, addGap, gappedPen2P_eq h, h.1]
+  simp only [gapWP, gapW, addGap, gappedPen2Pk_eq h, h.1]
 
 theorem sameStep2P_eq (R : ByteArray) (c : Nat) : sameStep2P R P c = sameStep2 R G c := by
   funext b e; simp only [sameStep2P, sameStep2, hamSeedsP_eq h, h.1]
