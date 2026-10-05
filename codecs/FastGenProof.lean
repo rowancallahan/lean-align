@@ -544,11 +544,13 @@ theorem foldl_invP_mem_le {α : Type} (P : Nat) (cw : Window → Nat) (f : Best 
 /-- The pruned kernel gives the same capped penalty as the plain one. -/
 theorem bandPenE_P (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : ByteArray)
     (hg : GenomeBytes gbs g) (hr : Encodes R read) (c st len : Nat) (hc : c < gbs.size) (sp : Nat → Bool)
-    (hsp : ∀ (hc' : c < g.length), SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp (st + len)) :
+    (hsp : ∀ (hc' : c < g.length), SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp (st + len))
+    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 25]! = blocksAbove sp i) :
     bandPenE P R.size len (decide (st + len ≤ gbs[c]!.size))
-      (bandEndP (-(P : Int)) (bandOf sc0 (-(P : Int))) sp R gbs[c]! (st + len)) =
+      (bandEndC (-(P : Int)) (bandOf sc0 (-(P : Int))) cnt R gbs[c]! (st + len)) =
     bandPenE P R.size len (decide (st + len ≤ gbs[c]!.size))
       (bandEnd2 sc0 (-(P : Int)) (bandOf sc0 (-(P : Int))) R gbs[c]! (st + len)) := by
+  rw [bandEndC_eq _ _ cnt sp R gbs[c]! _ hcnt]
   unfold bandPenE
   by_cases hf : decide (st + len ≤ gbs[c]!.size) = true ∧ R.size ≤ len + bandOf sc0 (-(P : Int)) ∧
       len ≤ R.size + bandOf sc0 (-(P : Int))
@@ -700,8 +702,8 @@ theorem addBS_pen (c D : Nat) (opt : Option (Array Int)) (b : Best) (sh : Int ×
   · exact add_pen_le _ _ _ _ _
   · exact Nat.le_refl _
 
-theorem stageBD_pen (c : Nat) (shs : List (Int × Int)) (D : Nat) (sp : Nat → Bool) (b : Best) (bb : Int) :
-    (stageBD P R gbs c shs D sp b bb).pen ≤ b.pen := by
+theorem stageBD_pen (c : Nat) (shs : List (Int × Int)) (D : Nat) (cnt : Array Nat) (b : Best) (bb : Int) :
+    (stageBD P R gbs c shs D cnt b bb).pen ≤ b.pen := by
   unfold stageBD; split
   · exact foldl_pen _ (fun b sh => addBS_pen P read g gbs R hg hr c D _ b sh) _ b
   · exact Nat.le_refl _
@@ -715,11 +717,12 @@ include hcw1 hcwc in
 theorem addBS_spec (hc : c < gbs.size) (Pc : Nat) (hPc : Pc ≤ P) (D : Nat) (bb : Int) (sh : Int × Int)
     (hsb : sh.2 = bb) (sp : Nat → Bool)
     (hsp : 0 ≤ (D : Int) + bb → ∀ (hc' : c < g.length),
-      SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp ((D : Int) + bb).toNat) (S : Window → Prop)
+      SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp ((D : Int) + bb).toNat)
+    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 25]! = blocksAbove sp i) (S : Window → Prop)
     (b : Best) (hbP : Pc = P ∨ b.pen ≤ Pc) (h : InvP P cw S b) :
     InvP P cw (fun w => S w ∨ (0 ≤ (D : Int) - R.size - sh.1 ∧ 0 ≤ (R.size : Int) + sh.1 + sh.2 ∧
         w = ⟨c, ((D : Int) - R.size - sh.1).toNat, ((R.size : Int) + sh.1 + sh.2).toNat⟩))
-      (addBS Pc R gbs c D (bandEndAt Pc R gbs c D sp bb) b sh) := by
+      (addBS Pc R gbs c D (bandEndAt Pc R gbs c D cnt bb) b sh) := by
   unfold addBS; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only []
   split
@@ -729,7 +732,7 @@ theorem addBS_spec (hc : c < gbs.size) (Pc : Nat) (hPc : Pc ≤ P) (D : Nat) (bb
     have hsp' := fun hc' => (hsp (by omega) hc').mono (bandOf_mono Pc P hPc)
     unfold bandEndAt
     rw [he] at hsp' ⊢
-    rw [bandPenE_P Pc read g gbs R hg hr c _ _ hc sp hsp', bandPenE_eq Pc read g gbs R hg hr _ _ _ hc,
+    rw [bandPenE_P Pc read g gbs R hg hr c _ _ hc sp hsp' cnt hcnt, bandPenE_eq Pc read g gbs R hg hr _ _ _ hc,
       bandPen_eq Pc read g gbs R hg hr, cwT_cap P read g Pc hPc]
     have hcw := hcwc ((D : Int) - R.size - sh.1).toNat ((R.size : Int) + sh.1 + sh.2).toNat
     have hle := h.le
@@ -755,12 +758,13 @@ include hcw1 hcwc in
 theorem stageBD_spec (hc : c < gbs.size) (Pc : Nat) (hPc : Pc ≤ P) (shs : List (Int × Int)) (D : Nat)
     (sp : Nat → Bool) (bb : Int)
     (hsp : 0 ≤ (D : Int) + bb → ∀ (hc' : c < g.length),
-      SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp ((D : Int) + bb).toNat) (S : Window → Prop)
+      SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp ((D : Int) + bb).toNat)
+    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 25]! = blocksAbove sp i) (S : Window → Prop)
     (b : Best) (hbP : Pc = P ∨ b.pen ≤ Pc) (h : InvP P cw S b) :
     InvP P cw (fun w => S w ∨ (0 ≤ (D : Int) + bb ∧ ∃ sh ∈ shs, sh.2 = bb ∧
         0 ≤ (D : Int) - R.size - sh.1 ∧ 0 ≤ (R.size : Int) + sh.1 + sh.2 ∧
         w = ⟨c, ((D : Int) - R.size - sh.1).toNat, ((R.size : Int) + sh.1 + sh.2).toNat⟩))
-      (stageBD Pc R gbs c shs D sp b bb) := by
+      (stageBD Pc R gbs c shs D cnt b bb) := by
   unfold stageBD
   split
   · next hD =>
@@ -771,7 +775,7 @@ theorem stageBD_spec (hc : c < gbs.size) (Pc : Nat) (hPc : Pc ≤ P) (shs : List
       (fun b sh => addBS_pen Pc read g gbs R hg hr c D _ b sh)
       (fun sh hsh S b hb h => by
         have hs2 : sh.2 = bb := by simpa using (List.mem_filter.1 hsh).2
-        exact inv_congrP P _ _ _ _ (addBS_spec P read g gbs R hg hr c cw hcw1 hcwc hc Pc hPc D bb sh hs2 sp hsp S b
+        exact inv_congrP P _ _ _ _ (addBS_spec P read g gbs R hg hr c cw hcw1 hcwc hc Pc hPc D bb sh hs2 sp hsp cnt hcnt S b
           (by split at hb <;> omega) h)
           (fun w => by simp [hs2])) S b (by have := h.le; split <;> omega) h
     refine inv_congrP P _ _ _ _ hl (fun w => ?_)
@@ -793,12 +797,13 @@ theorem stageB_spec (hc : c < gbs.size) (shs : List (Int × Int)) (bs : List Int
       InvP P cw (fun w => S w ∨ ∃ bb ∈ bs, (0 ≤ (D : Int) + bb ∧ ∃ sh ∈ shs, sh.2 = bb ∧
         0 ≤ (D : Int) - R.size - sh.1 ∧ 0 ≤ (R.size : Int) + sh.1 + sh.2 ∧
         w = ⟨c, ((D : Int) - R.size - sh.1).toNat, ((R.size : Int) + sh.1 + sh.2).toNat⟩))
-        (bs.foldl (fun b bb => stageBD (min b.pen P) R gbs c shs D (fun j =>
-          (spoiledArr R gbs[c]! D (shiftMax bs) (bandOf sc0 (-(P : Int))))[j]?.getD false) b bb) b) :=
+        (bs.foldl (fun b bb => stageBD (min b.pen P) R gbs c shs D
+          (prefCnt (spoiledArr R gbs[c]! D (shiftMax bs) (bandOf sc0 (-(P : Int))))) b bb) b) :=
     fun D => foldl_invP_mem P cw _ _ bs (fun bb hbb S b h =>
       stageBD_spec P read g gbs R hg hr c cw hcw1 hcwc hc (min b.pen P) (Nat.min_le_right _ _) shs D _ bb
         (fun h0 hc' => spoiled_ok R read hr gbs[c]! g[c].seq
           (by rw [getElem!_pos gbs c hc]; exact hg.2 c hc hc') D (shiftMax bs) _ bb (shiftMax_ge bs bb hbb) h0)
+        _ (prefCnt_get _ R.size (by unfold spoiledArr; simp))
         S b (by omega) h)
   exact inv_congrP P _ _ _ _ (foldl_invP P cw _ _ (fun D S b h => hD D S b h) ds S b h)
     (fun w => by unfold BW; rfl)
