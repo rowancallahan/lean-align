@@ -1183,7 +1183,7 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
       have := sbound_mono Q1 P (by omega); omega
   have hkq : q ≤ read.length / (m - 1 + 1) := by rw [← hn, show m - 1 + 1 = m by omega, hLs]; exact hlL
   obtain ⟨j, hj, p, a, bb, hcg, hmatch, hshape, ha1, ha2, hst, hwl⟩ :=
-    coverL g read gbs R hg hr (-(x : Int)) q hl0 (m - 1) hkq
+    coverLE g read gbs R hg hr (-(x : Int)) q hl0 (m - 1) hkq (by have h2 : 2 ≤ q := (by decide); omega)
       Jr hJn (fun j hj => by have := hJm j hj; omega) (by rw [sbound_def] at hJl; omega) w (-(x : Int)) hws (Int.le_refl _)
   rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch ha1 hst
   rw [← hn] at hwl
@@ -1221,7 +1221,7 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
     apply Classical.byContradiction; intro hlt'
     have hsub := List.filter_sublist (p := fun j => !t j) (l := L)
     obtain ⟨j', hj', p', a', bb', -, hmatch', hshape', ha1', -, hst', -⟩ :=
-      coverL g read gbs R hg hr (-(x : Int)) q hl0 (m - 1) hkq
+      coverLE g read gbs R hg hr (-(x : Int)) q hl0 (m - 1) hkq (by have h2 : 2 ≤ q := (by decide); omega)
         _ (hsub.nodup hLn)
         (fun j hj => by have := hLm j (hsub.subset hj); omega)
         (by rw [sbound_def] at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
