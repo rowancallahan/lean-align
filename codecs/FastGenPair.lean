@@ -614,7 +614,7 @@ theorem chromKB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) 
     unfold stageB
     refine foldl_pen _ (fun b D => foldl_pen _ (fun b bb => ?_) bs b) ds b
     unfold stageBD; split
-    · exact foldl_pen _ (fun b sh => addBS_pen' P R gbs c D _ b sh) _ b
+    · exact foldl_pen _ (fun b sh => addBS_pen' _ R gbs c D _ b sh) _ b
     · exact Nat.le_refl _
   unfold chromKB
   simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
