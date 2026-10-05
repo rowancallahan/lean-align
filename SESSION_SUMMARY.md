@@ -216,6 +216,22 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 - hg38.pe250 sim, 100k pairs, T = −16: 1,515 pairs/s at 1 thread, 5,401 at 4; 89,437 kept; RSS 7.6 GB (byte genome 3.07 GB; packing it would give ≈ 5.4 GB). The run then hit an IO error (HG002 step, not diagnosed).
 - TODO: switch to the packed genome; whole-genome HG002; minibwa whole-genome index (OOM-killed so far; needs ~9 GB free); why it is ~25× slower per pair than chr21 (lookup hits per seed?).
 
+### Whole genome, pair level (branch `speed/wg-speed`, 2026-10-05)
+- **Mate-anchored absence — PROVED** (`codecs/PairRegion.lean`, `pairRegionKP_mz_eq` = `pairSpecT`, per-mate T): map the mate with the cheaper lookups (`seedCost`) over the genome; a proper partner of its hit lies on the same chromosome in `regionB` (fragment bounds + `len_le_of_score`: a hit at T = −P is ≤ `bandOf sc0 (−P)` letters longer than the read, from `sv_lt_thr`). The proved search on that region alone (one-chromosome view, `region_absent` via `mapChromsGB_inv`) ending above P proves the pair is `none` without the second whole-genome search. Most HG002 pairs end here (84% of reads are off-target / unmapped at the cap).
+- Bench (`bench/WholeGenome.lean`, unproved IO): genome packed in parallel (block-aligned pieces, whole ACGT blocks at once, next file read ahead; same packed genome, hash equal) and overlapped with the index load: 65 s → 17–20 s. Tasks strided (item i on task i mod n), all `.dedicated`.
+- Whole genome, `pmap` mode PR (pairRegionKP + word kernels + packed genome), `WG_NOCHECK` (hash printed and equal to the earlier value; `WG_CHECK=1` check3P does not fit the 2-minute run limit — hg38.hash not written):
+
+| set | tasks | mapping s | pairs/s | kept | peak RSS | dump vs P |
+|---|---|---|---|---|---|---|
+| HG002 200k (cut) | 4 | 29.0 | 6,831 | 162,106 | 6.39 GB | identical |
+| HG002 200k | 2 | 47.5 | 4,177 | 162,106 | 6.47 GB | identical |
+| hg38.pe250 sim 100k | 4 | 7.55 | 13,237 | 89,437 | 6.10 GB | identical |
+| sim 100k | 2 | 16.0 | 6,246 | 89,437 | 6.10 GB | identical |
+
+  5k HG002 at 4 tasks: PK (both mates whole genome) 2,159–3,480 pairs/s vs PR 4,533–5,450. Target was 17.5 s for HG002 200k at 4 tasks (2× minibwa); not reached.
+- Profile: lookups 25–40 µs per mate; the cost is verification (stage K/B) on reads with big buckets; a few pairs dominate (polyA mate with 6 seeds of 291k entries: 1.1 s in PK, 0.24 s in PR). Parallel efficiency at 4 tasks ~60% (tail pairs).
+- Next: proof-of-absence that does not redo the full lookups for the region (look up only anchors inside the region: sliceA over the region range), skip seedCost's extra prep, then the pair-level tie exit / lower-bound prune.
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
