@@ -157,7 +157,7 @@ theorem bandLoopB_rel (M : Nat) (hM : M < 256) (T To : Int) (hT : -T < M) (hTo :
     (gb : Gt) (e : Nat) : Nat → ByteArray → ByteArray → ByteArray → Option ByteArray
   | i, N, X, Y =>
     if rb.size ≤ e + i + B then
-      let h := cnt[i / 25]!
+      let h := cnt[i / 8]!
       let tN := T + 4 * (h : Int)
       match bandLoopB M (-tN) (-(tN + (if h = 0 then 6 else 4))) rb gb e i (i == rb.size)
           (min (2 * B) (e + i + B - rb.size)) (i + B - rb.size) (e + i + B - rb.size - (i + B - rb.size)) N X Y false with
@@ -202,16 +202,16 @@ theorem bandRowsCB_rel (T : Int) (hT0 : T ≤ 0) (B : Nat) (cnt : Array Nat) (M 
     rw [bandRowsC, bandRowsCB]
     by_cases hin : rb.size ≤ e + 0 + B
     · simp only [hin, if_true]
-      have hr := bandLoopB_rel M hM (T + 4 * (cnt[0 / 25]! : Int))
-        (T + 4 * (cnt[0 / 25]! : Int) + (if cnt[0 / 25]! = 0 then 6 else 4)) (by omega) (by split <;> omega)
+      have hr := bandLoopB_rel M hM (T + 4 * (cnt[0 / 8]! : Int))
+        (T + 4 * (cnt[0 / 8]! : Int) + (if cnt[0 / 8]! = 0 then 6 else 4)) (by omega) (by split <;> omega)
         rb gb e 0 (0 == rb.size) (min (2 * B) (e + 0 + B - rb.size)) _ (0 + B - rb.size)
         (e + 0 + B - rb.size - (0 + B - rb.size)) N X Y Nb Xb Yb false rfl (by omega) (by omega) (by omega) hN hX hY
       revert hr
-      generalize bandLoop sc0 (T + 4 * (cnt[0 / 25]! : Int))
-        (T + 4 * (cnt[0 / 25]! : Int) + (if cnt[0 / 25]! = 0 then 6 else 4)) rb gb e 0 (0 == rb.size)
+      generalize bandLoop sc0 (T + 4 * (cnt[0 / 8]! : Int))
+        (T + 4 * (cnt[0 / 8]! : Int) + (if cnt[0 / 8]! = 0 then 6 else 4)) rb gb e 0 (0 == rb.size)
         (min (2 * B) (e + 0 + B - rb.size)) (0 + B - rb.size) (e + 0 + B - rb.size - (0 + B - rb.size)) N X Y false = r
-      generalize bandLoopB M (-(T + 4 * (cnt[0 / 25]! : Int)))
-        (-(T + 4 * (cnt[0 / 25]! : Int) + (if cnt[0 / 25]! = 0 then 6 else 4))) rb gb e 0 (0 == rb.size)
+      generalize bandLoopB M (-(T + 4 * (cnt[0 / 8]! : Int)))
+        (-(T + 4 * (cnt[0 / 8]! : Int) + (if cnt[0 / 8]! = 0 then 6 else 4))) rb gb e 0 (0 == rb.size)
         (min (2 * B) (e + 0 + B - rb.size)) (0 + B - rb.size) (e + 0 + B - rb.size - (0 + B - rb.size)) Nb Xb Yb false = rb'
       obtain ⟨N', X', Y', a⟩ := r
       obtain ⟨Nb', Xb', Yb', a'⟩ := rb'
@@ -225,22 +225,22 @@ theorem bandRowsCB_rel (T : Int) (hT0 : T ≤ 0) (B : Nat) (cnt : Array Nat) (M 
     rw [bandRowsC, bandRowsCB]
     by_cases hin : rb.size ≤ e + (i + 1) + B
     · simp only [hin, if_true]
-      have hr := bandLoopB_rel M hM (T + 4 * (cnt[(i + 1) / 25]! : Int))
-        (T + 4 * (cnt[(i + 1) / 25]! : Int) + (if cnt[(i + 1) / 25]! = 0 then 6 else 4)) (by omega) (by split <;> omega)
+      have hr := bandLoopB_rel M hM (T + 4 * (cnt[(i + 1) / 8]! : Int))
+        (T + 4 * (cnt[(i + 1) / 8]! : Int) + (if cnt[(i + 1) / 8]! = 0 then 6 else 4)) (by omega) (by split <;> omega)
         rb gb e (i + 1) (i + 1 == rb.size) (min (2 * B) (e + (i + 1) + B - rb.size)) _ (i + 1 + B - rb.size)
         (e + (i + 1) + B - rb.size - (i + 1 + B - rb.size)) N X Y Nb Xb Yb false rfl (by omega) (by omega) (by omega)
         hN hX hY
-      have hsz := bandLoop_size sc0 (T + 4 * (cnt[(i + 1) / 25]! : Int))
-        (T + 4 * (cnt[(i + 1) / 25]! : Int) + (if cnt[(i + 1) / 25]! = 0 then 6 else 4))
+      have hsz := bandLoop_size sc0 (T + 4 * (cnt[(i + 1) / 8]! : Int))
+        (T + 4 * (cnt[(i + 1) / 8]! : Int) + (if cnt[(i + 1) / 8]! = 0 then 6 else 4))
         rb gb e (i + 1) (i + 1 == rb.size) (min (2 * B) (e + (i + 1) + B - rb.size)) _ (i + 1 + B - rb.size)
         (e + (i + 1) + B - rb.size - (i + 1 + B - rb.size)) N X Y false rfl
       revert hr hsz
-      generalize bandLoop sc0 (T + 4 * (cnt[(i + 1) / 25]! : Int))
-        (T + 4 * (cnt[(i + 1) / 25]! : Int) + (if cnt[(i + 1) / 25]! = 0 then 6 else 4)) rb gb e (i + 1)
+      generalize bandLoop sc0 (T + 4 * (cnt[(i + 1) / 8]! : Int))
+        (T + 4 * (cnt[(i + 1) / 8]! : Int) + (if cnt[(i + 1) / 8]! = 0 then 6 else 4)) rb gb e (i + 1)
         (i + 1 == rb.size) (min (2 * B) (e + (i + 1) + B - rb.size)) (i + 1 + B - rb.size)
         (e + (i + 1) + B - rb.size - (i + 1 + B - rb.size)) N X Y false = r
-      generalize bandLoopB M (-(T + 4 * (cnt[(i + 1) / 25]! : Int)))
-        (-(T + 4 * (cnt[(i + 1) / 25]! : Int) + (if cnt[(i + 1) / 25]! = 0 then 6 else 4))) rb gb e (i + 1)
+      generalize bandLoopB M (-(T + 4 * (cnt[(i + 1) / 8]! : Int)))
+        (-(T + 4 * (cnt[(i + 1) / 8]! : Int) + (if cnt[(i + 1) / 8]! = 0 then 6 else 4))) rb gb e (i + 1)
         (i + 1 == rb.size) (min (2 * B) (e + (i + 1) + B - rb.size)) (i + 1 + B - rb.size)
         (e + (i + 1) + B - rb.size - (i + 1 + B - rb.size)) Nb Xb Yb false = rb'
       obtain ⟨N', X', Y', a⟩ := r

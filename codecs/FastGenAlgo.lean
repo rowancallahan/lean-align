@@ -167,23 +167,23 @@ def shapeR (shs : List (Int × Int)) : Nat := shs.foldl (fun m sh => max m (max 
     | none => P + 1
   else P + 1
 
-/-- The last `k` letters of read block `[a, a + 25)` occur at `p + 25 - k …`. -/
+/-- The last `k` letters of read block `[a, a + 8)` occur at `p + 8 - k …`. -/
 def blockEq {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (a p : Nat) : Nat → Bool
   | 0 => true
-  | k + 1 => R.get! (a + 25 - (k + 1)) == GRead.get G (p + 25 - (k + 1)) && blockEq R G a p k
+  | k + 1 => R.get! (a + 8 - (k + 1)) == GRead.get G (p + 8 - (k + 1)) && blockEq R G a p k
 
-/-- Read block `[a, a + 25)` occurs in `G` at one of `lo, lo + 1, …, lo + t − 1`. -/
+/-- Read block `[a, a + 8)` occurs in `G` at one of `lo, lo + 1, …, lo + t − 1`. -/
 def anyCopy {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (a : Nat) (lo : Int) : Nat → Bool
   | 0 => false
   | t + 1 =>
-    (decide (0 ≤ lo + t) && decide ((lo + t).toNat + 25 ≤ GRead.size G) && blockEq R G a (lo + t).toNat 25) ||
+    (decide (0 ≤ lo + t) && decide ((lo + t).toNat + 8 ≤ GRead.size G) && blockEq R G a (lo + t).toNat 8) ||
       anyCopy R G a lo t
 
 /-- Spoiled blocks of diagonal `D` (end shifts within `d`, band `B`): read block `j`
 has no exact copy at any position a band cell of any end `D ± d` can reach. -/
 def spoiledArr {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (D d B : Nat) : Array Bool :=
-  (Array.range (R.size / 25)).map fun j =>
-    !anyCopy R G (25 * j) ((D : Int) - d - R.size + (25 * j : Nat) - B) (2 * (d + B) + 1)
+  (Array.range (R.size / 8)).map fun j =>
+    !anyCopy R G (8 * j) ((D : Int) - d - R.size + (8 * j : Nat) - B) (2 * (d + B) + 1)
 
 /-- Largest end shift. -/
 def shiftMax (bs : List Int) : Nat := bs.foldl (fun m bb => max m bb.natAbs) 0

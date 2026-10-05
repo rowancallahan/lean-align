@@ -279,3 +279,8 @@ Stage-B seed filter — PROVED (`chromKBS`, `chromKBF`, `chromKBFG`; `chromKBS_c
 - Each stage-B diagonal goes through `kfilt` at `lim = P` (25-letter seeds looked up and unseen, plus 8-letter pieces, at most `sbound (min P best)` missed), re-evaluated at the best of the moment (`stageKS`). Proof: `hfilt` generalized to any `lim ≥ x` (`hfiltG`), stage B via `stageKS_inv`.
 - chr21 2×250 1% sim, 20k pairs, 1 task, GP_K=1, pairs/s before → after (dumps identical): T=−20 4.95k → 5.33k, T=−24 3.22k → 3.78k, T=−32 1.04k → 1.91k.
 - Real HG002 2×250 (first 20k ACGT-only pairs of D1_S1_L001_R{1,2}_004, not trimmed) vs chr21 (mostly off-target): T=−16 52.2k → 57.2k, T=−20 9.18k → 31.0k, T=−24 3.66k → 17.4k, T=−32 367 → 3.70k (dumps identical).
+
+Stage-B pruning blocks of 8 letters (was 25) — PROVED (same lemmas, `block_step` holds for any block length ≥ 2):
+- Each spoiled 8-letter read block (no exact copy in the band) adds 4 to the death threshold; 31 blocks per 250 bp read instead of 10, so dead passes stop earlier.
+- HG002 20k pairs vs chr21, 1 task, GP_K=1, pairs/s (two interleaved runs, dumps identical): T=−24 18.1–18.4k → 20.6–20.7k; T=−32 3.42–3.43k → 4.08–4.34k. Lengths 5/6/10 tried: 8 best or tied.
+- Tried and dropped: band loop restricted to non-saturated cells (identical output, 10–20% slower: live cells fill the band).
