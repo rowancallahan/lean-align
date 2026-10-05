@@ -3,15 +3,19 @@ import PairReason
 /-!
 # Codec `routeKP`: pass kernels in sequence, unmapped pairs with a reason
 
-* **Pass kernel** `passKP P1 P2` = the mate-anchored kernel of `pairRegionKP`
+* **Pluggable kernel** `PassKer` (whole-genome mate search + region test) with its
+  obligation `KerOk`; the passes and router (`passG`, `pass2G`, `routeG`) are generic,
+  `routeG_ok` holds for any pass-1 / pass-2 kernels meeting `KerOk`.  Today's kernel is
+  `kpKer` (`kpKer_ok`), `routeKP` = `routeG` with it in both passes.
+* **Pass kernel** `passG P1 P2` = the mate-anchored kernel of `pairRegionKP`
   (codecs/PairRegion.lean) at per-mate caps `P1`, `P2`, returning either the pair or a
   `Reason` (codecs/PairReason.lean).  The mate searched over the genome reports
   whether it has any hit (`mateKP`: best penalty `≤ P`, `pen_le_iff`), so "no hit" and
-  "tie" are told apart at no cost.  `passKP_ok`: mapped = `pairSpecT`, every reason
+  "tie" are told apart at no cost.  `passG_ok`: mapped = `pairSpecT`, every reason
   holds of the specification (hence `pairSpecT = none`).
-* **Known mate** `passKnownKP`: the other mate's answer already known (from pass 1 at a
+* **Known mate** `passKnownG`: the other mate's answer already known (from pass 1 at a
   cap no deeper: `mapSpecBoth_mono`); only the region (and, on a region hit, the
-  whole-genome search) of the remaining mate is run.  `passKnownKP_ok`.
+  whole-genome search) of the remaining mate is run.  `passKnownG_ok`.
 * **Router** `routeKP`: pass 1 at caps `cap1 len`; pairs whose reason passes `goOn`
   (default: `noHit`, `noPartner`, `tooShort`; hook for ties / non-proper pairs later)
   go to pass 2 at caps `cap2 len` (a mate keeps its pass-1 cap when the pass-2 cap is
@@ -105,34 +109,52 @@ def Out.swap : Out → Out
     | (none, h) => .unmapped (if h then .tie mb else .noHit mb) none
     | (some b, _) => if properPair lo hi a.1 b.1 then .mapped (a, b) else .unmapped .notProper none
 
+/-! ### Pluggable pass kernel
+
+A pass kernel (`PassKer`): per-mate preparation, the lookup cost used to pick the
+mate searched over the genome, the whole-genome search of a mate at cap `P` (answer +
+any-hit flag) and the region test near a placement.  The passes and the router are
+generic in it; `KerOk` is what a kernel must prove, and `routeG_ok` holds for any two
+kernels (pass 1, pass 2) meeting it.  Today's kernel is `kpKer` (`kpKer_ok`); a faster
+proved deep-cap search plugs in as pass 2's kernel. -/
+structure PassKer where
+  Prep : Type
+  prep : ByteArray → Prep
+  cost : Nat → Prep → Nat
+  mate : Nat → ByteArray → Prep → MateR
+  region : Nat → ByteArray → Placement → Bool
+
 /-- **Pass kernel**: mates at caps `P1`, `P2` (both on the fast path, `fastT`); `ord`
 picks the mate searched over the genome (`some true` = mate 2), `none` = the cheaper
-lookups (`costP`). -/
-def passKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (P1 P2 : Nat)
-    (ord : Option Bool) (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Out :=
-  let s1 := prepMate ix R1
-  let s2 := prepMate ix R2
+lookups (`K.cost`). -/
+def passG (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) : Out :=
+  let s1 := K.prep R1
+  let s2 := K.prep R2
   let sw := match ord with
     | some o => o
-    | none => decide (costP ix P2 s2 < costP ix P1 s1)
+    | none => decide (K.cost P2 s2 < K.cost P1 s1)
   if sw then
-    (stepR .two .one lo hi (mateKP P2 ix G offs pgs R2 s2) (regionNoHitKP P1 lo hi rl G offs pgs R1)
-      (fun _ => mateKP P1 ix G offs pgs R1 s1)).swap
+    (stepR .two .one lo hi (K.mate P2 R2 s2) (K.region P1 R1) (fun _ => K.mate P1 R1 s1)).swap
   else
-    stepR .one .two lo hi (mateKP P1 ix G offs pgs R1 s1) (regionNoHitKP P2 lo hi rl G offs pgs R2)
-      (fun _ => mateKP P2 ix G offs pgs R2 s2)
+    stepR .one .two lo hi (K.mate P1 R1 s1) (K.region P2 R2) (fun _ => K.mate P2 R2 s2)
 
 /-- **Known mate**: mate `ma`'s answer `a` is known; mate `mb` (read `RB`, cap `PB`) is
 searched near it first. -/
-def passKnownKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2]
-    (ma : Mate) (a : Placement × Int) (PB : Nat) (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (RB : ByteArray) : Out :=
-  let o := stepR ma ma.other lo hi (some a, true) (regionNoHitKP PB lo hi rl G offs pgs RB)
-    (fun _ => mateKP PB ix G offs pgs RB (prepMate ix RB))
+def passKnownG (K : PassKer) (ma : Mate) (a : Placement × Int) (PB : Nat) (lo hi : Nat) (RB : ByteArray) : Out :=
+  let o := stepR ma ma.other lo hi (some a, true) (K.region PB RB) (fun _ => K.mate PB RB (K.prep RB))
   match ma with
   | .one => o
   | .two => o.swap
+
+/-- Today's kernel: `mateKP` over the (packed) genome, `regionNoHitKP` near a placement. -/
+def kpKer {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2]
+    (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) : PassKer where
+  Prep := PrepM Pp
+  prep R := prepMate ix R
+  cost P s := costP ix P s
+  mate P R s := mateKP P ix G offs pgs R s
+  region P R := regionNoHitKP P lo hi rl G offs pgs R
 
 /-! ## Router -/
 
@@ -165,48 +187,51 @@ def cap2Of (cfg : RouteCfg) (R : ByteArray) : Nat :=
   if c1 ≤ c2 && fastT c2 R then c2 else c1
 
 /-- One pass at caps `P1`, `P2`: length reasons first, then the kernel. -/
-def passLenKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (P1 P2 : Nat)
-    (ord : Option Bool) (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Out :=
+def passLenG (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) : Out :=
   if !fastT P1 R1 then .unmapped (.tooShort .one) none
   else if !fastT P2 R2 then .unmapped (.tooShort .two) none
-  else passKP P1 P2 ord lo hi ix rl G offs pgs R1 R2
+  else passG K P1 P2 ord lo hi R1 R2
 
 /-- Pass 2 for a pair pass 1 left with reason `r` (pass-1 caps `A1 A2`, pass-2 caps `B1 B2`). -/
-def pass2KP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (A1 A2 B1 B2 : Nat)
-    (r : Reason) (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) (known : Option (Placement × Int)) : Out :=
+def pass2G (K : PassKer) (A1 A2 B1 B2 : Nat) (r : Reason) (lo hi : Nat) (R1 R2 : ByteArray)
+    (known : Option (Placement × Int)) : Out :=
   match r, known with
   | .noPartner .two, some a =>
-    if A1 ≤ B1 && fastT B2 R2 then passKnownKP .one a B2 lo hi ix rl G offs pgs R2
-    else passLenKP B1 B2 none lo hi ix rl G offs pgs R1 R2
+    if A1 ≤ B1 && fastT B2 R2 then passKnownG K .one a B2 lo hi R2
+    else passLenG K B1 B2 none lo hi R1 R2
   | .noPartner .one, some a =>
-    if A2 ≤ B2 && fastT B1 R1 then passKnownKP .two a B1 lo hi ix rl G offs pgs R1
-    else passLenKP B1 B2 none lo hi ix rl G offs pgs R1 R2
+    if A2 ≤ B2 && fastT B1 R1 then passKnownG K .two a B1 lo hi R1
+    else passLenG K B1 B2 none lo hi R1 R2
   -- the mate without hits goes near the other one
-  | .noHit .one, _ => passLenKP B1 B2 (some true) lo hi ix rl G offs pgs R1 R2
-  | .noHit .two, _ => passLenKP B1 B2 (some false) lo hi ix rl G offs pgs R1 R2
-  | _, _ => passLenKP B1 B2 none lo hi ix rl G offs pgs R1 R2
+  | .noHit .one, _ => passLenG K B1 B2 (some true) lo hi R1 R2
+  | .noHit .two, _ => passLenG K B1 B2 (some false) lo hi R1 R2
+  | _, _ => passLenG K B1 B2 none lo hi R1 R2
 
-/-- **Router**: pass 1, then (option) pass 2 on the pairs whose reason passes `goOn`. -/
-def routeKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (cfg : RouteCfg)
-    (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (O1 O2 : Option ByteArray) : Routed :=
+/-- **Router**: pass 1 (kernel `K1`), then (option) pass 2 (kernel `K2`) on the pairs
+whose reason passes `goOn`. -/
+def routeG (cfg : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (O1 O2 : Option ByteArray) : Routed :=
   match O1, O2 with
   | none, _ => ⟨.unmapped (.trimmedAway .one) none, 0, 0, 0⟩
   | _, none => ⟨.unmapped (.trimmedAway .two) none, 0, 0, 0⟩
   | some R1, some R2 =>
     let A1 := cfg.cap1 R1.size
     let A2 := cfg.cap1 R2.size
-    let o := passLenKP A1 A2 none lo hi ix rl G offs pgs R1 R2
+    let o := passLenG K1 A1 A2 none lo hi R1 R2
     match o with
     | .mapped _ => ⟨o, 1, A1, A2⟩
     | .unmapped r k =>
       let B1 := cap2Of cfg R1
       let B2 := cap2Of cfg R2
       if cfg.pass2 && cfg.goOn r && !(B1 == A1 && B2 == A2) then
-        ⟨pass2KP A1 A2 B1 B2 r lo hi ix rl G offs pgs R1 R2 k, 2, B1, B2⟩
+        ⟨pass2G K2 A1 A2 B1 B2 r lo hi R1 R2 k, 2, B1, B2⟩
       else ⟨o, 1, A1, A2⟩
+
+/-- The router with today's kernel in both passes. -/
+def routeKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (cfg : RouteCfg)
+    (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (O1 O2 : Option ByteArray) : Routed :=
+  let K := kpKer lo hi ix rl G offs pgs
+  routeG cfg K K lo hi O1 O2
 
 /-! ## What a routed answer means -/
 
@@ -327,7 +352,203 @@ theorem stepR_ok (ma : Mate) (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd :
           subst h
           exact ⟨fun _ => ⟨a, b, hA.symm, hB1.symm, hp⟩, fun h => absurd rfl h⟩
 
-/-! ## Proofs: the passes on the packed genome -/
+/-! ## Proofs: the passes, for any kernel meeting `KerOk` -/
+
+section generic
+variable (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (R1 R2 : ByteArray)
+
+/-- What a pass kernel guarantees at caps `T1`, `T2`. -/
+def PassOk (T1 T2 : Int) (o : Out) : Prop :=
+  match o with
+  | .mapped x => pairSpecT T1 T2 lo hi g m1 m2 = some x
+  | .unmapped rs k => rs.searched = true ∧ ReasonOk (Mate.sel T1 T2) lo hi g (Mate.sel m1 m2) rs ∧
+      KnownOk (Mate.sel T1 T2) g (Mate.sel m1 m2) rs k
+
+/-- **What a pass kernel must prove**: for every read on the fast path at cap `P`, the
+whole-genome search gives the specification's answer and any-hit flag, and a region
+miss rules out every proper partner among the read's hits. -/
+def KerOk (K : PassKer) : Prop :=
+  ∀ (P : Nat) (R : ByteArray) (m : List Char), Encodes R m → fastT P R = true →
+    MateOk (-(P : Int)) g m (K.mate P R (K.prep R)) ∧
+    ∀ a, K.region P R a = true → ∀ p ∈ hitsBoth sc0 (-(P : Int)) g m, properPair lo hi a p.1 = false
+
+/-- The step in both orientations gives `PassOk`. -/
+theorem stepR_passOk (sw : Bool) (P1 P2 : Nat) (mA mB : MateR) (nh : Placement → Bool)
+    (hA : MateOk (-(((if sw then P2 else P1 : Nat)) : Int)) g (if sw then m2 else m1) mA)
+    (hB : MateOk (-(((if sw then P1 else P2 : Nat)) : Int)) g (if sw then m1 else m2) mB)
+    (hnh : ∀ a, nh a = true → ∀ p ∈ hitsBoth sc0 (-(((if sw then P1 else P2 : Nat)) : Int)) g (if sw then m1 else m2),
+      properPair lo hi a p.1 = false) :
+    PassOk lo hi g m1 m2 (-(P1 : Int)) (-(P2 : Int))
+      (if sw then (stepR .two .one lo hi mA nh (fun _ => mB)).swap else stepR .one .two lo hi mA nh (fun _ => mB)) := by
+  cases sw with
+  | false =>
+    simp only [Bool.false_eq_true, if_false] at hA hB hnh ⊢
+    obtain ⟨hm, hu⟩ := stepR_ok .one (Mate.sel (-(P1 : Int)) (-(P2 : Int))) lo hi g (Mate.sel m1 m2) mA nh mB
+      hA.1 hA.2 hB hnh
+    simp only [Mate.other] at hm hu
+    unfold PassOk
+    cases ho : stepR .one .two lo hi mA nh (fun _ => mB) with
+    | mapped x =>
+      obtain ⟨ha, hb, hp⟩ := hm x ho
+      show pairSpecT _ _ lo hi g m1 m2 = some x
+      unfold pairSpecT
+      simp only [Mate.sel] at ha hb
+      rw [ha, hb]; simp [hp]
+    | unmapped rs k =>
+      obtain ⟨hnp, hok⟩ := hu rs k ho
+      by_cases hr : rs = .notProper
+      · subst hr; exact ⟨rfl, hnp rfl, trivial⟩
+      · exact hok hr
+  | true =>
+    simp only [if_true] at hA hB hnh ⊢
+    obtain ⟨hm, hu⟩ := stepR_ok .two (Mate.sel (-(P1 : Int)) (-(P2 : Int))) lo hi g (Mate.sel m1 m2) mA nh mB
+      hA.1 hA.2 hB hnh
+    simp only [Mate.other] at hm hu
+    unfold PassOk
+    cases ho : stepR .two .one lo hi mA nh (fun _ => mB) with
+    | mapped x =>
+      obtain ⟨ha, hb, hp⟩ := hm x ho
+      show pairSpecT _ _ lo hi g m1 m2 = some (x.2, x.1)
+      unfold pairSpecT
+      simp only [Mate.sel] at ha hb
+      have hp' : properPair lo hi x.2.1 x.1.1 = true := by rw [properPair_comm]; exact hp
+      rw [ha, hb]; simp [hp']
+    | unmapped rs k =>
+      obtain ⟨hnp, hok⟩ := hu rs k ho
+      by_cases hr : rs = .notProper
+      · subst hr
+        obtain ⟨a, b, ha, hb, hp⟩ := hnp rfl
+        refine ⟨rfl, ⟨b, a, hb, ha, ?_⟩, trivial⟩
+        rw [properPair_comm]; exact hp
+      · exact hok hr
+
+/-- `PassOk` at caps `c1`, `c2` is `Settled` there. -/
+theorem passOk_settled (c1 c2 n : Nat) (o : Out) (h : PassOk lo hi g m1 m2 (-(c1 : Int)) (-(c2 : Int)) o) :
+    Settled lo hi g m1 m2 R1 R2 ⟨o, n, c1, c2⟩ := by
+  unfold Settled
+  unfold PassOk at h
+  cases o with
+  | mapped x => exact h
+  | unmapped rs k =>
+    obtain ⟨hs, hr⟩ := h
+    cases rs with
+    | trimmedAway m => simp [Reason.searched] at hs
+    | tooShort m => simp [Reason.searched] at hs
+    | noHit m => exact hr
+    | tie m => exact hr
+    | noPartner m => exact hr
+    | notProper => exact hr
+
+variable (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (K : PassKer) (hK : KerOk lo hi g K)
+include h1 h2 hK
+
+/-- **Pass kernel = specification** at caps `P1`, `P2` (both mates on the fast path). -/
+theorem passG_ok (P1 P2 : Nat) (ord : Option Bool) (hf1 : fastT P1 R1 = true) (hf2 : fastT P2 R2 = true) :
+    PassOk lo hi g m1 m2 (-(P1 : Int)) (-(P2 : Int)) (passG K P1 P2 ord lo hi R1 R2) := by
+  unfold passG
+  simp only []
+  generalize (match ord with
+    | some o => o
+    | none => decide (K.cost P2 (K.prep R2) < K.cost P1 (K.prep R1))) = sw
+  obtain ⟨k1, r1⟩ := hK P1 R1 m1 h1 hf1
+  obtain ⟨k2, r2⟩ := hK P2 R2 m2 h2 hf2
+  cases sw with
+  | true =>
+    have := stepR_passOk lo hi g m1 m2 true P1 P2 _ _ _
+      (by simpa using k2) (by simpa using k1) (by simpa using r1)
+    simpa using this
+  | false =>
+    have := stepR_passOk lo hi g m1 m2 false P1 P2 _ _ _
+      (by simpa using k1) (by simpa using k2) (by simpa using r2)
+    simpa using this
+
+/-- **Known mate = specification**: mate `ma`'s answer at its cap `PA` is `a`; mate
+`ma.other` at cap `PB`. -/
+theorem passKnownG_ok (ma : Mate) (PA PB : Nat) (a : Placement × Int)
+    (ha : mapSpecBoth sc0 (-(PA : Int)) g (Mate.sel m1 m2 ma) = some a)
+    (hf : fastT PB (Mate.sel R1 R2 ma.other) = true) :
+    PassOk lo hi g m1 m2 (Mate.sel (-(PA : Int)) (-(PB : Int)) ma) (Mate.sel (-(PA : Int)) (-(PB : Int)) ma.other)
+      (passKnownG K ma a PB lo hi (Mate.sel R1 R2 ma.other)) := by
+  cases ma with
+  | one =>
+    obtain ⟨k, r⟩ := hK PB R2 m2 h2 hf
+    have := stepR_passOk lo hi g m1 m2 false PA PB (some a, true) _ _
+      ⟨by simpa using ha.symm, fun h => by cases h⟩ (by simpa using k) (by simpa using r)
+    simpa [passKnownG, Mate.sel, Mate.other] using this
+  | two =>
+    obtain ⟨k, r⟩ := hK PB R1 m1 h1 hf
+    have := stepR_passOk lo hi g m1 m2 true PB PA (some a, true) _ _
+      ⟨by simpa using ha.symm, fun h => by cases h⟩ (by simpa using k) (by simpa using r)
+    simpa [passKnownG, Mate.sel, Mate.other] using this
+
+/-- A pass with its length reasons. -/
+theorem passLenG_ok (P1 P2 : Nat) (ord : Option Bool) (n : Nat) :
+    Settled lo hi g m1 m2 R1 R2 ⟨passLenG K P1 P2 ord lo hi R1 R2, n, P1, P2⟩ := by
+  unfold passLenG
+  by_cases hf1 : fastT P1 R1 = true
+  · by_cases hf2 : fastT P2 R2 = true
+    · simp only [hf1, hf2, Bool.not_true, Bool.false_eq_true, if_false]
+      exact passOk_settled lo hi g m1 m2 R1 R2 P1 P2 n _
+        (passG_ok lo hi g m1 m2 R1 R2 h1 h2 K hK P1 P2 ord hf1 hf2)
+    · simp only [Bool.not_eq_true] at hf2
+      simp only [hf1, hf2, Bool.not_true, Bool.not_false, Bool.false_eq_true, if_false, if_true]
+      exact hf2
+  · simp only [Bool.not_eq_true] at hf1
+    simp only [hf1, Bool.not_false, if_true]
+    exact hf1
+
+/-- Pass 2 after pass 1 left the pair unmapped with reason `r` (and the other mate's
+answer `k` for `noPartner`), settled at the pass-1 caps `A1`, `A2`. -/
+theorem pass2G_ok (A1 A2 B1 B2 : Nat) (r : Reason) (k : Option (Placement × Int)) (n : Nat)
+    (h : Settled lo hi g m1 m2 R1 R2 ⟨.unmapped r k, 1, A1, A2⟩) :
+    Settled lo hi g m1 m2 R1 R2 ⟨pass2G K A1 A2 B1 B2 r lo hi R1 R2 k, n, B1, B2⟩ := by
+  have pl := fun ord => passLenG_ok lo hi g m1 m2 R1 R2 h1 h2 K hK B1 B2 ord n
+  unfold pass2G
+  split
+  · next a =>
+    split
+    · next hc =>
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+      have ha : mapSpecBoth sc0 (-(A1 : Int)) g m1 = some a := h.2
+      have ha' := mapSpecBoth_mono_some _ (-(B1 : Int)) (by omega) g m1 a ha
+      have := passKnownG_ok lo hi g m1 m2 R1 R2 h1 h2 K hK .one B1 B2 a ha' hc.2
+      exact passOk_settled lo hi g m1 m2 R1 R2 B1 B2 n _ this
+    · exact pl none
+  · next a =>
+    split
+    · next hc =>
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+      have ha : mapSpecBoth sc0 (-(A2 : Int)) g m2 = some a := h.2
+      have ha' := mapSpecBoth_mono_some _ (-(B2 : Int)) (by omega) g m2 a ha
+      have := passKnownG_ok lo hi g m1 m2 R1 R2 h1 h2 K hK .two B2 B1 a ha' hc.2
+      exact passOk_settled lo hi g m1 m2 R1 R2 B1 B2 n _ this
+    · exact pl none
+  · exact pl _
+  · exact pl _
+  · exact pl none
+
+omit hK in
+/-- **Router = specification**, for any pass-1 kernel `K1` and pass-2 kernel `K2`
+meeting `KerOk`.  Every routed pair is settled at the caps of the pass that settled it:
+mapped = `pairSpecT` there, a search reason holds of the specification there (so
+`pairSpecT = none`, `settled_none`), `tooShort` = off the fast path there. -/
+theorem routeG_ok (cfg : RouteCfg) (K1 K2 : PassKer) (hK1 : KerOk lo hi g K1) (hK2 : KerOk lo hi g K2) :
+    Settled lo hi g m1 m2 R1 R2 (routeG cfg K1 K2 lo hi (some R1) (some R2)) := by
+  have hp := passLenG_ok lo hi g m1 m2 R1 R2 h1 h2 K1 hK1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) none 1
+  unfold routeG
+  simp only []
+  generalize passLenG K1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) none lo hi R1 R2 = o at hp ⊢
+  cases o with
+  | mapped x => exact hp
+  | unmapped r k =>
+    simp only []
+    split
+    · exact pass2G_ok lo hi g m1 m2 R1 R2 h1 h2 K2 hK2 _ _ _ _ r k 2 hp
+    · exact hp
+
+end generic
+
+/-! ## Proofs: today's kernel on the packed genome -/
 
 section packed
 variable (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen)
@@ -379,212 +600,21 @@ theorem regionKP_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m)
     (fun _ _ _ _ _ _ _ => rfl) (catOk_cut G offs ns hcut)
     (fun a b B hb hB hBi => lookOk_rg ix G hchk a b B hb hB hBi) a h p.1 p.2 hp.2.1 hp.2.2
 
-/-- What a pass kernel guarantees at caps `T1`, `T2`. -/
-def PassOk (T1 T2 : Int) (o : Out) : Prop :=
-  match o with
-  | .mapped x => pairSpecT T1 T2 lo hi g m1 m2 = some x
-  | .unmapped rs k => rs.searched = true ∧ ReasonOk (Mate.sel T1 T2) lo hi g (Mate.sel m1 m2) rs ∧
-      KnownOk (Mate.sel T1 T2) g (Mate.sel m1 m2) rs k
 
-include hcut hg h1 h2 hchk
+include hcut hg hchk in
+/-- Today's kernel meets `KerOk`. -/
+theorem kpKer_ok : KerOk lo hi g (kpKer lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz))
+    ByteArray.empty offs (cutAll G offs ns)) :=
+  fun P R m hr hf => ⟨mateKP_ok g ix G offs ns P R m hr hg hcut hchk hf,
+    regionKP_ok lo hi g ix G offs ns P R m hr hg hcut hchk⟩
 
-omit hcut hg h1 h2 hchk in
-/-- The step in both orientations gives `PassOk`. -/
-theorem stepR_passOk (sw : Bool) (P1 P2 : Nat) (mA mB : MateR) (nh : Placement → Bool)
-    (hA : MateOk (-(((if sw then P2 else P1 : Nat)) : Int)) g (if sw then m2 else m1) mA)
-    (hB : MateOk (-(((if sw then P1 else P2 : Nat)) : Int)) g (if sw then m1 else m2) mB)
-    (hnh : ∀ a, nh a = true → ∀ p ∈ hitsBoth sc0 (-(((if sw then P1 else P2 : Nat)) : Int)) g (if sw then m1 else m2),
-      properPair lo hi a p.1 = false) :
-    PassOk lo hi g m1 m2 (-(P1 : Int)) (-(P2 : Int))
-      (if sw then (stepR .two .one lo hi mA nh (fun _ => mB)).swap else stepR .one .two lo hi mA nh (fun _ => mB)) := by
-  cases sw with
-  | false =>
-    simp only [Bool.false_eq_true, if_false] at hA hB hnh ⊢
-    obtain ⟨hm, hu⟩ := stepR_ok .one (Mate.sel (-(P1 : Int)) (-(P2 : Int))) lo hi g (Mate.sel m1 m2) mA nh mB
-      hA.1 hA.2 hB hnh
-    simp only [Mate.other] at hm hu
-    unfold PassOk
-    cases ho : stepR .one .two lo hi mA nh (fun _ => mB) with
-    | mapped x =>
-      obtain ⟨ha, hb, hp⟩ := hm x ho
-      show pairSpecT _ _ lo hi g m1 m2 = some x
-      unfold pairSpecT
-      simp only [Mate.sel] at ha hb
-      rw [ha, hb]; simp [hp]
-    | unmapped rs k =>
-      obtain ⟨hnp, hok⟩ := hu rs k ho
-      by_cases hr : rs = .notProper
-      · subst hr; exact ⟨rfl, hnp rfl, trivial⟩
-      · exact hok hr
-  | true =>
-    simp only [if_true] at hA hB hnh ⊢
-    obtain ⟨hm, hu⟩ := stepR_ok .two (Mate.sel (-(P1 : Int)) (-(P2 : Int))) lo hi g (Mate.sel m1 m2) mA nh mB
-      hA.1 hA.2 hB hnh
-    simp only [Mate.other] at hm hu
-    unfold PassOk
-    cases ho : stepR .two .one lo hi mA nh (fun _ => mB) with
-    | mapped x =>
-      obtain ⟨ha, hb, hp⟩ := hm x ho
-      show pairSpecT _ _ lo hi g m1 m2 = some (x.2, x.1)
-      unfold pairSpecT
-      simp only [Mate.sel] at ha hb
-      have hp' : properPair lo hi x.2.1 x.1.1 = true := by rw [properPair_comm]; exact hp
-      rw [ha, hb]; simp [hp']
-    | unmapped rs k =>
-      obtain ⟨hnp, hok⟩ := hu rs k ho
-      by_cases hr : rs = .notProper
-      · subst hr
-        obtain ⟨a, b, ha, hb, hp⟩ := hnp rfl
-        refine ⟨rfl, ⟨b, a, hb, ha, ?_⟩, trivial⟩
-        rw [properPair_comm]; exact hp
-      · exact hok hr
-
-/-- **Pass kernel = specification** at caps `P1`, `P2` (both mates on the fast path). -/
-theorem passKP_ok (P1 P2 : Nat) (ord : Option Bool) (hf1 : fastT P1 R1 = true) (hf2 : fastT P2 R2 = true) :
-    PassOk lo hi g m1 m2 (-(P1 : Int)) (-(P2 : Int))
-      (passKP P1 P2 ord lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty
-        offs (cutAll G offs ns) R1 R2) := by
-  unfold passKP
-  simp only []
-  generalize (match ord with
-    | some o => o
-    | none => decide (costP ((ix, G) : PkMz) P2 (prepMate ((ix, G) : PkMz) R2) <
-        costP ((ix, G) : PkMz) P1 (prepMate ((ix, G) : PkMz) R1))) = sw
-  have k1 := mateKP_ok g ix G offs ns P1 R1 m1 h1 hg hcut hchk hf1
-  have k2 := mateKP_ok g ix G offs ns P2 R2 m2 h2 hg hcut hchk hf2
-  have r1 := regionKP_ok lo hi g ix G offs ns P1 R1 m1 h1 hg hcut hchk
-  have r2 := regionKP_ok lo hi g ix G offs ns P2 R2 m2 h2 hg hcut hchk
-  cases sw with
-  | true =>
-    have := stepR_passOk lo hi g m1 m2 true P1 P2 _ _ _
-      (by simpa using k2) (by simpa using k1) (by simpa using r1)
-    simpa using this
-  | false =>
-    have := stepR_passOk lo hi g m1 m2 false P1 P2 _ _ _
-      (by simpa using k1) (by simpa using k2) (by simpa using r2)
-    simpa using this
-
-/-- **Known mate = specification**: mate `ma`'s answer at its cap `PA` is `a`; mate
-`ma.other` at cap `PB`. -/
-theorem passKnownKP_ok (ma : Mate) (PA PB : Nat) (a : Placement × Int)
-    (ha : mapSpecBoth sc0 (-(PA : Int)) g (Mate.sel m1 m2 ma) = some a)
-    (hf : fastT PB (Mate.sel R1 R2 ma.other) = true) :
-    PassOk lo hi g m1 m2 (Mate.sel (-(PA : Int)) (-(PB : Int)) ma) (Mate.sel (-(PA : Int)) (-(PB : Int)) ma.other)
-      (passKnownKP ma a PB lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty
-        offs (cutAll G offs ns) (Mate.sel R1 R2 ma.other)) := by
-  cases ma with
-  | one =>
-    have k := mateKP_ok g ix G offs ns PB R2 m2 h2 hg hcut hchk hf
-    have r := regionKP_ok lo hi g ix G offs ns PB R2 m2 h2 hg hcut hchk
-    have := stepR_passOk lo hi g m1 m2 false PA PB (some a, true) _ _
-      ⟨by simpa using ha.symm, fun h => by cases h⟩ (by simpa using k) (by simpa using r)
-    simpa [passKnownKP, Mate.sel, Mate.other] using this
-  | two =>
-    have k := mateKP_ok g ix G offs ns PB R1 m1 h1 hg hcut hchk hf
-    have r := regionKP_ok lo hi g ix G offs ns PB R1 m1 h1 hg hcut hchk
-    have := stepR_passOk lo hi g m1 m2 true PB PA (some a, true) _ _
-      ⟨by simpa using ha.symm, fun h => by cases h⟩ (by simpa using k) (by simpa using r)
-    simpa [passKnownKP, Mate.sel, Mate.other] using this
-
-omit hcut hg h1 h2 hchk in
-/-- `PassOk` at caps `c1`, `c2` is `Settled` there. -/
-theorem passOk_settled (c1 c2 n : Nat) (o : Out) (h : PassOk lo hi g m1 m2 (-(c1 : Int)) (-(c2 : Int)) o) :
-    Settled lo hi g m1 m2 R1 R2 ⟨o, n, c1, c2⟩ := by
-  unfold Settled
-  unfold PassOk at h
-  cases o with
-  | mapped x => exact h
-  | unmapped rs k =>
-    obtain ⟨hs, hr⟩ := h
-    cases rs with
-    | trimmedAway m => simp [Reason.searched] at hs
-    | tooShort m => simp [Reason.searched] at hs
-    | noHit m => exact hr
-    | tie m => exact hr
-    | noPartner m => exact hr
-    | notProper => exact hr
-
-/-- A pass with its length reasons. -/
-theorem passLenKP_ok (P1 P2 : Nat) (ord : Option Bool) (n : Nat) :
-    Settled lo hi g m1 m2 R1 R2 ⟨passLenKP P1 P2 ord lo hi ((ix, G) : PkMz)
-      (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs (cutAll G offs ns) R1 R2, n, P1, P2⟩ := by
-  unfold passLenKP
-  by_cases hf1 : fastT P1 R1 = true
-  · by_cases hf2 : fastT P2 R2 = true
-    · simp only [hf1, hf2, Bool.not_true, Bool.false_eq_true, if_false]
-      have hp := passKP_ok lo hi g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk P1 P2 ord hf1 hf2
-      unfold Settled
-      simp only []
-      generalize passKP P1 P2 ord lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz))
-        ByteArray.empty offs (cutAll G offs ns) R1 R2 = o at hp ⊢
-      unfold PassOk at hp
-      cases o with
-      | mapped x => exact hp
-      | unmapped rs =>
-        obtain ⟨hs, hr⟩ := hp
-        cases rs with
-        | trimmedAway m => simp [Reason.searched] at hs
-        | tooShort m => simp [Reason.searched] at hs
-        | noHit m => exact hr
-        | tie m => exact hr
-        | noPartner m => exact hr
-        | notProper => exact hr
-    · simp only [Bool.not_eq_true] at hf2
-      simp only [hf1, hf2, Bool.not_true, Bool.not_false, Bool.false_eq_true, if_false, if_true]
-      exact hf2
-  · simp only [Bool.not_eq_true] at hf1
-    simp only [hf1, Bool.not_false, if_true]
-    exact hf1
-
-/-- Pass 2 after pass 1 left the pair unmapped with reason `r` (and the other mate's
-answer `k` for `noPartner`), settled at the pass-1 caps `A1`, `A2`. -/
-theorem pass2KP_ok (A1 A2 B1 B2 : Nat) (r : Reason) (k : Option (Placement × Int)) (n : Nat)
-    (h : Settled lo hi g m1 m2 R1 R2 ⟨.unmapped r k, 1, A1, A2⟩) :
-    Settled lo hi g m1 m2 R1 R2 ⟨pass2KP A1 A2 B1 B2 r lo hi ((ix, G) : PkMz)
-      (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs (cutAll G offs ns) R1 R2 k, n, B1, B2⟩ := by
-  have pl := fun ord => passLenKP_ok lo hi g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk B1 B2 ord n
-  unfold pass2KP
-  split
-  · next a =>
-    split
-    · next hc =>
-      simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
-      have ha : mapSpecBoth sc0 (-(A1 : Int)) g m1 = some a := h.2
-      have ha' := mapSpecBoth_mono_some _ (-(B1 : Int)) (by omega) g m1 a ha
-      have := passKnownKP_ok lo hi g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk .one B1 B2 a ha' hc.2
-      exact passOk_settled lo hi g m1 m2 R1 R2 B1 B2 n _ this
-    · exact pl none
-  · next a =>
-    split
-    · next hc =>
-      simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
-      have ha : mapSpecBoth sc0 (-(A2 : Int)) g m2 = some a := h.2
-      have ha' := mapSpecBoth_mono_some _ (-(B2 : Int)) (by omega) g m2 a ha
-      have := passKnownKP_ok lo hi g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk .two B2 B1 a ha' hc.2
-      exact passOk_settled lo hi g m1 m2 R1 R2 B1 B2 n _ this
-    · exact pl none
-  · exact pl _
-  · exact pl _
-  · exact pl none
-
-/-- **Router = specification.**  Every routed pair is settled at the caps of the pass
-that settled it: mapped = `pairSpecT` there, a search reason holds of the specification
-there (so `pairSpecT = none`, `settled_none`), `tooShort` = off the fast path there. -/
+include hcut hg h1 h2 hchk in
+/-- **Router (today's kernel) = specification.** -/
 theorem routeKP_ok (cfg : RouteCfg) :
     Settled lo hi g m1 m2 R1 R2 (routeKP cfg lo hi ((ix, G) : PkMz)
-      (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs (cutAll G offs ns) (some R1) (some R2)) := by
-  have hp := passLenKP_ok lo hi g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk (cfg.cap1 R1.size) (cfg.cap1 R2.size) none 1
-  unfold routeKP
-  simp only []
-  generalize passLenKP (cfg.cap1 R1.size) (cfg.cap1 R2.size) none lo hi ((ix, G) : PkMz)
-    (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs (cutAll G offs ns) R1 R2 = o at hp ⊢
-  cases o with
-  | mapped x => exact hp
-  | unmapped r k =>
-    simp only []
-    split
-    · exact pass2KP_ok lo hi g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk _ _ _ _ r k 2 hp
-    · exact hp
+      (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs (cutAll G offs ns) (some R1) (some R2)) :=
+  have hK := kpKer_ok lo hi g ix G offs ns hcut hg hchk
+  routeG_ok lo hi g m1 m2 R1 R2 h1 h2 cfg _ _ hK hK
 
 end packed
 
@@ -592,9 +622,11 @@ end MapSpec.Fast
 
 #print axioms MapSpec.Fast.pen_le_iff
 #print axioms MapSpec.Fast.mateKP_ok
-#print axioms MapSpec.Fast.passKP_ok
-#print axioms MapSpec.Fast.passKnownKP_ok
-#print axioms MapSpec.Fast.passLenKP_ok
-#print axioms MapSpec.Fast.pass2KP_ok
+#print axioms MapSpec.Fast.kpKer_ok
+#print axioms MapSpec.Fast.passG_ok
+#print axioms MapSpec.Fast.passKnownG_ok
+#print axioms MapSpec.Fast.passLenG_ok
+#print axioms MapSpec.Fast.pass2G_ok
+#print axioms MapSpec.Fast.routeG_ok
 #print axioms MapSpec.Fast.routeKP_ok
 #print axioms MapSpec.Fast.settled_none
