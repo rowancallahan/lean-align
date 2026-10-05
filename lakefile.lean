@@ -193,3 +193,7 @@ lean_exe trim_map where               -- trimmed FASTQ pairs → proved trimmer 
 lean_exe whole_genome where           -- whole genome held once: index over a view of the chromosomes (unproved IO)
   srcDir := "bench"
   root := `WholeGenome
+
+lean_exe seed_lab where               -- seed lookup cost on the whole genome (benchmark only, unproved IO)
+  srcDir := "bench"
+  root := `SeedLab
