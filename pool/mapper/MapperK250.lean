@@ -192,23 +192,39 @@ def kerG3 (R G : ByteArray) (st len lim : Nat) : Nat :=
     else gappedPen3 R G st len lim
   else lim + 1
 
-/-- `gappedPen3` with the word scans (window checked by the caller). -/
-@[inline] def gappedW (R G : ByteArray) (rw : Array UInt64) (gw : ByteArray) (o st len lim : Nat) : Nat :=
+/-- `fwdMis R G st stop 0 k`: the byte pre-scan, then the word scan when the range is
+flagged (checked only then), else the byte loop. -/
+@[inline] def fwdL (R G : ByteArray) (K : RP) (P : PGen) (st stop k : Nat) : Nat :=
+  let f := fwdMis R G st (min stop pre) 0 k
+  if f < min stop pre then f
+  else if K.ok && decide (stop ≤ R.size) && winOk P st stop then fwdA K.w P.w (P.o + st) stop k
+  else fwdMis R G st stop 0 k
+
+/-- `bwdMis R G st len lo R.size k` likewise (end diagonal `st + len − n`). -/
+@[inline] def bwdL (R G : ByteArray) (K : RP) (P : PGen) (st len lo k : Nat) : Nat :=
+  let n := R.size
+  let b := bwdMis R G st len (max lo (n - pre)) n k
+  if max lo (n - pre) < b then b
+  else if K.ok && decide (n ≤ st + len) && decide (lo < n) && winOk P (st + len - n + lo) (n - lo) then
+    bwdA K.w P.w (P.o + (st + len - n)) lo n k
+  else bwdMis R G st len lo n k
+
+/-- `gappedPen3` with the scans `fwdL` / `bwdL`. -/
+@[inline] def gappedL (R G : ByteArray) (K : RP) (P : PGen) (st len lim : Nat) : Nat :=
   let n := R.size
   let L := if len > n then len - n else n - len
   if lim < 6 + 2 * L then lim + 1 else
   let skip := if len < n then L else 0
-  let d := o + st + len - n
-  let F1 := fwdK R G rw gw (o + st) st (n - skip) 1
-  let E1 := bwdK R G rw gw d st len skip 1
+  let F1 := fwdL R G K P st (n - skip) 1
+  let E1 := bwdL R G K P st len skip 1
   if E1 - skip ≤ F1 then 6 + 2 * L else
   if lim < 10 + 2 * L then lim + 1 else
-  let F2 := fwdK R G rw gw (o + st) st (n - skip) 2
-  let E2 := bwdK R G rw gw d st len skip 2
+  let F2 := fwdL R G K P st (n - skip) 2
+  let E2 := bwdL R G K P st len skip 2
   if E1 - skip ≤ F2 || E2 - skip ≤ F1 then 10 + 2 * L else
   if lim < 14 + 2 * L then lim + 1 else
-  let F3 := fwdK R G rw gw (o + st) st (n - skip) 3
-  let E3 := bwdK R G rw gw d st len skip 3
+  let F3 := fwdL R G K P st (n - skip) 3
+  let E3 := bwdL R G K P st len skip 3
   if E1 - skip ≤ F3 || E2 - skip ≤ F2 || E3 - skip ≤ F1 then 14 + 2 * L else lim + 1
 
 /-- Word path applies to window `(st, len)`. -/
@@ -223,7 +239,7 @@ def kerGK (R : ByteArray) (K : RP) (G : ByteArray) (P : PGen) (st len lim : Nat)
       let h := hamA K.w P.w (P.o + st) (lim / 4) R.size
       if 4 * h ≤ lim then 4 * h else lim + 1
     else kerG3 R G st len lim
-  else if wordOk R K P st len then gappedW R G K.w P.w P.o st len lim
-  else kerG3 R G st len lim
+  else if st + len ≤ P.n then gappedL R G K P st len lim
+  else lim + 1
 
 end MapSpec.Fast
