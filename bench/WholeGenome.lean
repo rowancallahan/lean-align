@@ -558,6 +558,12 @@ structure Prof where
   bWordNs : Nat := 0
   bNoBNs : Nat := 0
   bDiagNs : Nat := 0
+  slowDdNs : Nat := 0
+  slowSuppNs : Nat := 0
+  slowUnNs : Nat := 0
+  slowUnPass : Nat := 0
+  slowLkNs : Nat := 0
+  slowSlNs : Nat := 0
   penHist : Array Nat := Array.replicate 18 0
   lkHist : Array Nat := Array.replicate 25 0
 
@@ -681,6 +687,38 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
       let v0 ← IO.monoNanosNow
       let d1 ← (← IO.mkRef (dl R 0 x.1 + dl Rr n x.2.1)).get
       let v1 ← IO.monoNanosNow
+      let dd := fun (s : GS) => (List.range n).foldl (fun a c => a + (diags s.acc[c]!).length) 0
+      let ds := fun (Rx : ByteArray) (s : GS) => (List.range n).foldl (fun a c =>
+        let acc := s.acc[c]!
+        let Q := min (min P 16) b.pen
+        let r := 2 * gapBound sc0 (-(Q : Int))
+        a + ((diags acc).filter fun D => decide (acc.length - suppA acc D r ≤ sbound Q)).length + 0 * Rx.size) 0
+      let y0 ← IO.monoNanosNow
+      let e1 ← (← IO.mkRef (dd x.1 + dd x.2.1)).get
+      let y1 ← IO.monoNanosNow
+      let e2 ← (← IO.mkRef (ds R x.1 + ds Rr x.2.1)).get
+      let y2 ← IO.monoNanosNow
+      let du := fun (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun a c =>
+        let acc := s.acc[c]!
+        let Q := min (min P 16) b.pen
+        let r := 2 * gapBound sc0 (-(Q : Int))
+        let fJ := fun D => acc.length - suppA acc D r
+        a + ((diags acc).filter fun D => decide (fJ D ≤ sbound Q) &&
+          unlook Rx gbs2[t + c]! (Rx.size / (Rx.size / 25)) r D (sbound Q) (unseen (Rx.size / 25) s.J) (fJ D)).length) 0
+      let e3 ← (← IO.mkRef (du R 0 x.1 + du Rr n x.2.1)).get
+      let y3 ← IO.monoNanosNow
+      -- the lookups alone (the seeds the search looked up), then also the per-chromosome slices
+      let z0 ← IO.monoNanosNow
+      let lk1 ← (← IO.mkRef ((x.1.J.map fun j => (LookG.look ix ByteArray.empty R (j * Ls) (R.size - j * Ls) ps[j]!).size).foldl (· + ·) 0)).get
+      let lk2 ← (← IO.mkRef ((x.2.1.J.map fun j => (LookG.look ix ByteArray.empty Rr (j * Ls) (Rr.size - j * Ls) pr[j]!).size).foldl (· + ·) 0)).get
+      let z1 ← IO.monoNanosNow
+      let sl := fun (Rx : ByteArray) (t : Nat) (J : List Nat) (pp : Array MzP) => (J.map fun j =>
+        let a := LookG.look ix ByteArray.empty Rx (j * Ls) (Rx.size - j * Ls) pp[j]!
+        (List.range n).foldl (fun acc c => acc + (sliceG a (Rx.size - j * Ls) offs[c]! (GRead.size gbs2[t + c]!)).size) 0).foldl (· + ·) 0
+      let sl1 ← (← IO.mkRef (sl R 0 x.1.J ps + sl Rr n x.2.1.J pr)).get
+      let z2 ← IO.monoNanosNow
+      let pf := { pf with slowLkNs := pf.slowLkNs + (z1 - z0) + 0 * (lk1 + lk2), slowSlNs := pf.slowSlNs + (z2 - z1) + 0 * sl1 }
+      let pf := { pf with slowDdNs := pf.slowDdNs + (y1 - y0) + 0 * e1, slowSuppNs := pf.slowSuppNs + (y2 - y1) + 0 * e2, slowUnNs := pf.slowUnNs + (y3 - y2), slowUnPass := pf.slowUnPass + e3 }
       let u0 ← IO.monoNanosNow
       let r1 ← (← IO.mkRef (fl R 0 x.1)).get
       let r2 ← (← IO.mkRef (fl Rr n x.2.1)).get
@@ -700,6 +738,8 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
   say s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
   say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
+  say s!"  reads > 1 ms: lookups alone {secs 0 pf.slowLkNs} s, lookups + chromosome slices {secs 0 pf.slowSlNs} s"
+  say s!"  reads > 1 ms: diags only {secs 0 pf.slowDdNs} s, diags + seed-count (suppA) only {secs 0 pf.slowSuppNs} s, diags + suppA + unlook (no fine) {secs 0 pf.slowUnNs} s, passing {pf.slowUnPass}"
   say s!"  stage K only (cap 16) {secs 0 pf.kOnlyNs} s vs stages K/B {secs 0 pf.kbNs} s; prototype B through kfilt at P: {secs 0 pf.bFiltNs} s; word kfilt: {secs 0 pf.bWordNs} s (of which stage K + diagsB + word filter, no stage B: {secs 0 pf.bNoBNs} s; stage K + diagsB only: {secs 0 pf.bDiagNs} s)"
   say s!"  reads reaching stage B: {pf.bReads} (none at P: {pf.bNone}); stage-B diagonals {pf.bDiags}, passing kfilt at P {pf.bPass}"
   let tops := pf.bTopNs.qsort (· > ·)
@@ -1252,6 +1292,53 @@ def main (args : List String) : IO UInt32 := do
           offs pgs R sp.Rr sp.ps sp.pr
         let sec := min b.pen (L + 1)
         (sec, sec - bp)
+      -- WG_RPROF=N: pass-1 cost split of the first N pairs, one thread (bench only): prep + order,
+      -- mate A over the genome, region of B, mate B (hinted); by A's cap and outcome
+      let rpN ← envN "WG_RPROF" 0
+      let rprofL : List (String × (Array ByteArray → Array ByteArray → IO Unit)) := if rpN == 0 then [] else
+        [("pass1 split", fun r1 r2 => do
+          let mut tab : Std.HashMap String (Array Nat) := {}
+          let mut hA : Array Nat := Array.replicate 18 0
+          let mut hR : Array Nat := Array.replicate 18 0
+          for k in [0:min rpN r1.size] do
+            let R1 := r1[k]!
+            let R2 := r2[k]!
+            let P1 := rcfg.cap1 R1.size
+            let P2 := rcfg.cap1 R2.size
+            if !fastT P1 R1 || !fastT P2 R2 then continue
+            let t0 ← IO.monoNanosNow
+            let s1 ← (← IO.mkRef (kK.prep R1)).get
+            let s2 ← (← IO.mkRef (kK.prep R2)).get
+            let t1 ← IO.monoNanosNow
+            let sw ← (← IO.mkRef (decide (kK.cost P2 s2 < kK.cost P1 s1))).get
+            let t2 ← IO.monoNanosNow
+            let (RA, sA, PA, RB, sB, PB) := if sw then (R2, s2, P2, R1, s1, P1) else (R1, s1, P1, R2, s2, P2)
+            let mA ← (← IO.mkRef (kK.mate PA RA sA)).get
+            let t3 ← IO.monoNanosNow
+            let (rp, t4) ← match mA.1 with
+              | some a => do
+                let rp ← (← IO.mkRef (kK.region PB RB a.1)).get
+                pure (rp, ← IO.monoNanosNow)
+              | none => pure (PB + 1, t3)
+            let mB ← if mA.1.isSome && rp ≤ PB then (← IO.mkRef (mateH kK PB RB sB rp)).get else pure (none, false)
+            let t5 ← IO.monoNanosNow
+            let pa := match mA.1 with | some a => (-a.2).toNat | none => 17
+            hA := hA.modify (min pa 17) (· + 1)
+            if mA.1.isSome then hR := hR.modify (min rp 17) (· + 1)
+            let oc := if mA.1.isNone then (if mA.2 then "A tie" else "A none")
+              else if rp > PB then "B no region hit" else if mB.1.isSome then "B mapped" else "B none/tie"
+            let key := s!"caps {PA}/{PB} {oc}"
+            let v := #[1, t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4]
+            tab := tab.insert key (((tab.getD key #[0, 0, 0, 0, 0, 0]).zip v).map fun (a, b) => a + b)
+          let rows := tab.toArray.qsort (fun a b => a.2[3]! + a.2[5]! > b.2[3]! + b.2[5]!)
+          say "  columns: pairs, prep s, order s, mate A s, region s, mate B s (1 thread)"
+          let mut tot : Array Nat := #[0, 0, 0, 0, 0, 0]
+          for (key, v) in rows do
+            say s!"  {key}: {v[0]!}, {secs 0 v[1]!}, {secs 0 v[2]!}, {secs 0 v[3]!}, {secs 0 v[4]!}, {secs 0 v[5]!}"
+            tot := (tot.zip v).map fun (a, b) => a + b
+          say s!"  TOTAL: {tot[0]!}, {secs 0 tot[1]!}, {secs 0 tot[2]!}, {secs 0 tot[3]!}, {secs 0 tot[4]!}, {secs 0 tot[5]!}"
+          say s!"  mate A best penalty histogram (0..16, 17 = none): {hA}"
+          say s!"  region best penalty histogram (0..16, 17 = no hit): {hR}")]
       -- WG_PPROF=N: pass-2 cost of the first N pairs, one thread, by pass-1 reason: whole pass 2,
       -- and its parts (genome mate at the pass-2 cap and at the pass-1 cap, region, hinted mate B)
       let ppN ← envN "WG_PPROF" 0
@@ -1317,7 +1404,7 @@ def main (args : List String) : IO UInt32 := do
               pf ← profRead 0 0 false 0 0 pk offs pgs (if hi2 then Bg else Ag) Rg pf
             say s!"  no-hit genome mates ({dl.size} of {dead.size}) at the pass-{if hi2 then 2 else 1} cap:"
             showProf pf)]
-      runSets modes okLen prof (some margF) tally pprof
+      runSets modes okLen prof (some margF) tally (rprofL ++ pprof)
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
   | _ => throw (IO.userError "usage: whole_genome build|bytes|map|pmap <index_prefix> ...")

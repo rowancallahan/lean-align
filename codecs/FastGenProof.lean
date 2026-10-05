@@ -446,8 +446,8 @@ theorem seedNear_of (R G : ByteArray) (Ls r D j p : Nat) (hj : j * Ls ≤ R.size
     seedNear R G Ls r D j = true := by
   unfold seedNear
   simp only []
-  rw [if_neg (by omega)]
-  exact nearS_of R G (j * Ls) p h _ _ (by omega) (by omega)
+  rw [if_neg (by omega), Bool.or_eq_true]
+  exact Or.inr (nearS_of R G (j * Ls) p h _ _ (by omega) (by omega))
 
 theorem unlook_of (R G : ByteArray) (Ls r D sb : Nat) :
     ∀ (us : List Nat) (f : Nat), f + (us.filter fun j => !seedNear R G Ls r D j).length ≤ sb →
@@ -493,8 +493,8 @@ theorem pieceNear_of (R G : ByteArray) (l Ls r D j p : Nat) (hj : j * Ls ≤ R.s
     pieceNear R G l Ls r D j = true := by
   unfold pieceNear
   simp only []
-  rw [if_neg (by omega)]
-  exact nearL_of R G (j * Ls) p l h _ _ (by omega) (by omega)
+  rw [if_neg (by omega), Bool.or_eq_true]
+  exact Or.inr (nearL_of R G (j * Ls) p l h _ _ (by omega) (by omega))
 
 theorem fineOk_of (R G : ByteArray) (l Ls r D sb : Nat) :
     ∀ (k j f : Nat), f + ((List.range' j k).filter fun j => !pieceNear R G l Ls r D j).length ≤ sb →
