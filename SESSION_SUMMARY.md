@@ -209,3 +209,9 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 2. Grow the test genome toward chr1 / whole genome; compact index layout.
 3. Wire genome + reads → SAM through `Main.lean` (`LeanAlign/Mapper.lean` has the parser and `partialSamLine`); produce the CIGAR for the chosen window.
 4. Rowan: rewrite `spec/MapSpec.lean` (strand, repeats, paired-end); decide whether overlapping windows tying for best count as one locus.
+
+### Whole genome (merged from speed/whole-genome, codecs/MzView.lean)
+- `Mz.buildWV_eq` (view-based builder = in-memory `buildW`), `check3V_eq`, `pairFastGB_view_eq_pairSpec`. The genome is held once as a view of the chromosomes. `lake exe whole_genome`.
+- hg38, 24 chromosomes (3.09 G letters), k22 B26 c0 W5 t6: 843.6M entries, 1.45 B/letter; build 1173 s, peak 7.72 GB. Saved at /home/user/data/wg/hg38.*. Index check (check3V, 4 tasks) 979 s.
+- hg38.pe250 sim, 100k pairs, T = −16: 1,515 pairs/s at 1 thread, 5,401 at 4; 89,437 kept; RSS 7.6 GB (byte genome 3.07 GB; packing it would give ≈ 5.4 GB). The run then hit an IO error (HG002 step, not diagnosed).
+- TODO: switch to the packed genome; whole-genome HG002; minibwa whole-genome index (OOM-killed so far; needs ~9 GB free); why it is ~25× slower per pair than chr21 (lookup hits per seed?).
