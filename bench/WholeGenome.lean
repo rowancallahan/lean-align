@@ -1804,6 +1804,82 @@ def main (args : List String) : IO UInt32 := do
           say s!"  TOTAL: {tot[0]!}, {secs 0 tot[1]!}, {secs 0 tot[2]!}, {secs 0 tot[3]!}, {secs 0 tot[4]!}, {secs 0 tot[5]!}"
           say s!"  mate A best penalty histogram (0..16, 17 = none): {hA}"
           say s!"  region best penalty histogram (0..16, 17 = no hit): {hR}")]
+      -- WG_MPROF=N: pass-1 (RT, default) cost of the first N pairs, one thread, by the pair's penalty
+      -- (larger of the two mates' answers; unmapped separately): prep, order, mate A and mate B each split
+      -- into lookups / phase 1 (without the lookups) / stage K (stage B: caps > 16 only), region search
+      let mpN ← envN "WG_MPROF" 0
+      let rprofL : List (String × (Array ByteArray → Array ByteArray → IO Unit)) := if mpN == 0 then rprofL else rprofL ++
+        [("mason split", fun (r1 r2 : Array ByteArray) => do
+          let gb := pgs ++ pgs
+          -- one mate over the genome at cap P, timed by part: (lookups, phase 1 incl. lookups, stages K/B, best)
+          let split (P : Nat) (R : ByteArray) (s : PrepM MzP) : IO (Array Nat × Nat) := do
+            let m := R.size / 25
+            let Ls := R.size / m
+            let n := pgs.size
+            let kf1 := kerHKG R s.K1 gb gb
+            let kf2 := kerHKG s.Rr s.K2 gb gb
+            let a0 ← IO.monoNanosNow
+            let x ← (← IO.mkRef (ilGFG kf1 kf2 pk ByteArray.empty R s.Rr (gb : Array PGen) offs n P Ls s.ps s.pr (2 * m + 1)
+              ⟨ordG (s.ps.map (LookG.size pk)) m, [], Array.replicate n []⟩
+              ⟨ordG (s.pr.map (LookG.size pk)) m, [], Array.replicate n []⟩ (initP P))).get
+            let a1 ← IO.monoNanosNow
+            let b := (List.range n).foldl (fun b c => chromKBFG kf1 R (gb : Array PGen) c P x.1.acc[c]! x.1.J b) x.2.2
+            let b := (List.range n).foldl (fun b c => chromKBFG kf2 s.Rr (gb : Array PGen) (n + c) P x.2.1.acc[c]! x.2.1.J b) b
+            let b ← (← IO.mkRef b).get
+            let a2 ← IO.monoNanosNow
+            let lk ← (← IO.mkRef ((x.1.J.map fun j => (LookG.look pk ByteArray.empty R (j * Ls) (R.size - j * Ls) s.ps[j]!).size).foldl (· + ·) 0 +
+              (x.2.1.J.map fun j => (LookG.look pk ByteArray.empty s.Rr (j * Ls) (s.Rr.size - j * Ls) s.pr[j]!).size).foldl (· + ·) 0)).get
+            let a3 ← IO.monoNanosNow
+            pure (#[a3 - a2, a1 - a0, a2 - a1, x.1.J.length + x.2.1.J.length + 0 * lk], b.pen)
+          -- columns: pairs, RT total, prep, order, lookups, phase 1 (incl. lookups), stage K, region, seeds looked up
+          let mut tab : Std.HashMap String (Array Nat) := {}
+          for k in [0:min mpN r1.size] do
+            let R1 := r1[k]!
+            let R2 := r2[k]!
+            let P1 := rcfg.cap1 R1.size
+            let P2 := rcfg.cap1 R2.size
+            if !fastT P1 R1 || !fastT P2 R2 then continue
+            let r0 ← IO.monoNanosNow
+            let o ← (← IO.mkRef (route R1 R2)).get
+            let r1t ← IO.monoNanosNow
+            let key := match o.out with
+              | .mapped (a, b) =>
+                let q := max (-a.2).toNat (-b.2).toNat
+                if q == 0 then "0" else if q ≤ 4 then "1-4" else if q ≤ 8 then "5-8" else if q ≤ 12 then "9-12" else "13-16"
+              | _ => "unmapped"
+            let t0 ← IO.monoNanosNow
+            let s1 : PrepM MzP ← (← IO.mkRef (prepMate pk R1)).get
+            let s2 : PrepM MzP ← (← IO.mkRef (prepMate pk R2)).get
+            let t1 ← IO.monoNanosNow
+            let sw ← (← IO.mkRef (decide (costP pk P2 s2 < costP pk P1 s1))).get
+            let t2 ← IO.monoNanosNow
+            let (RA, sA, PA, RB, sB, PB) := if sw then (R2, s2, P2, R1, s1, P1) else (R1, s1, P1, R2, s2, P2)
+            let (vA, penA) ← split PA RA sA
+            let mA := mateKP PA pk ByteArray.empty offs pgs RA sA
+            let mut v : Array Nat := #[0, r1t - r0, t1 - t0, t2 - t1, vA[0]!, vA[1]!, vA[2]!, 0, vA[3]!]
+            if penA ≤ PA then
+              match mA.1 with
+              | some a =>
+                let u0 ← IO.monoNanosNow
+                let rp ← (← IO.mkRef (regionPenKP PB lo hi rlB ByteArray.empty offs pgs RB a.1)).get
+                let u1 ← IO.monoNanosNow
+                v := v.set! 7 (u1 - u0)
+                if rp ≤ PB then
+                  let h := if rp < PB && fastT rp RB then rp else PB
+                  let (vB, penB) ← split h RB sB
+                  v := #[v[0]!, v[1]!, v[2]!, v[3]!, v[4]! + vB[0]!, v[5]! + vB[1]!, v[6]! + vB[2]!, v[7]!, v[8]! + vB[3]!]
+                  if h < PB && penB > h then
+                    let (vC, _) ← split PB RB sB
+                    v := #[v[0]!, v[1]!, v[2]!, v[3]!, v[4]! + vC[0]!, v[5]! + vC[1]!, v[6]! + vC[2]!, v[7]!, v[8]! + vC[3]!]
+              | none => pure ()
+            v := v.set! 0 1
+            tab := tab.insert key (((tab.getD key #[0, 0, 0, 0, 0, 0, 0, 0, 0]).zip v).map fun (a, b) => a + b)
+          say "  per pair, us (1 thread): RT total | prep, order, lookups, phase 1 w/o lookups, stage K, region | seeds looked up"
+          for key in ["0", "1-4", "5-8", "9-12", "13-16", "unmapped"] do
+            let v := tab.getD key #[0, 0, 0, 0, 0, 0, 0, 0, 0]
+            let c := Float.ofNat (max v[0]! 1)
+            let us := fun (x : Nat) => Float.ofNat x / c / 1000
+            say s!"  MPROF {key}: pairs {v[0]!}, total {secs 0 v[1]!} s | RT {us v[1]!} | prep {us v[2]!}, order {us v[3]!}, lookups {us v[4]!}, phase1 {us (v[5]! - v[4]!)}, stageK {us v[6]!}, region {us v[7]!} | sum {us (v[2]! + v[3]! + v[5]! + v[6]! + v[7]!)} | seeds {Float.ofNat v[8]! / c}")]
       -- WG_PPROF=N: pass-2 cost of the first N pairs, one thread, by pass-1 reason: whole pass 2,
       -- and its parts (genome mate at the pass-2 cap and at the pass-1 cap, region, hinted mate B)
       let ppN ← envN "WG_PPROF" 0
