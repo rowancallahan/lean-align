@@ -1,5 +1,6 @@
 import FastGenPair
 import PairConcatPacked
+import MzWord
 
 /-!
 # Codec `pairFastGBP`: the general pair mapper over a packed genome
@@ -349,7 +350,7 @@ theorem mapChromsGB_same {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [In
 
 /-- `mzLookS` reading a packed genome. -/
 def mzLookSP (ix : Mz.MzIdx) (G : PGen) (R : ByteArray) (s base : Nat) (p : MzP) : Array Nat :=
-  if p.ok then lookupPP ix G R s p base 0 else lookupSeedAP ix G R s base 0
+  if p.ok then lookupPW ix G R s p base 0 else lookupSeedAP ix G R s base 0
 
 /-- A minimizer index and the packed genome it indexes. -/
 abbrev PkMz := Mz.MzIdx × PGen
@@ -359,7 +360,7 @@ instance : LookG PkMz MzP := ⟨fun ix => mzPrep ix.1, fun ix => mzSize ix.1, fu
 
 theorem mzLookSP_eq {P : PGen} {G : ByteArray} (h : Rep P G) (ix : Mz.MzIdx) (R : ByteArray) (s base : Nat) (p : MzP) :
     mzLookSP ix P R s base p = mzLookS ix G R s base p := by
-  simp only [mzLookSP, mzLookS, lookupPP, lookupP, lookupSeedAP, lookupSeedA, lookupCodeAP, lookupCodeA,
+  simp only [mzLookSP, lookupPW_eq, mzLookS, lookupPP, lookupP, lookupSeedAP, lookupSeedA, lookupCodeAP, lookupCodeA,
     fun ix R s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =>
       scanAP_eq h ix R s o key bw aw pmo o2 n1 a2 n2 hi base bit _ t acc rfl,
     fun ix R side d0 s base bit i acc => scanEdgeAP_eq h ix R side d0 s base bit _ i acc rfl,

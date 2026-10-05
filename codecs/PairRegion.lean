@@ -90,6 +90,48 @@ termination_by hi - t
     (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
     (ix.hiB p.b) base a b (startSlot ix (a + o) (ix.loB p.b) (ix.hiB p.b)) #[]
 
+/-- `scanAPR` with `okAtW` (codecs/MzWord.lean). -/
+def scanAWR (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base a b : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
+  if t < hi then
+    let pos := ix.posOf (ix.slot t)
+    if b + o < pos + Mz.q then acc else
+    scanAWR ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 hi base a b (t + 1)
+      (if decide (a + o ≤ pos) && okAtW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t then
+        acc.push (anc base 0 (pos - o - a)) else acc)
+  else acc
+termination_by hi - t
+
+/-- `lookupPPR` with `okAtW`. -/
+@[inline] def lookupPWR (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base a b : Nat) : Array Nat :=
+  let o := p.o
+  let v := p.v
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  let r := seedLE R s Mz.q 0 0 true
+  scanAWR ix G R r.1 r.2 s o (p.h &&& ix.kbM) ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+    ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+    (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
+    (ix.hiB p.b) base a b (startSlot ix (a + o) (ix.loB p.b) (ix.hiB p.b)) #[]
+
+theorem scanAWR_eq (ix : MzIdx) (P : PGen) (R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 hi base a b : Nat) :
+    ∀ d t acc, hi - t = d →
+      scanAWR ix P R (seedLE R s Mz.q 0 0 true).1 (seedLE R s Mz.q 0 0 true).2 s o key bw aw pmo o2 n1 a2 n2 hi
+        base a b t acc = scanAPR ix P R s o key bw aw pmo o2 n1 a2 n2 hi base a b t acc := by
+  intro d
+  induction d with
+  | zero => intro t acc hd; unfold scanAWR scanAPR; rw [if_neg (by omega), if_neg (by omega)]
+  | succ d ih =>
+    intro t acc hd
+    unfold scanAWR scanAPR
+    have ih' := fun acc => ih (t + 1) acc (by omega)
+    simp only [show t < hi from by omega, if_true, okAtW_eq, ih']
+
+theorem lookupPWR_eq (ix : MzIdx) (P : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base a b : Nat) :
+    lookupPWR ix P R s p base a b = lookupPPR ix P R s p base a b := by
+  unfold lookupPWR lookupPPR
+  exact scanAWR_eq ix P R s _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl
+
 end MzR
 
 /-- Keep an anchor (`bit = 0`) whose seed lies in `[a, b)`, counted from `a`. -/
@@ -99,7 +141,7 @@ end MzR
 
 /-- Lookups cut to letters `[a, b)` of the packed genome, places counted from `a`. -/
 def mzLookRP (ix : Mz.MzIdx) (G : PGen) (a b : Nat) (R : ByteArray) (s base : Nat) (p : MzP) : Array Nat :=
-  if p.ok then lookupPPR ix G R s p base a b
+  if p.ok then lookupPWR ix G R s p base a b
   else (lookupSeedAP ix G R s base 0).filterMap (cutAnc base a b)
 
 /-- A minimizer index on its packed genome, cut to a region `[a, b)`. -/
@@ -499,6 +541,7 @@ theorem mzLookRP_eq (ix : Mz.MzIdx) (G : PGen) (a b : Nat) (R : ByteArray) (s ba
     (hs : p.ok = true → ∀ j, ix.loB p.b ≤ j → j + 1 < ix.hiB p.b → ix.posOf (ix.slot j) < ix.posOf (ix.slot (j + 1))) :
     (mzLookRP ix G a b R s base p).toList = (mzLookSP ix G R s base p).toList.filterMap (cutAnc base a b) := by
   unfold mzLookRP mzLookSP
+  simp only [lookupPWR_eq, lookupPW_eq]
   split
   · next h => exact lookupPPR_eq ix G R s p base a b (hs h)
   · rw [Array.toList_filterMap]
