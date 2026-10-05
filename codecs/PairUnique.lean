@@ -7,18 +7,24 @@ Against `pairSpecU` (spec/PairSpec.lean): among all proper pairs of hits, the
 unique best by summed score.  One index over the concatenated genome, as
 `pairFastC` (codecs/PairConcat.lean).
 
-1. Both mates through the proved per-mate search (`mapChromsC`).  A mate with
-   no hit at all (`pen > 12`): no pair (`none`).
+1. Both mates through the proved per-mate search (`mapChromsCS` = `mapChromsC`
+   plus the strands' final states).  A mate with no hit at all (`pen > 12`): no
+   pair (`none`, `no_hit`).
 2. Both mates unique and the two form a proper pair: that pair is the unique
-   best pair (any other pair moves a mate to a strictly worse hit), so the
-   answer is `pairFastC`'s.
+   best pair (any other pair moves a mate to a strictly worse hit,
+   `pairSpecU_of_unique`), so the answer is `pairFastC`'s.
 3. Otherwise (a per-mate tie, or unique bests that are not a proper pair): the
-   exact fallback.  All 4 seeds of each mate are looked up on both strands; every
-   anchor diagonal gives 14 candidate windows (same length, and one gap of 1–3
-   starting or ending on the diagonal), each scored exactly (`penF = penB`).  By
-   the pigeonhole lemmas (`same_hit_mask`, `gap_support`) every hit has a clean
-   seed on one of its diagonals, so the list is all hits with their penalties
-   (`mem_hitsU`).  The best proper pair is then picked in one pass (`selU`).
+   exact fallback `pairLevels`.  Every proper pair sums to at least `l1 + l2`
+   (the mates' best penalties, `le_best`).  Level `X` (from `l1 + l2`, step 4):
+   every pair summing to `≤ X` has mate 1 at `≤ X − l2` and mate 2 at `≤ X − l1`.
+   The strands' final search states hold the anchors of `J` seeds; `deepen`
+   looks up more seeds (anchors merged, nothing scored) until `lim < 4·|J|`, so by
+   the pigeonhole lemmas (`same_lower_J`, `gap_lower`) every placement within
+   `lim` has an anchor within 3 diagonals (`anchor_near`).  Placements are listed
+   from those anchors, scoring only anchors with an anchor of the other mate
+   within `hi + 128` diagonals (`nearA`; a proper pair is that close,
+   `proper_close`).  If some pairs sum to `≤ X`, the best pair is the best of
+   those (`bestPair_restrict`; one pass, `selPairs`); otherwise the next level.
 
     … → pairFastU lk lo hi ix G offs gbs R1 R2 = pairSpecU sc0 (-12) lo hi g m1 m2   (pairFastU_eq_pairSpecU)
 -/
@@ -45,37 +51,6 @@ def candW (n A : Nat) : List (Nat × Nat) :=
 /-- The candidates that can cost `≤ lim` (a gap costs `≥ 8`). -/
 def candL (n A lim : Nat) : List (Nat × Nat) := if lim < 8 then [(A - BIAS, n)] else candW n A
 
-/-- Merge (two increasing lists, equal entries kept once), onto `acc` reversed. -/
-def mergeU : List Nat → List Nat → List Nat → List Nat
-  | [], ys, acc => acc.reverseAux ys
-  | xs, [], acc => acc.reverseAux xs
-  | x :: xs, y :: ys, acc =>
-    if x < y then mergeU xs (y :: ys) (x :: acc)
-    else if y < x then mergeU (x :: xs) ys (y :: acc)
-    else mergeU xs ys (x :: acc)
-termination_by xs ys => xs.length + ys.length
-
-/-- Placements of read `R'` (tagged with strand `s`) of penalty `≤ lim`, found from
-the anchors of the seeds `js`, with their penalties (all of them when
-`lim < 4·|js|`, `mem_hitsStrand`). -/
-def hitsStrand {L P : Type} (lk : Look L P) (ix : L) (G : ByteArray) (offs : Array Nat)
-    (gbs : Array ByteArray) (R' : ByteArray) (s : Strand) (js : List Nat) (lim : Nat) : List (Placement × Nat) :=
-  let as := js.map fun j => (j, lk.look ix G R' j (lk.prep ix (seedHash R' j)))
-  (List.range gbs.size).flatMap fun c =>
-    let ds := as.foldl (fun acc ja =>
-      mergeU acc ((sliceA ja.2 ja.1 offs[c]! gbs[c]!.size).toList.map (· / 16)) []) []
-    ds.flatMap fun d => (candL R'.size d lim).filterMap fun w =>
-      let k := penFL R' gbs[c]! w.1 w.2 lim
-      if k ≤ lim then some ((⟨c, w.1, w.2⟩, s), k) else none
-
-/-- Every placement of penalty `≤ lim ≤ 12`, both strands, with its penalty: the
-`lim / 4 + 1` seeds with the smallest buckets on each strand suffice. -/
-def hitsL {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (G : ByteArray) (offs : Array Nat)
-    (gbs : Array ByteArray) (R : ByteArray) (lim : Nat) : List (Placement × Nat) :=
-  let Rr := revCompB R
-  hitsStrand lk ix G offs gbs R .fwd ((seedOrder lk ix (prepAll lk ix (seedHashes R))).take (lim / 4 + 1)) lim ++
-    hitsStrand lk ix G offs gbs Rr .rev ((seedOrder lk ix (prepAll lk ix (seedHashes Rr))).take (lim / 4 + 1)) lim
-
 /-- Keep the better of the best so far and `x` (`amb`: another key ties the best). -/
 def addSel {β κ : Type} [DecidableEq κ] (key : β → κ) (sc : β → Int) (r : Option (β × Bool)) (x : β) :
     Option (β × Bool) :=
@@ -98,10 +73,6 @@ def pairsOf (lo hi : Nat) (h1 h2 : List (Placement × Int)) : List ((Placement �
 /-- The best of a list of pairs, in one pass. -/
 def selPairs (ps : List ((Placement × Int) × (Placement × Int))) : Option ((Placement × Int) × (Placement × Int)) :=
   selU (fun p : (Placement × Int) × (Placement × Int) => (p.1.1, p.2.1)) (fun p => p.1.2 + p.2.2) ps
-
-/-- `bestPair` in one pass. -/
-def bestPairF (lo hi : Nat) (h1 h2 : List (Placement × Int)) : Option ((Placement × Int) × (Placement × Int)) :=
-  selPairs (pairsOf lo hi h1 h2)
 
 /-- Penalties → scores. -/
 def toScore (h : List (Placement × Nat)) : List (Placement × Int) := h.map fun x => (x.1, -(x.2 : Int))
@@ -153,23 +124,79 @@ def hitsCSF (gbs : Array ByteArray) (R' : ByteArray) (s : Strand) (st o : CS) (W
           if k ≤ lim then some ((⟨c, w.1, w.2⟩, s), k) else none
       else []
 
-/-- A mate's placements at its best penalty that can pair with the other mate's
-(search results `r`, `o`; forward pairs with reverse). -/
-def hitsBest (gbs : Array ByteArray) (W : Nat) (R : ByteArray) (r o : Best × CS × CS) : List (Placement × Int) :=
-  toScore (hitsCSF gbs R .fwd r.2.1 o.2.2 W r.1.pen ++ hitsCSF gbs (revCompB R) .rev r.2.2 o.2.1 W r.1.pen)
+/-- A mate's placements of penalty `≤ L` (read `R`, its reverse complement `Rr`;
+own states `sf`, `sr`) that can pair with the other mate's (states `pf`, `pr`;
+forward pairs with reverse). -/
+def hitsLv (gbs : Array ByteArray) (W : Nat) (R Rr : ByteArray) (sf sr pf pr : CS) (L : Nat) : List (Placement × Int) :=
+  toScore (hitsCSF gbs R .fwd sf pr W L ++ hitsCSF gbs Rr .rev sr pf W L)
 
-/-- The exact fallback, given each mate's search result `r1`, `r2` (best penalty
-`l1`, `l2`).  First only the placements at those penalties, from the anchors the
-searches already hold: every pair sums to at least `l1 + l2`, so if any of them
-pair properly, the best pair is among them.  Otherwise every placement within
-the cap (all seeds looked up). -/
-def pairSlowU {L P : Type} [Inhabited P] (lk : Look L P) (lo hi : Nat) (ix : L) (G : ByteArray)
+/-- Seed `j`'s anchors `a` (in `G`) merged into every chromosome's anchors. -/
+def mergeAll (gbs : Array ByteArray) (offs : Array Nat) (a : Array Nat) (j : Nat) (as : Array (Array Nat)) :
+    Array (Array Nat) :=
+  as.mapIdx fun c x => merge x (sliceA a j offs[c]! gbs[c]!.size) 0 0 #[]
+
+/-- Look up the strand's next seeds (smallest bucket first) until `m` are done,
+merging their anchors; nothing is scored. -/
+def deepen {L P : Type} (lk : Look L P) (ix : L) (G : ByteArray) (gbs : Array ByteArray) (offs : Array Nat)
+    (R' : ByteArray) (m : Nat) : Nat → CS → CS
+  | 0, s => s
+  | f + 1, s =>
+    match s.ord with
+    | [] => s
+    | j :: rest =>
+      if m ≤ s.k then s
+      else deepen lk ix G gbs offs R' m f
+        ⟨rest, s.k + 1, s.looked + pow2 j, mergeAll gbs offs (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j s.as⟩
+
+/-- The best proper pair, by levels (mates' best penalties `l1`, `l2`; strand
+states `a b` of mate 1, `c d` of mate 2).  At level `X` every pair of penalty sum
+`≤ X` has mate 1 at `≤ L1 = X − l2` and mate 2 at `≤ L2 = X − l1`: those
+placements are listed (the states deepened to cover them) and the proper pairs
+among them summing to `≤ X` kept; if there are any, the best pair is among them.
+Otherwise the next level `X + 4`, up to every placement within the cap. -/
+def pairLevels {L P : Type} (lk : Look L P) (lo hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
+    (gbs : Array ByteArray) (R1 R2 Rr1 Rr2 : ByteArray) (l1 l2 X : Nat) (a b c d : CS) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  let L1 := min 12 (X - l2)
+  let L2 := min 12 (X - l1)
+  let a := deepen lk ix G gbs offs R1 (L1 / 4 + 1) 4 a
+  let b := deepen lk ix G gbs offs Rr1 (L1 / 4 + 1) 4 b
+  let c := deepen lk ix G gbs offs R2 (L2 / 4 + 1) 4 c
+  let d := deepen lk ix G gbs offs Rr2 (L2 / 4 + 1) 4 d
+  let T : Int := if 12 ≤ L1 ∧ 12 ≤ L2 then 24 else X
+  let ps := (pairsOf lo hi (hitsLv gbs (hi + 128) R1 Rr1 a b c d L1) (hitsLv gbs (hi + 128) R2 Rr2 c d a b L2)).filter
+    fun x => decide (-T ≤ x.1.2 + x.2.2)
+  if ps.isEmpty then
+    if h : 12 ≤ L1 ∧ 12 ≤ L2 then none
+    else pairLevels lk lo hi ix G offs gbs R1 R2 Rr1 Rr2 l1 l2 (X + 4) a b c d
+  else selPairs ps
+termination_by 24 + l1 + l2 - X
+decreasing_by omega
+
+/-- The exact fallback, from both mates' searches (`r1`, `r2`: best and final
+strand states): the levels from `X = l1 + l2`, where the states already cover
+the placements at the best penalties. -/
+def pairSlowU {L P : Type} (lk : Look L P) (lo hi : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array ByteArray) (R1 R2 : ByteArray) (r1 r2 : Best × CS × CS) :
     Option ((Placement × Int) × (Placement × Int)) :=
-  let ps := pairsOf lo hi (hitsBest gbs (hi + 128) R1 r1 r2) (hitsBest gbs (hi + 128) R2 r2 r1)
-  if ps.isEmpty then
-    bestPairF lo hi (toScore (hitsL lk ix G offs gbs R1 12)) (toScore (hitsL lk ix G offs gbs R2 12))
-  else selPairs ps
+  pairLevels lk lo hi ix G offs gbs R1 R2 (revCompB R1) (revCompB R2) r1.1.pen r2.1.pen (r1.1.pen + r2.1.pen)
+    r1.2.1 r1.2.2 r2.2.1 r2.2.2
+
+/-- Placements of read `R'` (strand `s`) of penalty `≤ lim` from the anchors in
+state `st` (all of them when `lim < 4·lookups`). -/
+def hitsCS (gbs : Array ByteArray) (R' : ByteArray) (s : Strand) (st : CS) (lim : Nat) : List (Placement × Nat) :=
+  (List.range gbs.size).flatMap fun c =>
+    st.as[c]!.toList.flatMap fun e => (candL R'.size (e / 16) lim).filterMap fun w =>
+      let k := penFL R' gbs[c]! w.1 w.2 lim
+      if k ≤ lim then some ((⟨c, w.1, w.2⟩, s), k) else none
+
+/-- Every placement of the read within the cap, with its score (`mem_allHits`;
+not used by `pairFastU`, for checks). -/
+def allHits {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (G : ByteArray) (offs : Array Nat)
+    (gbs : Array ByteArray) (R : ByteArray) : List (Placement × Int) :=
+  let r := mapChromsCS lk ix G offs gbs R false
+  toScore (hitsCS gbs R .fwd (deepen lk ix G gbs offs R 4 4 r.2.1) 12 ++
+    hitsCS gbs (revCompB R) .rev (deepen lk ix G gbs offs (revCompB R) 4 4 r.2.2) 12)
 
 def pairFastU {L P : Type} [Inhabited P] (lk : Look L P) (lo hi : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array ByteArray) (R1 R2 : ByteArray) :
@@ -346,35 +373,6 @@ theorem bestPair_iff (lo hi : Nat) (h1 h2 : List (Placement × Int)) (f1 : Fun h
   simp only [decide_eq_true_eq] at this
   exact this
 
-theorem bestPairF_iff (lo hi : Nat) (h1 h2 : List (Placement × Int)) (f1 : Fun h1) (f2 : Fun h2)
-    (p : (Placement × Int) × (Placement × Int)) :
-    bestPairF lo hi h1 h2 = some p ↔ p ∈ pairsOf lo hi h1 h2 ∧ ∀ x ∈ pairsOf lo hi h1 h2,
-      x.1.2 + x.2.2 < p.1.2 + p.2.2 ∨ (x.1.1 = p.1.1 ∧ x.2.1 = p.2.1) := by
-  have := selU_iff (fun p : (Placement × Int) × (Placement × Int) => (p.1.1, p.2.1))
-    (fun p => p.1.2 + p.2.2) (pairsOf lo hi h1 h2) (by
-      rintro ⟨⟨a, sa⟩, ⟨b, sb⟩⟩ hx ⟨⟨a', sa'⟩, ⟨b', sb'⟩⟩ hy he
-      simp only [Prod.mk.injEq] at he
-      obtain ⟨rfl, rfl⟩ := he
-      rw [mem_pairsOf] at hx hy
-      have e1 : sa = sa' := f1 _ hx.1 _ hy.1 rfl
-      have e2 : sb = sb' := f2 _ hx.2.1 _ hy.2.1 rfl
-      rw [e1, e2]) p
-  simp only [Prod.mk.injEq] at this
-  exact this
-
-/-- `bestPairF` on lists with the same members as `bestPair`'s gives the same pair. -/
-theorem bestPairF_eq (lo hi : Nat) (h1 h2 h1' h2' : List (Placement × Int)) (f1 : Fun h1) (f2 : Fun h2)
-    (e1 : ∀ x, x ∈ h1' ↔ x ∈ h1) (e2 : ∀ x, x ∈ h2' ↔ x ∈ h2) :
-    bestPairF lo hi h1' h2' = bestPair lo hi h1 h2 := by
-  have f1' : Fun h1' := fun x hx y hy => f1 x ((e1 x).1 hx) y ((e1 y).1 hy)
-  have f2' : Fun h2' := fun x hx y hy => f2 x ((e2 x).1 hx) y ((e2 y).1 hy)
-  have ep : ∀ x, x ∈ pairsOf lo hi h1' h2' ↔ x ∈ pairsOf lo hi h1 h2 := fun x => by
-    rw [mem_pairsOf, mem_pairsOf, e1, e2]
-  apply Option.ext
-  intro p
-  rw [bestPairF_iff lo hi h1' h2' f1' f2', bestPair_iff lo hi h1 h2 f1 f2, ep]
-  simp only [ep]
-
 /-! ## Exact penalties -/
 
 theorem penFL_eq (R G : ByteArray) (st len lim : Nat) (hn : 100 ≤ R.size) (hlim : lim ≤ 12) :
@@ -400,107 +398,6 @@ theorem penFL_eq (R G : ByteArray) (st len lim : Nat) (hn : 100 ≤ R.size) (hli
         · rw [if_neg hy]; constructor <;> intro h <;> omega
       · exact ⟨fun _ => rfl, fun _ => rfl⟩
   · exact ⟨fun _ => rfl, fun _ => rfl⟩
-
-theorem mem_mergeU : ∀ (xs ys acc : List Nat) (x : Nat), x ∈ mergeU xs ys acc ↔ x ∈ xs ∨ x ∈ ys ∨ x ∈ acc := by
-  intro xs ys acc x
-  induction xs, ys, acc using mergeU.induct with
-  | case1 ys acc => rw [mergeU, List.reverseAux_eq]; simp only [List.mem_append, List.mem_reverse]; grind
-  | case2 xs acc h =>
-    rw [mergeU, List.reverseAux_eq]
-    · simp only [List.mem_append, List.mem_reverse]; grind
-    · exact h
-  | case3 x' xs y ys acc h ih => rw [mergeU, if_pos h, ih]; simp only [List.mem_cons]; grind
-  | case4 x' xs y ys acc h h' ih => rw [mergeU, if_neg h, if_pos h', ih]; simp only [List.mem_cons]; grind
-  | case5 x' xs y ys acc h h' ih =>
-    rw [mergeU, if_neg h, if_neg h', ih]
-    have : x' = y := by omega
-    subst this; simp only [List.mem_cons]; grind
-
-theorem mem_foldl_mergeU (f : Nat × Array Nat → List Nat) :
-    ∀ (l : List (Nat × Array Nat)) (acc : List Nat) (d : Nat),
-      d ∈ l.foldl (fun acc ja => mergeU acc (f ja) []) acc ↔ d ∈ acc ∨ ∃ ja ∈ l, d ∈ f ja := by
-  intro l
-  induction l with
-  | nil => intro acc d; simp
-  | cons ja l ih =>
-    intro acc d
-    rw [List.foldl_cons, ih, mem_mergeU]
-    simp only [List.not_mem_nil, or_false, List.mem_cons]
-    constructor
-    · rintro ((h | h) | ⟨jb, hj, h⟩)
-      · exact Or.inl h
-      · exact Or.inr ⟨ja, Or.inl rfl, h⟩
-      · exact Or.inr ⟨jb, Or.inr hj, h⟩
-    · rintro (h | ⟨jb, rfl | hj, h⟩)
-      · exact Or.inl (Or.inl h)
-      · exact Or.inl (Or.inr h)
-      · exact Or.inr ⟨jb, hj, h⟩
-
-/-- A clean seed on diagonal `d` gives an anchor of the (sliced) lookup on that diagonal. -/
-theorem anchor_of_seedBit (Gc R : ByteArray) (j d : Nat) (hj : j < 4) (a : Array Nat) (hl : LookOk Gc R j a)
-    (h : seedBit Gc R j d ≠ 0) : ∃ e ∈ a.toList, e / 16 = d := by
-  obtain ⟨h1, h2⟩ := (seedBit_ne Gc R j d).mp h
-  refine ⟨anchorOf j (d - (BIAS - j * q)), (hl.2 _).mpr ⟨_, h2, rfl⟩, ?_⟩
-  unfold anchorOf
-  have hw : 2 ^ j < 16 := by
-    rcases (show j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 by omega) with rfl | rfl | rfl | rfl <;> decide
-  rw [show d - (BIAS - j * q) + (BIAS - j * q) = d by omega]
-  generalize 2 ^ j = w at hw ⊢
-  omega
-
-theorem maskAt_ne (G R : ByteArray) (d : Nat) (h : maskAt G R d ≠ 0) : ∃ j, j < 4 ∧ seedBit G R j d ≠ 0 := by
-  unfold maskAt at h
-  by_cases h0 : seedBit G R 0 d = 0
-  · by_cases h1 : seedBit G R 1 d = 0
-    · by_cases h2 : seedBit G R 2 d = 0
-      · exact ⟨3, by omega, by omega⟩
-      · exact ⟨2, by omega, h2⟩
-    · exact ⟨1, by omega, h1⟩
-  · exact ⟨0, by omega, h0⟩
-
-/-- The seeds of `js` as a mask. -/
-def maskOf : List Nat → Nat
-  | [] => 0
-  | j :: js => maskOf js + 2 ^ j
-
-theorem maskOf_spec : ∀ js : List Nat, js.Nodup → (∀ j ∈ js, j < 4) →
-    maskOf js < 16 ∧ pop4 (maskOf js) = js.length ∧ ∀ i, i < 4 → bit (maskOf js) i = 1 → i ∈ js := by
-  intro js
-  induction js with
-  | nil =>
-    intro _ _
-    refine ⟨by decide, rfl, fun i _ h => ?_⟩
-    simp only [maskOf, bit, Nat.zero_div, Nat.zero_mod] at h
-    omega
-  | cons j js ih =>
-    intro hnd hl
-    have hnd' := List.nodup_cons.mp hnd
-    obtain ⟨h1, h2, h3⟩ := ih hnd'.2 (fun i hi => hl i (List.mem_cons_of_mem _ hi))
-    have hj := hl j List.mem_cons_self
-    have h0 : bit (maskOf js) j = 0 := by
-      have : bit (maskOf js) j < 2 := Nat.mod_lt _ (by omega)
-      by_cases e : bit (maskOf js) j = 1
-      · exact absurd (h3 j hj e) hnd'.1
-      · omega
-    obtain ⟨p1, p2⟩ := pop4_add _ h1 j hj h0
-    refine ⟨p2, by simp only [maskOf, List.length_cons]; omega, fun i hi hb => ?_⟩
-    simp only [maskOf] at hb
-    rw [bit_add _ j i hj hi h1 h0] at hb
-    split at hb
-    · next e => exact e ▸ List.mem_cons_self
-    · exact List.mem_cons_of_mem _ (h3 i hi hb)
-
-theorem maskJ_ne (G R : ByteArray) (J d : Nat) (h : maskJ G R J d ≠ 0) :
-    ∃ j, j < 4 ∧ bit J j = 1 ∧ seedBit G R j d ≠ 0 := by
-  apply Classical.byContradiction
-  intro hne
-  apply h
-  have z : ∀ j, j < 4 → (if bit J j = 1 then seedBit G R j d else 0) = 0 := fun j hj => by
-    split
-    · next hb => exact Classical.byContradiction fun h' => hne ⟨j, hj, hb, h'⟩
-    · rfl
-  unfold maskJ
-  rw [z 0 (by omega), z 1 (by omega), z 2 (by omega), z 3 (by omega)]
 
 /-- A hit of penalty `≤ lim < 4·|J|` has a seed of `J` clean on one of its two
 diagonals (the start, or the end shifted by the read length), and is a candidate
@@ -553,76 +450,9 @@ theorem hit_candJ (R G : ByteArray) (st len lim J : Nat) (hn : 100 ≤ R.size) (
       · omega
   · omega
 
-/-- The same with the seeds of a list `js`. -/
-theorem hit_cand (R G : ByteArray) (st len lim : Nat) (js : List Nat) (hn : 100 ≤ R.size) (hlim : lim ≤ 12)
-    (hnd : js.Nodup) (hjs : ∀ j ∈ js, j < 4) (hcov : lim < 4 * js.length) (hp : penB R G st len ≤ lim) :
-    ∃ d, (∃ j ∈ js, seedBit G R j d ≠ 0) ∧ (st, len) ∈ candL R.size d lim := by
-  obtain ⟨-, hpop, hbit⟩ := maskOf_spec js hnd hjs
-  obtain ⟨d, hm, -, hc⟩ := hit_candJ R G st len lim (maskOf js) hn hlim (by omega) hp
-  obtain ⟨j, hj, hb, hs⟩ := maskJ_ne G R _ d hm
-  exact ⟨d, ⟨j, hbit j hj hb, hs⟩, hc⟩
-
 section enum
 
 variable {L P : Type} (lk : Look L P) (ix : L) (G : ByteArray) (offs : Array Nat) (gbs : Array ByteArray)
-
-/-- The strand's enumeration: with `lim < 4·|js|`, exactly the windows of penalty
-`≤ lim`, with their penalties. -/
-theorem mem_hitsStrand (R' : ByteArray) (s : Strand) (js : List Nat) (lim : Nat) (hn : 100 ≤ R'.size)
-    (hlim : lim ≤ 12) (hnd : js.Nodup) (hjs : ∀ j ∈ js, j < 4) (hcov : lim < 4 * js.length)
-    (hsl : ∀ j, j < 4 → ∀ c, c < gbs.size →
-      LookOk gbs[c]! R' j (sliceA (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j offs[c]! gbs[c]!.size))
-    (p : Placement) (k : Nat) :
-    (p, k) ∈ hitsStrand lk ix G offs gbs R' s js lim ↔
-      p.2 = s ∧ p.1.chr < gbs.size ∧ penB R' gbs[p.1.chr]! p.1.start p.1.len = k ∧ k ≤ lim := by
-  obtain ⟨⟨c, st, len⟩, s'⟩ := p
-  unfold hitsStrand
-  simp only [List.mem_flatMap, List.mem_range, List.mem_filterMap]
-  constructor
-  · rintro ⟨c', hc, d, -, w, -, hw⟩
-    split at hw
-    · next hk =>
-      simp only [Option.some.injEq, Prod.mk.injEq, Window.mk.injEq] at hw
-      obtain ⟨⟨⟨rfl, rfl, rfl⟩, rfl⟩, rfl⟩ := hw
-      exact ⟨rfl, hc, ((penFL_eq _ _ _ _ _ hn hlim).2 hk).symm, hk⟩
-    · simp at hw
-  · rintro ⟨rfl, hc, hpk, hk⟩
-    refine ⟨c, hc, ?_⟩
-    obtain ⟨d, ⟨j, hjm, hb⟩, hw⟩ := hit_cand R' gbs[c]! st len lim js hn hlim hnd hjs hcov (by omega)
-    have hj := hjs j hjm
-    obtain ⟨e, he, hed⟩ := anchor_of_seedBit _ _ j d hj _ (hsl j hj c hc) hb
-    refine ⟨d, ?_, (st, len), hw, ?_⟩
-    · rw [mem_foldl_mergeU]
-      refine Or.inr ⟨(j, lk.look ix G R' j (lk.prep ix (seedHash R' j))), ?_, ?_⟩
-      · simp only [List.mem_map]; exact ⟨j, hjm, rfl⟩
-      · simp only [List.mem_map]; exact ⟨e, he, hed⟩
-    · simp only []
-      rw [(penFL_eq _ _ _ _ _ hn hlim).1 (by omega), hpk, if_pos hk]
-
-/-- Both strands: exactly the placements of penalty `≤ lim`, with their penalties. -/
-theorem mem_hitsL [Inhabited P] (R : ByteArray) (lim : Nat) (hn : 100 ≤ R.size) (hlim : lim ≤ 12)
-    (hcat : catOk G offs gbs = true)
-    (hlk : ∀ R' : ByteArray, ∀ j, j < 4 → LookOk G R' j (lk.look ix G R' j (lk.prep ix (seedHash R' j))))
-    (p : Placement) (k : Nat) :
-    (p, k) ∈ hitsL lk ix G offs gbs R lim ↔ cwP R gbs p.2 p.1 = k ∧ k ≤ lim := by
-  have hsl : ∀ R' : ByteArray, ∀ j, j < 4 → ∀ c, c < gbs.size →
-      LookOk gbs[c]! R' j (sliceA (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j offs[c]! gbs[c]!.size) :=
-    fun R' j hj c hc => sliceA_ok G gbs[c]! R' offs[c]! j hj _ (hlk R' j hj) (catOk_spec G offs gbs hcat c hc).1
-      (catOk_spec G offs gbs hcat c hc).2
-  have hrn : 100 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
-  have ord : ∀ R' : ByteArray, List.Nodup ((seedOrder lk ix (prepAll lk ix (seedHashes R'))).take (lim / 4 + 1)) ∧
-      (∀ j ∈ (seedOrder lk ix (prepAll lk ix (seedHashes R'))).take (lim / 4 + 1), j < 4) ∧
-      lim < 4 * ((seedOrder lk ix (prepAll lk ix (seedHashes R'))).take (lim / 4 + 1)).length := by
-    intro R'
-    obtain ⟨h1, h2, h3⟩ := seedOrder_spec lk ix (prepAll lk ix (seedHashes R'))
-    refine ⟨h1.sublist (List.take_sublist _ _), fun j hj => h2 j (List.mem_of_mem_take hj), ?_⟩
-    rw [List.length_take, h3]; omega
-  unfold hitsL
-  simp only []
-  rw [List.mem_append, mem_hitsStrand lk ix G offs gbs R .fwd _ lim hn hlim (ord R).1 (ord R).2.1 (ord R).2.2 (hsl R),
-    mem_hitsStrand lk ix G offs gbs _ .rev _ lim hrn hlim (ord _).1 (ord _).2.1 (ord _).2.2 (hsl _)]
-  obtain ⟨⟨c, st, len⟩, s⟩ := p
-  cases s <;> simp only [cwP, cwG] <;> by_cases hc : c < gbs.size <;> simp [hc] <;> omega
 
 theorem penB_len (R G : ByteArray) (st len : Nat) (h : penB R G st len ≤ 12) :
     R.size ≤ len + 3 ∧ len ≤ R.size + 3 := by
@@ -783,29 +613,6 @@ theorem pairSpecU_of_unique (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (a b 
   · left; have := e1 h1; omega
   · right; exact ⟨h1, h2⟩
 
-/-- Each mate's placements with penalty `≤ lim` from `hitsL`, as scored hits. -/
-theorem mem_toScore_hitsL {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (g : Genome) (m : List Char) (gbs : Array ByteArray) (R : ByteArray) (lim : Nat)
-    (hg : GenomeBytes gbs g) (hr : Encodes R m) (hcat : catOk G offs gbs = true)
-    (hlk : ∀ R' : ByteArray, ∀ j, j < 4 → LookOk G R' j (lk.look ix G R' j (lk.prep ix (seedHash R' j))))
-    (hn : 100 ≤ R.size) (hlim : lim ≤ 12) (x : Placement × Int) :
-    x ∈ toScore (hitsL lk ix G offs gbs R lim) ↔ x ∈ hitsBoth sc0 (-12) g m ∧ -(lim : Int) ≤ x.2 := by
-  rw [mem_hitsBoth_cwP g m gbs R hg hr]
-  unfold toScore
-  rw [List.mem_map]
-  constructor
-  · rintro ⟨⟨p, k⟩, hm, rfl⟩
-    rw [mem_hitsL lk ix G offs gbs R lim hn hlim hcat hlk] at hm
-    obtain ⟨rfl, hk⟩ := hm
-    simp only
-    exact ⟨⟨by omega, trivial⟩, by omega⟩
-  · rintro ⟨⟨hk, hx⟩, hl⟩
-    refine ⟨(x.1, cwP R gbs x.1.2 x.1.1),
-      (mem_hitsL lk ix G offs gbs R lim hn hlim hcat hlk _ _).mpr ⟨rfl, by omega⟩, ?_⟩
-    obtain ⟨p, s⟩ := x
-    simp only at hx ⊢
-    rw [hx]
-
 /-- The per-mate best penalty bounds every hit's score. -/
 theorem le_best (g : Genome) (read : List Char) (gbs : Array ByteArray) (R : ByteArray) (b : Best)
     (hg : GenomeBytes gbs g) (hr : Encodes R read)
@@ -827,44 +634,6 @@ theorem selPairs_iff (ps : List ((Placement × Int) × (Placement × Int)))
       simp only [Prod.mk.injEq] at he; exact hf x hx y hy he.1 he.2) p
   simp only [Prod.mk.injEq] at this
   exact this
-
-/-- **Restricting to the best pairs.**  If no proper pair of hits sums above `l`,
-and `PS` holds exactly the proper pairs summing to `l` (and has one), the best pair
-is the best of `PS`. -/
-theorem bestPair_restrict (lo hi : Nat) (H1 H2 : List (Placement × Int))
-    (PS : List ((Placement × Int) × (Placement × Int))) (l : Int) (f1 : Fun H1) (f2 : Fun H2)
-    (sub : ∀ x, x ∈ PS ↔ x ∈ pairsOf lo hi H1 H2 ∧ l ≤ x.1.2 + x.2.2)
-    (hmax : ∀ x ∈ pairsOf lo hi H1 H2, x.1.2 + x.2.2 ≤ l) (hne : PS.isEmpty = false) :
-    selPairs PS = bestPair lo hi H1 H2 := by
-  have hf : ∀ x ∈ pairsOf lo hi H1 H2, ∀ y ∈ pairsOf lo hi H1 H2, x.1.1 = y.1.1 → x.2.1 = y.2.1 → x = y := by
-    rintro ⟨⟨a, sa⟩, ⟨b, sb⟩⟩ hx ⟨⟨a', sa'⟩, ⟨b', sb'⟩⟩ hy (rfl : a = a') (rfl : b = b')
-    rw [mem_pairsOf] at hx hy
-    have ea : sa = sa' := f1 _ hx.1 _ hy.1 rfl
-    have eb : sb = sb' := f2 _ hx.2.1 _ hy.2.1 rfl
-    rw [ea, eb]
-  obtain ⟨y, hy⟩ : ∃ y, y ∈ PS := by
-    cases h : PS with
-    | nil => rw [h] at hne; simp at hne
-    | cons y _ => exact ⟨y, List.mem_cons_self⟩
-  apply Option.ext
-  intro p
-  rw [selPairs_iff _ (fun x hx z hz => hf x ((sub x).1 hx).1 z ((sub z).1 hz).1),
-    bestPair_iff lo hi H1 H2 f1 f2]
-  constructor
-  · rintro ⟨hp, hall⟩
-    obtain ⟨hp1, hp2⟩ := (sub p).1 hp
-    refine ⟨hp1, fun x hx => ?_⟩
-    by_cases hs : l ≤ x.1.2 + x.2.2
-    · exact hall x ((sub x).2 ⟨hx, hs⟩)
-    · left; omega
-  · rintro ⟨hp, hall⟩
-    obtain ⟨hy1, hy2⟩ := (sub y).1 hy
-    have hpy : p = y := by
-      rcases hall y hy1 with h | ⟨h1, h2⟩
-      · have := hmax p hp; omega
-      · exact (hf y hy1 p hp h1 h2).symm
-    subst hpy
-    exact ⟨hy, fun x hx => hall x ((sub x).1 hx).1⟩
 
 /-! ## The searches' final states -/
 
@@ -953,26 +722,23 @@ theorem ilCS_inv : ∀ (f : Nat) (s1 s2 : CS) (b : Best) (S : Window → Prop),
 
 end twoS
 
-/-- A finished strand holds the anchors of seeds `J` with `best < 4·|J|`. -/
-theorem sc_dead_anchors (cw : Window → Nat) (R' : ByteArray) (gbs : Array ByteArray) (base : Nat) (s : CS)
-    (b : Best) (S : Window → Prop) (h : SC cw R' gbs base s b S) (hd : s.live b = false) (hp : b.pen ≤ 12) :
-    ∃ J, J < 16 ∧ b.pen < 4 * pop4 J ∧ ∀ c, c < gbs.size → AnchorsM (maskJ gbs[c]! R' J) s.as[c]! := by
-  obtain ⟨J, hJ, hk, -, -, -, hlen, -, -, hs⟩ := h
-  refine ⟨J, hJ, ?_, fun c hc => (hs c hc).anchors⟩
-  unfold CS.live at hd
-  cases ho : s.ord with
-  | nil => rw [ho] at hlen; simp at hlen; omega
-  | cons j rest => rw [ho] at hd; simp at hd; omega
+/-- A strand state holding the anchors of seeds `J` on every chromosome (`R'` =
+the strand's read), with the seeds not looked up yet in `ord`. -/
+def DSJ (gbs : Array ByteArray) (R' : ByteArray) (s : CS) (J : Nat) : Prop :=
+  J < 16 ∧ s.k = pop4 J ∧ s.ord.Nodup ∧ (∀ j ∈ s.ord, j < 4 ∧ bit J j = 0) ∧ pop4 J + s.ord.length = 4 ∧
+    s.as.size = gbs.size ∧ ∀ c, c < gbs.size → AnchorsM (maskJ gbs[c]! R' J) s.as[c]!
 
-/-- Both strands of a finished search, as `sc_dead_anchors`. -/
+theorem dsj_of_sc (cw : Window → Nat) (R' : ByteArray) (gbs : Array ByteArray) (base : Nat) (s : CS)
+    (b : Best) (S : Window → Prop) (h : SC cw R' gbs base s b S) : ∃ J, DSJ gbs R' s J := by
+  obtain ⟨J, hJ, hk, -, hnd, hord, hlen, -, hsz, hs⟩ := h
+  exact ⟨J, hJ, hk, hnd, hord, hlen, hsz, fun c hc => (hs c hc).anchors⟩
+
+/-- Both strands of a finished search. -/
 theorem mapChromsCS_ok {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (G : ByteArray) (offs : Array Nat)
     (gbs : Array ByteArray) (R : ByteArray) (rf : Bool) (hn : 100 ≤ R.size) (hcat : catOk G offs gbs = true)
-    (hlk : ∀ R' : ByteArray, ∀ j, j < 4 → LookOk G R' j (lk.look ix G R' j (lk.prep ix (seedHash R' j))))
-    (hp : (mapChromsCS lk ix G offs gbs R rf).1.pen ≤ 12) :
-    (∃ J, J < 16 ∧ (mapChromsCS lk ix G offs gbs R rf).1.pen < 4 * pop4 J ∧
-      ∀ c, c < gbs.size → AnchorsM (maskJ gbs[c]! R J) (mapChromsCS lk ix G offs gbs R rf).2.1.as[c]!) ∧
-    (∃ J, J < 16 ∧ (mapChromsCS lk ix G offs gbs R rf).1.pen < 4 * pop4 J ∧
-      ∀ c, c < gbs.size → AnchorsM (maskJ gbs[c]! (revCompB R) J) (mapChromsCS lk ix G offs gbs R rf).2.2.as[c]!) := by
+    (hlk : ∀ R' : ByteArray, ∀ j, j < 4 → LookOk G R' j (lk.look ix G R' j (lk.prep ix (seedHash R' j)))) :
+    (∃ J, DSJ gbs R (mapChromsCS lk ix G offs gbs R rf).2.1 J) ∧
+    (∃ J, DSJ gbs (revCompB R) (mapChromsCS lk ix G offs gbs R rf).2.2 J) := by
   have hrn : 100 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
   have hsl : ∀ R' : ByteArray, ∀ j, j < 4 → ∀ c, c < gbs.size →
       LookOk gbs[c]! R' j (sliceA (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j offs[c]! gbs[c]!.size) :=
@@ -989,21 +755,78 @@ theorem mapChromsCS_ok {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (G : 
       (CS.init lk ix (prepAll lk ix (seedHashes (revCompB R))) gbs.size).ord.length ≤ 8 := by
     simp [CS.init, (seedOrder_spec lk ix (prepAll lk ix (seedHashes R))).2.2,
       (seedOrder_spec lk ix (prepAll lk ix (seedHashes (revCompB R)))).2.2]
-  unfold mapChromsCS at hp ⊢
+  unfold mapChromsCS
   cases rf with
   | false =>
-    simp only [Bool.false_eq_true, if_false] at hp ⊢
-    obtain ⟨S, h1, h2, d1, d2⟩ := ilCS_inv (cwJ R gbs) (cwJ_le R gbs) lk ix G gbs offs R (revCompB R) 0 gbs.size
+    simp only [Bool.false_eq_true, if_false]
+    obtain ⟨S, h1, h2, -, -⟩ := ilCS_inv (cwJ R gbs) (cwJ_le R gbs) lk ix G gbs offs R (revCompB R) 0 gbs.size
       cf hn (hsl R) cr hrn (hsl _) 8 _ _ {} (fun _ => False)
       (initC_ok (cwJ R gbs) R gbs 0 lk ix {} _ i0) (initC_ok (cwJ R gbs) _ gbs gbs.size lk ix {} _ i0) hl0
-    exact ⟨sc_dead_anchors _ _ _ _ _ _ _ h1 d1 hp, sc_dead_anchors _ _ _ _ _ _ _ h2 d2 hp⟩
+    exact ⟨dsj_of_sc _ _ _ _ _ _ _ h1, dsj_of_sc _ _ _ _ _ _ _ h2⟩
   | true =>
-    simp only [if_true] at hp ⊢
-    obtain ⟨S, h1, h2, d1, d2⟩ := ilCS_inv (cwJ R gbs) (cwJ_le R gbs) lk ix G gbs offs (revCompB R) R gbs.size 0
+    simp only [if_true]
+    obtain ⟨S, h1, h2, -, -⟩ := ilCS_inv (cwJ R gbs) (cwJ_le R gbs) lk ix G gbs offs (revCompB R) R gbs.size 0
       cr hrn (hsl _) cf hn (hsl R) 8 _ _ {} (fun _ => False)
       (initC_ok (cwJ R gbs) _ gbs gbs.size lk ix {} _ i0) (initC_ok (cwJ R gbs) R gbs 0 lk ix {} _ i0)
       (by rw [Nat.add_comm]; exact hl0)
-    exact ⟨sc_dead_anchors _ _ _ _ _ _ _ h2 d2 hp, sc_dead_anchors _ _ _ _ _ _ _ h1 d1 hp⟩
+    exact ⟨dsj_of_sc _ _ _ _ _ _ _ h2, dsj_of_sc _ _ _ _ _ _ _ h1⟩
+
+theorem mergeAll_get (gbs : Array ByteArray) (offs : Array Nat) (a : Array Nat) (j : Nat) (as : Array (Array Nat))
+    (c : Nat) (hc : c < as.size) :
+    (mergeAll gbs offs a j as)[c]! = merge as[c]! (sliceA a j offs[c]! gbs[c]!.size) 0 0 #[] := by
+  unfold mergeAll
+  rw [getElem!_pos _ c (by simpa using hc), Array.getElem_mapIdx, getElem!_pos as c hc]
+
+/-- Deepening keeps the state and covers `m` seeds (or all of them). -/
+theorem deepen_ok {L P : Type} (lk : Look L P) (ix : L) (G : ByteArray) (gbs : Array ByteArray) (offs : Array Nat)
+    (R' : ByteArray) (m : Nat)
+    (hsl : ∀ j, j < 4 → ∀ c, c < gbs.size →
+      LookOk gbs[c]! R' j (sliceA (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j offs[c]! gbs[c]!.size)) :
+    ∀ f s J, DSJ gbs R' s J → s.ord.length ≤ f →
+      ∃ J', DSJ gbs R' (deepen lk ix G gbs offs R' m f s) J' ∧ (m ≤ pop4 J' ∨ pop4 J' = 4) := by
+  intro f
+  induction f with
+  | zero =>
+    intro s J h hf
+    refine ⟨J, h, Or.inr ?_⟩
+    have := h.2.2.2.2.1; omega
+  | succ f ih =>
+    intro s J h hf
+    obtain ⟨hJ, hk, hnd, hord, hlen, hsz, has⟩ := h
+    rcases s with ⟨_ | ⟨j, rest⟩, k, looked, as⟩
+    · refine ⟨J, ⟨hJ, hk, hnd, hord, hlen, hsz, has⟩, Or.inr ?_⟩
+      simp at hlen; omega
+    · simp only at hk hnd hord hlen hsz has hf
+      simp only [deepen]
+      split
+      · exact ⟨J, ⟨hJ, hk, hnd, hord, hlen, hsz, has⟩, Or.inl (by omega)⟩
+      · obtain ⟨hj4, hj0⟩ := hord j List.mem_cons_self
+        obtain ⟨hpop, hJ'⟩ := pop4_add J hJ j hj4 hj0
+        have hnd' := List.nodup_cons.mp hnd
+        apply ih _ (J + 2 ^ j) _ (by simp at hf ⊢; omega)
+        refine ⟨hJ', by simp only; omega, hnd'.2, fun j' hj' => ?_, by simp at hlen ⊢; omega,
+          by simp [mergeAll, hsz], fun c hc => ?_⟩
+        · obtain ⟨a1, a2⟩ := hord j' (List.mem_cons_of_mem _ hj')
+          refine ⟨a1, ?_⟩
+          rw [bit_add J j j' hj4 a1 hJ hj0, if_neg (fun e : j' = j => hnd'.1 (e ▸ hj'))]; exact a2
+        · simp only
+          rw [mergeAll_get gbs offs _ j as c (by omega)]
+          exact merge_step _ gbs[c]! R' J j (hsl j hj4 c hc) as[c]! (has c hc) hj4 hJ hj0
+
+/-- Anchors of seeds `J` with `L < 4·|J|` on every chromosome. -/
+def Cov (gbs : Array ByteArray) (R' : ByteArray) (s : CS) (L : Nat) : Prop :=
+  ∃ J, L < 4 * pop4 J ∧ ∀ c, c < gbs.size → AnchorsM (maskJ gbs[c]! R' J) s.as[c]!
+
+theorem cov_deepen {L P : Type} (lk : Look L P) (ix : L) (G : ByteArray) (gbs : Array ByteArray) (offs : Array Nat)
+    (R' : ByteArray) (Lm : Nat) (hL : Lm ≤ 12)
+    (hsl : ∀ j, j < 4 → ∀ c, c < gbs.size →
+      LookOk gbs[c]! R' j (sliceA (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j offs[c]! gbs[c]!.size))
+    (s : CS) (h : ∃ J, DSJ gbs R' s J) :
+    (∃ J, DSJ gbs R' (deepen lk ix G gbs offs R' (Lm / 4 + 1) 4 s) J) ∧
+      Cov gbs R' (deepen lk ix G gbs offs R' (Lm / 4 + 1) 4 s) Lm := by
+  obtain ⟨J, hJ⟩ := h
+  obtain ⟨J', h', hc⟩ := deepen_ok lk ix G gbs offs R' (Lm / 4 + 1) hsl 4 s J hJ (by have := hJ.2.2.2.2.1; omega)
+  exact ⟨⟨J', h'⟩, J', by omega, h'.2.2.2.2.2.2⟩
 
 theorem proper_close (lo hi : Nat) (a b : Placement) (h : properPair lo hi a b = true) (ha : a.1.len ≤ 106)
     (hb : b.1.len ≤ 106) :
@@ -1018,29 +841,6 @@ theorem cwP_hit (R : ByteArray) (gbs : Array ByteArray) (t : Strand) (w : Window
   have hc := cwP_chr_lt R gbs (w, t) h
   cases t <;> simp [cwP, cwG, hc]
 
-/-- Mate `R`'s listed placements are hits scoring at least `-best`. -/
-theorem hitsBest_sound (g : Genome) (m : List Char) (gbs : Array ByteArray) (W : Nat) (R : ByteArray)
-    (r o : Best × CS × CS) (hg : GenomeBytes gbs g) (hr : Encodes R m) (hn : 100 ≤ R.size) (hp : r.1.pen ≤ 12)
-    (x : Placement × Int) (h : x ∈ hitsBest gbs W R r o) :
-    x ∈ hitsBoth sc0 (-12) g m ∧ -(r.1.pen : Int) ≤ x.2 := by
-  have hrn : 100 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
-  rw [mem_hitsBoth_cwP g m gbs R hg hr]
-  unfold hitsBest toScore at h
-  rw [List.mem_map] at h
-  obtain ⟨⟨⟨⟨c, st, len⟩, t⟩, k⟩, hm, rfl⟩ := h
-  rcases List.mem_append.mp hm with hm | hm
-  · obtain ⟨rfl, hc, hpk, hk⟩ := hitsCSF_sound gbs R _ _ _ _ _ hn hp _ _ hm
-    simp only [cwP, cwG, hc, if_true] at hpk ⊢
-    exact ⟨⟨by omega, by rw [hpk]⟩, by omega⟩
-  · obtain ⟨rfl, hc, hpk, hk⟩ := hitsCSF_sound gbs _ _ _ _ _ _ hrn hp _ _ hm
-    simp only [cwP, cwG, hc, if_true] at hpk ⊢
-    exact ⟨⟨by omega, by rw [hpk]⟩, by omega⟩
-
-/-- Anchor facts of a finished search (both strands). -/
-def StOk (gbs : Array ByteArray) (R : ByteArray) (r : Best × CS × CS) : Prop :=
-  (∃ J, r.1.pen < 4 * pop4 J ∧ ∀ c, c < gbs.size → AnchorsM (maskJ gbs[c]! R J) r.2.1.as[c]!) ∧
-  (∃ J, r.1.pen < 4 * pop4 J ∧ ∀ c, c < gbs.size → AnchorsM (maskJ gbs[c]! (revCompB R) J) r.2.2.as[c]!)
-
 theorem incA_anchors (m : Nat → Nat) (as : Array Nat) (h : AnchorsM m as) : IncA as :=
   incA_of as (h.sorted.imp fun {a b} hab => by
     show a < b
@@ -1048,15 +848,34 @@ theorem incA_anchors (m : Nat → Nat) (as : Array Nat) (h : AnchorsM m as) : In
     have : b / 16 ≤ a / 16 := Nat.div_le_div_right (by omega)
     omega)
 
-/-- Mate `R`'s hits at its best penalty that pair properly with a hit of the other
-mate (`R2`) at its best penalty are listed. -/
-theorem hitsBest_complete (g : Genome) (m : List Char) (gbs : Array ByteArray) (lo hi : Nat) (R R2 : ByteArray)
-    (r o : Best × CS × CS) (hg : GenomeBytes gbs g) (hr : Encodes R m) (hn : 100 ≤ R.size) (hn' : R.size ≤ 103)
-    (hn2 : 100 ≤ R2.size) (hn2' : R2.size ≤ 103) (hp : r.1.pen ≤ 12) (hpo : o.1.pen ≤ 12)
-    (sr : StOk gbs R r) (so : StOk gbs R2 o) (x : Placement × Int) (hx : x ∈ hitsBoth sc0 (-12) g m)
-    (hl : -(r.1.pen : Int) ≤ x.2) (q : Placement) (hq : cwP R2 gbs q.2 q.1 ≤ o.1.pen)
+/-- Listed placements are hits scoring at least `-L`. -/
+theorem hitsLv_sound (g : Genome) (m : List Char) (gbs : Array ByteArray) (W : Nat) (R : ByteArray)
+    (sf sr pf pr : CS) (L : Nat) (hg : GenomeBytes gbs g) (hr : Encodes R m) (hn : 100 ≤ R.size) (hL : L ≤ 12)
+    (x : Placement × Int) (h : x ∈ hitsLv gbs W R (revCompB R) sf sr pf pr L) :
+    x ∈ hitsBoth sc0 (-12) g m ∧ -(L : Int) ≤ x.2 := by
+  have hrn : 100 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
+  rw [mem_hitsBoth_cwP g m gbs R hg hr]
+  unfold hitsLv toScore at h
+  rw [List.mem_map] at h
+  obtain ⟨⟨⟨⟨c, st, len⟩, t⟩, k⟩, hm, rfl⟩ := h
+  rcases List.mem_append.mp hm with hm | hm
+  · obtain ⟨rfl, hc, hpk, hk⟩ := hitsCSF_sound gbs R _ _ _ _ _ hn hL _ _ hm
+    simp only [cwP, cwG, hc, if_true] at hpk ⊢
+    exact ⟨⟨by omega, by rw [hpk]⟩, by omega⟩
+  · obtain ⟨rfl, hc, hpk, hk⟩ := hitsCSF_sound gbs _ _ _ _ _ _ hrn hL _ _ hm
+    simp only [cwP, cwG, hc, if_true] at hpk ⊢
+    exact ⟨⟨by omega, by rw [hpk]⟩, by omega⟩
+
+/-- A hit scoring at least `-L` that pairs properly with a hit `q` of the other
+mate (`R2`) of penalty `≤ L2` is listed. -/
+theorem hitsLv_complete (g : Genome) (m : List Char) (gbs : Array ByteArray) (lo hi : Nat) (R R2 : ByteArray)
+    (sf sr pf pr : CS) (L L2 : Nat) (hg : GenomeBytes gbs g) (hr : Encodes R m) (hn : 100 ≤ R.size)
+    (hn' : R.size ≤ 103) (hn2 : 100 ≤ R2.size) (hn2' : R2.size ≤ 103) (hL : L ≤ 12) (hL2 : L2 ≤ 12)
+    (cf : Cov gbs R sf L) (cr : Cov gbs (revCompB R) sr L) (kf : Cov gbs R2 pf L2)
+    (kr : Cov gbs (revCompB R2) pr L2) (x : Placement × Int) (hx : x ∈ hitsBoth sc0 (-12) g m)
+    (hl : -(L : Int) ≤ x.2) (q : Placement) (hq : cwP R2 gbs q.2 q.1 ≤ L2)
     (hpq : properPair lo hi x.1 q = true ∨ properPair lo hi q x.1 = true) :
-    x ∈ hitsBest gbs (hi + 128) R r o := by
+    x ∈ hitsLv gbs (hi + 128) R (revCompB R) sf sr pf pr L := by
   have hrn : 100 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
   have hrn2 : 100 ≤ (revCompB R2).size := by rw [revCompB_size]; exact hn2
   rw [mem_hitsBoth_cwP g m gbs R hg hr] at hx
@@ -1082,19 +901,21 @@ theorem hitsBest_complete (g : Genome) (m : List Char) (gbs : Array ByteArray) (
   obtain ⟨⟨c', st', len'⟩, t'⟩ := q
   simp only at hch hst hd1 hd2 hc hpe hqe hqc hq hl hx12 ⊢
   subst hch
-  unfold hitsBest toScore
+  unfold hitsLv toScore
   rw [List.mem_map]
   refine ⟨((⟨c, st, len⟩, t), cwP R gbs t ⟨c, st, len⟩), ?_, rfl⟩
-  obtain ⟨⟨Jf, cf, af⟩, ⟨Jr, cr, ar⟩⟩ := sr
-  obtain ⟨⟨Kf, kf, bf⟩, ⟨Kr, kr, br⟩⟩ := so
+  obtain ⟨Jf, cvf, af⟩ := cf
+  obtain ⟨Jr, cvr, ar⟩ := cr
+  obtain ⟨Kf, kvf, bf⟩ := kf
+  obtain ⟨Kr, kvr, br⟩ := kr
   cases t <;> cases t' <;> simp only [ne_eq, not_true_eq_false, reduceCtorEq, not_false_eq_true] at hst
   · -- forward mate, partner on the reverse strand
     simp only [if_true] at hpe
     simp only [reduceCtorEq, if_false] at hqe
     apply List.mem_append_left
-    obtain ⟨e', he', h1, h2, -⟩ := anchor_near (revCompB R2) gbs[c]! o.2.2.as[c]! Kr st' len' o.1.pen hrn2 hpo kr
+    obtain ⟨e', he', h1, h2, -⟩ := anchor_near (revCompB R2) gbs[c]! pr.as[c]! Kr st' len' L2 hrn2 hL2 kvr
       (br c hc) (by rw [hqe]; exact hq)
-    have := hitsCSF_complete gbs R .fwd r.2.1 o.2.2 (hi + 128) r.1.pen Jf hn hp cf c st len hc (af c hc)
+    have := hitsCSF_complete gbs R .fwd sf pr (hi + 128) L Jf hn hL cvf c st len hc (af c hc)
       (incA_anchors _ _ (br c hc)) (by rw [hpe]; omega) ⟨e', he', by simp only [BIAS] at *; omega,
         by simp only [BIAS] at *; omega⟩
     rwa [hpe] at this
@@ -1102,74 +923,217 @@ theorem hitsBest_complete (g : Genome) (m : List Char) (gbs : Array ByteArray) (
     simp only [reduceCtorEq, if_false] at hpe
     simp only [if_true] at hqe
     apply List.mem_append_right
-    obtain ⟨e', he', h1, h2, -⟩ := anchor_near R2 gbs[c]! o.2.1.as[c]! Kf st' len' o.1.pen hn2 hpo kf
+    obtain ⟨e', he', h1, h2, -⟩ := anchor_near R2 gbs[c]! pf.as[c]! Kf st' len' L2 hn2 hL2 kvf
       (bf c hc) (by rw [hqe]; exact hq)
-    have := hitsCSF_complete gbs (revCompB R) .rev r.2.2 o.2.1 (hi + 128) r.1.pen Jr hrn hp cr c st len hc
+    have := hitsCSF_complete gbs (revCompB R) .rev sr pf (hi + 128) L Jr hrn hL cvr c st len hc
       (ar c hc) (incA_anchors _ _ (bf c hc)) (by rw [hpe]; omega) ⟨e', he', by simp only [BIAS] at *; omega,
         by simp only [BIAS] at *; omega⟩
     rwa [hpe] at this
 
-theorem stOk_of {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (G : ByteArray) (offs : Array Nat)
-    (gbs : Array ByteArray) (R : ByteArray) (rf : Bool) (hn : 100 ≤ R.size) (hcat : catOk G offs gbs = true)
+/-- **Restricting to the best pairs.**  If `PS` holds exactly the proper pairs of
+hits summing to at least `l`, and has one, the best pair is the best of `PS`. -/
+theorem bestPair_restrict (lo hi : Nat) (H1 H2 : List (Placement × Int))
+    (PS : List ((Placement × Int) × (Placement × Int))) (l : Int) (f1 : Fun H1) (f2 : Fun H2)
+    (sub : ∀ x, x ∈ PS ↔ x ∈ pairsOf lo hi H1 H2 ∧ l ≤ x.1.2 + x.2.2) (hne : PS.isEmpty = false) :
+    selPairs PS = bestPair lo hi H1 H2 := by
+  have hf : ∀ x ∈ pairsOf lo hi H1 H2, ∀ y ∈ pairsOf lo hi H1 H2, x.1.1 = y.1.1 → x.2.1 = y.2.1 → x = y := by
+    rintro ⟨⟨a, sa⟩, ⟨b, sb⟩⟩ hx ⟨⟨a', sa'⟩, ⟨b', sb'⟩⟩ hy (rfl : a = a') (rfl : b = b')
+    rw [mem_pairsOf] at hx hy
+    have ea : sa = sa' := f1 _ hx.1 _ hy.1 rfl
+    have eb : sb = sb' := f2 _ hx.2.1 _ hy.2.1 rfl
+    rw [ea, eb]
+  obtain ⟨y, hy⟩ : ∃ y, y ∈ PS := by
+    cases h : PS with
+    | nil => rw [h] at hne; simp at hne
+    | cons y _ => exact ⟨y, List.mem_cons_self⟩
+  apply Option.ext
+  intro p
+  rw [selPairs_iff _ (fun x hx z hz => hf x ((sub x).1 hx).1 z ((sub z).1 hz).1),
+    bestPair_iff lo hi H1 H2 f1 f2]
+  constructor
+  · rintro ⟨hp, hall⟩
+    obtain ⟨hp1, hp2⟩ := (sub p).1 hp
+    refine ⟨hp1, fun x hx => ?_⟩
+    by_cases hs : l ≤ x.1.2 + x.2.2
+    · exact hall x ((sub x).2 ⟨hx, hs⟩)
+    · left; omega
+  · rintro ⟨hp, hall⟩
+    obtain ⟨hy1, hy2⟩ := (sub y).1 hy
+    have hpP : p ∈ PS := by
+      rcases hall y hy1 with h | ⟨h1, h2⟩
+      · exact (sub p).2 ⟨hp, by omega⟩
+      · rw [← hf y hy1 p hp h1 h2]; exact hy
+    exact ⟨hpP, fun x hx => hall x ((sub x).1 hx).1⟩
+
+theorem bestPair_of_nil (lo hi : Nat) (h1 h2 : List (Placement × Int)) (h : pairsOf lo hi h1 h2 = []) :
+    bestPair lo hi h1 h2 = none := by
+  show (pairsOf lo hi h1 h2).find? _ = none
+  rw [h]; rfl
+
+/-- **The levels are exact.** -/
+theorem pairLevels_eq {L P : Type} (lk : Look L P) (lo hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
+    (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray) (R1 R2 : ByteArray) (l1 l2 : Nat)
+    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
     (hlk : ∀ R' : ByteArray, ∀ j, j < 4 → LookOk G R' j (lk.look ix G R' j (lk.prep ix (seedHash R' j))))
-    (hp : (mapChromsCS lk ix G offs gbs R rf).1.pen ≤ 12) : StOk gbs R (mapChromsCS lk ix G offs gbs R rf) := by
-  obtain ⟨⟨Jf, -, cf, af⟩, ⟨Jr, -, cr, ar⟩⟩ := mapChromsCS_ok lk ix G offs gbs R rf hn hcat hlk hp
-  exact ⟨⟨Jf, cf, af⟩, ⟨Jr, cr, ar⟩⟩
+    (hn1 : 100 ≤ R1.size) (hn2 : 100 ≤ R2.size) (hn1' : R1.size ≤ 103) (hn2' : R2.size ≤ 103)
+    (b1 : ∀ x ∈ hitsBoth sc0 (-12) g m1, x.2 ≤ -(l1 : Int)) (b2 : ∀ x ∈ hitsBoth sc0 (-12) g m2, x.2 ≤ -(l2 : Int)) :
+    ∀ n X a b c d, 24 + l1 + l2 - X = n → (∃ J, DSJ gbs R1 a J) → (∃ J, DSJ gbs (revCompB R1) b J) →
+      (∃ J, DSJ gbs R2 c J) → (∃ J, DSJ gbs (revCompB R2) d J) →
+      pairLevels lk lo hi ix G offs gbs R1 R2 (revCompB R1) (revCompB R2) l1 l2 X a b c d =
+        pairSpecU sc0 (-12) lo hi g m1 m2 := by
+  have hsl : ∀ R' : ByteArray, ∀ j, j < 4 → ∀ c, c < gbs.size →
+      LookOk gbs[c]! R' j (sliceA (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j offs[c]! gbs[c]!.size) :=
+    fun R' j hj c hc => sliceA_ok G gbs[c]! R' offs[c]! j hj _ (hlk R' j hj) (catOk_spec G offs gbs hcat c hc).1
+      (catOk_spec G offs gbs hcat c hc).2
+  have hcw : ∀ (R : ByteArray) (m : List Char), Encodes R m → ∀ x ∈ hitsBoth sc0 (-12) g m,
+      x.2 = -(cwP R gbs x.1.2 x.1.1 : Int) ∧ cwP R gbs x.1.2 x.1.1 ≤ 12 := fun R m hr x hx => by
+    have := (mem_hitsBoth_cwP g m gbs R hg hr x).1 hx; exact ⟨this.2, this.1⟩
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+  intro X a b c d hX da db dc dd
+  rw [pairLevels]
+  have hL1 : min 12 (X - l2) ≤ 12 := Nat.min_le_left _ _
+  have hL2 : min 12 (X - l1) ≤ 12 := Nat.min_le_left _ _
+  obtain ⟨da', ca⟩ := cov_deepen lk ix G gbs offs R1 _ hL1 (hsl R1) a da
+  obtain ⟨db', cb⟩ := cov_deepen lk ix G gbs offs (revCompB R1) _ hL1 (hsl _) b db
+  obtain ⟨dc', cc⟩ := cov_deepen lk ix G gbs offs R2 _ hL2 (hsl R2) c dc
+  obtain ⟨dd', cd⟩ := cov_deepen lk ix G gbs offs (revCompB R2) _ hL2 (hsl _) d dd
+  generalize deepen lk ix G gbs offs R1 (min 12 (X - l2) / 4 + 1) 4 a = a' at *
+  generalize deepen lk ix G gbs offs (revCompB R1) (min 12 (X - l2) / 4 + 1) 4 b = b' at *
+  generalize deepen lk ix G gbs offs R2 (min 12 (X - l1) / 4 + 1) 4 c = c' at *
+  generalize deepen lk ix G gbs offs (revCompB R2) (min 12 (X - l1) / 4 + 1) 4 d = d' at *
+  generalize hL1v : min 12 (X - l2) = L1 at *
+  generalize hL2v : min 12 (X - l1) = L2 at *
+  generalize hT : (if 12 ≤ L1 ∧ 12 ≤ L2 then (24 : Int) else (X : Int)) = T
+  have hTv : (12 ≤ L1 ∧ 12 ≤ L2 → T = 24) ∧ (¬ (12 ≤ L1 ∧ 12 ≤ L2) → T = X) := by
+    rw [← hT]; constructor <;> intro h <;> simp [h]
+  -- the kept pairs: exactly the proper pairs of hits summing to at least `-T`
+  have sub : ∀ x, x ∈ (pairsOf lo hi (hitsLv gbs (hi + 128) R1 (revCompB R1) a' b' c' d' L1)
+      (hitsLv gbs (hi + 128) R2 (revCompB R2) c' d' a' b' L2)).filter (fun x => decide (-T ≤ x.1.2 + x.2.2)) ↔
+      x ∈ pairsOf lo hi (hitsBoth sc0 (-12) g m1) (hitsBoth sc0 (-12) g m2) ∧ -T ≤ x.1.2 + x.2.2 := by
+    intro x
+    rw [List.mem_filter, mem_pairsOf, mem_pairsOf, decide_eq_true_eq]
+    constructor
+    · rintro ⟨⟨ha, hb, hp⟩, hs⟩
+      exact ⟨⟨(hitsLv_sound g m1 gbs _ R1 _ _ _ _ _ hg h1 hn1 (by omega) _ ha).1,
+        (hitsLv_sound g m2 gbs _ R2 _ _ _ _ _ hg h2 hn2 (by omega) _ hb).1, hp⟩, hs⟩
+    · rintro ⟨⟨ha, hb, hp⟩, hs⟩
+      have e1 := b1 _ ha; have e2 := b2 _ hb
+      have c1 := hcw R1 m1 h1 _ ha; have c2 := hcw R2 m2 h2 _ hb
+      have k1 : -(L1 : Int) ≤ x.1.2 := by
+        by_cases hf : 12 ≤ L1 ∧ 12 ≤ L2
+        · have := hTv.1 hf; omega
+        · have := hTv.2 hf; omega
+      have k2 : -(L2 : Int) ≤ x.2.2 := by
+        by_cases hf : 12 ≤ L1 ∧ 12 ≤ L2
+        · have := hTv.1 hf; omega
+        · have := hTv.2 hf; omega
+      exact ⟨⟨hitsLv_complete g m1 gbs lo hi R1 R2 _ _ _ _ L1 L2 hg h1 hn1 hn1' hn2 hn2' (by omega) (by omega)
+          ca cb cc cd _ ha k1 x.2.1 (by omega) (Or.inl hp),
+        hitsLv_complete g m2 gbs lo hi R2 R1 _ _ _ _ L2 L1 hg h2 hn2 hn2' hn1 hn1' (by omega) (by omega)
+          cc cd ca cb _ hb k2 x.1.1 (by omega) (Or.inr hp), hp⟩, hs⟩
+  split
+  · next hemp =>
+    split
+    · next hf =>
+      unfold pairSpecU
+      symm
+      apply bestPair_of_nil
+      apply List.eq_nil_iff_forall_not_mem.mpr
+      intro x hx
+      have hx' := (mem_pairsOf _ _ _ _ _).1 hx
+      have c1 := hcw R1 m1 h1 _ hx'.1; have c2 := hcw R2 m2 h2 _ hx'.2.1
+      have hin := (sub x).2 ⟨hx, by have := hTv.1 hf; omega⟩
+      rw [List.isEmpty_iff] at hemp
+      rw [hemp] at hin; simp at hin
+    · next hf =>
+      exact ih _ (by omega) (X + 4) a' b' c' d' rfl da' db' dc' dd'
+  · next hemp =>
+    exact bestPair_restrict lo hi _ _ _ (-T) (fun_hitsBoth g m1) (fun_hitsBoth g m2) sub (by simpa using hemp)
 
 /-- **The fallback is exact.** -/
 theorem pairSlowU_eq {L P : Type} [Inhabited P] (lk : Look L P) (lo hi : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray) (R1 R2 : ByteArray) (rf1 rf2 : Bool)
     (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
     (hlk : ∀ R' : ByteArray, ∀ j, j < 4 → LookOk G R' j (lk.look ix G R' j (lk.prep ix (seedHash R' j))))
-    (hn1 : 100 ≤ R1.size) (hn2 : 100 ≤ R2.size) (hn1' : R1.size ≤ 103) (hn2' : R2.size ≤ 103)
-    (hl1 : (mapChromsCS lk ix G offs gbs R1 rf1).1.pen ≤ 12) (hl2 : (mapChromsCS lk ix G offs gbs R2 rf2).1.pen ≤ 12) :
+    (hn1 : 100 ≤ R1.size) (hn2 : 100 ≤ R2.size) (hn1' : R1.size ≤ 103) (hn2' : R2.size ≤ 103) :
     pairSlowU lk lo hi ix G offs gbs R1 R2 (mapChromsCS lk ix G offs gbs R1 rf1) (mapChromsCS lk ix G offs gbs R2 rf2) =
       pairSpecU sc0 (-12) lo hi g m1 m2 := by
-  have E := fun (R : ByteArray) (m : List Char) (hr : Encodes R m) (hn : 100 ≤ R.size) (lim : Nat)
-    (hlim : lim ≤ 12) => mem_toScore_hitsL lk ix G offs g m gbs R lim hg hr hcat hlk hn hlim
   have B := fun (R : ByteArray) (m : List Char) (hr : Encodes R m) (hn : 100 ≤ R.size) (rf : Bool) =>
     le_best g m gbs R (mapChromsCS lk ix G offs gbs R rf).1 hg hr (by
       rw [mapChromsCS_fst]
       exact mapChromsC_inv lk ix G offs gbs R rf hn hcat hlk)
-  have s1 := stOk_of lk ix G offs gbs R1 rf1 hn1 hcat hlk hl1
-  have s2 := stOk_of lk ix G offs gbs R2 rf2 hn2 hcat hlk hl2
-  have b1 := B R1 m1 h1 hn1 rf1
-  have b2 := B R2 m2 h2 hn2 rf2
-  unfold pairSlowU pairSpecU
+  obtain ⟨d1, d2⟩ := mapChromsCS_ok lk ix G offs gbs R1 rf1 hn1 hcat hlk
+  obtain ⟨d3, d4⟩ := mapChromsCS_ok lk ix G offs gbs R2 rf2 hn2 hcat hlk
+  unfold pairSlowU
+  exact pairLevels_eq lk lo hi ix G offs g m1 m2 gbs R1 R2 _ _ hg h1 h2 hcat hlk hn1 hn2 hn1' hn2'
+    (B R1 m1 h1 hn1 rf1) (B R2 m2 h2 hn2 rf2) _ _ _ _ _ _ rfl d1 d2 d3 d4
+
+/-! ## Every hit of one read -/
+
+theorem mem_hitsCS (gbs : Array ByteArray) (R' : ByteArray) (sd : Strand) (st : CS) (lim : Nat)
+    (hn : 100 ≤ R'.size) (hlim : lim ≤ 12) (hc : Cov gbs R' st lim) (p : Placement) (k : Nat) :
+    (p, k) ∈ hitsCS gbs R' sd st lim ↔
+      p.2 = sd ∧ p.1.chr < gbs.size ∧ penB R' gbs[p.1.chr]! p.1.start p.1.len = k ∧ k ≤ lim := by
+  obtain ⟨J, hcov, ha⟩ := hc
+  obtain ⟨⟨c, st0, len⟩, s'⟩ := p
+  unfold hitsCS
+  simp only [List.mem_flatMap, List.mem_range, List.mem_filterMap]
+  constructor
+  · rintro ⟨c', hc, e, -, w, -, hw⟩
+    split at hw
+    · next hk =>
+      simp only [Option.some.injEq, Prod.mk.injEq, Window.mk.injEq] at hw
+      obtain ⟨⟨⟨rfl, rfl, rfl⟩, rfl⟩, rfl⟩ := hw
+      exact ⟨rfl, hc, ((penFL_eq _ _ _ _ _ hn hlim).2 hk).symm, hk⟩
+    · simp at hw
+  · rintro ⟨rfl, hc, hpk, hk⟩
+    refine ⟨c, hc, ?_⟩
+    obtain ⟨e, he, -, -, hw⟩ := anchor_near R' gbs[c]! st.as[c]! J st0 len lim hn hlim hcov (ha c hc) (by omega)
+    refine ⟨e, he, (st0, len), hw, ?_⟩
+    simp only []
+    rw [(penFL_eq _ _ _ _ _ hn hlim).1 (by omega), hpk, if_pos hk]
+
+/-- **All hits.**  `allHits` lists exactly the read's placements within the cap
+(both strands) with their scores. -/
+theorem mem_allHits {L P : Type} [Inhabited P] (lk : Look L P) (ix : L) (G : ByteArray) (offs : Array Nat)
+    (g : Genome) (m : List Char) (gbs : Array ByteArray) (R : ByteArray) (hg : GenomeBytes gbs g)
+    (hr : Encodes R m) (hcat : catOk G offs gbs = true)
+    (hlk : ∀ R' : ByteArray, ∀ j, j < 4 → LookOk G R' j (lk.look ix G R' j (lk.prep ix (seedHash R' j))))
+    (hok : fastOk R = true) (x : Placement × Int) :
+    x ∈ allHits lk ix G offs gbs R ↔ x ∈ hitsBoth sc0 (-12) g m := by
+  have hn : 100 ≤ R.size := by unfold fastOk q at hok; simp at hok; omega
+  have hrn : 100 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
+  have hsl : ∀ R' : ByteArray, ∀ j, j < 4 → ∀ c, c < gbs.size →
+      LookOk gbs[c]! R' j (sliceA (lk.look ix G R' j (lk.prep ix (seedHash R' j))) j offs[c]! gbs[c]!.size) :=
+    fun R' j hj c hc => sliceA_ok G gbs[c]! R' offs[c]! j hj _ (hlk R' j hj) (catOk_spec G offs gbs hcat c hc).1
+      (catOk_spec G offs gbs hcat c hc).2
+  obtain ⟨d1, d2⟩ := mapChromsCS_ok lk ix G offs gbs R false hn hcat hlk
+  have cf := (cov_deepen lk ix G gbs offs R 12 (Nat.le_refl _) (hsl R) _ d1).2
+  have cr := (cov_deepen lk ix G gbs offs (revCompB R) 12 (Nat.le_refl _) (hsl _) _ d2).2
+  simp only [show (12 : Nat) / 4 + 1 = 4 from rfl] at cf cr
+  have key : ∀ p k, (p, k) ∈ hitsCS gbs R .fwd (deepen lk ix G gbs offs R 4 4 (mapChromsCS lk ix G offs gbs R false).2.1) 12 ++
+      hitsCS gbs (revCompB R) .rev (deepen lk ix G gbs offs (revCompB R) 4 4 (mapChromsCS lk ix G offs gbs R false).2.2) 12 ↔
+      cwP R gbs p.2 p.1 = k ∧ k ≤ 12 := by
+    intro p k
+    rw [List.mem_append, mem_hitsCS gbs R .fwd _ _ hn (Nat.le_refl _) cf, mem_hitsCS gbs _ .rev _ _ hrn (Nat.le_refl _) cr]
+    obtain ⟨⟨c, st, len⟩, s⟩ := p
+    cases s <;> simp only [cwP, cwG] <;> by_cases hc : c < gbs.size <;> simp [hc] <;> omega
+  rw [mem_hitsBoth_cwP g m gbs R hg hr]
+  unfold allHits toScore
   simp only []
-  generalize mapChromsCS lk ix G offs gbs R1 rf1 = r1 at hl1 s1 b1 ⊢
-  generalize mapChromsCS lk ix G offs gbs R2 rf2 = r2 at hl2 s2 b2 ⊢
-  split
-  · apply bestPairF_eq lo hi _ _ _ _ (fun_hitsBoth g m1) (fun_hitsBoth g m2)
-    · intro x; rw [E R1 m1 h1 hn1 12 (Nat.le_refl _)]
-      constructor
-      · exact fun h => h.1
-      · intro h; exact ⟨h, by have := ((mem_hitsBoth_sc0 g m1 x.1 x.2).1 h).2.2; omega⟩
-    · intro x; rw [E R2 m2 h2 hn2 12 (Nat.le_refl _)]
-      constructor
-      · exact fun h => h.1
-      · intro h; exact ⟨h, by have := ((mem_hitsBoth_sc0 g m2 x.1 x.2).1 h).2.2; omega⟩
-  · next hne =>
-    have hcw : ∀ (R : ByteArray) (m : List Char), Encodes R m → ∀ x ∈ hitsBoth sc0 (-12) g m,
-        x.2 = -(cwP R gbs x.1.2 x.1.1 : Int) ∧ cwP R gbs x.1.2 x.1.1 ≤ 12 := fun R m hr x hx => by
-      have := (mem_hitsBoth_cwP g m gbs R hg hr x).1 hx; exact ⟨this.2, this.1⟩
-    refine bestPair_restrict lo hi _ _ _ (-(r1.1.pen : Int) + -(r2.1.pen : Int)) (fun_hitsBoth g m1)
-      (fun_hitsBoth g m2) (fun x => ?_) (fun x hx => ?_) (by simpa using hne)
-    · rw [mem_pairsOf, mem_pairsOf]
-      constructor
-      · rintro ⟨ha, hb, hp⟩
-        have u1 := hitsBest_sound g m1 gbs _ R1 r1 r2 hg h1 hn1 hl1 _ ha
-        have u2 := hitsBest_sound g m2 gbs _ R2 r2 r1 hg h2 hn2 hl2 _ hb
-        exact ⟨⟨u1.1, u2.1, hp⟩, by have := u1.2; have := u2.2; omega⟩
-      · rintro ⟨⟨ha, hb, hp⟩, hs⟩
-        have e1 := b1 _ ha; have e2 := b2 _ hb
-        have c1 := hcw R1 m1 h1 _ ha; have c2 := hcw R2 m2 h2 _ hb
-        refine ⟨hitsBest_complete g m1 gbs lo hi R1 R2 r1 r2 hg h1 hn1 hn1' hn2 hn2' hl1 hl2 s1 s2 _ ha
-            (by omega) x.2.1 (by omega) (Or.inl hp),
-          hitsBest_complete g m2 gbs lo hi R2 R1 r2 r1 hg h2 hn2 hn2' hn1 hn1' hl2 hl1 s2 s1 _ hb
-            (by omega) x.1.1 (by omega) (Or.inr hp), hp⟩
-    · rw [mem_pairsOf] at hx
-      have := b1 _ hx.1; have := b2 _ hx.2.1; omega
+  rw [List.mem_map]
+  constructor
+  · rintro ⟨⟨p, k⟩, hm, rfl⟩
+    rw [key] at hm
+    obtain ⟨rfl, hk⟩ := hm
+    exact ⟨hk, rfl⟩
+  · rintro ⟨hk, hx⟩
+    refine ⟨(x.1, cwP R gbs x.1.2 x.1.1), (key _ _).mpr ⟨rfl, hk⟩, ?_⟩
+    obtain ⟨p, s⟩ := x
+    simp only at hx ⊢
+    rw [hx]
 
 /-! ## Top theorems -/
 
@@ -1205,9 +1169,7 @@ theorem pairFastU_eq_pairSpecU {L P : Type} [Inhabited P] (lk : Look L P) (lo hi
           rw [decodeJ_eq_mapSpecBoth g m2 gbs R2 _ hg h2 i2] at hb
           exact (pairSpecU_of_unique lo hi g m1 m2 a b ha hb hp).symm
         · exact pairSlowU_eq lk lo hi ix G offs g m1 m2 gbs R1 R2 _ _ hg h1 h2 hcat hlk hn1 hn2 hn1' hn2'
-            (by omega) (by omega)
       · exact pairSlowU_eq lk lo hi ix G offs g m1 m2 gbs R1 R2 _ _ hg h1 h2 hcat hlk hn1 hn2 hn1' hn2'
-          (by omega) (by omega)
 
 /-- Through the hashed index over the concatenation, checked at run time. -/
 theorem pairFastU_hashed_eq_pairSpecU (lo hi : Nat) (ix : HIdx) (G : ByteArray) (offs : Array Nat) (g : Genome)
@@ -1230,6 +1192,7 @@ theorem pairFastU_mz_eq_pairSpecU (lo hi : Nat) (ix : Mz.MzIdx) (G : ByteArray) 
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.pairSlowU_eq
+#print axioms MapSpec.Fast.mem_allHits
 #print axioms MapSpec.Fast.pairFastU_eq_pairSpecU
 #print axioms MapSpec.Fast.pairFastU_hashed_eq_pairSpecU
 #print axioms MapSpec.Fast.pairFastU_mz_eq_pairSpecU

@@ -187,13 +187,13 @@ def report (st : St) (pairs : Nat) : IO Unit := do
 
 end Diag
 
-/-- Every hit of each mate (`hitsL … 12`, proved = all placements of penalty ≤ 12):
+/-- Every hit of each mate (`allHits`, `mem_allHits`: all placements of penalty ≤ 12):
 `name  mate  chr:start:len:pen:strand ...`. -/
 def dumpHits {L P : Type} [Inhabited P] (lk : Fast.Look L P) (ix : L) (G : ByteArray) (offs : Array Nat) (gbs : Array ByteArray)
     (names : Array String) (ps : Array (ByteArray × ByteArray)) (path : String) : IO Unit := do
   let one (nm : String) (m : Nat) (R : ByteArray) : String :=
-    s!"{nm}\t{m}" ++ String.join ((Fast.hitsL lk ix G offs gbs R 12).map fun (p, k) =>
-      s!"\t{p.1.chr}:{p.1.start}:{p.1.len}:{k}:{if p.2 == Strand.rev then "-" else "+"}") ++ "\n"
+    s!"{nm}\t{m}" ++ String.join ((Fast.allHits lk ix G offs gbs R).map fun (p, k) =>
+      s!"\t{p.1.chr}:{p.1.start}:{p.1.len}:{-k}:{if p.2 == Strand.rev then "-" else "+"}") ++ "\n"
   IO.FS.writeFile path (String.join ((names.zip ps).toList.map fun (nm, p) => one nm 1 p.1 ++ one nm 2 p.2))
 
 /-- Pairs that reach the fallback of `pairFastU` (same tests, untimed). -/
