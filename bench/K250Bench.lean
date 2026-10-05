@@ -162,6 +162,14 @@ def main (args : List String) : IO UInt32 := do
   let _ ← timeIt "hot kerGK same length" reps fun t => (List.range reps).foldl (fun s i => s + kerGK j.R j.K G P j.st j.len (if t == 1 then i else 15)) 0
   let _ ← timeIt "hot hamming bytes" reps fun t => (List.range reps).foldl (fun s i => s + hamming j.R G j.st (if t == 1 then i else 3) 0 j.R.size 0) 0
   let _ ← timeIt "hot hamA words" reps fun t => (List.range reps).foldl (fun s i => s + hamA j.K.w P.w (P.o + j.st) (if t == 1 then i else 3) j.R.size) 0
+  let gbs := #[G]
+  let pvs := #[P]
+  for (nm, js) in [("true, same length (5x per read, warm)", sameT), ("random, same length", sameR),
+      ("true, one-gap shapes", shapeT), ("random, one-gap shapes", shapeR)] do
+    IO.println s!"{nm}: {js.size} windows, penalty 16"
+    let a ← timeIt "ker16  (bytes, band)" js.size fun t => js.foldl (fun s j => s + ker16 j.R gbs (if t == 1 then 1 else 0) j.st j.len) 0
+    let b ← timeIt "ker16K (words, closed form)" js.size fun t => js.foldl (fun s j => s + ker16K j.R j.K gbs pvs (if t == 1 then 1 else 0) j.st j.len) 0
+    assert! a == b
   for lim in [15, 12] do
     run "true, same length (5x per read, warm)" G P sameT lim
     run "random, same length" G P sameR lim
