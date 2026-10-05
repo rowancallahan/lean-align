@@ -4,6 +4,7 @@ import WgPacked
 import PairRegion
 import ReadTrim
 import PairRouter
+import PairLadder
 
 /-!
 Benchmark only (unproved IO).  Whole genome with the genome held once
@@ -917,6 +918,31 @@ def uprofRun (rcfg : RouteCfg) (kK : PassKer) (pk : PkMz) (upN : Nat) (uout : St
     h.putStrLn s!"{k}\t{R1.size}\t{R2.size}\t{kK.cost P1 s1}\t{kK.cost P2 s2}\t{t1 - t0}\t{t2 - t1}\t{st1}\t{st2}\t{tr1}\t{tr2}\t{rp1}\t{rp2}"
   h.flush
 
+/-- Proper-pair mode (`pairUKPR`, pairUKP_mz_eq): per pair, one thread, its time by class
+(how many mates have over 1000 seed anchors over both strands: 0 / 1 / 2 = both repeat), with
+kept and `pairTie` counts per class. -/
+def ukProf (f : ByteArray → ByteArray → Option PairHit × Bool) (anch : ByteArray → Nat) (N : Nat)
+    (r1 r2 : Array ByteArray) : IO Unit := do
+  let mut tot : Array Nat := #[0, 0, 0]
+  let mut cnt : Array Nat := #[0, 0, 0]
+  let mut kept : Array Nat := #[0, 0, 0]
+  let mut tie : Array Nat := #[0, 0, 0]
+  for k in [0:min N r1.size] do
+    let R1 := r1[k]!
+    let R2 := r2[k]!
+    let cl := (if 1000 < anch R1 then 1 else 0) + (if 1000 < anch R2 then 1 else 0)
+    let t0 ← IO.monoNanosNow
+    let r ← (← IO.mkRef (f R1 R2)).get
+    let t1 ← IO.monoNanosNow
+    tot := tot.modify cl (· + (t1 - t0))
+    cnt := cnt.modify cl (· + 1)
+    if r.1.isSome then kept := kept.modify cl (· + 1)
+    else if r.2 then tie := tie.modify cl (· + 1)
+  for cl in [0:3] do
+    say s!"UKPROF class {cl} (mates over 1000 anchors): pairs {cnt[cl]!}, {secs 0 tot[cl]!} s, kept {kept[cl]!}, pairTie {tie[cl]!}"
+  let all := tot.foldl (· + ·) 0
+  say s!"UKPROF all: pairs {cnt.foldl (· + ·) 0}, {secs 0 all} s; both-repeat share {Float.ofNat tot[2]! / Float.ofNat (max all 1)}"
+
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
     (prof : List (String × (ByteArray → Prof → IO Prof)))
@@ -1378,10 +1404,31 @@ def main (args : List String) : IO UInt32 := do
           | .unmapped .notProper _ => "notProper"
           | .unmapped .noPair _ => "noPair"
         s!"p{r.pass}:{rs}"
+      -- Proper-pair mode U (pairUKP_mz_eq / pairUKPR_tie, codecs/PairLadder.lean): pairSpecUT at the
+      -- caps penOf, sl = WG_USL (0), distance cost dcost0 (WG_UDC=1k: dcost1k); fast path, then rungs
+      -- capsU, the mate with the cheaper lookups (costP) first
+      let usl ← envN "WG_USL" 0
+      let udc : Nat → Nat := if (← IO.getEnv "WG_UDC").getD "0" == "1k" then dcost1k else dcost0
+      let uR : ByteArray → ByteArray → Option PairHit × Bool := fun a b =>
+        let P1 := penOf a
+        let P2 := penOf b
+        let a1 := !decide (costP pk P2 (prepMate pk b : PrepM MzP) < costP pk P1 (prepMate pk a : PrepM MzP))
+        pairUKPR udc usl lo hi P1 P2 capsU a1 pk ByteArray.empty offs pgs a b
+      let fU : ByteArray → ByteArray → PairOut := fun a b => (uR a b).1
+      let uAnch : ByteArray → Nat := fun R =>
+        let s : PrepM MzP := prepMate pk R
+        s.ps.foldl (fun x p => x + LookG.size pk p) 0 + s.pr.foldl (fun x p => x + LookG.size pk p) 0
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
-        else if m == "PR" then some ("PR", fR) else if m == "RT" then some ("RT", fRT) else none
+        else if m == "PR" then some ("PR", fR) else if m == "RT" then some ("RT", fRT)
+        else if m == "U" then some ("U", fU) else none
       let okLen : ByteArray → Bool := if ms == ["RT"] then (fun _ => true) else okLen
       let tally := if (← IO.getEnv "WG_REASONS").getD "0" == "1" then [("router", fun a b => showR (route a b))] else []
+      -- WG_UKIND=1: answer kinds of mode U (mapped / pairTie / none)
+      let tally := if (← IO.getEnv "WG_UKIND").getD "0" == "1" then tally ++ [("ukind", fun a b =>
+        match uR a b with
+        | (some _, _) => "mapped"
+        | (none, true) => "pairTie"
+        | (none, false) => "none")] else tally
       -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
       let cfgs := ((← IO.getEnv "WG_PROF").getD "").splitOn "," |>.filter (· ≠ "")
       let prof : List (String × (ByteArray → Prof → IO Prof)) := cfgs.map fun (cf : String) =>
@@ -1539,6 +1586,9 @@ def main (args : List String) : IO UInt32 := do
       let uout := (← IO.getEnv "WG_UOUT").getD "/dev/null"
       let pprof : List (String × (Array ByteArray → Array ByteArray → IO Unit)) :=
         if upN == 0 then pprof else pprof ++ [("uprof", uprofRun rcfg kK pk upN uout)]
+      -- WG_UKPROF=N: mode U per pair on one thread, time by class (both-repeat pairs separately)
+      let ukN ← envN "WG_UKPROF" 0
+      let pprof := if ukN == 0 then pprof else pprof ++ [("ukprof", ukProf uR uAnch ukN)]
       runSets modes okLen prof (some margF) tally (rprofL ++ pprof)
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
