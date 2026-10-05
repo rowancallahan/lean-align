@@ -107,7 +107,7 @@ All in `codecs/PairSched.lean`, PROVED, standard axioms:
 | 2 | 491 M | 1.67 G | 3.23 GB | 5.9k | 22.6k | 23.0k | 23.7k | 6.56 | 19.9 |
 | 3 | 689 M | 2.37 G | 4.51 GB | 3.3k | 13.1k | 14.7k | 16.5k | 9.92 | 29.0 |
 | 4 | 879 M | 3.07 G | 5.74 GB | 2.5k | 10.5k | 11.9k | 12.6k | 13.3 | 32.3 |
-(pairs/s). The scheduler turns the 6–16× collapse into ≈ 3× from 1 to 4 chromosomes; S2 ≥ S1 from 2 chromosomes on.
+(pairs/s). Repeat on 4 chromosomes, one process alternating S2/X/S2/X/S2/X: S2 11.2k/11.5k/11.2k, X 11.5k/12.1k/12.0k → early exits ≈ +5% at 1 thread. 4 threads, 4 chromosomes (single run, order I, S2, X): I 8.1k, S2 28.0k, X 43.1k pairs/s, RSS 5.75 GB, identical; the S2→X gap there is larger than at 1 thread and was not repeated. The scheduler turns the 6–16× collapse into ≈ 3× from 1 to 4 chromosomes; S2 ≥ S1 from 2 chromosomes on.
 
 Where the remaining drop comes from (`PAIR_PROF`, mate 1, S2):
 - Normal reads (≤ 64 anchors, 97%): 12.5 µs/read at 2 chromosomes, 24.3 µs at 4 → ≈ 6 µs per added chromosome per read. Every slot needs ≥ 1 lookup (a tying window can hide in any chromosome) plus 4 bucket probes to order its seeds: lookups grow ≈ 3.1 per chromosome per read. **The concatenated single index subsumes this term** (8 probes per read whatever the genome size); extrapolated, per-chromosome indexes cost ≈ 140 µs/read at 24 chromosomes from this term alone.
