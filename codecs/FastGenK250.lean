@@ -1,6 +1,7 @@
 import FastGenPair
 import FastGenProof
 import MapperK250Words
+import MapperK250Seed
 
 /-!
 # Codec `pairFastGBK`: `pairFastGB` with the word kernels
@@ -120,15 +121,14 @@ def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc
       ilGF kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
     else (s1, s2, b)
 
-/-- `mapChromsGB` with the kernels `kf1` (read) and `kf2` (reverse complement). -/
+/-- `mapChromsGB` with the kernels `kf1` (read) and `kf2` (reverse complement) and
+the prepared seeds `ps`, `pr`. -/
 @[specialize] def mapChromsGBF {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (P : Nat) (ix : L)
-    (G : ByteArray) (offs : Array Nat) (gbs : Array ByteArray) (R Rr : ByteArray) : Best :=
+    (G : ByteArray) (offs : Array Nat) (gbs : Array ByteArray) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
   let m := R.size / 25
   let Ls := R.size / m
-  let ps := prepG ix R m Ls
-  let pr := prepG ix Rr m Ls
   let x := ilGF kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
@@ -136,6 +136,10 @@ def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc
   (List.range n).foldl (fun b c => chromKBF kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! b) b
 
 /-! ## With the word kernels -/
+
+/-- Prepared seeds, hashes from the packed read (`seedHashK`). -/
+@[inline] def prepGK {L Pp : Type} [LookG L Pp] (ix : L) (R : ByteArray) (K : RP) (m Ls : Nat) : Array Pp :=
+  (Array.range m).map fun j => LookG.prep ix (seedHashK R K (j * Ls))
 
 /-- Both strands with the word kernels; `pvs` spells `gbs` (packed). -/
 @[specialize] def mapChromsGBK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
@@ -145,7 +149,10 @@ def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc
   let Rr := revCompK R
   let K1 := packRP R
   let K2 := packRP Rr
+  let m := R.size / 25
+  let Ls := R.size / m
   mapChromsGBF (kerHK R K1 gbs2 pvs2) (kerHK Rr K2 gbs2 pvs2) P ix G offs gbs R Rr
+    (prepGK ix R K1 m Ls) (prepGK ix Rr K2 m Ls)
 
 def mapFastGBK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (R : ByteArray) : Option (Placement × Int) :=
@@ -535,17 +542,24 @@ theorem ilGF_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R1 R2 : By
 
 theorem mapChromsGBF_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array ByteArray) (R : ByteArray) :
-    mapChromsGBF (kerH R (gbs ++ gbs)) (kerH (revCompB R) (gbs ++ gbs)) P ix G offs gbs R (revCompB R) =
+    mapChromsGBF (kerH R (gbs ++ gbs)) (kerH (revCompB R) (gbs ++ gbs)) P ix G offs gbs R (revCompB R)
+      (prepG ix R (R.size / 25) (R.size / (R.size / 25)))
+      (prepG ix (revCompB R) (R.size / 25) (R.size / (R.size / 25))) =
       mapChromsGB P ix G offs gbs R := by
   unfold mapChromsGBF mapChromsGB
   simp only [ilGF_eq, chromKBF_eq]
+
+theorem prepGK_eq {L Pp : Type} [LookG L Pp] (ix : L) (R : ByteArray) (m Ls : Nat) :
+    prepGK ix R (packRP R) m Ls = prepG ix R m Ls := by
+  unfold prepGK prepG
+  simp only [seedHashK_eq]
 
 theorem mapChromsGBK_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (hpg : checkPGs pvs gbs = true) (R : ByteArray) :
     mapChromsGBK P ix G offs gbs pvs R = mapChromsGB P ix G offs gbs R := by
   have hrep := checkPGs_ok pvs gbs hpg
   unfold mapChromsGBK
-  simp only [revCompK_eq]
+  simp only [revCompK_eq, prepGK_eq]
   rw [← mapChromsGBF_eq]
   congr 1
   · funext c st len l; exact kerHK_eq R _ _ hrep c st len l

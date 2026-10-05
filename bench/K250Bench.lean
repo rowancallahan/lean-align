@@ -90,7 +90,7 @@ def pairMain (gpath p1 p2 : String) (dump : Option String) : IO UInt32 := do
   if (← IO.getEnv "K_F").isSome then
     -- the parameterized search with the byte kernel (closure overhead only)
     let mF (R : ByteArray) : Option (Placement × Int) :=
-      if fastT P R then decodeP gbs.size P (mapChromsGBF (kerH R (gbs ++ gbs)) (kerH (revCompB R) (gbs ++ gbs)) P ix G offs gbs R (revCompB R))
+      if fastT P R then decodeP gbs.size P (mapChromsGBF (kerH R (gbs ++ gbs)) (kerH (revCompB R) (gbs ++ gbs)) P ix G offs gbs R (revCompB R) (prepG ix R (R.size / 25) (R.size / (R.size / 25))) (prepG ix (revCompB R) (R.size / 25) (R.size / (R.size / 25))))
       else none
     let _ ← go "mapChromsGBF + kerH (bytes)" fun p => match mF p.1, mF p.2 with
       | some a, some b => if properPair 100 1000 a.1 b.1 then some (a, b) else none
