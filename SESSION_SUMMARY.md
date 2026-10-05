@@ -362,3 +362,9 @@ Scripts: `bench/sim_pairs.py` (own simulator: mason-like / HG002-like variants /
 - Profile (A, mason-like, 20k mates, 1 thread): prep 6 µs, lookups + phase 1 88 µs, stage K 136 µs per mate; 2.2% of mates (repeats, ~3,800 anchors) take 84% of the time. On-target 150 bp reads are where we lose to minibwa.
 - Real data, same place % of minibwa unique proper pairs (MAPQ>0 / ≥20): NovaSeq A 88.30 / 90.37, P20 89.16 / 91.25, C23 89.70 / 91.80; HiSeq A 89.53 / 91.32, B 90.07 / 91.87, P23 91.35 / 93.17.
 - Caveats: own simulator is an approximation (variants hashed per position, no SVs/CNVs, iid errors); mason's own reads carry N (trimmed by us). No MAPQ for ours yet (Rowan: one point per config until a MAPQ spec). WG_MARGIN not merged anywhere; skipped.
+
+Cap-16 two-gap fallback on word scans — PROVED (`twoGap16K_eq`; WgPacked `twoGap16KG`, `twoGap16KG_same`):
+- Profile, repeat-heavy chr21 2×150 at T=−16 (mate 1 at an Alu-like site): phase 1 89% of the search, `ker16K` 73% inclusive, of which the two-gap fallback ~38% (byte first/last-mismatch scans 26%, computed twice when the necessary test passes).
+- Now first/last mismatch once per call by `fwdL`/`bwdL` (word scans, `fwdL_eq`/`bwdL_eq`), passed to the necessary test and `twoGapBP`.
+- Packed path (`whole_genome pmap`, mode PK, chr21 index, 20k pairs, 1 task, CPU s, 3 alternating runs, dumps identical): repeat-heavy 3.57–3.62 → 3.16–3.48; random 2×150 2.46–2.69 → 2.46–3.08 (noise; the fallback is rare there).
+- WFA band pass prototype (gap-affine wavefronts, byte extension): identical dumps, parity speed; core loop 52M Ir vs bandLoopB 108M, but allocation overhead ate the gain. Parked (scratch copy only).

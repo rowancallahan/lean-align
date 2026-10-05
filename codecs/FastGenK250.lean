@@ -47,6 +47,21 @@ def revCompLoop (R : ByteArray) : (i : Nat) → ByteArray → ByteArray
   else if twoGapB R G st len then 16
   else bandPen 16 R gbs ⟨c, st, len⟩
 
+/-- `twoGapC` with the first / last mismatch `A` / `B` passed in. -/
+@[inline] def twoGapCAB (R G : ByteArray) (st len A B : Nat) : Bool :=
+  let n := R.size
+  (len == n || len == n + 2 || len + 2 == n) &&
+    (hamming R G (st + 1) 0 (A + 1) (B - 1) 0 == 0 || st == 0 || hamming R G (st - 1) 0 (A + 1) (B - 1) 0 == 0)
+
+/-- `twoGap16` with the first / last mismatch found once, by the word scans (`twoGap16K_eq`). -/
+@[inline] def twoGap16K (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Array PGen) (c st len : Nat) : Nat :=
+  let G := gbs[c]!
+  let A := fwdL R G K pvs[c]! st R.size 1
+  let B := bwdL R G K pvs[c]! st len 0 1
+  if !twoGapCAB R G st len A B then 17
+  else if twoGapBP R G st len A B then 16
+  else bandPen 16 R gbs ⟨c, st, len⟩
+
 /-- `ker16`: the word kernel capped at `17` (exact one-gap formula), then the two-gap
 tests for lengths `n`, `n ± 2` (a chromosome out of range: `ker16` itself). -/
 def ker16K (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Array PGen) (c st len : Nat) : Nat :=
@@ -54,7 +69,7 @@ def ker16K (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Array PGen) (
   else if st + len ≤ gbs[c]!.size then
     let r := kerGK R K gbs[c]! pvs[c]! st len 16
     if r ≤ 16 then r
-    else if len = R.size ∨ len = R.size + 2 ∨ len + 2 = R.size then twoGap16 R gbs c st len
+    else if len = R.size ∨ len = R.size + 2 ∨ len + 2 = R.size then twoGap16K R K gbs pvs c st len
     else 17
   else 17
 
@@ -201,6 +216,11 @@ theorem revCompK_eq (R : ByteArray) : revCompK R = revCompB R := by
 
 /-- The packed chromosomes spell the byte chromosomes. -/
 def RepAllK (pvs : Array PGen) (gbs : Array ByteArray) : Prop := ∀ c : Nat, Rep pvs[c]! gbs[c]!
+
+theorem twoGap16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (c : Nat) (hP : Rep pvs[c]! gbs[c]!)
+    (st len : Nat) : twoGap16K R (packRP R) gbs pvs c st len = twoGap16 R gbs c st len := by
+  unfold twoGap16K twoGap16 twoGapC twoGapB twoGapCAB twoGapBP
+  simp only [fwdL_eq _ _ _ hP _ _ _ (Nat.le_refl 1), bwdL_eq _ _ _ hP _ _ _ _ (Nat.le_refl 1)]
 
 /-! ### `ker16K_eq`: helpers -/
 
@@ -434,6 +454,7 @@ theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hr
   by_cases hc : gbs.size ≤ c
   · rw [if_pos hc]
   rw [if_neg hc]
+  rw [twoGap16K_eq R gbs pvs c (hrep c)]
   have hc : c < gbs.size := by omega
   have hr := encodes_decodeBytes R
   have hg := genomeBytes_decode gbs
