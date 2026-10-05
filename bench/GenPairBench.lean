@@ -232,6 +232,27 @@ def stageBP (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (shs : L
         (shs.filter (·.2 == bb)).foldl (Fast.addBS P R gbs c D opt) b
       else b) b) b
 
+/-- Prototype: the proved pruned stage B with the cap lowered to the current best per pass
+and end shifts nearest first. -/
+def stageBDyn2 (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (shs : List (Int × Int))
+    (bs : List Int) (ds : List Nat) (b : Fast.Best) : Fast.Best :=
+  ds.foldl (fun b D =>
+    let A := Fast.spoiledArr R gbs[c]! D (Fast.shiftMax bs) (bandOf sc0 (-(P : Int)))
+    bs.foldl (fun b bb => Fast.stageBD (min b.pen P) R gbs c shs D (fun j => A[j]?.getD false) b bb) b) b
+
+def chromKBDyn2 (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Fast.Best) : Fast.Best :=
+  let lim := min P 16
+  let Q1 := min b1.pen P
+  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
+      (if 16 ≤ min lim Q1 then Fast.stageKP else Fast.stageK) R gbs c lim (Fast.shapesKT Q1)
+        (Fast.diagsB acc (acc.length - Fast.sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
+  let Q2 := min b2.pen P
+  if lim < Q2 then
+    let d := gapBound sc0 (-(Q2 : Int))
+    stageBDyn2 P R gbs c (Fast.shapesT Q2) ((Fast.shifts d).mergeSort fun u v => decide (u.natAbs ≤ v.natAbs))
+      (Fast.diagsB acc (acc.length - Fast.sbound P) (2 * d)) b2
+  else b2
+
 def chromKBP (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Fast.Best) : Fast.Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
@@ -417,6 +438,12 @@ def main (args : List String) : IO UInt32 := do
           let b := (List.range n).foldl (fun b c => chromKBH R gbs2 c P x.1.acc[c]! sa Ls b) x.2.2
           (List.range n).foldl (fun b c => chromKBH Rr gbs2 (n + c) P x.2.1.acc[c]! sr Ls b) b)).get
         let th1 ← IO.monoNanosNow
+        let bsY ← (← IO.mkRef (xs.map fun (R, Rr, x) =>
+          let b := (List.range n).foldl (fun b c => chromKBDyn2 R gbs2 c P x.1.acc[c]! b) x.2.2
+          (List.range n).foldl (fun b c => chromKBDyn2 Rr gbs2 (n + c) P x.2.1.acc[c]! b) b)).get
+        let th1y ← IO.monoNanosNow
+        let difY := (bs.zip bsY).foldl (fun a (u, v) => if Fast.resultP P u == Fast.resultP P v then a else a + 1) 0
+        IO.println s!"prof: chromKB proved pruning + dynamic cap + nearest shifts {secs th1 th1y} s, results differ on {difY}"
         let bsP ← (← IO.mkRef (xs.map fun (R, Rr, x) =>
           let b := (List.range n).foldl (fun b c => chromKBP R gbs2 c P x.1.acc[c]! b) x.2.2
           (List.range n).foldl (fun b c => chromKBP Rr gbs2 (n + c) P x.2.1.acc[c]! b) b)).get
