@@ -1083,6 +1083,84 @@ def pieceProf (pk : PkMz) (N : Nat) (r1 r2 : Array ByteArray) : IO Unit := do
       acc := pieceOne pk (revCompK R) acc
   say s!"PIECES: slow read strands {acc[0]!}; 25-mer prefixes of the pieces: occurrences {acc[1]!}, diagonals {acc[2]!}; whole pieces: occurrences {acc[3]!}, diagonals {acc[4]!}"
 
+/-- Prototype measurement (bench only): the best partition of the read into `sbound 16 + 1`
+disjoint segments (boundaries on a 5-letter grid, each ≥ 25 letters), each scored by its
+cheapest 25-mer (start on the grid) with the whole segment matching exactly; occurrence counts
+(an upper bound on the diagonals). Per strand with more than 1000 anchors of the `hitsSK` seeds;
+the first `N` such strands. Returns (strands, anchors now, best partition total). -/
+def partOne (pk : PkMz) (R : ByteArray) (acc : Array Nat) : Array Nat := Id.run do
+  let G := pk.2
+  let n := R.size
+  let m := n / 25
+  let Ls := n / m
+  let ps := prepG pk R m Ls
+  let J := (ordG (ps.map (LookG.size pk)) m).take (sbound 16 + 1)
+  let anch := J.foldl (fun x j => x + (LookG.look pk ByteArray.empty R (j * Ls) (n - j * Ls) ps[j]!).size) 0
+  if anch ≤ 1000 then return acc
+  let g := 5
+  let nb := n / g + 1            -- grid points 0, 5, …, (n / 5)·5
+  -- H[i][u][v]: occurrences of the 25-mer at grid start i with left ext ≥ u·g, right ext ≥ v·g
+  let mut H : Array (Array Nat) := #[]
+  let starts := (List.range nb).filter fun k => k * g + 25 ≤ n
+  for k in starts do
+    let s := k * g
+    let a := LookG.look pk ByteArray.empty R s (n - s) (LookG.prep pk (seedHashAt R s))
+    let mut h : Array Nat := Array.replicate (nb * nb) 0
+    for e in a do
+      let p := e / 16 - (n - s)
+      let mut l := 0
+      while l < s && l < p && R.get! (s - 1 - l) == GRead.get G (p - 1 - l) do l := l + 1
+      let mut r := 0
+      while s + 25 + r < n && R.get! (s + 25 + r) == GRead.get G (p + 25 + r) do r := r + 1
+      let u := min (l / g) (nb - 1)
+      let v := min (r / g) (nb - 1)
+      h := h.modify (u * nb + v) (· + 1)
+    -- suffix sums: h[u][v] = #occ with ext_l ≥ u·g and ext_r ≥ v·g
+    for u' in [0:nb] do
+      let u := nb - 1 - u'
+      for v' in [0:nb] do
+        let v := nb - 1 - v'
+        let x := h[u * nb + v]! + (if u + 1 < nb then h[(u + 1) * nb + v]! else 0) +
+          (if v + 1 < nb then h[u * nb + v + 1]! else 0) -
+          (if u + 1 < nb ∧ v + 1 < nb then h[(u + 1) * nb + v + 1]! else 0)
+        h := h.set! (u * nb + v) x
+    H := H.push h
+  let inf := 1000000000000
+  -- segment cost [a·g, b·g) (b·g may be capped at n): min over starts inside
+  let cost (a b : Nat) : Nat := Id.run do
+    let mut c := inf
+    let hi := if b = nb - 1 then n else b * g
+    for k in starts do
+      let s := k * g
+      if a * g ≤ s && s + 25 ≤ hi then
+        let u := k - a
+        let v := (hi - (s + 25)) / g
+        if u < nb && v < nb then c := min c H[starts.idxOf k]![u * nb + v]!
+    return c
+  let np := sbound 16 + 1
+  -- best[t][b]: t segments covering [0, b·g)
+  let mut best : Array Nat := (Array.range nb).map fun b => if b = 0 then 0 else inf
+  for _ in [0:np] do
+    let mut nx : Array Nat := Array.replicate nb inf
+    for b in [1:nb] do
+      for a in [0:b] do
+        if best[a]! < inf then
+          let c := cost a b
+          if c < inf then nx := nx.set! b (min nx[b]! (best[a]! + c))
+    best := nx
+  let tot := best[nb - 1]!
+  return #[acc[0]! + 1, acc[1]! + anch, acc[2]! + (if tot < inf then tot else anch)]
+
+def partProf (pk : PkMz) (N : Nat) (r1 r2 : Array ByteArray) : IO Unit := do
+  let mut acc : Array Nat := Array.replicate 3 0
+  for k in [0:r1.size] do
+    if N ≤ acc[0]! then break
+    for R in [r1[k]!, r2[k]!] do
+      if R.size < 50 then continue
+      acc := partOne pk R acc
+      acc := partOne pk (revCompK R) acc
+  say s!"PART: slow read strands {acc[0]!}; anchors now {acc[1]!}; best partition (occurrences) {acc[2]!}"
+
 def flankProf (pk : PkMz) (N : Nat) (r1 r2 : Array ByteArray) : IO Unit := do
   let cs := [1000, 10000, 50000]
   let fs := [4, 8, 16, 25, 64]
@@ -1943,6 +2021,8 @@ def main (args : List String) : IO UInt32 := do
       -- WG_FLANK=N: flank-keyed lookup prototype measurement on the first N pairs (bench only)
       let flN ← envN "WG_FLANK" 0
       let pprof := if flN == 0 then pprof else pprof ++ [("flank", flankProf pk flN)]
+      let ptN ← envN "WG_PART" 0
+      let pprof := if ptN == 0 then pprof else pprof ++ [("part", partProf pk ptN)]
       let pprof := if flN == 0 then pprof else pprof ++ [("pieces", pieceProf pk flN)]
       -- WG_UKDET=N: both-repeat pairs of mode U traced (hit lists vs pairing, stages of the hit lists)
       let udN ← envN "WG_UKDET" 0
