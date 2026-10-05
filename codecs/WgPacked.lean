@@ -223,8 +223,21 @@ def ker16KG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st l
     else 17
   else 17
 
+def ker16KWG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st len : Nat) : Nat :=
+  if c < gbs.size ∧ len = R.size ∧ st + len ≤ GRead.size gbs[c]! ∧ wordOk R K pvs[c]! st len = true then
+    let P := pvs[c]!
+    let h := hamA K.w P.w (P.o + st) 4 R.size
+    if 4 * h ≤ 16 then 4 * h
+    else
+      let A := fwdA K.w P.w (P.o + st) R.size 1
+      let B := bwdA K.w P.w (P.o + st) 0 R.size 1
+      if !twoGapCABG R gbs[c]! st len A B then 17
+      else if twoGapBP R gbs[c]! st len A B then 16
+      else bandPen 16 R gbs ⟨c, st, len⟩
+  else ker16KG R K gbs pvs c st len
+
 @[inline] def kerHKG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st len l : Nat) : Nat :=
-  if l ≤ 15 then kerGKG R K gbs[c]! pvs[c]! st len l else ker16KG R K gbs pvs c st len
+  if l ≤ 15 then kerGKG R K gbs[c]! pvs[c]! st len l else ker16KWG R K gbs pvs c st len
 
 /-! ### The search with the kernel as a parameter, chromosomes through `GRead` -/
 
@@ -399,9 +412,14 @@ theorem ker16KG_same (R : ByteArray) (K : RP) (pvs : Array PGen) (c st len : Nat
     ker16KG R K xs pvs c st len = ker16KG R K ys pvs c st len := by
   simp only [ker16KG, h.1, ker16_same h, (h.2 c).1, kerGKG_same (h.2 c), twoGap16KG_same h]
 
+theorem ker16KWG_same (R : ByteArray) (K : RP) (pvs : Array PGen) (c st len : Nat) :
+    ker16KWG R K xs pvs c st len = ker16KWG R K ys pvs c st len := by
+  simp only [ker16KWG, h.1, (h.2 c).1, twoGapCABG_same (h.2 c), twoGapBP_same (h.2 c), bandPen_same h,
+    ker16KG_same h]
+
 theorem kerHKG_same (R : ByteArray) (K : RP) (pvs : Array PGen) (c st len l : Nat) :
     kerHKG R K xs pvs c st len l = kerHKG R K ys pvs c st len l := by
-  simp only [kerHKG, kerGKG_same (h.2 c), ker16KG_same h]
+  simp only [kerHKG, kerGKG_same (h.2 c), ker16KWG_same h]
 
 end
 

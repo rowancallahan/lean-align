@@ -73,9 +73,24 @@ def ker16K (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Array PGen) (
     else 17
   else 17
 
+/-- `ker16K` with a word fast path for same-length flagged windows: the mismatch count,
+then the first / last mismatch straight from the word scans (`ker16KW_eq`). -/
+def ker16KW (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Array PGen) (c st len : Nat) : Nat :=
+  if c < gbs.size ∧ len = R.size ∧ st + len ≤ gbs[c]!.size ∧ wordOk R K pvs[c]! st len = true then
+    let P := pvs[c]!
+    let h := hamA K.w P.w (P.o + st) 4 R.size
+    if 4 * h ≤ 16 then 4 * h
+    else
+      let A := fwdA K.w P.w (P.o + st) R.size 1
+      let B := bwdA K.w P.w (P.o + st) 0 R.size 1
+      if !twoGapCAB R gbs[c]! st len A B then 17
+      else if twoGapBP R gbs[c]! st len A B then 16
+      else bandPen 16 R gbs ⟨c, st, len⟩
+  else ker16K R K gbs pvs c st len
+
 /-- `kerH` with the word kernels. -/
 @[inline] def kerHK (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Array PGen) (c st len l : Nat) : Nat :=
-  if l ≤ 15 then kerGK R K gbs[c]! pvs[c]! st len l else ker16K R K gbs pvs c st len
+  if l ≤ 15 then kerGK R K gbs[c]! pvs[c]! st len l else ker16KW R K gbs pvs c st len
 
 /-! ## The search with the kernel as a parameter (copied from `pairFastGB`) -/
 
@@ -501,12 +516,38 @@ theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hr
       exact hfit (by rw [he.1]; exact hfit')
     omega
 
+theorem ker16KW_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAllK pvs gbs)
+    (c st len : Nat) : ker16KW R (packRP R) gbs pvs c st len = ker16K R (packRP R) gbs pvs c st len := by
+  unfold ker16KW
+  split
+  · next hh =>
+    obtain ⟨hc, hl, hfit, hw⟩ := hh
+    obtain ⟨hok, -, -, -, hn, hf⟩ := wordOk_unpack R pvs[c]! st len hw
+    have hW : WOk R gbs[c]! pvs[c]! st R.size := ⟨hrep c, hok, Nat.le_refl _, by omega, fun x hx => by
+      rw [show pvs[c]!.o + st + x = pvs[c]!.o + (st + x) by omega]; exact hf _ (by omega) (by omega)⟩
+    have hWB : WOkB R gbs[c]! pvs[c]! (st + len - R.size) 0 := ⟨hrep c, hok, by omega, fun x _ hx => by
+      rw [show pvs[c]!.o + (st + len - R.size) + x = pvs[c]!.o + (st + x) by omega]; exact hf _ (by omega) (by omega)⟩
+    have hA := fwdA_eq R gbs[c]! pvs[c]! st R.size hW 1 (Nat.le_refl _)
+    have hB := bwdA_eq R gbs[c]! pvs[c]! st len 0 (by omega) hWB 1 (Nat.le_refl _)
+    rw [show st + len - R.size = st by omega] at hB
+    unfold ker16K
+    rw [if_neg (show ¬ gbs.size ≤ c by omega), if_pos hfit]
+    unfold kerGK
+    rw [if_pos (show len = R.size from hl), if_pos hw]
+    simp only [show (16 : Nat) / 4 = 4 from rfl]
+    by_cases h4 : 4 * hamA (packRP R).w pvs[c]!.w (pvs[c]!.o + st) 4 R.size ≤ 16
+    · simp only [h4, if_true]
+    · simp only [h4, if_false, show ¬ (17 ≤ 16) by omega, show len = R.size ∨ len = R.size + 2 ∨ len + 2 = R.size from Or.inl hl]
+      unfold twoGap16K
+      simp only [hA, hB, fwdL_eq _ _ _ (hrep c) _ _ _ (Nat.le_refl 1), bwdL_eq _ _ _ (hrep c) _ _ _ _ (Nat.le_refl 1), if_true]
+  · rfl
+
 theorem kerHK_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAllK pvs gbs)
     (c st len l : Nat) : kerHK R (packRP R) gbs pvs c st len l = kerH R gbs c st len l := by
   unfold kerHK kerH
   split
   · exact kerGK_kerG R gbs[c]! pvs[c]! (hrep c) st len l (by omega)
-  · exact ker16K_eq R gbs pvs hrep c st len
+  · rw [ker16KW_eq R gbs pvs hrep c st len]; exact ker16K_eq R gbs pvs hrep c st len
 
 /-! ## Proofs: the search -/
 

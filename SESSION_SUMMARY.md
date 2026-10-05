@@ -368,3 +368,8 @@ Cap-16 two-gap fallback on word scans — PROVED (`twoGap16K_eq`; WgPacked `twoG
 - Now first/last mismatch once per call by `fwdL`/`bwdL` (word scans, `fwdL_eq`/`bwdL_eq`), passed to the necessary test and `twoGapBP`.
 - Packed path (`whole_genome pmap`, mode PK, chr21 index, 20k pairs, 1 task, CPU s, 3 alternating runs, dumps identical): repeat-heavy 3.57–3.62 → 3.16–3.48; random 2×150 2.46–2.69 → 2.46–3.08 (noise; the fallback is rare there).
 - WFA band pass prototype (gap-affine wavefronts, byte extension): identical dumps, parity speed; core loop 52M Ir vs bandLoopB 108M, but allocation overhead ate the gain. Parked (scratch copy only).
+
+`ker16KW` / `ker16KWG` — PROVED (`ker16KW_eq`; `ker16KWG_same`, `kerHKG_bytes` still rfl):
+- Same-length flagged windows at cap 16: `hamA`, then first / last mismatch straight from `fwdA` / `bwdA` (no byte pre-scans, no extra `winOk`), else `ker16K`.
+- Packed path (whole_genome pmap PK, chr21 index, 2k repeat-heavy 2×150 pairs, callgrind): 309M → 285M Ir (−7.6%); byte fwdMis/bwdMis on the packed genome 47M → word fwdW/bwdW 27M. Wall/CPU time on 20k pairs within noise (2.37–2.64 → 2.39–2.49 CPU s). Dumps identical.
+- Remaining there: hamW 51M, `hamming` of the two-gap middle check 33M, flagsOk 13M.
