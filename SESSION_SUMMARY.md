@@ -336,6 +336,20 @@ Stage-B seed filter — PROVED (`chromKBS`, `chromKBF`, `chromKBFG`; `chromKBS_c
 - chr21 2×250 1% sim, 20k pairs, 1 task, GP_K=1, pairs/s before → after (dumps identical): T=−20 4.95k → 5.33k, T=−24 3.22k → 3.78k, T=−32 1.04k → 1.91k.
 - Real HG002 2×250 (first 20k ACGT-only pairs of D1_S1_L001_R{1,2}_004, not trimmed) vs chr21 (mostly off-target): T=−16 52.2k → 57.2k, T=−20 9.18k → 31.0k, T=−24 3.66k → 17.4k, T=−32 367 → 3.70k (dumps identical).
 
+### Denser-index / seed-scheme prototype for 135–175 bp mates (bench-only, 2026-10-05)
+- Tool: scratch C (`seeds.c`), exact L-mer occurrences over all of hg38 (one stream, 444 s, 1.8 GB), 2,500 pairs each of NovaSeq and mason (q25-trimmed), both strands. Candidate = diagonal whose ±band (band = (4e−6)/2) holds ≥ thr distinct seeds; thr from pigeonhole. Slow mate = > 1000 current anchors (NovaSeq 789/5000, mason 741/5000).
+- Means per slow mate at e = 4 (P = 16; NovaSeq / mason): anchors, candidate diagonals, loci (clusters).
+  - L25 disjoint ×6, thr 2 (current): 33.6k / 29.5k anchors; 9.9k / 5.1k cand; 5.95k / 4.46k loci.
+  - L22 disjoint ×6, thr 2: 63k / 54k; 12.5k / 4.6k; 4.9k / 3.5k.
+  - L20 disjoint ×7, thr 3: 109k / 89k; 15.4k / 3.9k; 4.4k / 2.7k.
+  - L25 step 13 ×10, thr 10−2e (works on the current index): 56k / 47k; 12.3k / 6.6k; 6.8k / 5.9k.
+  - L22 step 11 ×12, thr 12−2e: 124k / 100k; 12.5k / 3.3k; 3.95k / 2.7k.
+  - L20 step 10 ×14 / step 7 ×19: 205k–284k anchors; 17.9k–23.7k / 4.1k–5.2k cand.
+  - Adjacent L20 pair (strobe-like), ≥1 pair: 2.6k / 2.2k cand, but only sound for e ≤ ⌊m/2⌋−1 = 2 (killing every other seed breaks all adjacent pairs).
+- At e = 3 the current scheme is best on candidates (NovaSeq 3.4k, mason 1.05k); at e = 6 everything except the pair key degrades to thr 1 (all anchors are candidates).
+- Verdict: shorter or denser seeds cut slow-mate loci by ≤ 34% but multiply anchors 2–8×; at 0.05 µs/anchor + 0.37 µs/candidate every scheme is slower than the current one (L25 5.3k / 3.4k µs vs ≥ 7.4k / 4.4k µs). Slow-mate candidates are genuine near-copies (repeats); no seed filter removes them. Index for any L ∈ {20, 22} at the same density (k = L−3, w = 4) ≈ 4.2–4.5 GB, the same as now; current + new ≈ 8.5 GB RAM, does not fit 3.6 GB free disk.
+- A sound strobe-like key at e = 4 needs m ≥ 10 disjoint seeds (2×15-mer keys, 30 letters per key) — not measured; the per-candidate cost (speed/wg-speed) is the lever.
+
 Stage-B pruning blocks of 8 letters (was 25) — PROVED (same lemmas, `block_step` holds for any block length ≥ 2):
 - Each spoiled 8-letter read block (no exact copy in the band) adds 4 to the death threshold; 31 blocks per 250 bp read instead of 10, so dead passes stop earlier.
 - HG002 20k pairs vs chr21, 1 task, GP_K=1, pairs/s (two interleaved runs, dumps identical): T=−24 18.1–18.4k → 20.6–20.7k; T=−32 3.42–3.43k → 4.08–4.34k. Lengths 5/6/10 tried: 8 best or tied.

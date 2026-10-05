@@ -910,6 +910,42 @@ def parChunk {α β : Type} [Inhabited α] [Inhabited β] (n cs : Nat) (f : α �
   IO.eprintln s!"  workers finished at (ms): {fin}"
   return out
 
+/-- Bench estimate for the draft `pairSpecU`: per pair, one thread, at the pass-1 caps: genome
+search time of each mate, and region search time of each mate near the other's genome hit (when it
+has one).  TSV: idx n1 n2 c1 c2 tg1 tg2 st1 st2 tr1 tr2 rp1 rp2 (ns; st 0 none / 1 hit / 2 tie). -/
+def uprofRun (rcfg : RouteCfg) (kK : PassKer) (pk : PkMz) (upN : Nat) (uout : String)
+    (r1 r2 : Array ByteArray) : IO Unit := do
+  let h ← IO.FS.Handle.mk uout .write
+  for k in [0:min upN r1.size] do
+    let R1 := r1[k]!
+    let R2 := r2[k]!
+    let P1 := rcfg.cap1 R1.size
+    let P2 := rcfg.cap1 R2.size
+    if !(fastT P1 R1 && fastT P2 R2) then continue
+    let s1 := kK.prep R1
+    let s2 := kK.prep R2
+    let t0 ← IO.monoNanosNow
+    let m1 ← (← IO.mkRef (kK.mate P1 R1 s1)).get
+    let t1 ← IO.monoNanosNow
+    let m2 ← (← IO.mkRef (kK.mate P2 R2 s2)).get
+    let t2 ← IO.monoNanosNow
+    let st1 : Nat := if m1.1.isSome then 1 else if m1.2 then 2 else 0
+    let st2 : Nat := if m2.1.isSome then 1 else if m2.2 then 2 else 0
+    let mut tr1 := 0
+    let mut rp1 := 0
+    let mut tr2 := 0
+    let mut rp2 := 0
+    if let some b := m2.1 then
+      let u0 ← IO.monoNanosNow
+      rp1 ← (← IO.mkRef (kK.region P1 R1 b.1)).get
+      tr1 := (← IO.monoNanosNow) - u0
+    if let some a := m1.1 then
+      let u0 ← IO.monoNanosNow
+      rp2 ← (← IO.mkRef (kK.region P2 R2 a.1)).get
+      tr2 := (← IO.monoNanosNow) - u0
+    h.putStrLn s!"{k}\t{R1.size}\t{R2.size}\t{kK.cost P1 s1}\t{kK.cost P2 s2}\t{t1 - t0}\t{t2 - t1}\t{st1}\t{st2}\t{tr1}\t{tr2}\t{rp1}\t{rp2}"
+  h.flush
+
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
     (prof : List (String × (ByteArray → Prof → IO Prof)))
@@ -1527,6 +1563,11 @@ def main (args : List String) : IO UInt32 := do
               pf ← profRead 0 0 false 0 0 pk offs pgs (if hi2 then Bg else Ag) Rg pf
             say s!"  no-hit genome mates ({dl.size} of {dead.size}) at the pass-{if hi2 then 2 else 1} cap:"
             showProf pf)]
+      -- WG_UPROF=N: `uprofRun` (bench estimate for the draft pairSpecU), TSV to WG_UOUT
+      let upN ← envN "WG_UPROF" 0
+      let uout := (← IO.getEnv "WG_UOUT").getD "/dev/null"
+      let pprof : List (String × (Array ByteArray → Array ByteArray → IO Unit)) :=
+        if upN == 0 then pprof else pprof ++ [("uprof", uprofRun rcfg kK pk upN uout)]
       runSets modes okLen prof (some margF) tally (rprofL ++ pprof)
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")

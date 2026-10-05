@@ -23,7 +23,7 @@ package lean_align where
 @[default_target]
 lean_lib AlignmentSpecLib where
   srcDir := "spec"
-  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec, `PairSpecTier]
+  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec, `PairSpecTier, `PairSpecU]
 
 -- ──────────────────────────── codecs ────────────────────────────
 
@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `FastGenCoverE, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenTierK, `MzPacked, `PairPacked, `MzWord, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked, `FastGenK250, `PairDispatch, `ReadTrim, `PairUnique, `PairSched, `MzView, `FastGenWordFilt, `FastGenSupp, `FastGenBlock, `WgPacked, `PairRegion, `PairReason, `PairJoin, `PairRouter]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `FastGenCoverE, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenTierK, `MzPacked, `PairPacked, `MzWord, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked, `FastGenK250, `PairDispatch, `ReadTrim, `PairUnique, `PairSched, `MzView, `FastGenWordFilt, `WgPacked, `PairRegion, `PairReason, `PairJoin, `PairRouter, `PairBnB, `PairBox, `PairRegionU, `PairHits, `PairHitsKP, `FastGenSupp, `FastGenBlock]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
