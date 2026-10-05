@@ -252,3 +252,6 @@ theorem hitsBoth_mono {sc : Scoring} {T T' : Int} {g : Genome} {r : List Char}
   exact (List.mem_filter.mp hx).1
 
 end MapSpec
+
+#print axioms MapSpec.bestPairD_restrict
+#print axioms MapSpec.pairSpecUT_bnb
