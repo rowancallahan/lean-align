@@ -33,6 +33,11 @@ def rss : IO String := do
   return " ".intercalate ((s.splitOn "\n").filter (fun l => l.startsWith "VmHWM" || l.startsWith "VmRSS")
     |>.map (fun l => l.replace "\t" "" |>.replace "  " ""))
 
+/-- Print one line and flush (stdout to a pipe is block-buffered; a killed run kept nothing). -/
+def say (s : String) : IO Unit := do
+  IO.println s
+  (← IO.getStdout).flush
+
 def envN (k : String) (d : Nat) : IO Nat := do return ((← IO.getEnv k).map String.toNat!).getD d
 
 /-- A one-record FASTA, sequence only, into one buffer of the file's size (no copy). -/
@@ -119,10 +124,10 @@ def loadGenome (files : List String) : IO (Array ByteArray × Array Nat × GV) :
   let offs := (gbs.foldl (fun (o, n) g => (o.push n, n + g.size)) ((#[] : Array Nat), 0)).1
   let V := GV.ofChroms gbs
   let t1 ← IO.monoNanosNow
-  IO.println s!"genome: {gbs.size} chromosomes, {V.n} letters, load {secs t0 t1} s; {← rss}"
+  say s!"genome: {gbs.size} chromosomes, {V.n} letters, load {secs t0 t1} s; {← rss}"
   let ok ← (← IO.mkRef (if t1 == 1 then false else catOkVPar V offs gbs)).get
   let t2 ← IO.monoNanosNow
-  IO.println s!"catOkV: {ok} ({secs t1 t2} s)"
+  say s!"catOkV: {ok} ({secs t1 t2} s)"
   assert! ok
   return (gbs, offs, V)
 
@@ -338,14 +343,14 @@ def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Arr
 
 def showProf (pf : Prof) : IO Unit := do
   let r := Float.ofNat (max pf.reads 1)
-  IO.println s!"profile: {pf.reads} reads; per read: lookups {Float.ofNat pf.lookups / r}, anchors {Float.ofNat pf.hits / r}, bucket entries scanned {Float.ofNat pf.bucket / r}"
-  IO.println s!"  lookups of buckets > 1000 entries: {pf.bigLookups} ({Float.ofNat pf.bigHits / Float.ofNat (max pf.bigLookups 1)} entries avg)"
-  IO.println s!"  time per read: prep {Float.ofNat pf.prepNs / r / 1000} us, lookups + phase 1 {Float.ofNat pf.p1Ns / r / 1000} us, stages K/B {Float.ofNat pf.kbNs / r / 1000} us"
-  IO.println s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
-  IO.println s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
-  IO.println s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}; filter alone {secs 0 pf.slowFiltNs} s"
-  IO.println s!"  best penalty histogram (0..16, 17 = none): {pf.penHist}"
-  IO.println s!"  lookups per read histogram (0..23, 24+): {pf.lkHist}"
+  say s!"profile: {pf.reads} reads; per read: lookups {Float.ofNat pf.lookups / r}, anchors {Float.ofNat pf.hits / r}, bucket entries scanned {Float.ofNat pf.bucket / r}"
+  say s!"  lookups of buckets > 1000 entries: {pf.bigLookups} ({Float.ofNat pf.bigHits / Float.ofNat (max pf.bigLookups 1)} entries avg)"
+  say s!"  time per read: prep {Float.ofNat pf.prepNs / r / 1000} us, lookups + phase 1 {Float.ofNat pf.p1Ns / r / 1000} us, stages K/B {Float.ofNat pf.kbNs / r / 1000} us"
+  say s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
+  say s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
+  say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}; filter alone {secs 0 pf.slowFiltNs} s"
+  say s!"  best penalty histogram (0..16, 17 = none): {pf.penHist}"
+  say s!"  lookups per read histogram (0..23, 24+): {pf.lkHist}"
 
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
@@ -367,13 +372,14 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
     let r1 := idx.map fun i => m1[i]!.get!
     let r2 := idx.map fun i => m2[i]!.get!
     let rk := Array.range idx.size
-    IO.println s!"set {name}: pairs {n}, trimmed away {trimmed.size}, both mates taken by the mapper {idx.size}; {← rss}"
+    say s!"set {name}: pairs {n}, trimmed away {trimmed.size}, both mates taken by the mapper {idx.size}; {← rss}"
+    let plim ← envN "WG_PROF_LIM" rk.size
     for (lab, pr) in prof do
       let mut pf : Prof := {}
-      for k in rk do
+      for k in rk.extract 0 plim do
         pf ← pr r1[k]! pf
         pf ← pr r2[k]! pf
-      IO.println s!"profile {lab}"
+      say s!"profile {lab}"
       showProf pf
     for (mode, f) in modes do
       let g (k : Nat) : PairOut := f r1[k]! r2[k]!
@@ -382,9 +388,9 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
         let t3 ← IO.monoNanosNow
         let out ← (← IO.mkRef (if t3 == 1 then #[] else if tasks ≤ 1 then rk.map g else ParMap.parMap tasks g rk)).get
         let t4 ← IO.monoNanosNow
-        IO.println s!"RESULT set {name} mode {mode} tasks {tasks}: mapped {idx.size} pairs, kept {(out.filter (·.isSome)).size}, {secs t3 t4} s, pairs/s {Float.ofNat idx.size / secs t3 t4}; {← rss}"
+        say s!"RESULT set {name} mode {mode} tasks {tasks}: mapped {idx.size} pairs, kept {(out.filter (·.isSome)).size}, {secs t3 t4} s, pairs/s {Float.ofNat idx.size / secs t3 t4}; {← rss}"
         match first with
-        | some o => if o != out then IO.println s!"MISMATCH between task counts ({mode})"
+        | some o => if o != out then say s!"MISMATCH between task counts ({mode})"
         | none =>
           first := some out
           if outDir != "" then
@@ -395,8 +401,14 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
                 | some (a, b) => s!"{showHit a}\t{showHit b}\n"
                 | none => "none\n")
             let path := s!"{outDir}/{mode}_{name}.tsv"
-            IO.FS.writeFile path (String.join ((Array.range n).toList.map fun i => s!"p{i + 1}\t{res[i]!}"))
-            IO.println s!"dump {path}"
+            let txt := String.join ((Array.range n).toList.map fun i => s!"p{i + 1}\t{res[i]!}")
+            if ← System.FilePath.pathExists path then
+              -- an earlier dump is kept, never overwritten: compare
+              let old ← IO.FS.readFile path
+              say s!"dump {path} kept; this run {if old == txt then "SAME" else "DIFFERENT"}"
+            else
+              IO.FS.writeFile path txt
+              say s!"dump {path}"
 
 /-- All chromosomes packed into one genome as they are read; offsets and lengths. -/
 def loadPacked (files : List String) : IO (PGen × Array Nat × Array Nat) := do
@@ -420,7 +432,7 @@ def loadPacked (files : List String) : IO (PGen × Array Nat × Array Nat) := do
   let G := s.finish
   let ns := (Array.range offs.size).map fun c => (offs[c + 1]?.getD G.n) - offs[c]!
   let t1 ← IO.monoNanosNow
-  IO.println s!"genome packed: {ns.size} chromosomes, {G.n} letters, {G.w.size + 4 * G.ex.size} bytes ({secs t0 t1} s); {← rss}"
+  say s!"genome packed: {ns.size} chromosomes, {G.n} letters, {G.w.size + 4 * G.ex.size} bytes ({secs t0 t1} s); {← rss}"
   return (G, offs, ns)
 
 def main (args : List String) : IO UInt32 := do
@@ -441,21 +453,21 @@ def main (args : List String) : IO UInt32 := do
       let ix ← if mode == "build" then IO.mkRef (if t0 == 1 then default else Mz.buildWV V k B c sw t) >>= (·.get) else do
         let G := gbs.foldl (· ++ ·) (ByteArray.emptyWithCapacity V.n)
         IO.mkRef (if t0 == 1 then default else Mz.buildW G k B c sw t) >>= (·.get)
-      IO.println s!"built: {ix.sl.size / sw} entries, sl {ix.sl.size} B, offs {ix.offs.size} B, runs {ix.runs.size}"
+      say s!"built: {ix.sl.size / sw} entries, sl {ix.sl.size} B, offs {ix.offs.size} B, runs {ix.runs.size}"
       let t1 ← IO.monoNanosNow
-      IO.println s!"build {secs t0 t1} s ({Float.ofNat (ix.sl.size + ix.offs.size) / Float.ofNat V.n} B/letter); {← rss}"
+      say s!"build {secs t0 t1} s ({Float.ofNat (ix.sl.size + ix.offs.size) / Float.ofNat V.n} B/letter); {← rss}"
       save pre ix (V.n.log2 + 1)
-      IO.println s!"saved {pre}.*"
+      say s!"saved {pre}.*"
       return 0
     else if mode == "map" then
       let (gbs, offs, V) ← loadGenome files
       let t0 ← IO.monoNanosNow
       let ix ← load pre
       let t1 ← IO.monoNanosNow
-      IO.println s!"index loaded {secs t0 t1} s: {ix.sl.size / ix.sw} entries; {← rss}"
+      say s!"index loaded {secs t0 t1} s: {ix.sl.size / ix.sw} entries; {← rss}"
       let ok ← (← IO.mkRef (if t1 == 1 then false else Mz.check3V ix V 4)).get
       let t2 ← IO.monoNanosNow
-      IO.println s!"index check (check3V = check2V, 4 tasks): {ok} ({secs t1 t2} s); {← rss}"
+      say s!"index check (check3V = check2V, 4 tasks): {ok} ({secs t1 t2} s); {← rss}"
       if !ok then throw (IO.userError "index check failed")
       -- pairDispatch_view_eq / pairFastGB_view_eq_pairSpec
       let f : ByteArray → ByteArray → PairOut := if P == 0 then pairDispatch lo hi (ix, V) ByteArray.empty offs gbs
@@ -469,13 +481,13 @@ def main (args : List String) : IO UInt32 := do
       let t0 ← IO.monoNanosNow
       let ix ← load pre
       let t1 ← IO.monoNanosNow
-      IO.println s!"index loaded {secs t0 t1} s: {ix.sl.size / ix.sw} entries; {← rss}"
+      say s!"index loaded {secs t0 t1} s: {ix.sl.size / ix.sw} entries; {← rss}"
       if (← IO.getEnv "WG_NOCHECK").isSome then
-        IO.println "WARNING: index check skipped (WG_NOCHECK): profiling only, not the proved setting"
+        say "WARNING: index check skipped (WG_NOCHECK): profiling only, not the proved setting"
       else
         let ok ← (← IO.mkRef (if t1 == 1 then false else Mz.check3P ix G 4)).get
         let t2 ← IO.monoNanosNow
-        IO.println s!"index check (check3P = check2P, 4 tasks): {ok} ({secs t1 t2} s); {← rss}"
+        say s!"index check (check3P = check2P, 4 tasks): {ok} ({secs t1 t2} s); {← rss}"
         if !ok then throw (IO.userError "index check failed")
       let pk : PkMz := (ix, G)
       -- pairDispatchP_mz_eq / pairFastGBP_mz_eq_pairSpec; pairDispatchKP_mz_eq / pairFastGBKP_mz_eq_pairSpec
