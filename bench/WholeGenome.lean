@@ -771,7 +771,8 @@ def parChunk {α β : Type} [Inhabited α] [Inhabited β] (n cs : Nat) (f : α �
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
     (prof : List (String × (ByteArray → Prof → IO Prof)))
-    (tally : List (String × (ByteArray → ByteArray → String)) := []) : IO Unit := do
+    (tally : List (String × (ByteArray → ByteArray → String)) := [])
+    (pprof : List (String × (Array ByteArray → Array ByteArray → IO Unit)) := []) : IO Unit := do
   -- WG_TASKS: comma list of `tasks` or `tasks/chunk` (chunk 0 = strided)
   let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map fun s => match s.splitOn "/" with
     | [a, c] => (a.toNat!, some c.toNat!)
@@ -797,6 +798,9 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
     let r1 := idx.map fun i => m1[i]!.get!
     let r2 := idx.map fun i => m2[i]!.get!
     let rk := Array.range idx.size
+    for (lab, pp) in pprof do
+      say s!"pair profile {lab}"
+      pp r1 r2
     say s!"set {name}: pairs {n}, trimmed away {trimmed.size}, both mates taken by the mapper {idx.size}; {← rss}"
     let plim ← envN "WG_PROF_LIM" rk.size
     for (lab, pr) in prof do
@@ -1131,10 +1135,13 @@ def main (args : List String) : IO UInt32 := do
       let ms := ((← IO.getEnv "WG_MODES").getD "P,PK").splitOn ","
       -- pairRegionKP_mz_eq: the cheaper mate first, the other near it first
       let fR : ByteArray → ByteArray → PairOut := pairRegionKP lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs
-      -- routeKP_ok (codecs/PairRouter.lean): pass 1 = pairRegionKP's kernel with reasons; WG_SHORT=1: mates of
+      -- routeKP_ok (codecs/PairRouter.lean): pass 1 = pairRegionKP's kernel with reasons; WG_SHORT (below): mates of
       -- 50–74 letters at −7, 75–99 at −11 (else < 100 too short); WG_PASS2=1: pairs left without a hit
       -- (noHit / noPartner / tooShort) get pass 2 at WG_T2 = "minLen:cap,…" (e.g. 150:20; first match wins)
-      let short := (← IO.getEnv "WG_SHORT").getD "0" == "1"
+      -- WG_SHORT: "75" (default) mates of 75–99 letters at −11; "50" (or "1") also 50–74 at −7; "0" off
+      let shortE := (← IO.getEnv "WG_SHORT").getD "75"
+      let short := shortE == "50" || shortE == "1"
+      let short75 := short || shortE == "75"
       -- WG_CAP1="minLen:cap,…" overrides the pass-1 caps (first match wins; shorter mates: cap 12, too short)
       let c1s := ((← IO.getEnv "WG_CAP1").getD "").splitOn "," |>.filter (· ≠ "") |>.map fun x =>
         match x.splitOn ":" with
@@ -1142,7 +1149,7 @@ def main (args : List String) : IO UInt32 := do
         | _ => (0, 0)
       let cap1F : Nat → Nat := fun n =>
         if !c1s.isEmpty then (match c1s.find? (fun x => x.1 ≤ n) with | some x => x.2 | none => 12) else
-        if 150 ≤ n then 16 else if 100 ≤ n then 12 else if short then (if 75 ≤ n then 11 else 7) else 12
+        if 150 ≤ n then 16 else if 100 ≤ n then 12 else if short75 && 75 ≤ n then 11 else if short then 7 else 12
       let t2s := ((← IO.getEnv "WG_T2").getD "150:20").splitOn "," |>.filter (· ≠ "") |>.map fun x =>
         match x.splitOn ":" with
         | [a, b] => (a.toNat!, b.toNat!)
@@ -1161,7 +1168,14 @@ def main (args : List String) : IO UInt32 := do
         else if a.size < 100 && 100 ≤ b.size then some !sh
         else none
       let p2on := (← IO.getEnv "WG_PASS2").getD "0" == "1"
-      let rcfg : RouteCfg := { cap1 := cap1F, pass2 := p2on, cap2 := cap2F, ord1 := ord1 }
+      -- WG_P2ORD=cost: pass 2 on noHit pairs orders the mates by lookup cost (default: the other mate first)
+      let swap2 := (← IO.getEnv "WG_P2ORD").getD "cost" == "swap"
+      -- WG_P2BUDGET=N: pass 2 only when both mates' lookup cost at the pass-2 cap (`costP`) is ≤ N
+      let bud ← envN "WG_P2BUDGET" 0
+      let cap2F' := cap2F
+      let gate2 : ByteArray → ByteArray → Bool := fun a b => bud == 0 ||
+        (costP pk (cap2F' a.size) (prepMate pk a : PrepM MzP) ≤ bud && costP pk (cap2F' b.size) (prepMate pk b : PrepM MzP) ≤ bud)
+      let rcfg : RouteCfg := { cap1 := cap1F, pass2 := p2on, cap2 := cap2F, ord1 := ord1, swap2 := swap2, gate2 := gate2 }
       -- WG_HINT=0: mate B over the genome at its full cap (no region-hit hint; mateH_ok holds either way)
       let hint := (← IO.getEnv "WG_HINT").getD "1" == "1"
       let kK := { kpKer lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs with hint := hint }
@@ -1192,7 +1206,72 @@ def main (args : List String) : IO UInt32 := do
         let XK := (ax[3]?.getD "0").toNat!
         let XL := (ax[4]?.getD "0").toNat!
         (cf, fun (R : ByteArray) (pf : Prof) => profRead XA XN XF XK XL pk offs pgs (if P == 0 then penOf R else P) R pf)
-      runSets modes okLen prof tally
+      -- WG_PPROF=N: pass-2 cost of the first N pairs, one thread, by pass-1 reason: whole pass 2,
+      -- and its parts (genome mate at the pass-2 cap and at the pass-1 cap, region, hinted mate B)
+      let ppN ← envN "WG_PPROF" 0
+      let rcfg1 : RouteCfg := { rcfg with pass2 := false }
+      let pprof : List (String × (Array ByteArray → Array ByteArray → IO Unit)) := if ppN == 0 then [] else
+        [("pass2", fun r1 r2 => do
+          let mut tab : Std.HashMap String (Array Nat) := {}
+          let mut dead : Array (ByteArray × Nat × Nat) := #[]
+          for k in [0:min ppN r1.size] do
+            let R1 := r1[k]!
+            let R2 := r2[k]!
+            let o ← (← IO.mkRef (routeG rcfg1 kK kK lo hi (some R1) (some R2))).get
+            match o.out with
+            | .mapped _ => pure ()
+            | .unmapped r kn =>
+              let A1 := o.c1
+              let A2 := o.c2
+              let B1 := cap2Of rcfg R1
+              let B2 := cap2Of rcfg R2
+              if !(rcfg.goOn r && rcfg.gate2 R1 R2 && !(B1 == A1 && B2 == A2)) then pure () else
+              let t0 ← IO.monoNanosNow
+              let o2 ← (← IO.mkRef (pass2G kK rcfg.swap2 A1 A2 B1 B2 r lo hi R1 R2 kn)).get
+              let t1 ← IO.monoNanosNow
+              -- parts: genome mate `g` (cap Bg, pass-1 cap Ag), region mate `x` (cap Bx)
+              let parts : Option (ByteArray × Nat × Nat × ByteArray × Nat × Option (Placement × Int)) := match r, kn with
+                | .noHit .one, _ => some (R2, B2, A2, R1, B1, none)
+                | .noHit .two, _ => some (R1, B1, A1, R2, B2, none)
+                | .noPartner .two, some a => some (R1, B1, A1, R2, B2, some a)
+                | .noPartner .one, some a => some (R2, B2, A2, R1, B1, some a)
+                | _, _ => none
+              let mut v : Array Nat := #[1, t1 - t0, 0, 0, 0, 0, 0, 0]
+              if let some (Rg, Bg, Ag, Rx, Bx, kn') := parts then
+                let sg := kK.prep Rg
+                let sx := kK.prep Rx
+                let u0 ← IO.monoNanosNow
+                let mg ← if kn'.isSome then pure ((kn'.map fun a => (some a, true)).getD (none, false))
+                  else (← IO.mkRef (kK.mate Bg Rg sg)).get
+                let u1 ← IO.monoNanosNow
+                let _ ← if kn'.isSome || !fastT Ag Rg then pure (none, false) else (← IO.mkRef (kK.mate Ag Rg sg)).get
+                let u2 ← IO.monoNanosNow
+                let (rp, u3) ← match mg.1 with
+                  | some a => do
+                    let rp ← (← IO.mkRef (kK.region Bx Rx a.1)).get
+                    pure (rp, ← IO.monoNanosNow)
+                  | none => pure (Bx + 1, u2)
+                let _ ← if rp ≤ Bx then (← IO.mkRef (mateH kK Bx Rx sx rp)).get else pure (none, false)
+                let u4 ← IO.monoNanosNow
+                v := #[1, t1 - t0, u1 - u0, u2 - u1, u3 - u2, u4 - u3, if mg.1.isSome then 1 else 0,
+                  if mg.1.isSome && rp ≤ Bx then 1 else 0]
+                if kn'.isNone && mg.1.isNone && !mg.2 && fastT Ag Rg then dead := dead.push (Rg, Bg, Ag)
+              let key := s!"{showR ⟨o.out, 1, A1, A2⟩} -> {showR ⟨o2, 2, B1, B2⟩}"
+              tab := tab.insert key (((tab.getD key #[0, 0, 0, 0, 0, 0, 0, 0]).zip v).map fun (a, b) => a + b)
+          let rows := tab.toArray.qsort (fun a b => a.2[1]! > b.2[1]!)
+          let tot := rows.foldl (fun a r => a + r.2[1]!) 0
+          say s!"  pass-2 total {secs 0 tot} s over {min ppN r1.size} pairs (1 thread); columns: pairs, pass 2 s, genome mate at cap 2 s, same at cap 1 s, region s, hinted B s, genome mate mapped, region hit"
+          for (key, v) in rows do
+            say s!"  {key}: {v[0]!}, {secs 0 v[1]!}, {secs 0 v[2]!}, {secs 0 v[3]!}, {secs 0 v[4]!}, {secs 0 v[5]!}, {v[6]!}, {v[7]!}"
+          -- read profile of the genome mates without any hit at the pass-2 cap, at both caps
+          let dl := dead.extract 0 (← envN "WG_PPROF_DEAD" 300)
+          for hi2 in [true, false] do
+            let mut pf : Prof := {}
+            for (Rg, Bg, Ag) in dl do
+              pf ← profRead 0 0 false 0 0 pk offs pgs (if hi2 then Bg else Ag) Rg pf
+            say s!"  no-hit genome mates ({dl.size} of {dead.size}) at the pass-{if hi2 then 2 else 1} cap:"
+            showProf pf)]
+      runSets modes okLen prof tally pprof
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
   | _ => throw (IO.userError "usage: whole_genome build|bytes|map|pmap <index_prefix> ...")
