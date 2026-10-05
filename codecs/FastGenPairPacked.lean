@@ -130,6 +130,32 @@ theorem bandEnd2_same (sc : Scoring) (T : Int) (B : Nat) (rb : ByteArray) (e : N
     bandEnd2 sc T B rb x e = bandEnd2 sc T B rb y e := by
   simp only [bandEnd2, bandRows2_same h]
 
+theorem bandRowsP_same (T : Int) (B : Nat) (sp : Nat → Bool) (rb : ByteArray) (e : Nat) :
+    ∀ i N X Y, bandRowsP T B sp rb x e i N X Y = bandRowsP T B sp rb y e i N X Y := by
+  intro i
+  induction i with
+  | zero => intro N X Y; rw [bandRowsP, bandRowsP, bandLoop_same' h]
+  | succ i ih => intro N X Y; rw [bandRowsP, bandRowsP, bandLoop_same' h]; simp only [ih]
+
+theorem bandEndP_same (T : Int) (B : Nat) (sp : Nat → Bool) (rb : ByteArray) (e : Nat) :
+    bandEndP T B sp rb x e = bandEndP T B sp rb y e := by
+  simp only [bandEndP, bandRowsP_same h]
+
+theorem blockEq_same (R : ByteArray) (a p : Nat) : ∀ k, blockEq R x a p k = blockEq R y a p k := by
+  intro k
+  induction k with
+  | zero => rfl
+  | succ k ih => simp only [blockEq, h.2, ih]
+
+theorem anyCopy_same (R : ByteArray) (a : Nat) (lo : Int) : ∀ t, anyCopy R x a lo t = anyCopy R y a lo t := by
+  intro t
+  induction t with
+  | zero => rfl
+  | succ t ih => simp only [anyCopy, h.1, blockEq_same h, ih]
+
+theorem spoiledArr_same (R : ByteArray) (D d B : Nat) : spoiledArr R x D d B = spoiledArr R y D d B := by
+  simp only [spoiledArr, anyCopy_same h]
+
 end
 
 section
@@ -181,18 +207,18 @@ theorem stageKP_same (R : ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds
     stageKP R xs c lim shs ds b = stageKP R ys c lim shs ds b := by
   simp only [stageKP, addKP_same h, fwdProf_same (h.2 c), bwdProf_same (h.2 c)]
 
-theorem bandEndAt_same (P : Nat) (R : ByteArray) (c D : Nat) (bb : Int) :
-    bandEndAt P R xs c D bb = bandEndAt P R ys c D bb := by
-  simp only [bandEndAt, bandEnd2_same (h.2 c)]
+theorem bandEndAt_same (P : Nat) (R : ByteArray) (c D : Nat) (sp : Nat → Bool) (bb : Int) :
+    bandEndAt P R xs c D sp bb = bandEndAt P R ys c D sp bb := by
+  simp only [bandEndAt, bandEndP_same (h.2 c)]
 
 theorem stageB_same (P : Nat) (R : ByteArray) (c : Nat) (shs : List (Int × Int)) (bs : List Int) (ds : List Nat)
     (b : Best) : stageB P R xs c shs bs ds b = stageB P R ys c shs bs ds b := by
   have e : stageBD P R xs c shs = stageBD P R ys c shs := by
-    funext D b bb
+    funext D sp b bb
     have e2 : addBS P R xs c D = addBS P R ys c D := by
       funext opt b sh; simp only [addBS, (h.2 c).1]
     simp only [stageBD, bandEndAt_same h, e2]
-  simp only [stageB, e]
+  simp only [stageB, e, spoiledArr_same (h.2 c)]
 
 theorem chromKB_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) :
     chromKB R xs c P acc b1 = chromKB R ys c P acc b1 := by
