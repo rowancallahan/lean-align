@@ -1,6 +1,7 @@
 import FastGenPairPacked
 import FastGenK250
 import PairDispatch
+import FastGenWordFilt
 import MzCheckPar
 import MzPacked
 import MzView
@@ -214,7 +215,8 @@ def ker16KG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st l
 
 /-! ### The search with the kernel as a parameter, chromosomes through `GRead` -/
 
-def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
+/-- Stages K and B of one chromosome, the letter filter (`chromKBFG_eq`: the same). -/
+def chromKBFG0 (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
     (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
@@ -226,6 +228,28 @@ def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : Lis
     stageKS (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
       R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) P
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
+  else b2
+
+/-- Stages K and B of one chromosome, the filter by words where it applies (`kfiltV`;
+the read is packed once, when the chromosome has anchors). -/
+def chromKBFG [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
+    (b1 : Best) : Best :=
+  match diags acc with
+  | [] => b1
+  | ds@(_ :: _) =>
+  let K := packRP R
+  let lim := min P 16
+  let Q1 := min b1.pen P
+  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
+      stageKSV (fun D b => stageKF kf R.size c lim (shapesKT Q1) [D] b)
+        K R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim ds b1 else b1
+  let Q2 := min b2.pen P
+  if lim < Q2 then
+    let need := acc.length - sbound P
+    let r := 2 * gapBound sc0 (-(Q2 : Int))
+    stageKSV (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
+      K R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) P
+      (ds.filter fun D => decide (need ≤ suppA acc D r)) b2
   else b2
 
 @[inline] def advCFG (kf : Ker) (n : Nat) (gbs2 : Array Gt) (offs : Array Nat) (t P bs : Nat) (a : Array Nat)
@@ -257,7 +281,7 @@ def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : Lis
       ilGFG kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
     else (s1, s2, b)
 
-@[specialize] def mapChromsGBFG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (P : Nat) (ix : L)
+@[specialize] def mapChromsGBFG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
@@ -270,7 +294,7 @@ def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : Lis
   (List.range n).foldl (fun b c => chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
 
 /-- `mapChromsGBK` with the chromosomes `gbs` of any representation. -/
-@[specialize] def mapChromsGBKG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+@[specialize] def mapChromsGBKG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array Gt) (pvs : Array PGen) (R : ByteArray) : Best :=
   let gbs2 := gbs ++ gbs
   let pvs2 := pvs ++ pvs
@@ -364,14 +388,25 @@ theorem kerHKG_bytes (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Arr
 
 /-! ## Proofs: the search -/
 
+theorem chromKBFG_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt)
+    (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
+    chromKBFG kf R gbs c P acc J b1 = chromKBFG0 kf R gbs c P acc J b1 := by
+  unfold chromKBFG chromKBFG0
+  simp only [diagsB]
+  generalize diags acc = ds
+  cases ds with
+  | nil => simp [stageKS]
+  | cons D ds => simp only [stageKSV_eq]
+
 section
 variable {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] {xs : Array G1} {ys : Array G2}
   (h : SameA xs ys) {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf kf1 kf2 : Ker) (ix : L) (G : ByteArray)
 include h
 
-theorem chromKBFG_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
+theorem chromKBFG_same [GPk G1] [GPk G2] (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
     chromKBFG kf R xs c P acc J b1 = chromKBFG kf R ys c P acc J b1 := by
-  simp only [chromKBFG, stageKS_same (h.2 c) _ _ (fun D b => stageB_same h _ _ _ _ _ _ b),
+  rw [chromKBFG_eq, chromKBFG_eq]
+  simp only [chromKBFG0, stageKS_same (h.2 c) _ _ (fun D b => stageB_same h _ _ _ _ _ _ b),
     stageKS_same (h.2 c) _ _ (fun D b => rfl)]
 
 theorem advFG_same (R : ByteArray) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) :
@@ -410,7 +445,7 @@ theorem ilGFG_bytes {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (i
 theorem mapChromsGBFG_bytes {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array ByteArray) (R Rr : ByteArray) (ps pr : Array Pp) :
     mapChromsGBFG kf1 kf2 P ix G offs gbs R Rr ps pr = mapChromsGBF kf1 kf2 P ix G offs gbs R Rr ps pr := by
-  simp only [mapChromsGBFG, mapChromsGBF, ilGFG_bytes]
+  simp only [mapChromsGBFG, mapChromsGBF, ilGFG_bytes, chromKBFG_eq]
   rfl
 
 /-- Packed chromosomes = their unpacked bytes, for the whole word-kernel search. -/

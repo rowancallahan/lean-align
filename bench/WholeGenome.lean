@@ -563,6 +563,20 @@ structure Prof where
   slowUnNs : Nat := 0
   slowUnPass : Nat := 0
   slowLkNs : Nat := 0
+  slowK12Ns : Nat := 0
+  slowK16Ns : Nat := 0
+  slowKAnc : Nat := 0
+  slowVNs : Nat := 0
+  slowVPass : Nat := 0
+  slowVDiff : Nat := 0
+  slowD2Ns : Nat := 0
+  clsAll : Nat := 0
+  clsAllC : Nat := 0
+  clsAllM : Nat := 0
+  clsPass : Nat := 0
+  clsPassC : Nat := 0
+  clsPassM : Nat := 0
+  slowD3Ns : Nat := 0
   slowSlNs : Nat := 0
   penHist : Array Nat := Array.replicate 18 0
   lkHist : Array Nat := Array.replicate 25 0
@@ -687,6 +701,49 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
       let v0 ← IO.monoNanosNow
       let d1 ← (← IO.mkRef (dl R 0 x.1 + dl Rr n x.2.1)).get
       let v1 ← IO.monoNanosNow
+      let dv := fun (Kx : RP) (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun a c =>
+        let acc := s.acc[c]!
+        let us := unseen (Rx.size / 25) s.J
+        a + ((diags acc).filter fun D => kfiltV Kx Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D).length) 0
+      let dx := fun (Kx : RP) (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun a c =>
+        let acc := s.acc[c]!
+        let us := unseen (Rx.size / 25) s.J
+        a + ((diags acc).filter fun D => kfiltV Kx Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D !=
+          kfilt Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D).length) 0
+      let x0 ← IO.monoNanosNow
+      let dV ← (← IO.mkRef (dv K1 R 0 x.1 + dv K2 Rr n x.2.1)).get
+      let x1 ← IO.monoNanosNow
+      let dX := dx K1 R 0 x.1 + dx K2 Rr n x.2.1
+      let pf := { pf with slowVNs := pf.slowVNs + (x1 - x0), slowVPass := pf.slowVPass + dV, slowVDiff := pf.slowVDiff + dX }
+      -- repeat classes: identical genome windows [D − n − g, D + g) among the read's diagonals
+      let g := gapBound sc0 (-(16 : Int))
+      let wh := fun (Gx : PGen) (st len : Nat) => (List.range len).foldl (fun (h : UInt64) i =>
+        (h ^^^ (Gx.get (st + i)).toUInt64) * 0x100000001b3) 0xcbf29ce484222325
+      let hs := fun (pass : Bool) (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun (a : Array UInt64) c =>
+        let acc := s.acc[c]!
+        let us := unseen (Rx.size / 25) s.J
+        let Gx := gbs2[t + c]!
+        (diags acc).foldl (fun a D =>
+          if Rx.size + g ≤ D && D + g ≤ Gx.n && (!pass || kfilt Rx Gx acc us (Rx.size / (Rx.size / 25)) (min P 16) b D)
+          then a.push (wh Gx (D - Rx.size - g) (Rx.size + 2 * g)) else a) a) #[]
+      let cls := fun (a : Array UInt64) =>
+        let srt := a.qsort (· < ·)
+        let r := srt.foldl (fun (st : Nat × Nat × Nat × UInt64 × Bool) h =>
+          -- (classes, members of multi-copy classes, current run length, last, first)
+          if !st.2.2.2.2 && h == st.2.2.2.1 then (st.1, st.2.1 + (if st.2.2.1 == 1 then 2 else 1), st.2.2.1 + 1, h, false)
+          else (st.1 + 1, st.2.1, 1, h, false)) (0, 0, 0, 0, true)
+        (a.size, r.1, r.2.1)
+      let cA := cls (hs false R 0 x.1 ++ hs false Rr n x.2.1)
+      let cP := cls (hs true R 0 x.1 ++ hs true Rr n x.2.1)
+      let pf := { pf with clsAll := pf.clsAll + cA.1, clsAllC := pf.clsAllC + cA.2.1, clsAllM := pf.clsAllM + cA.2.2 }
+      let pf := { pf with clsPass := pf.clsPass + cP.1, clsPassC := pf.clsPassC + cP.2.1, clsPassM := pf.clsPassM + cP.2.2 }
+      let ddq := fun (s : GS) => (List.range n).foldl (fun a c => a + (diags s.acc[c]!).length) 0
+      let q0 ← IO.monoNanosNow
+      let qq ← (← IO.mkRef (ddq x.1 + ddq x.2.1)).get
+      let q1 ← IO.monoNanosNow
+      let qq2 ← (← IO.mkRef (ddq x.1 + ddq x.2.1)).get
+      let q2 ← IO.monoNanosNow
+      let pf := { pf with slowD2Ns := pf.slowD2Ns + (q1 - q0) + 0 * qq, slowD3Ns := pf.slowD3Ns + (q2 - q1) + 0 * qq2 }
       let dd := fun (s : GS) => (List.range n).foldl (fun a c => a + (diags s.acc[c]!).length) 0
       let ds := fun (Rx : ByteArray) (s : GS) => (List.range n).foldl (fun a c =>
         let acc := s.acc[c]!
@@ -717,6 +774,19 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
         (List.range n).foldl (fun acc c => acc + (sliceG a (Rx.size - j * Ls) offs[c]! (GRead.size gbs2[t + c]!)).size) 0).foldl (· + ·) 0
       let sl1 ← (← IO.mkRef (sl R 0 x.1.J ps + sl Rr n x.2.1.J pr)).get
       let z2 ← IO.monoNanosNow
+      -- the phase-1 kernel alone at every anchor (same-length window), at cap 12 and 16
+      let kall := fun (l : Nat) => (List.range n).foldl (fun a c =>
+        let f := fun (kf : Ker) (Rx : ByteArray) (t : Nat) (acc : List (Array Nat)) =>
+          acc.foldl (fun a2 arr => arr.foldl (fun a3 e =>
+            let st : Int := ((e / 16 : Nat) : Int) - (Rx.size : Int)
+            if 0 ≤ st then a3 + kf (t + c) st.toNat Rx.size l else a3) a2) 0
+        a + f kf1 R 0 x.1.acc[c]! + f kf2 Rr n x.2.1.acc[c]!) 0
+      let k0 ← IO.monoNanosNow
+      let q12 ← (← IO.mkRef (kall 12)).get
+      let k1 ← IO.monoNanosNow
+      let q16 ← (← IO.mkRef (kall 16)).get
+      let k2 ← IO.monoNanosNow
+      let pf := { pf with slowK12Ns := pf.slowK12Ns + (k1 - k0) + 0 * q12, slowK16Ns := pf.slowK16Ns + (k2 - k1) + 0 * q16, slowKAnc := pf.slowKAnc + hits }
       let pf := { pf with slowLkNs := pf.slowLkNs + (z1 - z0) + 0 * (lk1 + lk2), slowSlNs := pf.slowSlNs + (z2 - z1) + 0 * sl1 }
       let pf := { pf with slowDdNs := pf.slowDdNs + (y1 - y0) + 0 * e1, slowSuppNs := pf.slowSuppNs + (y2 - y1) + 0 * e2, slowUnNs := pf.slowUnNs + (y3 - y2), slowUnPass := pf.slowUnPass + e3 }
       let u0 ← IO.monoNanosNow
@@ -738,6 +808,9 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
   say s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
   say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
+  say s!"  reads > 1 ms: diags + word kfiltV {secs 0 pf.slowVNs} s, passing {pf.slowVPass}, differing from kfilt {pf.slowVDiff}; diags again {secs 0 pf.slowD2Ns} s, {secs 0 pf.slowD3Ns} s"
+  say s!"  reads > 1 ms: repeat classes (identical windows of n + 2·{gapBound sc0 (-16)} letters, per read): all diagonals {pf.clsAll} in {pf.clsAllC} classes ({pf.clsAllM} in multi-copy classes); passing kfilt {pf.clsPass} in {pf.clsPassC} classes ({pf.clsPassM} in multi-copy classes)"
+  say s!"  reads > 1 ms: phase-1 kernel alone at all {pf.slowKAnc} anchors: cap 12 {secs 0 pf.slowK12Ns} s, cap 16 {secs 0 pf.slowK16Ns} s"
   say s!"  reads > 1 ms: lookups alone {secs 0 pf.slowLkNs} s, lookups + chromosome slices {secs 0 pf.slowSlNs} s"
   say s!"  reads > 1 ms: diags only {secs 0 pf.slowDdNs} s, diags + seed-count (suppA) only {secs 0 pf.slowSuppNs} s, diags + suppA + unlook (no fine) {secs 0 pf.slowUnNs} s, passing {pf.slowUnPass}"
   say s!"  stage K only (cap 16) {secs 0 pf.kOnlyNs} s vs stages K/B {secs 0 pf.kbNs} s; prototype B through kfilt at P: {secs 0 pf.bFiltNs} s; word kfilt: {secs 0 pf.bWordNs} s (of which stage K + diagsB + word filter, no stage B: {secs 0 pf.bNoBNs} s; stage K + diagsB only: {secs 0 pf.bDiagNs} s)"
