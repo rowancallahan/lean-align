@@ -972,6 +972,138 @@ def ukProf (f : ByteArray → ByteArray → Option PairHit × Bool) (anch : Byte
   let all := tot.foldl (· + ·) 0
   say s!"UKPROF all: pairs {cnt.foldl (· + ·) 0}, {secs 0 all} s; both-repeat share {Float.ofNat tot[2]! / Float.ofNat (max all 1)}"
 
+/-- Stage times of one `hitsAtKP` call (as `hitsSK`, timed): lookups, slices + diagonals,
+filter, kernels; counts of diagonals, filter passes, kernel calls. -/
+structure HDet where
+  tLook : Nat := 0
+  tDiag : Nat := 0
+  tFilt : Nat := 0
+  tKer : Nat := 0
+  nAnch : Nat := 0
+  nDiag : Nat := 0
+  nPass : Nat := 0
+  nKer : Nat := 0
+  nHit : Nat := 0
+  calls : Nat := 0
+
+def hitsSKT {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
+    (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) (d : HDet) : IO HDet := do
+  let mut d := d
+  let t0 ← IO.monoNanosNow
+  let m := Rs.size / 25
+  let Ls := Rs.size / m
+  let K := packRP Rs
+  let ps := prepG ix Rs m Ls
+  let J := (ordG (ps.map (LookG.size ix)) m).take (sbound lim + 1)
+  let lk ← (← IO.mkRef (J.map fun j => (j, LookG.look ix G Rs (j * Ls) (Rs.size - j * Ls) ps[j]!))).get
+  let us := unseen m J
+  let t1 ← IO.monoNanosNow
+  d := { d with tLook := d.tLook + (t1 - t0), nAnch := d.nAnch + lk.foldl (fun x a => x + a.2.size) 0 }
+  for c in [0:n] do
+    let a0 ← IO.monoNanosNow
+    let acc := slicesAt lk Rs.size Ls offs[c]! (GRead.size pgs2[t + c]!)
+    let ds ← (← IO.mkRef (diags acc)).get
+    let a1 ← IO.monoNanosNow
+    let pass ← (← IO.mkRef (ds.filter fun D => kfiltV K Rs pgs2[t + c]! acc us Ls lim (initP lim) D)).get
+    let a2 ← IO.monoNanosNow
+    let hs ← (← IO.mkRef (pass.flatMap fun D => (shapesAt lim).filterMap fun sh =>
+        if 0 ≤ dst Rs.size D sh ∧ 0 ≤ wlen Rs.size sh then
+          let k := kerHKG Rs K pgs2 pgs2 (t + c) (dst Rs.size D sh).toNat (wlen Rs.size sh).toNat lim
+          if k ≤ lim then some k else none
+        else none)).get
+    let a3 ← IO.monoNanosNow
+    d := { d with tDiag := d.tDiag + (a1 - a0) }
+    d := { d with tFilt := d.tFilt + (a2 - a1) }
+    d := { d with tKer := d.tKer + (a3 - a2) }
+    d := { d with nDiag := d.nDiag + ds.length }
+    d := { d with nPass := d.nPass + pass.length }
+    d := { d with nKer := d.nKer + pass.length * (shapesAt lim).length }
+    d := { d with nHit := d.nHit + hs.length }
+  return d
+
+def hitsKPT {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
+    (pgs : Array PGen) (R : ByteArray) (lim : Nat) (d : HDet) : IO HDet := do
+  if fastT lim R then
+    let n := pgs.size
+    let d ← hitsSKT ix G offs (pgs ++ pgs) n 0 lim R d
+    let d ← hitsSKT ix G offs (pgs ++ pgs) n n lim (revCompK R) d
+    return { d with calls := d.calls + 1 }
+  else return d
+
+/-- Mode U on both-repeat pairs, the ladder traced: time in the hit lists (and their stages,
+`hitsKPT`) vs the pairing (`properPairs` / `topW` / `bestPairD`), hit-list sizes, exit rung. -/
+def ukDet {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (offs : Array Nat) (pgs : Array PGen)
+    (dc : Nat → Nat) (sl lo hi : Nat) (penOf : ByteArray → Nat) (a1f : ByteArray → ByteArray → Bool)
+    (anch : ByteArray → Nat) (N : Nat) (r1 r2 : Array ByteArray) : IO Unit := do
+  let mut tH := 0
+  let mut tP := 0
+  let mut nH := 0
+  let mut sLen := 0
+  let mut mLen := 0
+  let mut nPr := 0
+  let mut mPr := 0
+  let mut np := 0
+  let mut exits : Array Nat := Array.replicate 7 0
+  let mut d : HDet := {}
+  for k in [0:min N r1.size] do
+    let R1 := r1[k]!
+    let R2 := r2[k]!
+    if !(1000 < anch R1 && 1000 < anch R2) then continue
+    np := np + 1
+    let P1 := penOf R1
+    let P2 := penOf R2
+    let a1 := a1f R1 R2
+    let mut rung := 0
+    let mut fin := false
+    for c in capsU do
+      if fin then break
+      rung := rung + 1
+      let c1 := min c P1
+      let c2 := min c P2
+      let hfT := fun (b : Bool) (cc : Nat) => do
+        let t0 ← IO.monoNanosNow
+        let l ← (← IO.mkRef (hitsKPF ix ByteArray.empty offs pgs (if b then R1 else R2) cc)).get
+        let t1 ← IO.monoNanosNow
+        return (l, t1 - t0)
+      let (hA, ta) ← hfT a1 (if a1 then c1 else c2)
+      tH := tH + ta; nH := nH + 1; sLen := sLen + hA.length; mLen := max mLen hA.length
+      d ← hitsKPT ix ByteArray.empty offs pgs (if a1 then R1 else R2) (if a1 then c1 else c2) d
+      if hA.isEmpty then
+        if (if a1 then P1 ≤ c1 else P2 ≤ c2) then fin := true
+        continue
+      let (hB, tb) ← hfT (!a1) (if a1 then c2 else c1)
+      tH := tH + tb; nH := nH + 1; sLen := sLen + hB.length; mLen := max mLen hB.length
+      d ← hitsKPT ix ByteArray.empty offs pgs (if a1 then R2 else R1) (if a1 then c2 else c1) d
+      let l1 := if a1 then hA else hB
+      let l2 := if a1 then hB else hA
+      let p0 ← IO.monoNanosNow
+      let prs ← (← IO.mkRef (properPairs sl lo hi l1 l2)).get
+      nPr := nPr + prs.length; mPr := max mPr prs.length
+      if P1 ≤ c1 ∧ P2 ≤ c2 then
+        let _ ← (← IO.mkRef (bestPairD dc sl lo hi l1 l2)).get
+        tP := tP + ((← IO.monoNanosNow) - p0); fin := true
+      else
+        match topW dc prs with
+        | none => tP := tP + ((← IO.monoNanosNow) - p0)
+        | some w =>
+          let e := (-(pairScoreD dc w)).toNat
+          if (P1 ≤ c1 ∨ e ≤ c1) ∧ (P2 ≤ c2 ∨ e ≤ c2) then
+            let _ ← (← IO.mkRef (bestPairD dc sl lo hi l1 l2)).get
+            tP := tP + ((← IO.monoNanosNow) - p0)
+          else
+            tP := tP + ((← IO.monoNanosNow) - p0)
+            let (x1, t1) ← hfT true (min P1 e)
+            let (x2, t2) ← hfT false (min P2 e)
+            tH := tH + t1 + t2; nH := nH + 2
+            let q0 ← IO.monoNanosNow
+            let _ ← (← IO.mkRef (bestPairD dc sl lo hi x1 x2)).get
+            tP := tP + ((← IO.monoNanosNow) - q0)
+            rung := rung + 1
+          fin := true
+    exits := exits.modify (min rung 6) (· + 1)
+  say s!"UKDET both-repeat pairs {np}: hits {secs 0 tH} s in {nH} lists (mean len {sLen / max nH 1}, max {mLen}); pairing {secs 0 tP} s (proper pairs total {nPr}, max {mPr}); exit rung {exits}"
+  say s!"UKDET stages ({d.calls} calls): look {secs 0 d.tLook} s, slices+diags {secs 0 d.tDiag} s, filter {secs 0 d.tFilt} s, kernels {secs 0 d.tKer} s; anchors {d.nAnch}, diags {d.nDiag}, passed {d.nPass}, kernel calls {d.nKer}, hits {d.nHit}"
+
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
     (prof : List (String × (ByteArray → Prof → IO Prof)))
@@ -1618,6 +1750,11 @@ def main (args : List String) : IO UInt32 := do
       -- WG_UKPROF=N: mode U per pair on one thread, time by class (both-repeat pairs separately)
       let ukN ← envN "WG_UKPROF" 0
       let pprof := if ukN == 0 then pprof else pprof ++ [("ukprof", ukProf uR uAnch ukN)]
+      -- WG_UKDET=N: both-repeat pairs of mode U traced (hit lists vs pairing, stages of the hit lists)
+      let udN ← envN "WG_UKDET" 0
+      let a1f : ByteArray → ByteArray → Bool := fun a b =>
+        !decide (costP pk (penOf b) (prepMate pk b : PrepM MzP) < costP pk (penOf a) (prepMate pk a : PrepM MzP))
+      let pprof := if udN == 0 then pprof else pprof ++ [("ukdet", ukDet pk offs pgs udc usl lo hi penOf a1f uAnch udN)]
       runSets modes okLen prof (some margF) tally (rprofL ++ pprof)
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
