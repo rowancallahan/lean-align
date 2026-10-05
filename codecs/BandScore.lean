@@ -104,10 +104,10 @@ theorem genomeBytes_ok (g : Genome) (h : ∀ c : Chromosome, c ∈ g → ∀ x :
 /-- Score of one window through the banded kernel: `none` when the window
 does not fit, is more than `B` letters longer or shorter than the read, or
 when the kernel finds every window ending where it ends below `T`. -/
-def bandScore (sc : Scoring) (T : Int) (B : Nat) (rb : ByteArray) (gbs : Array ByteArray)
+@[specialize] def bandScore {Gt : Type} [GRead Gt] (sc : Scoring) (T : Int) (B : Nat) (rb : ByteArray) (gbs : Array Gt)
     (w : Window) : Option Int :=
   if h : w.chr < gbs.size then
-    if w.start + w.len ≤ gbs[w.chr].size ∧ rb.size ≤ w.len + B ∧ w.len ≤ rb.size + B then
+    if w.start + w.len ≤ GRead.size gbs[w.chr] ∧ rb.size ≤ w.len + B ∧ w.len ≤ rb.size + B then
       match bandEnd2 sc T B rb gbs[w.chr] (w.start + w.len) with
       | some A => some A[w.len + B - rb.size + 1]!
       | none => none
@@ -132,7 +132,7 @@ theorem bandScore_faithful (sc : Scoring) (hv : ValidScoring sc) (T : Int) (B : 
     (hr : Encodes rb read) (hg : GenomeBytes gbs g) :
     ScoreFaithful sc T read g (bandScore sc T B rb gbs) := by
   intro w s
-  unfold bandScore
+  unfold bandScore; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   by_cases hc : w.chr < gbs.size
   · rw [dif_pos hc]
     have hc' : w.chr < g.length := hg.1 ▸ hc

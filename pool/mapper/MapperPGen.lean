@@ -126,98 +126,104 @@ theorem checkPG_ok (P : PGen) (G : ByteArray) (h : checkPG P G = true) : Rep P G
   · exact eqAll_ok P G _ 0 h.2 i (by omega) (by omega)
   · rw [get!_out G i (by omega)]; exact get_out P i (by omega)
 
-/-! ## Genome-reading loops over `PGen` (copies of the byte versions) -/
+/-! ## Genome-reading loops over `PGen`
 
-def hammingP (r : ByteArray) (g : PGen) (a lim : Nat) (i stop m : Nat) : Nat :=
-  if i < stop then
-    if r.get! i != g.get (a + i) then
-      if lim < m + 1 then m + 1 else hammingP r g a lim (i + 1) stop (m + 1)
-    else hammingP r g a lim (i + 1) stop m
-  else m
-termination_by stop - i
+The kernels are generic over `GRead` (pool/mapper/MapperGRead.lean); `PGen` is an
+instance.  `SameG x y`: two genomes of any representations with the same size and
+bytes; every kernel gives the same answer on both (`hamming_same`, …).  `Rep P G`
+is `SameG P G`. -/
 
-def fwdMisP (r : ByteArray) (g : PGen) (st stop : Nat) (i k : Nat) : Nat :=
-  if i < stop then
-    if r.get! i != g.get (st + i) then (if k ≤ 1 then i else fwdMisP r g st stop (i + 1) (k - 1))
-    else fwdMisP r g st stop (i + 1) k
-  else stop
-termination_by stop - i
+instance : GRead PGen := ⟨PGen.get, PGen.n⟩
 
-def bwdMisP (r : ByteArray) (g : PGen) (st len lo : Nat) (e k : Nat) : Nat :=
-  if lo < e then
-    if r.get! (e - 1) != g.get (st + len + (e - 1) - r.size) then
-      (if k ≤ 1 then e else bwdMisP r g st len lo (e - 1) (k - 1))
-    else bwdMisP r g st len lo (e - 1) k
-  else lo
-termination_by e - lo
+/-- Same length, same byte at every index. -/
+def SameG {G1 G2 : Type} [GRead G1] [GRead G2] (x : G1) (y : G2) : Prop :=
+  GRead.size x = GRead.size y ∧ ∀ i, GRead.get x i = GRead.get y i
 
-/-- `G[i, i+k) = R[j, j+k)`. -/
-def eqRunP (a : PGen) (b : ByteArray) (i j : Nat) : (k : Nat) → Bool
-  | 0 => true
-  | k + 1 => a.get i == b.get! j && eqRunP a b (i + 1) (j + 1) k
+theorem Rep.same {P : PGen} {G : ByteArray} (h : Rep P G) : SameG P G := ⟨h.1, h.2⟩
+
+section
+variable {G1 G2 : Type} [GRead G1] [GRead G2] {x : G1} {y : G2} (h : SameG x y)
+include h
+
+theorem hamming_same (r : ByteArray) (a lim stop : Nat) : ∀ d i m, stop - i = d →
+    hamming r x a lim i stop m = hamming r y a lim i stop m := by
+  intro d
+  induction d with
+  | zero => intro i m hd; unfold hamming; rw [if_neg (by omega), if_neg (by omega)]
+  | succ d ih =>
+    intro i m hd
+    unfold hamming
+    have ih' := fun m => ih (i + 1) m (by omega)
+    simp only [h.2, ih']
+
+theorem fwdMis_same (r : ByteArray) (st stop : Nat) : ∀ d i k, stop - i = d →
+    fwdMis r x st stop i k = fwdMis r y st stop i k := by
+  intro d
+  induction d with
+  | zero => intro i k hd; unfold fwdMis; rw [if_neg (by omega), if_neg (by omega)]
+  | succ d ih =>
+    intro i k hd
+    unfold fwdMis
+    have ih' := fun k => ih (i + 1) k (by omega)
+    simp only [h.2, ih']
+
+theorem bwdMis_same (r : ByteArray) (st len lo : Nat) : ∀ d e k, e - lo = d →
+    bwdMis r x st len lo e k = bwdMis r y st len lo e k := by
+  intro d
+  induction d with
+  | zero => intro e k hd; unfold bwdMis; rw [if_neg (by omega), if_neg (by omega)]
+  | succ d ih =>
+    intro e k hd
+    unfold bwdMis
+    by_cases he : lo < e
+    · have ih' := fun k => ih (e - 1) k (by omega)
+      simp only [h.2, ih']
+    · rw [if_neg he, if_neg he]
+
+theorem eqRun_same (b : ByteArray) : ∀ k i j, eqRun x b i j k = eqRun y b i j k := by
+  intro k
+  induction k with
+  | zero => intro i j; rfl
+  | succ k ih => intro i j; simp only [eqRun, h.2, ih]
+
+theorem hamming_same' (r : ByteArray) (a lim i stop m : Nat) :
+    hamming r x a lim i stop m = hamming r y a lim i stop m := hamming_same h r a lim stop _ i m rfl
+
+theorem fwdMis_same' (r : ByteArray) (st stop i k : Nat) : fwdMis r x st stop i k = fwdMis r y st stop i k :=
+  fwdMis_same h r st stop _ i k rfl
+
+theorem bwdMis_same' (r : ByteArray) (st len lo e k : Nat) : bwdMis r x st len lo e k = bwdMis r y st len lo e k :=
+  bwdMis_same h r st len lo _ e k rfl
+
+end
+
+/-! The names used by codecs/PairPacked.lean (the kernels at `PGen`). -/
+
+abbrev hammingP (r : ByteArray) (g : PGen) (a lim i stop m : Nat) : Nat := hamming r g a lim i stop m
+abbrev fwdMisP (r : ByteArray) (g : PGen) (st stop i k : Nat) : Nat := fwdMis r g st stop i k
+abbrev bwdMisP (r : ByteArray) (g : PGen) (st len lo e k : Nat) : Nat := bwdMis r g st len lo e k
+abbrev eqRunP (a : PGen) (b : ByteArray) (i j k : Nat) : Bool := eqRun a b i j k
 
 section
 variable {P : PGen} {G : ByteArray} (h : Rep P G)
 include h
 
-theorem hammingP_eq (r : ByteArray) (a lim stop : Nat) : ∀ d i m, stop - i = d →
-    hammingP r P a lim i stop m = hamming r G a lim i stop m := by
-  intro d
-  induction d with
-  | zero => intro i m hd; unfold hammingP hamming; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro i m hd
-    unfold hammingP hamming
-    have e : stop - (i + 1) = d := by omega
-    have ih' := fun m => ih (i + 1) m e
-    simp only [h.2, ih']
-
-theorem fwdMisP_eq (r : ByteArray) (st stop : Nat) : ∀ d i k, stop - i = d →
-    fwdMisP r P st stop i k = fwdMis r G st stop i k := by
-  intro d
-  induction d with
-  | zero => intro i k hd; unfold fwdMisP fwdMis; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro i k hd
-    unfold fwdMisP fwdMis
-    have e : stop - (i + 1) = d := by omega
-    have ih' := fun k => ih (i + 1) k e
-    simp only [h.2, ih']
-
-theorem bwdMisP_eq (r : ByteArray) (st len lo : Nat) : ∀ d e k, e - lo = d →
-    bwdMisP r P st len lo e k = bwdMis r G st len lo e k := by
-  intro d
-  induction d with
-  | zero => intro e k hd; unfold bwdMisP bwdMis; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro e k hd
-    unfold bwdMisP bwdMis
-    by_cases he : lo < e
-    · have e' : e - 1 - lo = d := by omega
-      have ih' := fun k => ih (e - 1) k e'
-      simp only [h.2, ih']
-    · rw [if_neg he, if_neg he]
-
 theorem hammingP_eq' (r : ByteArray) (a lim i stop m : Nat) :
-    hammingP r P a lim i stop m = hamming r G a lim i stop m := hammingP_eq h r a lim stop _ i m rfl
+    hammingP r P a lim i stop m = hamming r G a lim i stop m := hamming_same' h.same r a lim i stop m
 
 theorem fwdMisP_eq' (r : ByteArray) (st stop i k : Nat) : fwdMisP r P st stop i k = fwdMis r G st stop i k :=
-  fwdMisP_eq h r st stop _ i k rfl
+  fwdMis_same' h.same r st stop i k
 
 theorem bwdMisP_eq' (r : ByteArray) (st len lo e k : Nat) : bwdMisP r P st len lo e k = bwdMis r G st len lo e k :=
-  bwdMisP_eq h r st len lo _ e k rfl
+  bwdMis_same' h.same r st len lo e k
 
-theorem eqRunP_eq (b : ByteArray) : ∀ k i j, eqRunP P b i j k = eqRun G b i j k := by
-  intro k
-  induction k with
-  | zero => intro i j; rfl
-  | succ k ih => intro i j; simp only [eqRunP, eqRun, h.2, ih]
+theorem eqRunP_eq (b : ByteArray) (k i j : Nat) : eqRunP P b i j k = eqRun G b i j k := eqRun_same h.same b k i j
 
 theorem eqRunP_eqMz (b : ByteArray) : ∀ k i j, eqRunP P b i j k = Mz.eqRun G b i j k := by
   intro k
   induction k with
   | zero => intro i j; rfl
-  | succ k ih => intro i j; simp only [eqRunP, Mz.eqRun, h.2, ih]
+  | succ k ih => intro i j; simp only [eqRunP, eqRun, Mz.eqRun, ih] at *; rw [show GRead.get P i = G.get! i from h.2 i]
 
 end
 

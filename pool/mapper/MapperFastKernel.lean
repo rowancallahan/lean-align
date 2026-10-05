@@ -21,11 +21,11 @@ theorem hamming_spec (r g : ByteArray) (a lim stop : Nat) :
   induction d with
   | zero =>
     intro i m hd hm
-    unfold hamming
+    unfold hamming; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
     rw [if_neg (by omega), hd]; simp [cntP]; omega
   | succ d ih =>
     intro i m hd hm
-    unfold hamming
+    unfold hamming; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
     rw [if_pos (by omega), show stop - i = (stop - (i + 1)) + 1 by omega, cntP]
     by_cases hp : (r.get! i != g.get! (a + i)) = true
     · rw [if_pos hp, if_pos hp]
@@ -40,7 +40,7 @@ abbrev hc (R G : ByteArray) (a i m : Nat) : Nat := cntP (fun k => R.get! k != G.
 theorem hamStep_spec (r g : ByteArray) (a lim i stop m : Nat) (clean : Bool) (S : Nat) (hm : m ≤ lim + 1)
     (hS : clean = true → S = 0) (hc' : hc r g a i (stop - i) = S) :
     hamStep r g a lim i stop clean m = min (m + S) (lim + 1) := by
-  unfold hamStep
+  unfold hamStep; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   by_cases h1 : m ≤ lim
   · cases clean with
     | false =>
@@ -60,7 +60,7 @@ theorem hamSeeds_spec (R G : ByteArray) (a mask lim : Nat) (hn : 4 * q ≤ R.siz
     (h0 : mask % 2 = 1 → hc R G a 0 25 = 0) (h1 : mask / 2 % 2 = 1 → hc R G a 25 25 = 0)
     (h2 : mask / 4 % 2 = 1 → hc R G a 50 25 = 0) (h3 : mask / 8 % 2 = 1 → hc R G a 75 25 = 0) :
     hamSeeds R G a mask lim = min (preB R G a R.size) (lim + 1) := by
-  unfold hamSeeds
+  unfold hamSeeds; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only [q] at hn ⊢
   have hs : preB R G a R.size =
       hc R G a 0 25 + hc R G a 25 25 + hc R G a 50 25 + hc R G a 75 25 + hc R G a 100 (R.size - 100) := by
@@ -88,12 +88,12 @@ theorem fwdMis_spec (r g : ByteArray) (st stop : Nat) :
   induction d with
   | zero =>
     intro i0 k hd h0 hk
-    unfold fwdMis; rw [if_neg (by omega)]
+    unfold fwdMis; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]; rw [if_neg (by omega)]
     refine ⟨h0, Nat.le_refl _, fun i h1 h2 => ?_⟩
     rw [show i - i0 = 0 by omega]; simp [cntP]; omega
   | succ d ih =>
     intro i0 k hd h0 hk
-    unfold fwdMis; rw [if_pos (by omega)]
+    unfold fwdMis; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]; rw [if_pos (by omega)]
     by_cases hp : (r.get! i0 != g.get! (st + i0)) = true
     · rw [if_pos hp]
       by_cases hk1 : k ≤ 1
@@ -130,12 +130,12 @@ theorem bwdMis_spec (r g : ByteArray) (st len lo : Nat) :
   induction d with
   | zero =>
     intro e k hd h0 hk
-    unfold bwdMis; rw [if_neg (by omega)]
+    unfold bwdMis; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]; rw [if_neg (by omega)]
     refine ⟨Nat.le_refl _, h0, fun j h1 h2 => ?_⟩
     rw [show e - j = 0 by omega]; simp [cntP]; omega
   | succ d ih =>
     intro e k hd h0 hk
-    unfold bwdMis; rw [if_pos (by omega)]
+    unfold bwdMis; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]; rw [if_pos (by omega)]
     have split : ∀ j, j < e → cntP (fun x => r.get! x != g.get! (st + len + x - r.size)) j (e - j) =
         cntP (fun x => r.get! x != g.get! (st + len + x - r.size)) j (e - 1 - j) +
           (if (r.get! (e - 1) != g.get! (st + len + (e - 1) - r.size)) = true then 1 else 0) := by

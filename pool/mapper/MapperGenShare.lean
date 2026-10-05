@@ -17,11 +17,11 @@ namespace MapSpec.Fast
 open MapSpec
 
 /-- First three mismatches from the left on diagonal `st`. -/
-@[inline] def fwdProf (R G : ByteArray) (st : Nat) : Nat × Nat × Nat :=
+@[inline] def fwdProf {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (st : Nat) : Nat × Nat × Nat :=
   (fwdMis R G st R.size 0 1, fwdMis R G st R.size 0 2, fwdMis R G st R.size 0 3)
 
 /-- Last three mismatches from the right on the end diagonal `E` (read letter `x` ↔ `G[E + x − n]`). -/
-@[inline] def bwdProf (R G : ByteArray) (E : Nat) : Nat × Nat × Nat :=
+@[inline] def bwdProf {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (E : Nat) : Nat × Nat × Nat :=
   (bwdMis R G E 0 0 R.size 1, bwdMis R G E 0 0 R.size 2, bwdMis R G E 0 0 R.size 3)
 
 theorem fwdMis_min (r g : ByteArray) (st stop k : Nat) (hk : 1 ≤ k) (hs : stop ≤ r.size) :
@@ -64,7 +64,7 @@ theorem bwdMis_max (r g : ByteArray) (st len lo k : Nat) (hk : 1 ≤ k) (hlo : l
 
 /-- `gappedPen2` with the profiles of the start diagonal (`f1`, `f2`) and the end
 diagonal (`e1`, `e2`) passed in. -/
-def gappedPen2P (r g : ByteArray) (st len lim : Nat) (f1 f2 e1 e2 : Nat) : Nat :=
+@[specialize] def gappedPen2P {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lim : Nat) (f1 f2 e1 e2 : Nat) : Nat :=
   let n := r.size
   let L := if len > n then len - n else n - len
   if lim < 6 + 2 * L then lim + 1 else
@@ -88,7 +88,7 @@ theorem gappedPen2P_eq (r g : ByteArray) (st len lim : Nat) :
     bwdMis_max r g st len skip 1 (Nat.le_refl _) hs, bwdMis_max r g st len skip 2 (by decide) hs]
 
 /-- `twoGapB` with `A` and `B` passed in. -/
-def twoGapBP (R G : ByteArray) (st len A B : Nat) : Bool :=
+@[specialize] def twoGapBP {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (st len A B : Nat) : Bool :=
   if len = R.size + 2 then twoGapAt R G st len 1 1 A B
   else if len + 2 = R.size then twoGapAt R G st len 0 0 A B
   else if len = R.size then twoGapAt R G st len 1 0 A B || twoGapAt R G st len 0 1 A B
@@ -102,7 +102,7 @@ theorem twoGapBP_eq (R G : ByteArray) (st len : Nat) :
   simp only [bwdProf, ← this]
 
 /-- `filt16` with `A`, `B` and the third mismatches `f3`, `e3` passed in. -/
-def filt16P (R G : ByteArray) (st len A B f3 e3 : Nat) : Bool :=
+@[specialize] def filt16P {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (st len A B f3 e3 : Nat) : Bool :=
   let n := R.size
   let s := skipOf n len
   (len == n && hamming R G st 4 0 n 0 == 4) ||

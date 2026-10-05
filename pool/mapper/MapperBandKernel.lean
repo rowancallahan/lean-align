@@ -1,3 +1,4 @@
+import MapperGRead
 import MapperBandSpec
 
 /-!
@@ -143,7 +144,7 @@ theorem deadRow_down (sc : Scoring) (hv : ValidScoring sc) (T : Int) (xs gs : Li
 /-- New (none, gapX, gapY) values of one cell from its diagonal neighbour's
 none value, its right neighbour's gapX value and its lower neighbour's gapY
 value. -/
-@[inline] def cellVals (sc : Scoring) (rb gb : ByteArray) (i p : Nat) (lastRow atEnd : Bool)
+@[inline] def cellVals (sc : Scoring) {Gt : Type} [GRead Gt] (rb : ByteArray) (gb : Gt) (i p : Nat) (lastRow atEnd : Bool)
     (dN xX yY : Int) : Int × Int × Int :=
   let oe := sc.gapOpen + sc.gapExtend
   let ext := sc.gapExtend
@@ -151,7 +152,7 @@ value. -/
     if atEnd then (0, 0, 0) else (oe + xX, ext + xX, oe + xX)
   else if atEnd then (oe + yY, oe + yY, ext + yY)
   else
-    let d := (if rb.get! i == gb.get! p then sc.matchScore else sc.mismatchScore) + dN
+    let d := (if rb.get! i == GRead.get gb p then sc.matchScore else sc.mismatchScore) + dN
     (max (max d (oe + xX)) (oe + yY), max (max d (ext + xX)) (oe + yY),
      max (max d (oe + xX)) (ext + yY))
 

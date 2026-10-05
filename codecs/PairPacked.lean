@@ -35,7 +35,7 @@ open MapSpec AlignmentSpec
   hamStepP r g a lim 0 q (mask % 2 == 1) <|
   hammingP r g a lim (4 * q) r.size 0
 
-def gappedPen2P (r : ByteArray) (g : PGen) (st len lim : Nat) : Nat :=
+def gappedPen2Pk (r : ByteArray) (g : PGen) (st len lim : Nat) : Nat :=
   let n := r.size
   let L := if len > n then len - n else n - len
   if lim < 6 + 2 * L then lim + 1 else
@@ -49,7 +49,7 @@ def gappedPen2P (r : ByteArray) (g : PGen) (st len lim : Nat) : Nat :=
   if E1 - skip ≤ F2 || E2 - skip ≤ F1 then 10 + 2 * L else lim + 1
 
 @[inline] def gapWP (R : ByteArray) (G : PGen) (c st len s : Nat) (ok : Bool) (b : Best) : Best :=
-  if need b ≤ s && ok && st + len ≤ G.n then b.add c st len (gappedPen2P R G st len (min b.pen cap)) else b
+  if need b ≤ s && ok && st + len ≤ G.n then b.add c st len (gappedPen2Pk R G st len (min b.pen cap)) else b
 
 @[inline] def sameStep2P (R : ByteArray) (G : PGen) (c : Nat) (b : Best) (e : Nat) : Best :=
   let A := e / 16
@@ -258,8 +258,8 @@ include h
 theorem hamSeedsP_eq (r : ByteArray) (a mask lim : Nat) : hamSeedsP r P a mask lim = hamSeeds r G a mask lim := by
   simp only [hamSeedsP, hamSeeds, hamStepP, hamStep, hammingP_eq' h] <;> rfl
 
-theorem gappedPen2P_eq (r : ByteArray) (st len lim : Nat) : gappedPen2P r P st len lim = gappedPen2 r G st len lim := by
-  simp only [gappedPen2P, gappedPen2, fwdMisP_eq' h, bwdMisP_eq' h]
+theorem gappedPen2P_eq (r : ByteArray) (st len lim : Nat) : gappedPen2Pk r P st len lim = gappedPen2 r G st len lim := by
+  simp only [gappedPen2Pk, gappedPen2, fwdMisP_eq' h, bwdMisP_eq' h]
 
 theorem gapWP_eq (R : ByteArray) (c st len s : Nat) (ok : Bool) (b : Best) :
     gapWP R P c st len s ok b = gapW R G c st len s ok b := by

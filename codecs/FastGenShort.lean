@@ -18,13 +18,13 @@ open MapSpec AlignmentSpec
 
 /-! ## Scanning a chromosome for a seed -/
 
-def scanAux (G R : ByteArray) (s l base stop : Nat) (p : Nat) (acc : Array Nat) : Array Nat :=
+@[specialize] def scanAux {Gt : Type} [GRead Gt] (G : Gt) (R : ByteArray) (s l base stop : Nat) (p : Nat) (acc : Array Nat) : Array Nat :=
   if p < stop then scanAux G R s l base stop (p + 1) (if eqRun G R p s l then acc.push ((p + base) * 16) else acc)
   else acc
 termination_by stop - p
 
 /-- Anchors `(p + base)·16` of every place `p` of `G` where `R[s, s+l)` occurs. -/
-def scanL (G R : ByteArray) (s l base : Nat) : Array Nat := scanAux G R s l base (G.size + 1 - l) 0 #[]
+def scanL {Gt : Type} [GRead Gt] (G : Gt) (R : ByteArray) (s l base : Nat) : Array Nat := scanAux G R s l base (GRead.size G + 1 - l) 0 #[]
 
 theorem scanAux_spec (G R : ByteArray) (s l base stop : Nat) :
     ∀ d p (acc : Array Nat), stop - p = d → (∀ e ∈ acc.toList, e < (p + base) * 16) → acc.toList.Pairwise (· < ·) →
@@ -88,14 +88,14 @@ theorem scanL_ok (G R : ByteArray) (s l base : Nat) :
 /-! ## Driver -/
 
 /-- Chromosome `c` of a strand (read `R`, tag `t + c`): `m` seeds of `Ls` letters. -/
-def shortChrom (R : ByteArray) (gbs2 : Array ByteArray) (t c P m Ls : Nat) (b : Best) : Best :=
+@[specialize] def shortChrom {Gt : Type} [GRead Gt] [Inhabited Gt] (R : ByteArray) (gbs2 : Array Gt) (t c P m Ls : Nat) (b : Best) : Best :=
   let arrs := (List.range m).map fun j => scanL gbs2[t + c]! R (j * Ls) Ls (R.size - j * Ls)
   let b1 := arrs.foldl (fun b a =>
     a.foldl (fun b e => addK R gbs2 (t + c) (min P 16) ((e / 16 : Nat) - (R.size : Int)) R.size b) b) b
   chromKB R gbs2 (t + c) P arrs.reverse b1
 
 /-- Both strands of a short read. -/
-def mapChromsShort (P : Nat) (gbs : Array ByteArray) (R : ByteArray) : Best :=
+@[specialize] def mapChromsShort {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (gbs : Array Gt) (R : ByteArray) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
   let m := sbound P + 1
