@@ -76,7 +76,10 @@ above the best cannot change it). -/
 
 /-- The seed count for the penalty bound `x`: how many seeds a window within
 penalty `x` can spoil. -/
-@[inline] def sbound (x : Nat) : Nat := seedBound sc0 (-(x : Int))
+def sbTbl : Array Nat := ((List.range 33).map fun (x : Nat) => seedBound sc0 (-(x : Int))).toArray
+
+/-- (`sbound_def`: `seedBound sc0 (−x)`, from a table below `33`.) -/
+@[inline] def sbound (x : Nat) : Nat := if x < 33 then sbTbl[x]! else seedBound sc0 (-(x : Int))
 
 /-- Look up the seeds of `ord`; each anchor's same-length window goes through the
 kernel.  Returns the best, the anchor arrays and the seeds looked up (newest first). -/

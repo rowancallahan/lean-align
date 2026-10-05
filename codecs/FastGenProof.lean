@@ -186,8 +186,13 @@ theorem cwT_kerH (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArra
 
 /-! ## Monotonicity of the bounds -/
 
+theorem sbound_def (x : Nat) : sbound x = seedBound sc0 (-(x : Int)) := by
+  unfold sbound sbTbl; split
+  · next h => simp [getElem!_pos, h]
+  · rfl
+
 theorem sbound_eq (x : Nat) : sbound x = max ((x : Int) / 4).toNat (((x : Int) - 6) / 2).toNat := by
-  unfold sbound seedBound sc0
+  rw [sbound_def]; unfold seedBound sc0
   simp only [Int.neg_neg, show min (4 : Int) (-(-6 + -2)) = 4 by decide, show min (4 : Int) 2 = 2 by decide,
     show (-(-2 : Int)) = 2 by decide, show (-(-4 : Int)) = 4 by decide]
   congr 2
@@ -675,7 +680,7 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
       have := sbound_mono Q1 P (by omega); omega
   obtain ⟨j, hj, p, a, bb, hcg, hmatch, hshape, ha1, ha2, hst, hwl⟩ :=
     coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
-      J hJn (fun j hj => by have := hJm j hj; omega) (by unfold sbound at hJl; omega) w (-(x : Int)) hws (Int.le_refl _)
+      J hJn (fun j hj => by have := hJm j hj; omega) (by rw [sbound_def] at hJl; omega) w (-(x : Int)) hws (Int.le_refl _)
   rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch ha1 hst
   rw [← hn] at hwl
   rw [hwc] at hmatch
@@ -718,7 +723,7 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
         coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
           _ (hsub.nodup hpnd)
           (fun j hj => by have := hpm j (hsub.subset hj); omega)
-          (by unfold sbound at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
+          (by rw [sbound_def] at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
       rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch' ha1' hst'
       rw [hwc] at hmatch'
       have hj'pre := hsub.subset hj'
