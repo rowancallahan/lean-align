@@ -571,6 +571,10 @@ structure Prof where
   slowVPass : Nat := 0
   slowVDiff : Nat := 0
   slowD2Ns : Nat := 0
+  blkCur : Nat := 0
+  slowSwNs : Nat := 0
+  slowSwDiff : Nat := 0
+  blkAlt : Nat := 0
   clsAll : Nat := 0
   clsAllC : Nat := 0
   clsAllM : Nat := 0
@@ -673,6 +677,19 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
     let allSz := (ps.toList.map (LookG.size ix)) ++ (pr.toList.map (LookG.size ix))
     say s!"  read {pf.reads}: {R.size} letters, P {P}, {secs t1 t3} s (phase 1 {secs t1 t2}), lookups {lk}, anchors {hits}, best {b.pen} amb {b.amb}, bucket sizes {allSz}"
   let bigSum := big.foldl (fun a v => a + v) 0
+  -- block choice: each block of Ls letters may use any 25-letter subwindow (least bucket)
+  let slowB := t3 - t1 > 1000000
+  let pf := if slowB then
+      let bestOf := fun (Rx : ByteArray) (Kx : RP) (j : Nat) =>
+        (List.range (Ls - 25 + 1)).foldl (fun a d =>
+          min a (LookG.size ix (LookG.prep ix (seedHashK Rx Kx (j * Ls + d)) : MzP))) 1000000000
+      let cur := fun (pp : Array MzP) (J : List Nat) => (J.map fun j => LookG.size ix pp[j]!).foldl (· + ·) 0
+      let alt := fun (Rx : ByteArray) (Kx : RP) (J : List Nat) =>
+        (((List.range m).map (bestOf Rx Kx)).mergeSort (· ≤ ·)).take J.length |>.foldl (· + ·) 0
+      let c1 := cur ps x.1.J + cur pr x.2.1.J
+      let a1 := alt R K1 x.1.J + alt Rr K2 x.2.1.J
+      { pf with blkCur := pf.blkCur + c1, blkAlt := pf.blkAlt + a1 }
+    else pf
   let pf := { pf with reads := pf.reads + 1, lookups := pf.lookups + lk }
   let pf := { pf with hits := pf.hits + hits, bucket := pf.bucket + bk }
   let pf := { pf with bigLookups := pf.bigLookups + big.length, bigHits := pf.bigHits + bigSum }
@@ -756,6 +773,16 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
       let y1 ← IO.monoNanosNow
       let e2 ← (← IO.mkRef (ds R x.1 + ds Rr x.2.1)).get
       let y2 ← IO.monoNanosNow
+      let dsw := fun (s : GS) => (List.range n).foldl (fun a c =>
+        let acc := s.acc[c]!
+        let Q := min (min P 16) b.pen
+        let r := 2 * gapBound sc0 (-(Q : Int))
+        let cnt := suppCntC acc r (diags acc)
+        a + cnt.foldl (fun a v => if acc.length - v ≤ sbound Q then a + 1 else a) 0) 0
+      let ys0 ← IO.monoNanosNow
+      let e2w ← (← IO.mkRef (dsw x.1 + dsw x.2.1)).get
+      let ys1 ← IO.monoNanosNow
+      let pf := { pf with slowSwNs := pf.slowSwNs + (ys1 - ys0), slowSwDiff := pf.slowSwDiff + (if e2w == e2 then 0 else 1) }
       let du := fun (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun a c =>
         let acc := s.acc[c]!
         let Q := min (min P 16) b.pen
@@ -810,6 +837,8 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
   say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
   say s!"  reads > 1 ms: diags + word kfiltV {secs 0 pf.slowVNs} s, passing {pf.slowVPass}, differing from kfilt {pf.slowVDiff}; diags again {secs 0 pf.slowD2Ns} s, {secs 0 pf.slowD3Ns} s"
+  say s!"  reads > 1 ms: diags + swept supports (suppCntC) {secs 0 pf.slowSwNs} s, reads differing {pf.slowSwDiff}"
+  say s!"  reads > 1 ms: bucket entries of the seeds looked up {pf.blkCur}; with the least 25-letter subwindow per block {pf.blkAlt}"
   say s!"  reads > 1 ms: repeat classes (identical windows of n + 2·{gapBound sc0 (-16)} letters, per read): all diagonals {pf.clsAll} in {pf.clsAllC} classes ({pf.clsAllM} in multi-copy classes); passing kfilt {pf.clsPass} in {pf.clsPassC} classes ({pf.clsPassM} in multi-copy classes)"
   say s!"  reads > 1 ms: phase-1 kernel alone at all {pf.slowKAnc} anchors: cap 12 {secs 0 pf.slowK12Ns} s, cap 16 {secs 0 pf.slowK16Ns} s"
   say s!"  reads > 1 ms: lookups alone {secs 0 pf.slowLkNs} s, lookups + chromosome slices {secs 0 pf.slowSlNs} s"
