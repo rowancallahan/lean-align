@@ -38,6 +38,20 @@ def say (s : String) : IO Unit := do
   IO.println s
   (← IO.getStdout).flush
 
+/-- 64-bit FNV-style hash of bytes `[lo, hi)` (trusted IO: ties a loaded index to the checked one). -/
+def hashRange (b : ByteArray) (lo hi : Nat) : UInt64 := Id.run do
+  let mut h : UInt64 := 0xcbf29ce484222325
+  for i in [lo:hi] do
+    h := (h ^^^ (b.get! i).toUInt64) * 0x100000001b3
+  return h
+
+/-- `hashRange` over 64 MB chunks on parallel tasks, combined in order with the size. -/
+def hashBytes (b : ByteArray) : UInt64 :=
+  let ch := 67108864
+  let n := (b.size + ch - 1) / ch
+  let ts := (List.range n).map fun i => Task.spawn (prio := .dedicated) fun _ => hashRange b (i * ch) (min b.size ((i + 1) * ch))
+  ts.foldl (fun h t => (h ^^^ t.get) * 0x100000001b3 + 0x9e3779b97f4a7c15) b.size.toUInt64
+
 def envN (k : String) (d : Nat) : IO Nat := do return ((← IO.getEnv k).map String.toNat!).getD d
 
 /-- A one-record FASTA, sequence only, into one buffer of the file's size (no copy). -/
@@ -179,20 +193,20 @@ def liveX (A X P : Nat) (s : GS) (b : Best) : Bool :=
     (decide (s.J.length < sbound (min b.pen P) + 1 + X) && decide (A ≤ gsAnchors s)))
 
 /-- Prototype: seed `R[s, s+25)` matches `G` at `p`. -/
-def matchQx {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s p : Nat) : Bool :=
+def matchQx (R : ByteArray) (G : PGen) (s p : Nat) : Bool :=
   p + 25 ≤ GRead.size G && go 0 25
 where go (k : Nat) : Nat → Bool
   | 0 => true
   | f + 1 => GRead.get G (p + k) == R.get! (s + k) && go (k + 1) f
 
 /-- Prototype: some `p ∈ [lo, lo + w)` matches. -/
-def nearX {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s lo : Nat) : Nat → Bool
+def nearX (R : ByteArray) (G : PGen) (s lo : Nat) : Nat → Bool
   | 0 => false
   | w + 1 => matchQx R G s lo || nearX R G s (lo + 1) w
 
 /-- Prototype: at least `need` of the `m` seeds match within `r` of diagonal `D`
 (early exits both ways). -/
-def dOkX {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (m Ls need r D : Nat) : Bool :=
+def dOkX (R : ByteArray) (G : PGen) (m Ls need r D : Nat) : Bool :=
   go 0 0 0 m
 where go (j pass fail : Nat) : Nat → Bool
   | 0 => need ≤ pass
@@ -204,7 +218,7 @@ where go (j pass fail : Nat) : Nat → Bool
     if ok then go (j + 1) (pass + 1) fail f else go (j + 1) pass (fail + 1) f
 
 /-- Prototype: seeds `us` (not looked up) checked directly; reject once more than `sb` fail. -/
-def unlookX {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D sb : Nat) : List Nat → Nat → Bool
+def unlookX (R : ByteArray) (G : PGen) (Ls r D sb : Nat) : List Nat → Nat → Bool
   | [], _ => true
   | j :: us, fail =>
     let a := D + j * Ls
@@ -213,7 +227,116 @@ def unlookX {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D sb : Nat) : 
     if ok then unlookX R G Ls r D sb us fail
     else if sb < fail + 1 then false else unlookX R G Ls r D sb us (fail + 1)
 
-def chromKBX (kf : Ker) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) : Best :=
+/-- Prototype: letters `[0, l)` of the piece at read offset `s` match at `p`. -/
+def matchLx (R : ByteArray) (G : PGen) (s p l : Nat) : Bool := go 0 l
+where go (k : Nat) : Nat → Bool
+  | 0 => true
+  | f + 1 => GRead.get G (p + k) == R.get! (s + k) && go (k + 1) f
+
+def nearLx (R : ByteArray) (G : PGen) (l s lo : Nat) : Nat → Bool
+  | 0 => false
+  | w + 1 => matchLx R G s lo l || nearLx R G l s (lo + 1) w
+
+/-- Prototype fine filter: pieces of `l` letters (spacing `n / (n / l)`); reject once more
+than `sb` fail within `r` of `D`. -/
+def fineX (R : ByteArray) (G : PGen) (l r D sb : Nat) : Bool :=
+  let m := R.size / l
+  let Ls := R.size / m
+  go Ls 0 0 m
+where go (Ls j f : Nat) : Nat → Bool
+  | 0 => true
+  | k + 1 =>
+    let a := D + j * Ls
+    let n := R.size
+    let ok := if a + r < n then false else
+      nearLx R G l (j * Ls) (a + r - n - min (2 * r) (a + r - n)) (min (2 * r) (a + r - n) + 1)
+    if ok then go Ls (j + 1) f k else if sb < f + 1 then false else go Ls (j + 1) (f + 1) k
+
+/-- Prototype fine filter, pieces tried in order `ord` (a permutation of the pieces):
+the answer does not depend on the order; also returns the failing pieces met. -/
+def fineM (R : ByteArray) (G : PGen) (l r D sb : Nat) (ord : List Nat) : Bool × List Nat :=
+  let m := R.size / l
+  let Ls := R.size / m
+  go Ls ord 0 []
+where go (Ls : Nat) : List Nat → Nat → List Nat → Bool × List Nat
+  | [], _, fs => (true, fs)
+  | j :: rest, f, fs =>
+    let a := D + j * Ls
+    let n := R.size
+    let ok := if a + r < n then false else
+      nearLx R G l (j * Ls) (a + r - n - min (2 * r) (a + r - n)) (min (2 * r) (a + r - n) + 1)
+    if ok then go Ls rest f fs else if sb < f + 1 then (false, j :: fs) else go Ls rest (f + 1) (j :: fs)
+
+/-- Memo, two entries per piece `j`: `M[2j] = a`, `M[2j+1] = 2e + f`: no match at
+`[a, e)`; `f = 1`: a match at `e`. -/
+abbrev FMemo := Array Nat
+
+/-- First match of the piece at read offset `s` in `[p, hi)`, else `hi`. -/
+def scanL (R : ByteArray) (G : PGen) (l s p : Nat) : Nat → Nat
+  | 0 => p
+  | w + 1 => if matchLx R G s p l then p else scanL R G l s (p + 1) w
+
+/-- Is there a match of piece `j` (read offset `s`) in `[lo, lo + w)`, through the memo. -/
+@[inline] def qMemo (R : ByteArray) (G : PGen) (l j s lo w : Nat) (M : FMemo) : Bool × FMemo :=
+  let a := M[2 * j]!
+  let ef := M[2 * j + 1]!
+  let e := ef / 2
+  let hi := lo + w
+  if a ≤ lo && lo ≤ e then
+    if ef % 2 == 1 then (decide (e < hi), M)
+    else if hi ≤ e then (false, M)
+    else
+      let p := scanL R G l s e (hi - e)
+      let ok := decide (p < hi)
+      (ok, M.set! (2 * j + 1) (2 * p + if ok then 1 else 0))
+  else
+    let p := scanL R G l s lo w
+    let ok := decide (p < hi)
+    (ok, (M.set! (2 * j) lo).set! (2 * j + 1) (2 * p + if ok then 1 else 0))
+
+def fineMemo (R : ByteArray) (G : PGen) (l r D sb : Nat) (M : FMemo) : Bool × FMemo :=
+  let m := R.size / l
+  let Ls := R.size / m
+  go Ls 0 0 m M
+where go (Ls j f : Nat) : Nat → FMemo → Bool × FMemo
+  | 0, M => (true, M)
+  | k + 1, M =>
+    let a := D + j * Ls
+    let n := R.size
+    let (ok, M) := if a + r < n then (false, M) else
+      qMemo R G l j (j * Ls) (a + r - n - min (2 * r) (a + r - n)) (min (2 * r) (a + r - n) + 1) M
+    if ok then go Ls (j + 1) f k M else if sb < f + 1 then (false, M) else go Ls (j + 1) (f + 1) k M
+
+/-- Prototype word test: a match of read letters `[s, s + l)` at some genome start in
+`[lo, lo + w)` (`l < 32`, `w + l ≤ 33`, window flagged, read packed), 2 bits per letter. -/
+@[inline] def nearW (K : RP) (P : PGen) (l s lo w : Nat) : Bool :=
+  let a := P.o + lo
+  let g := comb (gword P.w (a / 32)) (gword P.w (a / 32 + 1)) (a % 32) (2 * (a % 32)).toUInt64 (64 - 2 * (a % 32)).toUInt64
+  let mk : UInt64 := (1 <<< (2 * l).toUInt64) - 1
+  let rw := K.w
+  let rp := comb rw[s / 32]! rw[s / 32 + 1]! (s % 32) (2 * (s % 32)).toUInt64 (64 - 2 * (s % 32)).toUInt64 &&& mk
+  go g mk rp w
+where go (g mk rp : UInt64) : Nat → Bool
+  | 0 => false
+  | i + 1 => (g &&& mk) == rp || go (g >>> 2) mk rp i
+
+def fineW (K : RP) (R : ByteArray) (G : PGen) (l r D sb : Nat) : Bool :=
+  let m := R.size / l
+  let Ls := R.size / m
+  go Ls 0 0 m
+where go (Ls j f : Nat) : Nat → Bool
+  | 0 => true
+  | k + 1 =>
+    let a := D + j * Ls
+    let n := R.size
+    let ok := if a + r < n then false else
+      let lo := a + r - n - min (2 * r) (a + r - n)
+      let w := min (2 * r) (a + r - n) + 1
+      if K.ok && decide (w + l ≤ 33) && winOk G lo (w + l - 1) then nearW K G l (j * Ls) lo w
+      else nearLx R G l (j * Ls) lo w
+    if ok then go Ls (j + 1) f k else if sb < f + 1 then false else go Ls (j + 1) (f + 1) k
+
+def chromKBX (XL : Nat) (kf : Ker) (KR : RP) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
   let m := R.size / 25
@@ -221,14 +344,35 @@ def chromKBX (kf : Ker) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : Li
   let G := gbs[c]!
   let us := (List.range m).filter (fun j => !J.contains j)
   let r := 2 * gapBound sc0 (-(Q1 : Int))
+  let fl := XL % 100
+  let ord0 := List.range (R.size / max fl 1)
+  let mz := R.size / max fl 1
+  let M0 : FMemo := (Array.range (2 * mz)).map fun i => if i % 2 == 0 then 1 else 0
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      (diags acc).foldl (fun b D =>
+      if 200 ≤ XL && XL < 300 then ((diags acc).foldl (fun (x : Best × FMemo) D =>
+        let b := x.1
         let Q := min lim b.pen
         let rq := 2 * gapBound sc0 (-(Q : Int))
         let fJ := acc.length - suppA acc D rq
         if fJ ≤ sbound Q && unlookX R G Ls rq D (sbound Q) us fJ then
-          (shapesKT Q1).foldl (fun b sh => addKF kf c lim (dst R.size D sh) (wlen R.size sh) b) b
-        else b) b1 else b1
+          let (okF, M) := if XL == 299 then (false, x.2) else fineMemo R G fl rq D (sbound Q) x.2
+          if okF then ((shapesKT Q1).foldl (fun b sh => addKF kf c lim (dst R.size D sh) (wlen R.size sh) b) b, M)
+          else (b, M)
+        else x) (b1, M0)).1 else
+      ((diags acc).foldl (fun (x : Best × List Nat) D =>
+        let b := x.1
+        let Q := min lim b.pen
+        let rq := 2 * gapBound sc0 (-(Q : Int))
+        let fJ := acc.length - suppA acc D rq
+        if fJ ≤ sbound Q && unlookX R G Ls rq D (sbound Q) us fJ then
+          let (okF, ord) := if XL == 0 then (true, x.2) else if XL < 100 then (fineX R G XL rq D (sbound Q), x.2)
+            else if 400 ≤ XL then (fineW KR R G (XL - 400) rq D (sbound Q), x.2)
+            else
+              let (o, fs) := fineM R G fl rq D (sbound Q) x.2
+              (o, if fs.isEmpty then x.2 else fs ++ x.2.filter (fun j => !fs.contains j))
+          if okF then ((shapesKT Q1).foldl (fun b sh => addKF kf c lim (dst R.size D sh) (wlen R.size sh) b) b, ord)
+          else (b, ord)
+        else x) (b1, ord0)).1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
     stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
@@ -272,10 +416,12 @@ structure Prof where
   slowDiags : Nat := 0
   slowPass : Nat := 0
   slowFiltNs : Nat := 0
+  slowFine : Nat := 0
+  slowDiagNs : Nat := 0
   penHist : Array Nat := Array.replicate 18 0
   lkHist : Array Nat := Array.replicate 25 0
 
-def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (P : Nat) (R : ByteArray) (pf : Prof) :
+def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (P : Nat) (R : ByteArray) (pf : Prof) :
     IO Prof := do
   let n := pgs.size
   let gbs2 := pgs ++ pgs
@@ -287,8 +433,14 @@ def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Arr
   let Ls := R.size / m
   let ps := prepGK ix R K1 m Ls
   let pr := prepGK ix Rr K2 m Ls
-  let kf1 := kerHKG R K1 gbs2 gbs2
-  let kf2 := kerHKG Rr K2 gbs2 gbs2
+  -- XK (timing only, not exact): 1 = cap-16 kernel without the two-gap / band fallback;
+  -- 2 = every kernel call returns `l + 1` (stage K body cost removed)
+  let kx : ByteArray → RP → Ker := fun R K c st len l =>
+    if XK == 2 then l + 1
+    else if XK == 1 && 16 ≤ l then (let r := kerGKG R K gbs2[c]! gbs2[c]! st len 16; if r ≤ 16 then r else 17)
+    else kerHKG R K gbs2 gbs2 c st len l
+  let kf1 := kx R K1
+  let kf2 := kx Rr K2
   let o1 := ordG (ps.map (LookG.size ix)) m
   let o2 := ordG (pr.map (LookG.size ix)) m
   let o1 ← (← IO.mkRef o1).get
@@ -300,9 +452,9 @@ def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Arr
     else ilX XA XN kf1 kf2 ix ByteArray.empty R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
       ⟨o1, [], Array.replicate n []⟩ ⟨o2, [], Array.replicate n []⟩ (initP P))).get
   let t2 ← IO.monoNanosNow
-  let b := (List.range n).foldl (fun b c => if XF then chromKBX kf1 R gbs2 c P x.1.acc[c]! x.1.J b
+  let b := (List.range n).foldl (fun b c => if XF then chromKBX XL kf1 K1 R gbs2 c P x.1.acc[c]! x.1.J b
     else chromKBFG kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
-  let b := (List.range n).foldl (fun b c => if XF then chromKBX kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b
+  let b := (List.range n).foldl (fun b c => if XF then chromKBX XL kf2 K2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b
     else chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
   let b ← (← IO.mkRef b).get
   let t3 ← IO.monoNanosNow
@@ -312,6 +464,9 @@ def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Arr
   let bk := szs.foldl (· + ·) 0
   let big := szs.filter (· > 1000)
   let slow := t3 - t1 > 1000000
+  if t3 - t1 > 20000000 then
+    let allSz := (ps.toList.map (LookG.size ix)) ++ (pr.toList.map (LookG.size ix))
+    say s!"  read {pf.reads}: {R.size} letters, P {P}, {secs t1 t3} s (phase 1 {secs t1 t2}), lookups {lk}, anchors {hits}, best {b.pen} amb {b.amb}, bucket sizes {allSz}"
   let bigSum := big.foldl (fun a v => a + v) 0
   let pf := { pf with reads := pf.reads + 1, lookups := pf.lookups + lk }
   let pf := { pf with hits := pf.hits + hits, bucket := pf.bucket + bk }
@@ -325,17 +480,29 @@ def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Arr
   let pf := if slow then { pf with slowP1 := pf.slowP1 + (t2 - t1), slowAmb := pf.slowAmb + a1 } else pf
   let pf := if slow then { pf with slowAmb0 := pf.slowAmb0 + a0, slowNone := pf.slowNone + a2 } else pf
   let pf ← if slow then do
+      let Q := min (min P 16) b.pen
+      let rq := 2 * gapBound sc0 (-(Q : Int))
       let fl := fun (Rx : ByteArray) (t : Nat) (s : GS) =>
-        (List.range n).foldl (fun (a : Nat × Nat) c =>
+        (List.range n).foldl (fun (a : Nat × Nat × Nat) c =>
           let acc := s.acc[c]!
           let ds := diags acc
           let us := unseen (Rx.size / 25) s.J
-          (a.1 + ds.length, a.2 + (ds.filter fun D => kfilt Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D).length)) (0, 0)
+          let ps := ds.filter fun D => kfilt Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D
+          let fs := ps.filter fun D => fineX Rx gbs2[t + c]! 8 rq D (sbound Q)
+          (a.1 + ds.length, a.2.1 + ps.length, a.2.2 + fs.length)) (0, 0, 0)
+      let dl := fun (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun a c =>
+        let acc := s.acc[c]!
+        let us := unseen (Rx.size / 25) s.J
+        a + ((diags acc).filter fun D => kfilt Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D).length) 0
+      let v0 ← IO.monoNanosNow
+      let d1 ← (← IO.mkRef (dl R 0 x.1 + dl Rr n x.2.1)).get
+      let v1 ← IO.monoNanosNow
       let u0 ← IO.monoNanosNow
       let r1 ← (← IO.mkRef (fl R 0 x.1)).get
       let r2 ← (← IO.mkRef (fl Rr n x.2.1)).get
       let u1 ← IO.monoNanosNow
-      let pf := { pf with slowDiags := pf.slowDiags + r1.1 + r2.1, slowPass := pf.slowPass + r1.2 + r2.2 }
+      let pf := { pf with slowDiags := pf.slowDiags + r1.1 + r2.1, slowPass := pf.slowPass + r1.2.1 + r2.2.1 }
+      let pf := { pf with slowFine := pf.slowFine + r1.2.2 + r2.2.2 + 0 * d1, slowDiagNs := pf.slowDiagNs + (v1 - v0) }
       pure { pf with slowFiltNs := pf.slowFiltNs + (u1 - u0) }
     else pure pf
   let pf := { pf with penHist := pf.penHist.modify (min b.pen 17) (fun v => v + 1) }
@@ -348,9 +515,39 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  time per read: prep {Float.ofNat pf.prepNs / r / 1000} us, lookups + phase 1 {Float.ofNat pf.p1Ns / r / 1000} us, stages K/B {Float.ofNat pf.kbNs / r / 1000} us"
   say s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
   say s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
-  say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}; filter alone {secs 0 pf.slowFiltNs} s"
+  say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
   say s!"  best penalty histogram (0..16, 17 = none): {pf.penHist}"
   say s!"  lookups per read histogram (0..23, 24+): {pf.lkHist}"
+
+/-- `f` over `xs` on `n` dedicated tasks, item `i` on task `i % n` (strided, so the few
+very slow pairs spread over the tasks), results in the order of `xs`. -/
+def parStrided {α β : Type} [Inhabited α] [Inhabited β] (n : Nat) (f : α → β) (xs : Array α) : Array β :=
+  let n := max n 1
+  let ts := (List.range n).map fun t =>
+    Task.spawn (prio := .dedicated) fun _ =>
+      ((List.range ((xs.size + n - 1 - t) / n)).map fun i => f xs[t + i * n]!).toArray
+  let rs := ts.toArray.map Task.get
+  (Array.range xs.size).map fun i => rs[i % n]![i / n]!
+
+/-- `f` over `xs` on `n` dedicated workers taking the next item from a shared counter
+(dynamic balance: a slow pair holds up only its own worker), results in the order of `xs`. -/
+def parQueue {α β : Type} [Inhabited α] [Inhabited β] (n : Nat) (f : α → β) (xs : Array α) : IO (Array β) := do
+  let ctr ← IO.mkRef 0
+  let worker : IO (Array (Nat × β)) := do
+    let mut acc : Array (Nat × β) := #[]
+    repeat
+      let k ← ctr.modifyGet fun i => (i, i + 1)
+      if k ≥ xs.size then break
+      let y ← (← IO.mkRef (f xs[k]!)).get
+      acc := acc.push (k, y)
+    return acc
+  let ts ← (List.range (max n 1)).mapM fun _ => IO.asTask worker (prio := .dedicated)
+  let mut out : Array β := Array.replicate xs.size default
+  for t in ts do
+    match ← IO.wait t with
+    | .ok rs => for (k, y) in rs do out := out.set! k y
+    | .error e => throw e
+  return out
 
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
@@ -381,12 +578,33 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
         pf ← pr r2[k]! pf
       say s!"profile {lab}"
       showProf pf
+    let top ← envN "WG_TOP" 0
+    if top > 0 then
+      for (mode, f) in modes do
+        let mut ts : Array (Nat × Nat) := #[]
+        let mut tot := 0
+        for k in rk.extract 0 plim do
+          let u0 ← IO.monoNanosNow
+          let o ← (← IO.mkRef (if u0 == 0 then none else f r1[k]! r2[k]!)).get
+          let u1 ← IO.monoNanosNow
+          ts := ts.push (u1 - u0, k)
+          tot := tot + (u1 - u0)
+          if o.isSome && u1 == 0 then say ""
+        let srt := ts.qsort (fun a b => a.1 > b.1)
+        let cum := (srt.extract 0 top).foldl (fun a x => a + x.1) 0
+        say s!"top {top} of {ts.size} pairs ({mode}, 1 task): {secs 0 cum} s of {secs 0 tot} s"
+        for (t, k) in srt.extract 0 top do
+          let o := f r1[k]! r2[k]!
+          let os := match o with
+            | some (a, b) => s!"{showHit a} | {showHit b}"
+            | none => "none"
+          say s!"  pair {idx[k]! + 1}: {secs 0 t} s, mates {r1[k]!.size}/{r2[k]!.size}, {os}"
     for (mode, f) in modes do
       let g (k : Nat) : PairOut := f r1[k]! r2[k]!
       let mut first : Option (Array PairOut) := none
       for tasks in taskL do
         let t3 ← IO.monoNanosNow
-        let out ← (← IO.mkRef (if t3 == 1 then #[] else if tasks ≤ 1 then rk.map g else ParMap.parMap tasks g rk)).get
+        let out ← if t3 == 1 then pure #[] else (← IO.mkRef (if tasks ≤ 1 then rk.map g else parStrided tasks g rk)).get
         let t4 ← IO.monoNanosNow
         say s!"RESULT set {name} mode {mode} tasks {tasks}: mapped {idx.size} pairs, kept {(out.filter (·.isSome)).size}, {secs t3 t4} s, pairs/s {Float.ofNat idx.size / secs t3 t4}; {← rss}"
         match first with
@@ -482,13 +700,30 @@ def main (args : List String) : IO UInt32 := do
       let ix ← load pre
       let t1 ← IO.monoNanosNow
       say s!"index loaded {secs t0 t1} s: {ix.sl.size / ix.sw} entries; {← rss}"
+      -- index hash: index files + packed genome + chromosome cuts; stored next to the index once
+      -- the full check (check3P) passed on them (WG_CHECK=1), verified on every other run
+      let mt ← IO.FS.readFile (pre ++ ".meta")
+      let hs := [hashBytes ix.offs, hashBytes ix.sl, hashBytes (← readBin (pre ++ ".runs")), hashBytes G.w,
+        hashBytes G.ex, hashBytes mt.toUTF8, hashBytes (String.join ((offs.toList ++ ns.toList).map (s!"{·},"))).toUTF8,
+        G.n.toUInt64, G.o.toUInt64]
+      let hstr := String.intercalate " " (hs.map fun h => toString h.toNat)
+      let t1h ← IO.monoNanosNow
+      say s!"index hash ({secs t1 t1h} s): {hstr}"
+      let hfile := pre ++ ".hash"
       if (← IO.getEnv "WG_NOCHECK").isSome then
-        say "WARNING: index check skipped (WG_NOCHECK): profiling only, not the proved setting"
-      else
+        say "WARNING: index check and hash skipped (WG_NOCHECK): profiling only, not the proved setting"
+      else if (← IO.getEnv "WG_CHECK").isSome then
         let ok ← (← IO.mkRef (if t1 == 1 then false else Mz.check3P ix G 4)).get
         let t2 ← IO.monoNanosNow
-        say s!"index check (check3P = check2P, 4 tasks): {ok} ({secs t1 t2} s); {← rss}"
+        say s!"index check (check3P = check2P, 4 tasks): {ok} ({secs t1h t2} s); {← rss}"
         if !ok then throw (IO.userError "index check failed")
+        IO.FS.writeFile hfile (hstr ++ "\n")
+        say s!"hash of the checked index written to {hfile}"
+      else
+        let stored ← if ← System.FilePath.pathExists hfile then IO.FS.readFile hfile else pure ""
+        if stored.trim != hstr then
+          throw (IO.userError s!"index hash differs from {hfile} (or none stored): run once with WG_CHECK=1")
+        say s!"index hash = {hfile} (index checked by check3P when the hash was written)"
       let pk : PkMz := (ix, G)
       -- pairDispatchP_mz_eq / pairFastGBP_mz_eq_pairSpec; pairDispatchKP_mz_eq / pairFastGBKP_mz_eq_pairSpec
       let fP : ByteArray → ByteArray → PairOut := if P == 0 then pairDispatchP lo hi pk offs pgs
@@ -504,7 +739,9 @@ def main (args : List String) : IO UInt32 := do
         let XA := ax[0]!.toNat!
         let XN := (ax[1]?.getD "0").toNat!
         let XF := (ax[2]?.getD "0") == "1"
-        (cf, fun (R : ByteArray) (pf : Prof) => profRead XA XN XF pk offs pgs (if P == 0 then penOf R else P) R pf)
+        let XK := (ax[3]?.getD "0").toNat!
+        let XL := (ax[4]?.getD "0").toNat!
+        (cf, fun (R : ByteArray) (pf : Prof) => profRead XA XN XF XK XL pk offs pgs (if P == 0 then penOf R else P) R pf)
       runSets modes okLen prof
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
