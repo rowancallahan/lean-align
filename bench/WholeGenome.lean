@@ -4,7 +4,7 @@ import WgPacked
 import PairRegion
 import ReadTrim
 import PairRouter
-import PairLadder
+import PairLadderF
 
 /-!
 Benchmark only (unproved IO).  Whole genome with the genome held once
@@ -1077,10 +1077,10 @@ def ukDet {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (offs : Array Nat) 
       let l1 := if a1 then hA else hB
       let l2 := if a1 then hB else hA
       let p0 ← IO.monoNanosNow
-      let prs ← (← IO.mkRef (properPairs sl lo hi l1 l2)).get
+      let prs ← (← IO.mkRef (properPairsF sl lo hi l1 l2)).get
       nPr := nPr + prs.length; mPr := max mPr prs.length
       if P1 ≤ c1 ∧ P2 ≤ c2 then
-        let _ ← (← IO.mkRef (bestPairD dc sl lo hi l1 l2)).get
+        let _ ← (← IO.mkRef (bestOfPairs dc prs)).get
         tP := tP + ((← IO.monoNanosNow) - p0); fin := true
       else
         match topW dc prs with
@@ -1088,7 +1088,7 @@ def ukDet {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (offs : Array Nat) 
         | some w =>
           let e := (-(pairScoreD dc w)).toNat
           if (P1 ≤ c1 ∨ e ≤ c1) ∧ (P2 ≤ c2 ∨ e ≤ c2) then
-            let _ ← (← IO.mkRef (bestPairD dc sl lo hi l1 l2)).get
+            let _ ← (← IO.mkRef (bestOfPairs dc prs)).get
             tP := tP + ((← IO.monoNanosNow) - p0)
           else
             tP := tP + ((← IO.monoNanosNow) - p0)
@@ -1096,7 +1096,7 @@ def ukDet {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (offs : Array Nat) 
             let (x2, t2) ← hfT false (min P2 e)
             tH := tH + t1 + t2; nH := nH + 2
             let q0 ← IO.monoNanosNow
-            let _ ← (← IO.mkRef (bestPairD dc sl lo hi x1 x2)).get
+            let _ ← (← IO.mkRef (bestPairF dc sl lo hi x1 x2)).get
             tP := tP + ((← IO.monoNanosNow) - q0)
             rung := rung + 1
           fin := true
@@ -1565,7 +1565,7 @@ def main (args : List String) : IO UInt32 := do
           | .unmapped .notProper _ => "notProper"
           | .unmapped .noPair _ => "noPair"
         s!"p{r.pass}:{rs}"
-      -- Proper-pair mode U (pairUKP_mz_eq / pairUKPR_tie, codecs/PairLadder.lean): pairSpecUT at the
+      -- Proper-pair mode U (pairUKPF_mz_eq / pairUKPRF_tie, codecs/PairLadderF.lean): pairSpecUT at the
       -- caps penOf, sl = WG_USL (0), distance cost dcost0 (WG_UDC=1k: dcost1k); fast path, then rungs
       -- capsU, the mate with the cheaper lookups (costP) first
       let usl ← envN "WG_USL" 0
@@ -1574,7 +1574,7 @@ def main (args : List String) : IO UInt32 := do
         let P1 := penOf a
         let P2 := penOf b
         let a1 := !decide (costP pk P2 (prepMate pk b : PrepM MzP) < costP pk P1 (prepMate pk a : PrepM MzP))
-        pairUKPR udc usl lo hi P1 P2 capsU a1 pk ByteArray.empty offs pgs a b
+        pairUKPRF udc usl lo hi P1 P2 capsU a1 pk ByteArray.empty offs pgs a b
       let fU : ByteArray → ByteArray → PairOut := fun a b => (uR a b).1
       let uAnch : ByteArray → Nat := fun R =>
         let s : PrepM MzP := prepMate pk R
