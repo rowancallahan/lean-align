@@ -160,7 +160,20 @@ def main (args : List String) : IO UInt32 := do
         let fin := (xs.zip bs).foldl (fun (h : Array Nat) ((_, _, x), b) =>
           if min x.2.2.pen P == P then h.modify (min b.pen (P + 1)) (· + 1) else h) (Array.replicate (P + 2) 0)
         IO.println s!"prof: final best of the reads with phase-1 best {P}: {(Array.range (P + 2)).toList.filterMap fun q => if fin[q]! > 0 then some (q, fin[q]!) else none}"
-        IO.println s!"prof: lookups alone {secs t3 t4} s ({lk}); prep+revcomp {secs t4 t5} s ({hsh})"
+        let t6 ← IO.monoNanosNow
+        let ords ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          let ps := Fast.prepG ix R m Ls
+          let pr := Fast.prepG ix Rr m Ls
+          a + (Fast.ordG (ps.map (Fast.LookG.size ix)) m).length + (Fast.ordG (pr.map (Fast.LookG.size ix)) m).length) 0)).get
+        let t7 ← IO.monoNanosNow
+        let hashes ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          (List.range m).foldl (fun a j => a + ((Fast.seedHashAt R (j * Ls)).getD 0).toNat % 2 + ((Fast.seedHashAt Rr (j * Ls)).getD 0).toNat % 2) a) 0)).get
+        let t8 ← IO.monoNanosNow
+        IO.println s!"prof: lookups alone {secs t3 t4} s ({lk}); prep+revcomp {secs t4 t5} s ({hsh}); prep+ordG {secs t6 t7} s ({ords}); hashes only {secs t7 t8} s ({hashes})"
         IO.println s!"prof: ilG {secs t0 t1} s, chromKB {secs t1 t2} s ({bs.size}); lookups {looks}, anchors {anc}, stage-K diagonals (at phase-1 best) {dK}"
       if (← IO.getEnv "GP_TWO").isSome then
         -- estimate only (not the proved path): -12 first, -P for reads without a hit <= 12
