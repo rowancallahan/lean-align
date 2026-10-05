@@ -56,9 +56,28 @@ theorem unlook_same (R : ByteArray) (Ls r D sb : Nat) :
   | nil => intro f; rfl
   | cons j us ih => intro f; simp only [unlook, seedNear_same h, ih]
 
+theorem matchLn_same (R : ByteArray) (s p l : Nat) : ∀ k, matchLn R x s p l k = matchLn R y s p l k := by
+  intro k
+  induction k with
+  | zero => rfl
+  | succ k ih => simp only [matchLn, h.2, ih]
+
+theorem nearL_same (R : ByteArray) (s l : Nat) : ∀ w lo, nearL R x s l lo w = nearL R y s l lo w := by
+  intro w
+  induction w with
+  | zero => intro lo; rfl
+  | succ w ih => intro lo; simp only [nearL, h.1, matchLn_same h, ih]
+
+theorem fineOk_same (R : ByteArray) (l Ls r D sb : Nat) :
+    ∀ k j f, fineOk R x l Ls r D sb j f k = fineOk R y l Ls r D sb j f k := by
+  intro k
+  induction k with
+  | zero => intro j f; rfl
+  | succ k ih => intro j f; simp only [fineOk, pieceNear, nearL_same h, ih]
+
 theorem kfilt_same (R : ByteArray) (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
     kfilt R x acc us Ls lim b D = kfilt R y acc us Ls lim b D := by
-  simp only [kfilt, unlook_same h]
+  simp only [kfilt, unlook_same h, fineOk_same h]
 
 theorem stageKS_same (body1 body2 : Nat → Best → Best) (hb : ∀ D b, body1 D b = body2 D b) (R : ByteArray)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) :

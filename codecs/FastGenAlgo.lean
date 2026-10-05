@@ -294,13 +294,48 @@ def unlook {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D sb : Nat) : L
     if seedNear R G Ls r D j then unlook R G Ls r D sb us f
     else if sb < f + 1 then false else unlook R G Ls r D sb us (f + 1)
 
-/-- The filter of diagonal `D` at best `b`. -/
+/-! The fine filter: the same count over the read cut into `pl`-letter pieces (`pl = 8`):
+a window within penalty `Q` near `D` spoils at most `sbound Q` pieces too
+(`coverLE` holds for any piece length ≥ 2), and pieces are many more, so false
+diagonals that pass the 25-letter count fail this one. -/
+
+/-- Piece length of the fine filter. -/
+def pl : Nat := 8
+
+/-- Letters `[l − k, l)` of the piece at `s` (length `l`) are spelled at `p`. -/
+def matchLn {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s p l : Nat) : Nat → Bool
+  | 0 => true
+  | k + 1 => GRead.get G (p + (l - (k + 1))) == R.get! (s + (l - (k + 1))) && matchLn R G s p l k
+
+/-- The piece at `s` (length `l`) is spelled at some place of `[lo, lo + w)`. -/
+def nearL {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s l : Nat) : Nat → Nat → Bool
+  | _, 0 => false
+  | lo, w + 1 => (decide (lo + l ≤ GRead.size G) && matchLn R G s lo l l) || nearL R G s l (lo + 1) w
+
+/-- Piece `j` (spacing `Ls`, length `l`) is spelled at an anchor diagonal within `r` of `D`. -/
+@[inline] def pieceNear {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (l Ls r D j : Nat) : Bool :=
+  let a := D + j * Ls
+  if a + r < R.size then false
+  else
+    let hi := a + r - R.size
+    let w := min (2 * r) hi
+    nearL R G (j * Ls) l (hi - w) (w + 1)
+
+/-- Pieces `j, j + 1, …` (`k` of them) in turn: `false` once more than `sb` failed. -/
+def fineOk {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (l Ls r D sb : Nat) : Nat → Nat → Nat → Bool
+  | _, _, 0 => true
+  | j, f, k + 1 =>
+    if pieceNear R G l Ls r D j then fineOk R G l Ls r D sb (j + 1) f k
+    else if sb < f + 1 then false else fineOk R G l Ls r D sb (j + 1) (f + 1) k
+
+/-- The filter of diagonal `D` at best `b`: the 25-letter seeds, then the pieces. -/
 @[inline] def kfilt {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat)
     (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
   let Q := min lim b.pen
   let r := 2 * gapBound sc0 (-(Q : Int))
   let fJ := acc.length - suppA acc D r
-  decide (fJ ≤ sbound Q) && unlook R G Ls r D (sbound Q) us fJ
+  decide (fJ ≤ sbound Q) && unlook R G Ls r D (sbound Q) us fJ &&
+    fineOk R G pl (R.size / (R.size / pl)) r D (sbound Q) 0 0 (R.size / pl)
 
 /-- Stage K over the diagonals `ds`, each through the filter at the best of the moment. -/
 @[specialize] def stageKS {Gt : Type} [GRead Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)

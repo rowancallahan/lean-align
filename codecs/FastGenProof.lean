@@ -466,6 +466,59 @@ theorem unlook_of (R G : ByteArray) (Ls r D sb : Nat) :
       rw [if_neg (by omega)]
       exact ih _ h'
 
+theorem matchLn_of (R G : ByteArray) (s p l : Nat) (h : ∀ i, i < l → G.get! (p + i) = R.get! (s + i)) :
+    ∀ k, k ≤ l → matchLn R G s p l k = true := by
+  intro k
+  induction k with
+  | zero => intro _; rfl
+  | succ k ih =>
+    intro hk
+    simp only [matchLn, Bool.and_eq_true, beq_iff_eq, GRead.get_bytes]
+    exact ⟨h _ (by omega), ih (by omega)⟩
+
+theorem nearL_of (R G : ByteArray) (s p l : Nat) (h : MatchAtL G p R s l) :
+    ∀ w lo, lo ≤ p → p < lo + w → nearL R G s l lo w = true := by
+  intro w
+  induction w with
+  | zero => intro lo _ h2; omega
+  | succ w ih =>
+    intro lo h1 h2
+    simp only [nearL, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, GRead.size_bytes]
+    by_cases he : lo = p
+    · subst he; exact Or.inl ⟨h.1, matchLn_of R G s lo l h.2 l (Nat.le_refl _)⟩
+    · exact Or.inr (ih (lo + 1) (by omega) (by omega))
+
+theorem pieceNear_of (R G : ByteArray) (l Ls r D j p : Nat) (hj : j * Ls ≤ R.size)
+    (h : MatchAtL G p R (j * Ls) l) (h1 : D ≤ p + (R.size - j * Ls) + r) (h2 : p + (R.size - j * Ls) ≤ D + r) :
+    pieceNear R G l Ls r D j = true := by
+  unfold pieceNear
+  simp only []
+  rw [if_neg (by omega)]
+  exact nearL_of R G (j * Ls) p l h _ _ (by omega) (by omega)
+
+theorem fineOk_of (R G : ByteArray) (l Ls r D sb : Nat) :
+    ∀ (k j f : Nat), f + ((List.range' j k).filter fun j => !pieceNear R G l Ls r D j).length ≤ sb →
+      fineOk R G l Ls r D sb j f k = true := by
+  intro k
+  induction k with
+  | zero => intro j f _; rfl
+  | succ k ih =>
+    intro j f h
+    rw [List.range'_succ] at h
+    unfold fineOk
+    by_cases hj : pieceNear R G l Ls r D j = true
+    · rw [if_pos hj]; apply ih; simpa [hj] using h
+    · rw [if_neg hj]
+      have h' : f + 1 + ((List.range' (j + 1) k).filter fun j => !pieceNear R G l Ls r D j).length ≤ sb := by
+        simp [hj] at h; omega
+      rw [if_neg (by omega)]
+      exact ih _ _ h'
+
+theorem le_div_pieces (n l : Nat) (hm : 0 < n / l) : l ≤ n / (n / l) := by
+  rw [Nat.le_div_iff_mul_le hm]
+  have := Nat.div_mul_le_self n l
+  rw [Nat.mul_comm]; exact this
+
 /-- Stage K with the filter: a diagonal whose filter passes at every best not below the
 final one has its windows (`X`) added. -/
 theorem stageKS_inv {Gt : Type} [GRead Gt] (P : Nat) (cw : Window → Nat) (body : Nat → Best → Best)
@@ -1194,6 +1247,13 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
   have hacc : acc = (pre.map arr).reverse := hacc0.symm
   unfold chromKBS
   simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
+  have hm8 : 0 < R.size / pl := by
+    have h25 : 25 ≤ R.size := by
+      rcases Nat.lt_or_ge R.size 25 with h | h
+      · rw [Nat.div_eq_of_lt h] at hm; omega
+      · exact h
+    exact Nat.div_pos (by unfold pl; omega) (by decide)
+  have hlL8 : pl ≤ R.size / (R.size / pl) := le_div_pieces _ _ hm8
   generalize hmm : R.size / 25 = m at *
   have hm0 : 0 < m := hm
   have hsbm : sbound P < m := hsb
@@ -1420,10 +1480,41 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
         (pre.filter ((fun arr => !anyNear arr (e / 16 - rq) (e / 16 + rq)) ∘ arr)).length := by
       rw [hsupp, hal]
       omega
-    refine ⟨by omega, ?_⟩
-    apply unlook_of
-    rw [hfJ]
-    omega
+    refine ⟨⟨by omega, ?_⟩, ?_⟩
+    · apply unlook_of
+      rw [hfJ]
+      omega
+    -- the pieces: more than `sbound x` failures would leave one matched at the window
+    generalize hm8e : R.size / pl = m8 at hm8 hlL8 ⊢
+    generalize hL8 : R.size / m8 = L8 at hlL8 ⊢
+    have hmL8 : m8 * L8 ≤ R.size := by rw [← hL8, Nat.mul_comm]; exact Nat.div_mul_le_self _ _
+    apply fineOk_of
+    rw [Nat.zero_add]
+    refine Nat.le_trans ?_ hsQ
+    apply Classical.byContradiction; intro hlt'
+    have hkq8 : pl ≤ read.length / (m8 - 1 + 1) := by
+      rw [← hn, show m8 - 1 + 1 = m8 by omega, hL8]; exact hlL8
+    have hsub := List.filter_sublist (p := fun j => !pieceNear R gbs[c]! pl L8 rq (e / 16) j)
+      (l := List.range' 0 m8)
+    obtain ⟨j', hj', p', a', bb', -, hmatch', hshape', ha1', -, hst', -⟩ :=
+      coverLE g read gbs R hg hr (-(x : Int)) pl (by decide) (m8 - 1) hkq8
+        (by have : 2 ≤ pl := by decide
+            omega)
+        _ (hsub.nodup List.nodup_range')
+        (fun j hj => by have := List.mem_range'_1.1 (hsub.subset hj); omega)
+        (by rw [sbound_def] at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
+    rw [← hn, show m8 - 1 + 1 = m8 by omega, hL8] at hmatch' ha1' hst'
+    rw [hwc] at hmatch'
+    have hj'm := (List.mem_range'_1.1 (hsub.subset hj')).2
+    have hj'L : j' * L8 + L8 ≤ R.size := by
+      have : j' * L8 + L8 ≤ m8 * L8 := by rw [← Nat.succ_mul]; exact Nat.mul_le_mul_right _ (by omega)
+      omega
+    have hsa := hshape.1
+    have hsa' := hshape'.1
+    have htj := pieceNear_of R gbs[c]! pl L8 rq (e / 16) j' p' (by omega) hmatch'
+      (by rw [he16]; omega) (by rw [he16]; omega)
+    have := (List.mem_filter.1 hj').2
+    rw [htj] at this; cases this
   -- the band stage covers the windows above `lim`
   have hband : min P 16 < x → BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds w := by
     intro hlx
