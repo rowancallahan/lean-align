@@ -78,12 +78,13 @@ abbrev Ker := Nat → Nat → Nat → Nat → Nat
 def stageKF (kf : Ker) (n c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
   ds.foldl (fun b D => shs.foldl (fun b sh => addKF kf c lim (dst n D sh) (wlen n sh) b) b) b
 
-def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
+def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat))
+    (J : List Nat) (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageKF kf R.size c lim (shapesKT Q1)
-        (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
+      stageKS (fun D b => stageKF kf R.size c lim (shapesKT Q1) [D] b)
+        R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim (diags acc) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
     stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
@@ -130,8 +131,8 @@ the prepared seeds `ps`, `pr`. -/
   let x := ilGF kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
-  let b := (List.range n).foldl (fun b c => chromKBF kf1 R gbs2 c P x.1.acc[c]! b) x.2.2
-  (List.range n).foldl (fun b c => chromKBF kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! b) b
+  let b := (List.range n).foldl (fun b c => chromKBF kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
+  (List.range n).foldl (fun b c => chromKBF kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
 
 /-! ## With the word kernels -/
 
@@ -517,9 +518,9 @@ theorem checkPGs_ok (pvs : Array PGen) (gbs : Array ByteArray) (h : checkPGs pvs
 theorem stageKF_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat)
     (b : Best) : stageKF (kerH R gbs) R.size c lim shs ds b = stageK R gbs c lim shs ds b := rfl
 
-theorem chromKBF_eq (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b : Best) :
-    chromKBF (kerH R gbs) R gbs c P acc b = chromKB R gbs c P acc b := by
-  simp only [chromKBF, chromKB]
+theorem chromKBF_eq (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
+    (b : Best) : chromKBF (kerH R gbs) R gbs c P acc J b = chromKBS R gbs c P acc J b := by
+  simp only [chromKBF, chromKBS]
   rw [show (if 16 ≤ min (min P 16) (min b.pen P) then stageKP else stageK) = stageK by split <;> first | rfl | (funext R gbs c lim shs ds b; exact stageKP_eq R gbs c lim shs ds b)]
   rfl
 

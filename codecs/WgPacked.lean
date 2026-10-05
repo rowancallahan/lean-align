@@ -216,12 +216,13 @@ def ker16KG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st l
 
 /-! ### The search with the kernel as a parameter, chromosomes through `GRead` -/
 
-def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
+def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
+    (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageKF kf R.size c lim (shapesKT Q1)
-        (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
+      stageKS (fun D b => stageKF kf R.size c lim (shapesKT Q1) [D] b)
+        R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim (diags acc) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
     stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
@@ -266,8 +267,8 @@ def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : Lis
   let x := ilGFG kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
-  let b := (List.range n).foldl (fun b c => chromKBFG kf1 R gbs2 c P x.1.acc[c]! b) x.2.2
-  (List.range n).foldl (fun b c => chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! b) b
+  let b := (List.range n).foldl (fun b c => chromKBFG kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
+  (List.range n).foldl (fun b c => chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
 
 /-- `mapChromsGBK` with the chromosomes `gbs` of any representation. -/
 @[specialize] def mapChromsGBKG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
@@ -373,9 +374,9 @@ variable {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] {xs 
   (h : SameA xs ys) {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf kf1 kf2 : Ker) (ix : L) (G : ByteArray)
 include h
 
-theorem chromKBFG_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) :
-    chromKBFG kf R xs c P acc b1 = chromKBFG kf R ys c P acc b1 := by
-  simp only [chromKBFG, stageB_same h]
+theorem chromKBFG_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
+    chromKBFG kf R xs c P acc J b1 = chromKBFG kf R ys c P acc J b1 := by
+  simp only [chromKBFG, stageB_same h, stageKS_same (h.2 c) _ _ (fun D b => rfl)]
 
 theorem advFG_same (R : ByteArray) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) :
     s.advFG kf ix G R xs offs n t P Ls ps b = s.advFG kf ix G R ys offs n t P Ls ps b := by

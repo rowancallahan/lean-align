@@ -165,6 +165,85 @@ def readMates (path : String) : IO (Array (Option ByteArray)) := do
 
 abbrev PairOut := Option ((Placement × Int) × (Placement × Int))
 
+/-- Prototype (profile only): anchors held by a strand. -/
+def gsAnchors (s : GS) : Nat := s.acc.foldl (fun a l => a + l.foldl (fun a2 arr => a2 + arr.size) 0) 0
+
+/-- Prototype (profile only): live with `X` extra lookups once a strand holds `A` anchors. -/
+def liveX (A X P : Nat) (s : GS) (b : Best) : Bool :=
+  !s.ord.isEmpty && (!decide (sbound (min b.pen P) < s.J.length) ||
+    (decide (s.J.length < sbound (min b.pen P) + 1 + X) && decide (A ≤ gsAnchors s)))
+
+/-- Prototype: seed `R[s, s+25)` matches `G` at `p`. -/
+def matchQx {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s p : Nat) : Bool :=
+  p + 25 ≤ GRead.size G && go 0 25
+where go (k : Nat) : Nat → Bool
+  | 0 => true
+  | f + 1 => GRead.get G (p + k) == R.get! (s + k) && go (k + 1) f
+
+/-- Prototype: some `p ∈ [lo, lo + w)` matches. -/
+def nearX {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s lo : Nat) : Nat → Bool
+  | 0 => false
+  | w + 1 => matchQx R G s lo || nearX R G s (lo + 1) w
+
+/-- Prototype: at least `need` of the `m` seeds match within `r` of diagonal `D`
+(early exits both ways). -/
+def dOkX {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (m Ls need r D : Nat) : Bool :=
+  go 0 0 0 m
+where go (j pass fail : Nat) : Nat → Bool
+  | 0 => need ≤ pass
+  | f + 1 =>
+    if need ≤ pass then true else if m < need + fail then false else
+    let a := D + j * Ls
+    let n := R.size
+    let ok := if a + r < n then false else nearX R G (j * Ls) (a + r - n - min (2 * r) (a + r - n)) (min (2 * r) (a + r - n) + 1)
+    if ok then go (j + 1) (pass + 1) fail f else go (j + 1) pass (fail + 1) f
+
+/-- Prototype: seeds `us` (not looked up) checked directly; reject once more than `sb` fail. -/
+def unlookX {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D sb : Nat) : List Nat → Nat → Bool
+  | [], _ => true
+  | j :: us, fail =>
+    let a := D + j * Ls
+    let n := R.size
+    let ok := if a + r < n then false else nearX R G (j * Ls) (a + r - n - min (2 * r) (a + r - n)) (min (2 * r) (a + r - n) + 1)
+    if ok then unlookX R G Ls r D sb us fail
+    else if sb < fail + 1 then false else unlookX R G Ls r D sb us (fail + 1)
+
+def chromKBX (kf : Ker) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) : Best :=
+  let lim := min P 16
+  let Q1 := min b1.pen P
+  let m := R.size / 25
+  let Ls := R.size / m
+  let G := gbs[c]!
+  let us := (List.range m).filter (fun j => !J.contains j)
+  let r := 2 * gapBound sc0 (-(Q1 : Int))
+  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
+      (diags acc).foldl (fun b D =>
+        let Q := min lim b.pen
+        let rq := 2 * gapBound sc0 (-(Q : Int))
+        let fJ := acc.length - suppA acc D rq
+        if fJ ≤ sbound Q && unlookX R G Ls rq D (sbound Q) us fJ then
+          (shapesKT Q1).foldl (fun b sh => addKF kf c lim (dst R.size D sh) (wlen R.size sh) b) b
+        else b) b1 else b1
+  let Q2 := min b2.pen P
+  if lim < Q2 then
+    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+      (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
+  else b2
+
+def ilX {L Pp : Type} [LookG L Pp] [Inhabited Pp] (A X : Nat) (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array PGen) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    Nat → GS → GS → Best → GS × GS × Best
+  | 0, s1, s2, b => (s1, s2, b)
+  | f + 1, s1, s2, b =>
+    let l2 := liveX A X P s2 b
+    if liveX A X P s1 b && (!l2 || decide (s1.J.length ≤ s2.J.length)) then
+      let r := s1.advFG kf1 ix G R1 gbs2 offs n 0 P Ls ps1 b
+      ilX A X kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f r.1 s2 r.2
+    else if l2 then
+      let r := s2.advFG kf2 ix G R2 gbs2 offs n n P Ls ps2 b
+      ilX A X kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
+    else (s1, s2, b)
+
 /-- Per-read profile of the packed word-kernel mapper (bench only: the proved
 functions' parts called one by one and timed). -/
 structure Prof where
@@ -184,7 +263,7 @@ structure Prof where
   penHist : Array Nat := Array.replicate 18 0
   lkHist : Array Nat := Array.replicate 25 0
 
-def profRead (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (P : Nat) (R : ByteArray) (pf : Prof) :
+def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (P : Nat) (R : ByteArray) (pf : Prof) :
     IO Prof := do
   let n := pgs.size
   let gbs2 := pgs ++ pgs
@@ -203,11 +282,16 @@ def profRead (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (P : Nat) (R : By
   let o1 ← (← IO.mkRef o1).get
   let o2 ← (← IO.mkRef o2).get
   let t1 ← IO.monoNanosNow
-  let x ← (← IO.mkRef (if t1 == 0 then (default, default, initP P) else ilGFG kf1 kf2 ix ByteArray.empty R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
-    ⟨o1, [], Array.replicate n []⟩ ⟨o2, [], Array.replicate n []⟩ (initP P))).get
+  let x ← (← IO.mkRef (if t1 == 0 then (default, default, initP P) else if XN == 0 then
+    ilGFG kf1 kf2 ix ByteArray.empty R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+      ⟨o1, [], Array.replicate n []⟩ ⟨o2, [], Array.replicate n []⟩ (initP P)
+    else ilX XA XN kf1 kf2 ix ByteArray.empty R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+      ⟨o1, [], Array.replicate n []⟩ ⟨o2, [], Array.replicate n []⟩ (initP P))).get
   let t2 ← IO.monoNanosNow
-  let b := (List.range n).foldl (fun b c => chromKBFG kf1 R gbs2 c P x.1.acc[c]! b) x.2.2
-  let b := (List.range n).foldl (fun b c => chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! b) b
+  let b := (List.range n).foldl (fun b c => if XF then chromKBX kf1 R gbs2 c P x.1.acc[c]! x.1.J b
+    else chromKBFG kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
+  let b := (List.range n).foldl (fun b c => if XF then chromKBX kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b
+    else chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
   let b ← (← IO.mkRef b).get
   let t3 ← IO.monoNanosNow
   let lk := x.1.J.length + x.2.1.J.length
@@ -237,7 +321,7 @@ def showProf (pf : Prof) : IO Unit := do
 
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
-    (prof : Option (ByteArray → Prof → IO Prof)) : IO Unit := do
+    (prof : List (String × (ByteArray → Prof → IO Prof))) : IO Unit := do
   let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map String.toNat!
   let sets := ((← IO.getEnv "WG_READS").getD "").splitOn ";" |>.filter (· ≠ "")
   let outDir := (← IO.getEnv "WG_OUT").getD ""
@@ -256,11 +340,12 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
     let r2 := idx.map fun i => m2[i]!.get!
     let rk := Array.range idx.size
     IO.println s!"set {name}: pairs {n}, trimmed away {trimmed.size}, both mates taken by the mapper {idx.size}; {← rss}"
-    if let some pr := prof then
+    for (lab, pr) in prof do
       let mut pf : Prof := {}
       for k in rk do
         pf ← pr r1[k]! pf
         pf ← pr r2[k]! pf
+      IO.println s!"profile {lab}"
       showProf pf
     for (mode, f) in modes do
       let g (k : Nat) : PairOut := f r1[k]! r2[k]!
@@ -347,7 +432,7 @@ def main (args : List String) : IO UInt32 := do
       -- pairDispatch_view_eq / pairFastGB_view_eq_pairSpec
       let f : ByteArray → ByteArray → PairOut := if P == 0 then pairDispatch lo hi (ix, V) ByteArray.empty offs gbs
         else pairFastGB P lo hi (ix, V) ByteArray.empty offs gbs
-      runSets [("B", f)] okLen none
+      runSets [("B", f)] okLen []
       return 0
     else if mode == "pmap" then
       let (G, offs, ns) ← loadPacked files
@@ -372,8 +457,14 @@ def main (args : List String) : IO UInt32 := do
         else pairFastGBKP P lo hi pk ByteArray.empty offs pgs
       let ms := ((← IO.getEnv "WG_MODES").getD "P,PK").splitOn ","
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK) else none
-      let prof : Option (ByteArray → Prof → IO Prof) := if (← IO.getEnv "WG_PROF").isSome then
-        some (fun R pf => profRead pk offs pgs (if P == 0 then penOf R else P) R pf) else none
+      -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
+      let cfgs := ((← IO.getEnv "WG_PROF").getD "").splitOn "," |>.filter (· ≠ "")
+      let prof : List (String × (ByteArray → Prof → IO Prof)) := cfgs.map fun (cf : String) =>
+        let ax := cf.splitOn ":"
+        let XA := ax[0]!.toNat!
+        let XN := (ax[1]?.getD "0").toNat!
+        let XF := (ax[2]?.getD "0") == "1"
+        (cf, fun (R : ByteArray) (pf : Prof) => profRead XA XN XF pk offs pgs (if P == 0 then penOf R else P) R pf)
       runSets modes okLen prof
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
