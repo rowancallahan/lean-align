@@ -13,6 +13,9 @@ reason is a statement about the specification alone (`ReasonOk`):
                   cap forms a proper pair with `a` (what the region search proves without
                   searching mate `m` over the whole genome);
 * `notProper`   — both mates map uniquely, but not as a proper pair;
+* `noPair`      — no hit of mate 1 and hit of mate 2 (each within its cap) form a proper
+                  pair, whatever the mates' unique bests (codecs/PairJoin.lean proves it
+                  from the seed anchors of both mates, without any alignment);
 * `tooShort m` / `trimmedAway m` — mate `m` is outside the mapper's length range at its
                   cap / was removed by the trimmer (stated by the router, not here).
 
@@ -47,6 +50,7 @@ inductive Reason where
   | tie (m : Mate)
   | noPartner (m : Mate)
   | notProper
+  | noPair
 deriving DecidableEq, Repr, Inhabited
 
 /-- The reasons a search decides (all but the length reasons). -/
@@ -64,6 +68,8 @@ def ReasonOk (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd : Mate → List C
       ∀ p ∈ hitsBoth sc0 (T m) g (rd m), properPair lo hi a.1 p.1 = false
   | .notProper => ∃ a b, mapSpecBoth sc0 (T .one) g (rd .one) = some a ∧
       mapSpecBoth sc0 (T .two) g (rd .two) = some b ∧ properPair lo hi a.1 b.1 = false
+  | .noPair => ∀ a ∈ hitsBoth sc0 (T .one) g (rd .one), ∀ b ∈ hitsBoth sc0 (T .two) g (rd .two),
+      properPair lo hi a.1 b.1 = false
   | .tooShort _ => False
   | .trimmedAway _ => False
 
@@ -161,6 +167,13 @@ theorem reasonOk_none (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd : Mate �
   | notProper =>
     obtain ⟨a, b, ha, hb, hp⟩ := h
     rw [ha, hb]; simp [hp]
+  | noPair =>
+    cases ha : mapSpecBoth sc0 (T .one) g (rd .one) with
+    | none => rfl
+    | some a =>
+      cases hb : mapSpecBoth sc0 (T .two) g (rd .two) with
+      | none => rfl
+      | some b => simp [h a (mapSpecBoth_mem ha) b (mapSpecBoth_mem hb)]
 
 /-! ## Which reasons stay at deeper caps -/
 

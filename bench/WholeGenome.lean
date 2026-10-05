@@ -1088,13 +1088,22 @@ def main (args : List String) : IO UInt32 := do
       -- WG_P2BUDGET=N: pass 2 only when both mates' lookup cost at the pass-2 cap (`costP`) is ≤ N
       let bud ← envN "WG_P2BUDGET" 0
       let cap2F' := cap2F
+      -- WG_P2GATE=min: the budget applies to the cheaper mate only (default: both mates)
+      let gMin := (← IO.getEnv "WG_P2GATE").getD "both" == "min"
       let gate2 : ByteArray → ByteArray → Bool := fun a b => bud == 0 ||
-        (costP pk (cap2F' a.size) (prepMate pk a : PrepM MzP) ≤ bud && costP pk (cap2F' b.size) (prepMate pk b : PrepM MzP) ≤ bud)
+        (let ca := costP pk (cap2F' a.size) (prepMate pk a : PrepM MzP)
+         let cb := costP pk (cap2F' b.size) (prepMate pk b : PrepM MzP)
+         if gMin then min ca cb ≤ bud else ca ≤ bud && cb ≤ bud)
       let rcfg : RouteCfg := { cap1 := cap1F, pass2 := p2on, cap2 := cap2F, ord1 := ord1, swap2 := swap2, gate2 := gate2 }
       -- WG_HINT=0: mate B over the genome at its full cap (no region-hit hint; mateH_ok holds either way)
       let hint := (← IO.getEnv "WG_HINT").getD "1" == "1"
-      let kK := { kpKer lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs with hint := hint }
-      let route (a b : ByteArray) : Routed := routeG rcfg kK kK lo hi (some a) (some b)
+      -- WG_JOIN1 / WG_JOIN2 = 1: the pair-level anchor join (`noPairJ`, reason `noPair`) before the
+      -- search in pass 1 / pass 2 (`routeKPB_ok`)
+      let j1 := (← IO.getEnv "WG_JOIN1").getD "0" == "1"
+      let j2 := (← IO.getEnv "WG_JOIN2").getD "0" == "1"
+      let kK := kpKerB lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs j1 hint
+      let kK2 := kpKerB lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs j2 hint
+      let route (a b : ByteArray) : Routed := routeG rcfg kK kK2 lo hi (some a) (some b)
       let fRT : ByteArray → ByteArray → PairOut := fun a b => (route a b).out.toOpt
       let showR (r : Routed) : String :=
         let m (x : Mate) := match x with | .one => "1" | .two => "2"
@@ -1106,6 +1115,7 @@ def main (args : List String) : IO UInt32 := do
           | .unmapped (.tie x) _ => s!"tie{m x}"
           | .unmapped (.noPartner x) _ => s!"noPartner{m x}"
           | .unmapped .notProper _ => "notProper"
+          | .unmapped .noPair _ => "noPair"
         s!"p{r.pass}:{rs}"
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
         else if m == "PR" then some ("PR", fR) else if m == "RT" then some ("RT", fRT) else none
@@ -1142,7 +1152,7 @@ def main (args : List String) : IO UInt32 := do
               let B2 := cap2Of rcfg R2
               if !(rcfg.goOn r && rcfg.gate2 R1 R2 && !(B1 == A1 && B2 == A2)) then pure () else
               let t0 ← IO.monoNanosNow
-              let o2 ← (← IO.mkRef (pass2G kK rcfg.swap2 A1 A2 B1 B2 r lo hi R1 R2 kn)).get
+              let o2 ← (← IO.mkRef (pass2G kK2 rcfg.swap2 A1 A2 B1 B2 r lo hi R1 R2 kn)).get
               let t1 ← IO.monoNanosNow
               -- parts: genome mate `g` (cap Bg, pass-1 cap Ag), region mate `x` (cap Bx)
               let parts : Option (ByteArray × Nat × Nat × ByteArray × Nat × Option (Placement × Int)) := match r, kn with
@@ -1171,13 +1181,24 @@ def main (args : List String) : IO UInt32 := do
                 v := #[1, t1 - t0, u1 - u0, u2 - u1, u3 - u2, u4 - u3, if mg.1.isSome then 1 else 0,
                   if mg.1.isSome && rp ≤ Bx then 1 else 0]
                 if kn'.isNone && mg.1.isNone && !mg.2 && fastT Ag Rg then dead := dead.push (Rg, Bg, Ag)
+              -- prototype pair-level absence: all anchors of both mates, joined within the fragment
+              let j0 ← IO.monoNanosNow
+              let emp ← (← IO.mkRef (noPairJ B1 B2 hi pk ByteArray.empty R1 R2)).get
+              let j1 ← IO.monoNanosNow
+              let c1 := costP pk B1 (kK.prep R1)
+              let c2 := costP pk B2 (kK.prep R2)
+              let slow := decide (1000 < max c1 c2)
+              v := v ++ #[if emp then 1 else 0, j1 - j0, if slow then 1 else 0, if slow && emp then 1 else 0,
+                if slow then t1 - t0 else 0, if emp then t1 - t0 else 0]
               let key := s!"{showR ⟨o.out, 1, A1, A2⟩} -> {showR ⟨o2, 2, B1, B2⟩}"
-              tab := tab.insert key (((tab.getD key #[0, 0, 0, 0, 0, 0, 0, 0]).zip v).map fun (a, b) => a + b)
+              tab := tab.insert key (((tab.getD key (Array.replicate 14 0)).zip v).map fun (a, b) => a + b)
           let rows := tab.toArray.qsort (fun a b => a.2[1]! > b.2[1]!)
           let tot := rows.foldl (fun a r => a + r.2[1]!) 0
           say s!"  pass-2 total {secs 0 tot} s over {min ppN r1.size} pairs (1 thread); columns: pairs, pass 2 s, genome mate at cap 2 s, same at cap 1 s, region s, hinted B s, genome mate mapped, region hit"
           for (key, v) in rows do
-            say s!"  {key}: {v[0]!}, {secs 0 v[1]!}, {secs 0 v[2]!}, {secs 0 v[3]!}, {secs 0 v[4]!}, {secs 0 v[5]!}, {v[6]!}, {v[7]!}"
+            say s!"  {key}: {v[0]!}, {secs 0 v[1]!}, {secs 0 v[2]!}, {secs 0 v[3]!}, {secs 0 v[4]!}, {secs 0 v[5]!}, {v[6]!}, {v[7]!} | noPairJ {v[8]!}, join {secs 0 v[9]!} s, slow {v[10]!} ({secs 0 v[12]!} s), slow+noPair {v[11]!}, pass-2 s of noPair {secs 0 v[13]!}"
+          let sum := rows.foldl (fun a r => (a.zip r.2).map fun (x, y) => x + y) (Array.replicate 14 0)
+          say s!"  ALL: pairs {sum[0]!}, pass 2 {secs 0 sum[1]!} s | noPairJ true {sum[8]!} (pass-2 time of those {secs 0 sum[13]!} s), join time {secs 0 sum[9]!} s, slow (max cost > 1000) {sum[10]!} ({secs 0 sum[12]!} s), slow+noPair {sum[11]!}"
           -- read profile of the genome mates without any hit at the pass-2 cap, at both caps
           let dl := dead.extract 0 (← envN "WG_PPROF_DEAD" 300)
           for hi2 in [true, false] do
