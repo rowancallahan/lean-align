@@ -660,7 +660,7 @@ theorem chromKBS_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat)
     · exact Nat.le_refl _
   generalize (if 0 < gapBound sc0 (-((min b.pen P : Nat) : Int)) then _ else b) = b2 at h2 ⊢
   split
-  · exact Nat.le_trans (hB _ _ _ _) h2
+  · exact Nat.le_trans (hS _ (fun D b' => hB _ _ _ _) _ _ _ _ _) h2
   · exact h2
 
 section kb

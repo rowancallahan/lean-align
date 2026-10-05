@@ -87,7 +87,8 @@ def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc
         R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim (diags acc) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
-    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+    stageKS (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
+      R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) P
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
