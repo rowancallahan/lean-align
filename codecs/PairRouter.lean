@@ -229,6 +229,9 @@ structure RouteCfg where
   goOn : Reason → Bool := fun r => match r with
     | .noHit _ | .noPartner _ | .tooShort _ => true
     | _ => false
+  /-- Pass 1: which mate goes over the genome first (`some true` = mate 2; `none` =
+  the kernel's cost); any choice is exact. -/
+  ord1 : ByteArray → ByteArray → Option Bool := fun _ _ => none
 
 /-- A routed pair: the answer, the pass that settled it (0 = trimmed away, 1, 2), and the
 per-mate caps of that pass. -/
@@ -276,7 +279,7 @@ def routeG (cfg : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (O1 O2 : Option Byte
   | some R1, some R2 =>
     let A1 := cfg.cap1 R1.size
     let A2 := cfg.cap1 R2.size
-    let o := passLenG K1 A1 A2 none lo hi R1 R2
+    let o := passLenG K1 A1 A2 (cfg.ord1 R1 R2) lo hi R1 R2
     match o with
     | .mapped _ => ⟨o, 1, A1, A2⟩
     | .unmapped r k =>
@@ -625,10 +628,10 @@ mapped = `pairSpecT` there, a search reason holds of the specification there (so
 `pairSpecT = none`, `settled_none`), `tooShort` = off the fast path there. -/
 theorem routeG_ok (cfg : RouteCfg) (K1 K2 : PassKer) (hK1 : KerOk lo hi g K1) (hK2 : KerOk lo hi g K2) :
     Settled lo hi g m1 m2 R1 R2 (routeG cfg K1 K2 lo hi (some R1) (some R2)) := by
-  have hp := passLenG_ok lo hi g m1 m2 R1 R2 h1 h2 K1 hK1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) none 1
+  have hp := passLenG_ok lo hi g m1 m2 R1 R2 h1 h2 K1 hK1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) (cfg.ord1 R1 R2) 1
   unfold routeG
   simp only []
-  generalize passLenG K1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) none lo hi R1 R2 = o at hp ⊢
+  generalize passLenG K1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) (cfg.ord1 R1 R2) lo hi R1 R2 = o at hp ⊢
   cases o with
   | mapped x => exact hp
   | unmapped r k =>

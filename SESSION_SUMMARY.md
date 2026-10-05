@@ -275,6 +275,20 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 - **Short mates 50–99 bp** (cap 7 for 50–74, 11 for 75–99 bp; `fastT`: sbound(P) < len/25): HG002 200k, pass 1: kept 167,760 → 170,282 (+2,522, +1.5%), CPU 49.3 → 59.3 s (+20%), mapping wall 17.0 → 20.7 s (noisy box). tooShort left: 641 / 3,055 (mates < 50 bp).
 - How B's uniqueness is proved in `pairRegionKP`: B's region search on a miss proves no proper partner (`regionNoHitKP_sound`); on a region hit B still needs the full whole-genome search (selectUnique over all hits), so a short B costs a whole genome search. Cheaper exact option (not implemented): when the region finds B's best at penalty p ≤ cap, `mapSpecBoth_mono` gives B's answer at the cap = answer at −p, so the whole-genome search can run at cap p (often 0–2: larger exact seeds, fast path from shorter reads).
 - `pairSpecU` (pair-level uniqueness), not implemented: it can only rescue tie pairs, upper bound tie1 + tie2 = 8,831 pairs (5.3% of kept) at Q25 pass 1 (9,565 with short mates).
+- **B-cap trick — PROVED** (`mateH`, `mateH_ok`; `PassKer.hint`, bench `WG_HINT=0` turns it off): after a region hit, mate B goes over the genome first at the cap of its best region hit (`regionPenKP`), and at the full cap only when that search finds no hit. Exact for any hint: a hit within cap h gives the answer at the full cap (`mapSpecBoth_mono`, `hitsBoth_ne_mono`). 20k: dumps identical on/off; CPU 5.87 → 5.27 s (short off), 6.28 → 6.11 s (short on). 200k short on: CPU 63.7 → ~57 s.
+- Pass-1 mate order option `RouteCfg.ord1` (bench `WG_ORD=cost|short|long`; any order exact, `passLenG_ok`). 200k short on: cost 15.2 s / CPU 59 s, short mate first 26.5 s / CPU 101 s, long mate first CPU 61.5 s: keep `cost`. Bench `WG_CAP1=minLen:cap,…` overrides the pass-1 caps. Packed genome loaded with `WG_PKLOAD=1`.
+- After merging the proved stage-B kfilt (d410057), pass 2 on 20k: T2=−20 11.7 → 6.2 s.
+- **vs minibwa, one BIG.lock hold, 3 interleaved rounds** (HG002 200k cut, Q25, 4 tasks, saved packed genome; box shared with Lean builds, noisy). minibwa mapping (real − index load) 35.6 / 25.6 / 27.8 s, **median 27.8 s**, CPU ~106–119 s (whole run), peak RSS 7.6 GB. Denominators from mb_hg200k_cut_t4.sam: proper pairs, both mapped, primary, both MAPQ > 0: **D0 = 188,963**; both MAPQ ≥ 20: **D20 = 185,217**. "Same place" = both mates on minibwa's chromosome with overlapping reference intervals.
+
+  | setting | mapping s (3 runs) | median | ×minibwa | CPU s | RSS GB | kept | % D0 / D20 | same place % D0 / D20 | not mb-proper |
+  |---|---|---|---|---|---|---|---|---|---|
+  | A short off (16/12, <100 too short) | 15.23 / 10.92 / 12.17 | 12.17 | 2.28 | 42–48 | 5.5 | 167,760 | 88.78 / 90.57 | 88.75 / 90.52 | 43 |
+  | B short on (75–99 @11, 50–74 @7) | 19.74 / 14.74 / 15.03 | 15.03 | 1.85 | 56–59 | 5.5 | 170,282 | 90.11 / 91.94 | 90.07 / 91.87 | 47 |
+  | C 75–99 @11 only | 13.29 / 13.59 / 13.96 | 13.59 | 2.04 | 52–54 | 5.5 | 169,243 | 89.56 / 91.38 | 89.53 / 91.32 | 44 |
+  | B + pass 2, T2=−20 (≥150 bp) | 39.50 (1 run) | | 0.70 | 155 | 5.5 | 172,082 | 91.07 / 92.91 | 91.02 / 92.84 | 49 |
+  | B + pass 2, T2=−24 (≥150 bp) | 49.37 (1 run) | | 0.56 | 190 | 5.5 | 172,799 | 91.45 / 93.30 | 91.40 / 93.22 | 52 |
+
+  Full short mates miss 2× (1.85×): the default is unchanged. 75–99 bp only is on the line (2.04× median, 1.88× in one round). The extra cost is mostly proofs of absence for the newly searched pairs (noHit +985, noPartner +736, tie +734).
 - **Plan for later (Rowan, not now): multi-pass router.** Several passes, each a kernel optimized for an error band (x ≤ pen ≤ y); each runs only on the previous pass's noHit residual, may pass information forward (e.g. the band already ruled out), and a final mop-up pass ends the chain. The router proof composes them (`routeG_ok` generalizes to a list of `KerOk` kernels). Watch each pass's startup cost against how fast the pool shrinks.
 - Note: a few whole runs spent ~80 s of wall outside the timed phases (box load / exit); the 20k measurement avoids the 150 s guard.
 
