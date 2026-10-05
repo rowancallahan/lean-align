@@ -1135,7 +1135,13 @@ def main (args : List String) : IO UInt32 := do
       -- 50–74 letters at −7, 75–99 at −11 (else < 100 too short); WG_PASS2=1: pairs left without a hit
       -- (noHit / noPartner / tooShort) get pass 2 at WG_T2 = "minLen:cap,…" (e.g. 150:20; first match wins)
       let short := (← IO.getEnv "WG_SHORT").getD "0" == "1"
+      -- WG_CAP1="minLen:cap,…" overrides the pass-1 caps (first match wins; shorter mates: cap 12, too short)
+      let c1s := ((← IO.getEnv "WG_CAP1").getD "").splitOn "," |>.filter (· ≠ "") |>.map fun x =>
+        match x.splitOn ":" with
+        | [a, b] => (a.toNat!, b.toNat!)
+        | _ => (0, 0)
       let cap1F : Nat → Nat := fun n =>
+        if !c1s.isEmpty then (match c1s.find? (fun x => x.1 ≤ n) with | some x => x.2 | none => 12) else
         if 150 ≤ n then 16 else if 100 ≤ n then 12 else if short then (if 75 ≤ n then 11 else 7) else 12
       let t2s := ((← IO.getEnv "WG_T2").getD "150:20").splitOn "," |>.filter (· ≠ "") |>.map fun x =>
         match x.splitOn ":" with
@@ -1144,9 +1150,22 @@ def main (args : List String) : IO UInt32 := do
       let cap2F : Nat → Nat := fun n => match t2s.find? (fun x => x.1 ≤ n) with
         | some x => x.2
         | none => 0
-      let rcfg : RouteCfg := { cap1 := cap1F, pass2 := (← IO.getEnv "WG_PASS2").getD "0" == "1", cap2 := cap2F }
-      let route (a b : ByteArray) : Routed :=
-        routeKP rcfg lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs (some a) (some b)
+      -- WG_ORD=short: a mate under 100 letters (smaller cap) goes over the genome first, the
+      -- long mate near it (region + hinted search); else (and by default `cost`) the cheaper lookups
+      -- WG_ORD=long: the long mate first, the short one near it
+      let ordE := (← IO.getEnv "WG_ORD").getD "cost"
+      let ord1 : ByteArray → ByteArray → Option Bool := fun a b =>
+        let sh := if ordE == "short" then true else false
+        if ordE != "short" && ordE != "long" then none
+        else if b.size < 100 && 100 ≤ a.size then some sh
+        else if a.size < 100 && 100 ≤ b.size then some !sh
+        else none
+      let p2on := (← IO.getEnv "WG_PASS2").getD "0" == "1"
+      let rcfg : RouteCfg := { cap1 := cap1F, pass2 := p2on, cap2 := cap2F, ord1 := ord1 }
+      -- WG_HINT=0: mate B over the genome at its full cap (no region-hit hint; mateH_ok holds either way)
+      let hint := (← IO.getEnv "WG_HINT").getD "1" == "1"
+      let kK := { kpKer lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs with hint := hint }
+      let route (a b : ByteArray) : Routed := routeG rcfg kK kK lo hi (some a) (some b)
       let fRT : ByteArray → ByteArray → PairOut := fun a b => (route a b).out.toOpt
       let showR (r : Routed) : String :=
         let m (x : Mate) := match x with | .one => "1" | .two => "2"

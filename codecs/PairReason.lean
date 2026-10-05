@@ -109,6 +109,15 @@ theorem hitsBoth_ne_of_some {T : Int} {g : Genome} {r : List Char} {a : Placemen
     (h : mapSpecBoth sc0 T g r = some a) : hitsBoth sc0 T g r ≠ [] := by
   intro hn; rw [hitsBoth_nil_none hn] at h; cases h
 
+/-- Hits within a cap are hits within any deeper cap. -/
+theorem hitsBoth_ne_mono (T T' : Int) (hT : T' ≤ T) {g : Genome} {r : List Char}
+    (h : hitsBoth sc0 T g r ≠ []) : hitsBoth sc0 T' g r ≠ [] := by
+  obtain ⟨x, hx⟩ := List.exists_mem_of_ne_nil _ h
+  rw [mem_hitsBoth_T] at hx
+  intro hn
+  have : x ∈ hitsBoth sc0 T' g r := (mem_hitsBoth_T _ _ _ _ _).mpr ⟨hx.1, hx.2.1, Int.le_trans hT hx.2.2⟩
+  rw [hn] at this; cases this
+
 theorem mapSpecBoth_mono_some (T T' : Int) (hT : T' ≤ T) (g : Genome) (r : List Char) (a : Placement × Int)
     (h : mapSpecBoth sc0 T g r = some a) : mapSpecBoth sc0 T' g r = some a := by
   rw [mapSpecBoth_mono T T' hT g r (hitsBoth_ne_of_some h)]; exact h
