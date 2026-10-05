@@ -1,4 +1,4 @@
-import FastGenPair
+import FastGenShort
 import ParMap
 
 /-!
@@ -9,7 +9,8 @@ mapper over one index of the concatenated genome (codecs/FastGenPair.lean:
     lake exe gen_pair_bench <genome.fa> <mate1.reads.txt> [mate2.reads.txt [dump.tsv]]
     env: GP_T=P (16), GP_MIN (100), GP_MAX (1000), GP_TASKS (1), GP_MZ=k [GP_MZ_B=B] (minimizer index),
     GP_CHECK=n (reads of 100–103 letters at P = 12: compare with the proved `mapFastC` on n reads)
-One mate file: single reads on both strands (`mapFastGB`); two: proper pairs (`pairFastGB`).
+One mate file: single reads on both strands (`mapFastGS`, short reads by the proved genome scan); two: proper pairs.
+GP_SHORTCHECK=n: the short-read path against the indexed path on n reads (both proved = mapSpecBoth).
 -/
 
 open MapSpec
@@ -93,6 +94,14 @@ def main (args : List String) : IO UInt32 := do
           then n else n + 1) 0
         IO.println s!"check vs mapFastC (T = -12) on {rs.size} reads: {bad} differ"
         assert! bad == 0
+      if let some k := (← IO.getEnv "GP_SHORTCHECK") then
+        -- both proved = mapSpecBoth: the short-read scan against the indexed path
+        let rs := r1.extract 0 k.toNat!
+        let t0 ← IO.monoNanosNow
+        let bad := rs.foldl (fun n R => if Fast.decodeP gbs.size P (Fast.mapChromsShort P gbs R) ==
+          Fast.mapFastGB P ix G offs gbs R then n else n + 1) 0
+        IO.println s!"short-path check on {rs.size} reads: {bad} differ ({secs t0 (← IO.monoNanosNow)} s)"
+        assert! bad == 0
       if (← IO.getEnv "GP_TWO").isSome then
         -- estimate only (not the proved path): -12 first, -P for reads without a hit <= 12
         pure fun R => if Fast.fastT 12 R then
@@ -100,14 +109,14 @@ def main (args : List String) : IO UInt32 := do
             if b.pen ≤ 12 then Fast.decodeP gbs.size 12 b else Fast.mapFastGB P ix G offs gbs R
           else Fast.mapFastGB P ix G offs gbs R
       else
-      pure fun R => Fast.mapFastGB P ix G offs gbs R
+      pure fun R => Fast.mapFastGS P ix G offs gbs R
     else do
       let B := ((← IO.getEnv "GP_MZ_B").getD "24").toNat!
       let ix := Mz.buildW G mz B (25 - mz) 8 mz
       let ok := Fast.checkAllMz #[ix] #[G]
       IO.println s!"index check: {ok}  minimizer k={mz} B={B}"
       assert! ok
-      pure fun R => Fast.mapFastGB P ix G offs gbs R
+      pure fun R => Fast.mapFastGS P ix G offs gbs R
   match rest with
   | [] =>
     let t0 ← IO.monoNanosNow
