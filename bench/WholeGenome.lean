@@ -260,6 +260,13 @@ structure Prof where
   slowNs : Nat := 0
   slowHits : Nat := 0
   slowLookups : Nat := 0
+  slowP1 : Nat := 0
+  slowAmb : Nat := 0
+  slowAmb0 : Nat := 0
+  slowNone : Nat := 0
+  slowDiags : Nat := 0
+  slowPass : Nat := 0
+  slowFiltNs : Nat := 0
   penHist : Array Nat := Array.replicate 18 0
   lkHist : Array Nat := Array.replicate 25 0
 
@@ -307,6 +314,25 @@ def profRead (XA XN : Nat) (XF : Bool) (ix : PkMz) (offs : Array Nat) (pgs : Arr
   let pf := { pf with prepNs := pf.prepNs + (t1 - t0), p1Ns := pf.p1Ns + (t2 - t1), kbNs := pf.kbNs + (t3 - t2) }
   let pf := if slow then { pf with slowReads := pf.slowReads + 1, slowNs := pf.slowNs + (t3 - t1) } else pf
   let pf := if slow then { pf with slowHits := pf.slowHits + hits, slowLookups := pf.slowLookups + lk } else pf
+  let a1 : Nat := if b.amb && decide (b.pen ≤ P) then 1 else 0
+  let a0 : Nat := if b.amb && b.pen == 0 then 1 else 0
+  let a2 : Nat := if decide (b.pen > P) then 1 else 0
+  let pf := if slow then { pf with slowP1 := pf.slowP1 + (t2 - t1), slowAmb := pf.slowAmb + a1 } else pf
+  let pf := if slow then { pf with slowAmb0 := pf.slowAmb0 + a0, slowNone := pf.slowNone + a2 } else pf
+  let pf ← if slow then do
+      let fl := fun (Rx : ByteArray) (t : Nat) (s : GS) =>
+        (List.range n).foldl (fun (a : Nat × Nat) c =>
+          let acc := s.acc[c]!
+          let ds := diags acc
+          let us := unseen (Rx.size / 25) s.J
+          (a.1 + ds.length, a.2 + (ds.filter fun D => kfilt Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D).length)) (0, 0)
+      let u0 ← IO.monoNanosNow
+      let r1 ← (← IO.mkRef (fl R 0 x.1)).get
+      let r2 ← (← IO.mkRef (fl Rr n x.2.1)).get
+      let u1 ← IO.monoNanosNow
+      let pf := { pf with slowDiags := pf.slowDiags + r1.1 + r2.1, slowPass := pf.slowPass + r1.2 + r2.2 }
+      pure { pf with slowFiltNs := pf.slowFiltNs + (u1 - u0) }
+    else pure pf
   let pf := { pf with penHist := pf.penHist.modify (min b.pen 17) (fun v => v + 1) }
   return { pf with lkHist := pf.lkHist.modify (min lk 24) (fun v => v + 1) }
 
@@ -316,6 +342,8 @@ def showProf (pf : Prof) : IO Unit := do
   IO.println s!"  lookups of buckets > 1000 entries: {pf.bigLookups} ({Float.ofNat pf.bigHits / Float.ofNat (max pf.bigLookups 1)} entries avg)"
   IO.println s!"  time per read: prep {Float.ofNat pf.prepNs / r / 1000} us, lookups + phase 1 {Float.ofNat pf.p1Ns / r / 1000} us, stages K/B {Float.ofNat pf.kbNs / r / 1000} us"
   IO.println s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
+  IO.println s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
+  IO.println s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}; filter alone {secs 0 pf.slowFiltNs} s"
   IO.println s!"  best penalty histogram (0..16, 17 = none): {pf.penHist}"
   IO.println s!"  lookups per read histogram (0..23, 24+): {pf.lkHist}"
 
