@@ -4,7 +4,7 @@ import WgPacked
 import PairRegion
 import ReadTrim
 import PairRouter
-import PairHybrid
+import PairNear
 
 /-!
 Benchmark only (unproved IO).  Whole genome with the genome held once
@@ -1606,15 +1606,23 @@ def main (args : List String) : IO UInt32 := do
         let a1 := !decide (costP pk (penOf b) (prepMate pk b : PrepM MzP) < costP pk (penOf a) (prepMate pk a : PrepM MzP))
         pairUKH udc usl lo hi capsU a1 pk (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs a b
       let fH : ByteArray → ByteArray → PairOut := fun a b => (hR a b).1
+      -- Mode HN (pairUKHN_eq, codecs/PairNear.lean): mode H with the second-searched mate enumerated
+      -- only on diagonals near the first mate's hits at each rung.  Same answers as mode H.
+      let hnR : ByteArray → ByteArray → Option PairHit × Bool := fun a b =>
+        let a1 := !decide (costP pk (penOf b) (prepMate pk b : PrepM MzP) < costP pk (penOf a) (prepMate pk a : PrepM MzP))
+        pairUKHN udc usl lo hi capsU a1 pk (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs a b
+      let fHN : ByteArray → ByteArray → PairOut := fun a b => (hnR a b).1
       -- WG_UKH=1: the kind tally and the profile below run mode H instead of mode U
       let uR0 := uR
-      let uR := if (← IO.getEnv "WG_UKH").getD "0" == "1" then hR else uR
+      let ukh := (← IO.getEnv "WG_UKH").getD "0"
+      let uR := if ukh == "1" then hR else if ukh == "N" then hnR else uR
       let uAnch : ByteArray → Nat := fun R =>
         let s : PrepM MzP := prepMate pk R
         s.ps.foldl (fun x p => x + LookG.size pk p) 0 + s.pr.foldl (fun x p => x + LookG.size pk p) 0
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
         else if m == "PR" then some ("PR", fR) else if m == "RT" then some ("RT", fRT)
-        else if m == "U" then some ("U", fU) else if m == "H" then some ("H", fH) else none
+        else if m == "U" then some ("U", fU) else if m == "H" then some ("H", fH)
+        else if m == "HN" then some ("HN", fHN) else none
       let okLen : ByteArray → Bool := if ms == ["RT"] then (fun _ => true) else okLen
       let tally := if (← IO.getEnv "WG_REASONS").getD "0" == "1" then [("router", fun a b => showR (route a b))] else []
       -- WG_UKIND=1: answer kinds of mode U (mapped / pairTie / none)
@@ -1626,6 +1634,8 @@ def main (args : List String) : IO UInt32 := do
       -- WG_HUCHK=1: mode H's answer and flag against mode U's
       let tally := if (← IO.getEnv "WG_HUCHK").getD "0" == "1" then tally ++ [("h=u", fun a b =>
         if decide (hR a b = uR0 a b) then "same" else "diff")] else tally
+      let tally := if (← IO.getEnv "WG_HUCHK").getD "0" == "N" then tally ++ [("hn=h", fun a b =>
+        if decide (hnR a b = hR a b) then "same" else "diff")] else tally
       -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
       let cfgs := ((← IO.getEnv "WG_PROF").getD "").splitOn "," |>.filter (· ≠ "")
       let prof : List (String × (ByteArray → Prof → IO Prof)) := cfgs.map fun (cf : String) =>
