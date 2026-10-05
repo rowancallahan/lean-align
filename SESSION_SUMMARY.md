@@ -215,3 +215,12 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 - hg38, 24 chromosomes (3.09 G letters), k22 B26 c0 W5 t6: 843.6M entries, 1.45 B/letter; build 1173 s, peak 7.72 GB. Saved at /home/user/data/wg/hg38.*. Index check (check3V, 4 tasks) 979 s.
 - hg38.pe250 sim, 100k pairs, T = −16: 1,515 pairs/s at 1 thread, 5,401 at 4; 89,437 kept; RSS 7.6 GB (byte genome 3.07 GB; packing it would give ≈ 5.4 GB). The run then hit an IO error (HG002 step, not diagnosed).
 - TODO: switch to the packed genome; whole-genome HG002; minibwa whole-genome index (OOM-killed so far; needs ~9 GB free); why it is ~25× slower per pair than chr21 (lookup hits per seed?).
+
+### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
+Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
+- Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
+- Lower bounds from seeds: a candidate window with k spoiled seeds costs ≥ 4k (same event argument); skip windows whose bound > T or > current best (unique mode: > second best).
+- Word kernels past 16: extend ker16 / stage K (one gap, shared mismatch profiles) to gap length ≤ (T−6)/2 (16 shifts at −39), then two-gap kernels; only reads that fail these reach the banded step.
+- Bit-parallel banded DP (Myers / Hyyrö-style bit vectors, affine variant): band ≤ 64 fits one word per column.
+- Iterative deepening per read: −16, then −24, then −39, only on reads not settled; ambiguity early exit (two hits ≤ T tie → unmapped in default unique mode).
+- Batch the slow reads (stragglers) so their genome windows are fetched together.
