@@ -7,6 +7,7 @@ import MapperGen16
 import MapperGenShare
 import MapperEvents
 import MapperBandPrune
+import MapperBandBytes
 import SeedMapper2
 
 /-!
@@ -191,7 +192,9 @@ def shiftMax (bs : List Int) : Nat := bs.foldl (fun m bb => max m bb.natAbs) 0
 spoiled blocks `sp` (`bandEndP_spec`). -/
 @[inline] def bandEndAt {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c D : Nat)
     (cnt : Array Nat) (bb : Int) : Option (Array Int) :=
-  bandEndC (-(P : Int)) (bandOf sc0 (-(P : Int))) cnt R gbs[c]! ((D : Int) + bb).toNat
+  if P < 255 then
+    (bandEndCB (-(P : Int)) (bandOf sc0 (-(P : Int))) cnt (P + 1) R gbs[c]! ((D : Int) + bb).toNat).map toIntRow
+  else bandEndC (-(P : Int)) (bandOf sc0 (-(P : Int))) cnt R gbs[c]! ((D : Int) + bb).toNat
 
 /-- Add the window of diagonal `D` and shape `sh`, read from the rows `opt`. -/
 @[inline] def addBS {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c D : Nat) (opt : Option (Array Int))

@@ -625,6 +625,34 @@ theorem foldl_invP_mem_le {α : Type} (P : Nat) (cw : Window → Nat) (f : Best 
         · exact Or.inl (Or.inr h2)
         · exact Or.inr h3)
 
+/-- The byte pass gives the same capped penalty as the `Int` pass. -/
+theorem bandPenE_B (P : Nat) (R : ByteArray) (G : ByteArray) (cnt : Array Nat) (B n len e : Nat) (fits : Bool) :
+    bandPenE P n len fits (if P < 255 then (bandEndCB (-(P : Int)) B cnt (P + 1) R G e).map toIntRow
+      else bandEndC (-(P : Int)) B cnt R G e) = bandPenE P n len fits (bandEndC (-(P : Int)) B cnt R G e) := by
+  split
+  · next hP =>
+    have hr := bandEndCB_rel (-(P : Int)) (by omega) B cnt (P + 1) (by omega) (by omega) R G e
+    revert hr
+    cases bandEndC (-(P : Int)) B cnt R G e <;> cases bandEndCB (-(P : Int)) B cnt (P + 1) R G e <;> intro hr
+    · rfl
+    · cases hr
+    · cases hr
+    · rename_i A Ab
+      unfold bandPenE
+      simp only [Option.map_some]
+      split
+      · generalize len + bandOf sc0 (-(P : Int)) - n + 1 = j
+        by_cases hj : j < A.size
+        · obtain ⟨r1, r2⟩ := relRow_read P A Ab hr j hj
+          by_cases hs : -(P : Int) ≤ A[j]!
+          · rw [r1 hs]
+          · have := r2 (by omega)
+            rw [if_neg (by omega), if_neg hs]
+        · have hs : (toIntRow Ab).size = A.size := by unfold toIntRow; simp [hr.1]
+          rw [getElem!_neg _ _ (by omega), getElem!_neg _ _ (by omega)]
+      · rfl
+  · rfl
+
 /-- The pruned kernel gives the same capped penalty as the plain one. -/
 theorem bandPenE_P (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : ByteArray)
     (hg : GenomeBytes gbs g) (hr : Encodes R read) (c st len : Nat) (hc : c < gbs.size) (sp : Nat → Bool)
@@ -816,7 +844,7 @@ theorem addBS_spec (hc : c < gbs.size) (Pc : Nat) (hPc : Pc ≤ P) (D : Nat) (bb
     have hsp' := fun hc' => (hsp (by omega) hc').mono (bandOf_mono Pc P hPc)
     unfold bandEndAt
     rw [he] at hsp' ⊢
-    rw [bandPenE_P Pc read g gbs R hg hr c _ _ hc sp hsp' cnt hcnt, bandPenE_eq Pc read g gbs R hg hr _ _ _ hc,
+    rw [bandPenE_B, bandPenE_P Pc read g gbs R hg hr c _ _ hc sp hsp' cnt hcnt, bandPenE_eq Pc read g gbs R hg hr _ _ _ hc,
       bandPen_eq Pc read g gbs R hg hr, cwT_cap P read g Pc hPc]
     have hcw := hcwc ((D : Int) - R.size - sh.1).toNat ((R.size : Int) + sh.1 + sh.2).toNat
     have hle := h.le

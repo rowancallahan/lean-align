@@ -152,6 +152,32 @@ theorem bandEndC_same (T : Int) (B : Nat) (cnt : Array Nat) (rb : ByteArray) (e 
     bandEndC T B cnt rb x e = bandEndC T B cnt rb y e := by
   simp only [bandEndC, bandRowsC_same h]
 
+theorem bandLoopB_same (M : Nat) (uN uG : Int) (rb : ByteArray) (e i : Nat) (lastRow : Bool) (hi : Nat) :
+    ∀ d k p N X Y alive, hi + 1 - k = d →
+      bandLoopB M uN uG rb x e i lastRow hi k p N X Y alive = bandLoopB M uN uG rb y e i lastRow hi k p N X Y alive := by
+  intro d
+  induction d with
+  | zero => intro k p N X Y alive hd; unfold bandLoopB; rw [if_neg (by omega), if_neg (by omega)]
+  | succ d ih =>
+    intro k p N X Y alive hd
+    unfold bandLoopB
+    rw [if_pos (by omega), if_pos (by omega)]
+    simp only [cellB, h.2]
+    exact ih (k + 1) _ _ _ _ _ (by omega)
+
+theorem bandRowsCB_same (T : Int) (B : Nat) (cnt : Array Nat) (M : Nat) (rb : ByteArray) (e : Nat) :
+    ∀ i N X Y, bandRowsCB T B cnt M rb x e i N X Y = bandRowsCB T B cnt M rb y e i N X Y := by
+  intro i
+  induction i with
+  | zero => intro N X Y; rw [bandRowsCB, bandRowsCB]; simp only [bandLoopB_same h _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl]
+  | succ i ih =>
+    intro N X Y; rw [bandRowsCB, bandRowsCB]
+    simp only [bandLoopB_same h _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl, ih]
+
+theorem bandEndCB_same (T : Int) (B : Nat) (cnt : Array Nat) (M : Nat) (rb : ByteArray) (e : Nat) :
+    bandEndCB T B cnt M rb x e = bandEndCB T B cnt M rb y e := by
+  simp only [bandEndCB, bandRowsCB_same h]
+
 theorem blockEq_same (R : ByteArray) (a p : Nat) : ∀ k, blockEq R x a p k = blockEq R y a p k := by
   intro k
   induction k with
@@ -220,7 +246,7 @@ theorem stageKP_same (R : ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds
 
 theorem bandEndAt_same (P : Nat) (R : ByteArray) (c D : Nat) (cnt : Array Nat) (bb : Int) :
     bandEndAt P R xs c D cnt bb = bandEndAt P R ys c D cnt bb := by
-  simp only [bandEndAt, bandEndC_same (h.2 c)]
+  simp only [bandEndAt, bandEndC_same (h.2 c), bandEndCB_same (h.2 c)]
 
 theorem stageB_same (P : Nat) (R : ByteArray) (c : Nat) (shs : List (Int × Int)) (bs : List Int) (ds : List Nat)
     (b : Best) : stageB P R xs c shs bs ds b = stageB P R ys c shs bs ds b := by
