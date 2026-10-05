@@ -290,11 +290,26 @@ def mapFastGBP (P : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : 
   if fastT P R then decodeP pgs.size P (mapChromsGB P ix ByteArray.empty offs pgs R)
   else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB (pgs.map Mz.unpack)) (decodeBytes R)
 
+/-- A pair from its mates' answers, mate 2 mapped only when mate 1 has an answer
+(the pair needs both): `pairLazy_match`. -/
+@[inline] def pairLazy (lo hi : Nat) (m1 : Option (Placement × Int)) (m2 : Unit → Option (Placement × Int)) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  match m1 with
+  | none => none
+  | some a =>
+    match m2 () with
+    | some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+    | none => none
+
+theorem pairLazy_match (lo hi : Nat) (m1 m2 : Option (Placement × Int)) :
+    pairLazy lo hi m1 (fun _ => m2) = (match m1, m2 with
+      | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+      | _, _ => none) := by
+  cases m1 <;> cases m2 <;> rfl
+
 def pairFastGBP (P lo hi : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
     Option ((Placement × Int) × (Placement × Int)) :=
-  match mapFastGBP P ix offs pgs R1, mapFastGBP P ix offs pgs R2 with
-  | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
-  | _, _ => none
+  pairLazy lo hi (mapFastGBP P ix offs pgs R1) (fun _ => mapFastGBP P ix offs pgs R2)
 
 /-! ## Theorem -/
 
@@ -324,7 +339,7 @@ theorem pairFastGBP_mz_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Ch
     pairFastGBP P lo hi (ix, G) offs (cutAll G offs ns) R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
   have e : pairFastGBP P lo hi (ix, G) offs (cutAll G offs ns) R1 R2 =
       pairFastGB P lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
-    unfold pairFastGBP pairFastGB; rw [mapFastGBP_eq, mapFastGBP_eq]; rfl
+    unfold pairFastGBP pairFastGB; rw [pairLazy_match, mapFastGBP_eq, mapFastGBP_eq]; rfl
   rw [e]
   refine pairFastGB_eq_pairSpec P lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut) ?_
   intro R' s base hs

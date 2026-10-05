@@ -68,9 +68,7 @@ theorem mapFastGB_congrG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G G
 /-- `pairDispatch` on the packed chromosomes `pgs` (lookups in the bundled genome). -/
 def pairDispatchP (lo hi : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
     Option ((Placement × Int) × (Placement × Int)) :=
-  match mapFastGBP (penOf R1) ix offs pgs R1, mapFastGBP (penOf R2) ix offs pgs R2 with
-  | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
-  | _, _ => none
+  pairLazy lo hi (mapFastGBP (penOf R1) ix offs pgs R1) (fun _ => mapFastGBP (penOf R2) ix offs pgs R2)
 
 theorem lookOk_pk (ix : Mz.MzIdx) (G : PGen) (hchk : Mz.check2P ix G = true) :
     ∀ (R' : ByteArray) s base, s + q ≤ R'.size →
@@ -90,7 +88,7 @@ theorem pairDispatchP_mz_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix :
       pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
   have e : pairDispatchP lo hi (ix, G) offs (cutAll G offs ns) R1 R2 =
       pairDispatch lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
-    unfold pairDispatchP pairDispatch; rw [mapFastGBP_eq, mapFastGBP_eq]; rfl
+    unfold pairDispatchP pairDispatch; rw [pairLazy_match, mapFastGBP_eq, mapFastGBP_eq]; rfl
   rw [e]
   exact pairDispatch_eq_pairSpecT lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut)
     (lookOk_pk ix G hchk)
@@ -294,16 +292,12 @@ def mapFastGBKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G 
 /-- Proper pairs at `T = −P`, word kernels, packed genome. -/
 def pairFastGBKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option ((Placement × Int) × (Placement × Int)) :=
-  match mapFastGBKP P ix G offs pgs R1, mapFastGBKP P ix G offs pgs R2 with
-  | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
-  | _, _ => none
+  pairLazy lo hi (mapFastGBKP P ix G offs pgs R1) (fun _ => mapFastGBKP P ix G offs pgs R2)
 
 /-- Length dispatch, word kernels, packed genome. -/
 def pairDispatchKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lo hi : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option ((Placement × Int) × (Placement × Int)) :=
-  match mapFastGBKP (penOf R1) ix G offs pgs R1, mapFastGBKP (penOf R2) ix G offs pgs R2 with
-  | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
-  | _, _ => none
+  pairLazy lo hi (mapFastGBKP (penOf R1) ix G offs pgs R1) (fun _ => mapFastGBKP (penOf R2) ix G offs pgs R2)
 
 /-! ## Proofs: same bytes, same kernels -/
 
@@ -477,7 +471,7 @@ theorem pairFastGBKP_mz_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List C
   have e : pairFastGBKP P lo hi ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
       pairFastGB P lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
     unfold pairFastGBKP pairFastGB
-    rw [mapFastGBKP_eq, mapFastGBKP_eq,
+    rw [pairLazy_match, mapFastGBKP_eq, mapFastGBKP_eq,
       mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl),
       mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl)]
     rfl
@@ -495,7 +489,7 @@ theorem pairDispatchKP_mz_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix 
   have e : pairDispatchKP lo hi ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
       pairDispatch lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
     unfold pairDispatchKP pairDispatch
-    rw [mapFastGBKP_eq, mapFastGBKP_eq,
+    rw [pairLazy_match, mapFastGBKP_eq, mapFastGBKP_eq,
       mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl),
       mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl)]
     rfl
