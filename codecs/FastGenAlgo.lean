@@ -278,14 +278,17 @@ def nearS {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s : Nat) : Nat → Na
   | _, 0 => false
   | lo, w + 1 => (decide (lo + q ≤ GRead.size G) && matchQ R G s lo q) || nearS R G s (lo + 1) w
 
-/-- Seed `j` is spelled at an anchor diagonal within `r` of `D`. -/
+/-- Seed `j` is spelled at an anchor diagonal within `r` of `D`.  The diagonal `D` itself
+(place `hi − r`) is tried first: a seed of a true copy is usually spelled there, and then
+the scan of the `2r + 1` places is skipped (same answer: that place is one of them). -/
 @[inline] def seedNear {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D j : Nat) : Bool :=
   let a := D + j * Ls
   if a + r < R.size then false
   else
     let hi := a + r - R.size
     let w := min (2 * r) hi
-    nearS R G (j * Ls) (hi - w) (w + 1)
+    (decide (r ≤ w) && decide (hi - r + q ≤ GRead.size G) && matchQ R G (j * Ls) (hi - r) q) ||
+      nearS R G (j * Ls) (hi - w) (w + 1)
 
 /-- The seeds `us` checked in turn: `false` once more than `sb` failed (`f` so far). -/
 def unlook {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D sb : Nat) : List Nat → Nat → Bool
@@ -312,14 +315,16 @@ def nearL {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s l : Nat) : Nat → 
   | _, 0 => false
   | lo, w + 1 => (decide (lo + l ≤ GRead.size G) && matchLn R G s lo l l) || nearL R G s l (lo + 1) w
 
-/-- Piece `j` (spacing `Ls`, length `l`) is spelled at an anchor diagonal within `r` of `D`. -/
+/-- Piece `j` (spacing `Ls`, length `l`) is spelled at an anchor diagonal within `r` of `D`
+(the diagonal itself first, as in `seedNear`). -/
 @[inline] def pieceNear {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (l Ls r D j : Nat) : Bool :=
   let a := D + j * Ls
   if a + r < R.size then false
   else
     let hi := a + r - R.size
     let w := min (2 * r) hi
-    nearL R G (j * Ls) l (hi - w) (w + 1)
+    (decide (r ≤ w) && decide (hi - r + l ≤ GRead.size G) && matchLn R G (j * Ls) (hi - r) l l) ||
+      nearL R G (j * Ls) l (hi - w) (w + 1)
 
 /-- Pieces `j, j + 1, …` (`k` of them) in turn: `false` once more than `sb` failed. -/
 def fineOk {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (l Ls r D sb : Nat) : Nat → Nat → Nat → Bool
