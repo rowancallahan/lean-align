@@ -7,7 +7,7 @@ Benchmark only (unproved IO).  Whole genome with the genome held once
 
     lake exe whole_genome build <index_prefix> <chr.fa>...       build over the view, save
     lake exe whole_genome bytes <index_prefix> <chr.fa>...       same with `Mz.buildW` on the concatenation
-    lake exe whole_genome map <index_prefix> <mate1> <mate2> [dump.tsv] <chr.fa>...
+    WG_READS='r1:r2:dump.tsv|-:limit|0;…' WG_TASKS=1,4 lake exe whole_genome map <index_prefix> <chr.fa>...
     env: WG_K (22) WG_B (26) WG_C (0) WG_W (5) WG_T (6)  index; WG_P (16) WG_MIN (100) WG_MAX (1000)
          WG_TASKS (1)  WG_MINLEN (150 at P = 16, 100 at P = 12): pairs with a shorter mate are skipped
 Chromosome files: one record each.  Mates: `>name` / sequence lines, or FASTQ.
@@ -140,16 +140,13 @@ def main (args : List String) : IO UInt32 := do
       IO.println s!"saved {pre}.*"
       return 0
     else if mode == "map" then
-      let p1 :: p2 :: rest := files | throw (IO.userError "map <prefix> <mate1> <mate2> [dump] <chr.fa>...")
-      let (dump, cf) := match rest with
-        | d :: cs => if d.endsWith ".tsv" then (some d, cs) else (none, rest)
-        | [] => (none, [])
       let P ← envN "WG_P" 16
       let lo ← envN "WG_MIN" 100
       let hi ← envN "WG_MAX" 1000
-      let tasks ← envN "WG_TASKS" 1
+      let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map String.toNat!
       let minLen ← envN "WG_MINLEN" (if P ≥ 16 then 150 else 100)
-      let (gbs, offs, V) ← loadGenome cf
+      let sets := ((← IO.getEnv "WG_READS").getD "").splitOn ";" |>.filter (· ≠ "")
+      let (gbs, offs, V) ← loadGenome files
       let t0 ← IO.monoNanosNow
       let ix ← load pre
       let t1 ← IO.monoNanosNow
@@ -158,21 +155,30 @@ def main (args : List String) : IO UInt32 := do
       let t2 ← IO.monoNanosNow
       IO.println s!"index check (check3V = check2V, 4 tasks): {ok} ({secs t1 t2} s); {← rss}"
       assert! ok
-      let r1 ← readSeqs p1
-      let r2 ← readSeqs p2
-      assert! r1.size == r2.size
-      let idx := (Array.range r1.size).filter fun i => r1[i]!.size ≥ minLen && r2[i]!.size ≥ minLen
-      IO.println s!"pairs: {r1.size}, both mates >= {minLen}: {idx.size}; {← rss}"
-      let f (i : Nat) := pairFastGB P lo hi (ix, V) ByteArray.empty offs gbs r1[i]! r2[i]!
-      let t3 ← IO.monoNanosNow
-      let out ← (← IO.mkRef (if t3 == 1 then #[] else if tasks ≤ 1 then idx.map f else ParMap.parMap tasks f idx)).get
-      let t4 ← IO.monoNanosNow
-      IO.println s!"T = -{P}, tasks {tasks}: mapped {idx.size} pairs, kept {(out.filter (·.isSome)).size}"
-      IO.println s!"map_seconds: {secs t3 t4}  pairs/s: {Float.ofNat idx.size / secs t3 t4}; {← rss}"
-      if let some d := dump then
-        IO.FS.writeFile d (String.join ((idx.zip out).toList.map fun (i, x) => match x with
-          | some (a, b) => s!"p{i + 1}\t{showHit a}\t{showHit b}\n"
-          | none => s!"p{i + 1}\tnone\n"))
+      for st in sets do
+        let [p1, p2, dump, lim] := st.splitOn ":" | throw (IO.userError "WG_READS: r1:r2:dump|-:limit|0;...")
+        let r1 ← readSeqs p1
+        let r2 ← readSeqs p2
+        assert! r1.size == r2.size
+        let n := if lim.toNat! == 0 then r1.size else min r1.size lim.toNat!
+        let idx := (Array.range n).filter fun i => r1[i]!.size ≥ minLen && r2[i]!.size ≥ minLen
+        IO.println s!"{p1}: pairs {n}, both mates >= {minLen}: {idx.size}; {← rss}"
+        let f (i : Nat) := pairFastGB P lo hi (ix, V) ByteArray.empty offs gbs r1[i]! r2[i]!
+        let mut first : Option (Array (Option ((Placement × Int) × (Placement × Int)))) := none
+        for tasks in taskL do
+          let t3 ← IO.monoNanosNow
+          let out ← (← IO.mkRef (if t3 == 1 then #[] else if tasks ≤ 1 then idx.map f else ParMap.parMap tasks f idx)).get
+          let t4 ← IO.monoNanosNow
+          IO.println s!"T = -{P}, tasks {tasks}: mapped {idx.size} pairs, kept {(out.filter (·.isSome)).size}"
+          IO.println s!"map_seconds: {secs t3 t4}  pairs/s: {Float.ofNat idx.size / secs t3 t4}; {← rss}"
+          match first with
+          | some o => assert! o == out
+          | none =>
+            first := some out
+            if dump != "-" then
+              IO.FS.writeFile dump (String.join ((idx.zip out).toList.map fun (i, x) => match x with
+                | some (a, b) => s!"p{i + 1}\t{showHit a}\t{showHit b}\n"
+                | none => s!"p{i + 1}\tnone\n"))
       return 0
     else throw (IO.userError "mode: build | bytes | map")
   | _ => throw (IO.userError "usage: whole_genome build|bytes|map <index_prefix> ...")
