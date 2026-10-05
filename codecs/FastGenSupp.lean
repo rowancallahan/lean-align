@@ -62,7 +62,7 @@ def suppCntC (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
   if fJ ≤ sb then
     match pk with
     | some P =>
-      if wordWin K n r D P && usIn Ls n us then
+      if wordWin K n r D P then
         let a := P.o + (D - n - r)
         let o := a % 32
         let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
@@ -72,7 +72,7 @@ def suppCntC (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
     | none => kfilt R G acc us Ls lim b D
   else false
 
-/-- `stageKSS` with `pk = GPk.pk G` given. -/
+/-- `stageKSS` with `pk = pkU G Ls R.size us` given. -/
 @[specialize] def stageKSP {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
     (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
     List Nat → Nat → Best → Best
@@ -87,7 +87,7 @@ def suppCntC (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
 @[inline] def stageKSS {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
     (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
     (ds : List Nat) (k : Nat) (b : Best) : Best :=
-  stageKSP (GPk.pk G) body K R G acc us Ls lim r0 cnt ds k b
+  stageKSP (pkU G Ls R.size us) body K R G acc us Ls lim r0 cnt ds k b
 
 /-! ## Proofs -/
 

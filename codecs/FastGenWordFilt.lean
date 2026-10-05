@@ -14,7 +14,7 @@ that keeps no reference to the genome (`loadG`); a seed is 25 fields compared at
 (`eq25`); the pieces of a read word are four 16-bit lanes of its folded mismatch word,
 all tested at once (`laneZ`), and the piece count stops once its outcome is known
 (`fineE_eq`).  Elsewhere it is `kfilt`.  A stage looks up the packed genome once
-(`kfiltVP`), and the word path does not pass the genome on, so the genome shared by
+(`pkU`, `kfiltVP`), and the word path does not pass the genome on, so the genome shared by
 the mapping tasks has its reference count touched per stage, not per diagonal.
 
     kfiltV (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D      (kfiltV_eq)
@@ -159,9 +159,14 @@ chromosome and in all-ACGT blocks, pieces of 8 letters 8 apart. -/
 @[inline] def wordWin (K : RP) (n r D : Nat) (P : PGen) : Bool :=
   K.ok && decide (n + r ≤ D) && n / (n / pl) == 8 && winOk P (D - n - r) (n + 2 * r)
 
-/-- `kfiltV` with the packed genome `pk = GPk.pk G` given: a stage computes it once,
-so the shared genome is not passed through the instance (and its count touched) per
+/-- The packed genome for the word path: `GPk.pk G` when the seeds `us` lie inside the
+read (`usIn`), else `none`.  A stage computes it once (`kfiltVP`), so neither the
+seed check nor the instance call (which touches the shared genome's count) is per
 diagonal. -/
+@[inline] def pkU {Gt : Type} [GRead Gt] [GPk Gt] (G : Gt) (Ls n : Nat) (us : List Nat) : Option PGen :=
+  if usIn Ls n us then GPk.pk G else none
+
+/-- `kfiltV` with the packed genome `pk` given (`pkU`). -/
 @[inline] def kfiltVP {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
   let Q := min lim b.pen
@@ -172,7 +177,7 @@ diagonal. -/
   if fJ ≤ sb then
     match pk with
     | some P =>
-      if wordWin K n r D P && usIn Ls n us then
+      if wordWin K n r D P then
         let a := P.o + (D - n - r)
         let o := a % 32
         let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
@@ -185,12 +190,12 @@ diagonal. -/
 /-- `kfilt` with the word path where it applies. -/
 @[inline] def kfiltV {Gt : Type} [GRead Gt] [GPk Gt] (K : RP) (R : ByteArray) (G : Gt) (acc : List (Array Nat))
     (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
-  kfiltVP (GPk.pk G) K R G acc us Ls lim b D
+  kfiltVP (pkU G Ls R.size us) K R G acc us Ls lim b D
 
 /-- `stageKS` with `kfiltV`. -/
 @[specialize] def stageKSV {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
     (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) : Best :=
-  let pk := GPk.pk G
+  let pk := pkU G Ls R.size us
   ds.foldl (fun b D => if kfiltVP pk K R G acc us Ls lim b D then body D b else b) b
 
 /-! ## Proofs -/
@@ -895,21 +900,24 @@ theorem fineE_sb (K : RP) (gs : GW) (o n r m need k sb : Nat) :
     fineE K gs o n r m need 0 k sb = decide (need ≤ sb + fineV K gs o n r m 0 k 0) := by
   rw [fineE_eq, ← fineV_add, Nat.add_zero]
 
-theorem kfiltV_eq {Gt : Type} [GRead Gt] [GPk Gt] (R : ByteArray) (G : Gt) (acc : List (Array Nat))
-    (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
-    kfiltV (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D := by
-  unfold kfiltV kfiltVP
+theorem kfiltVP_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat)
+    (hpk : ∀ P, pk = some P → SameG G P ∧ usIn Ls R.size us = true) :
+    kfiltVP pk (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D := by
+  unfold kfiltVP
   simp only []
   split
   · rename_i hf
-    split
-    · rename_i P hP
+    rcases pk with _ | P
+    · rfl
+    · have hP : (some P : Option PGen) = some P := rfl
+      dsimp only
       split
       · rename_i hw
         simp only [wordWin, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hw
-        obtain ⟨⟨⟨⟨hok, hD⟩, h8⟩, hwin⟩, hall⟩ := hw
-        have hall := usIn_mem _ _ _ hall
-        have hS := GPk.pk_same G P hP
+        obtain ⟨⟨⟨hok, hD⟩, h8⟩, hwin⟩ := hw
+        have hS := (hpk P hP).1
+        have hall := usIn_mem _ _ _ (hpk P hP).2
         have hR := Mz.rep_unpack P
         have hGb : SameG G (Mz.unpack P) :=
           ⟨hS.1.trans hR.1, fun i => (hS.2 i).trans (hR.2 i)⟩
@@ -928,16 +936,28 @@ theorem kfiltV_eq {Gt : Type} [GRead Gt] [GPk Gt] (R : ByteArray) (G : Gt) (acc 
         rw [seedNear_same hGb]
         exact seedV_eq hW hD Ls j hA
       · rfl
-    · rfl
   · rename_i hf
     unfold kfilt
     simp only []
     rw [decide_eq_false hf, Bool.false_and, Bool.false_and]
 
+theorem pkU_ok {Gt : Type} [GRead Gt] [GPk Gt] (G : Gt) (Ls n : Nat) (us : List Nat) :
+    ∀ P, pkU G Ls n us = some P → SameG G P ∧ usIn Ls n us = true := by
+  intro P h
+  unfold pkU at h
+  split at h
+  · exact ⟨GPk.pk_same G P h, ‹_›⟩
+  · cases h
+
+theorem kfiltV_eq {Gt : Type} [GRead Gt] [GPk Gt] (R : ByteArray) (G : Gt) (acc : List (Array Nat))
+    (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
+    kfiltV (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D :=
+  kfiltVP_eq _ R G acc us Ls lim b D (pkU_ok G Ls R.size us)
+
 theorem stageKSV_eq {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) :
     stageKSV body (packRP R) R G acc us Ls lim ds b = stageKS body R G acc us Ls lim ds b := by
-  have e : ∀ b D, kfiltVP (GPk.pk G) (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D :=
+  have e : ∀ b D, kfiltVP (pkU G Ls R.size us) (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D :=
     fun b D => kfiltV_eq R G acc us Ls lim b D
   simp only [stageKSV, stageKS, e]
 
