@@ -290,7 +290,8 @@ theorem chromKBS_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : 
   by_cases h16 : 16 ≤ min (min P 16) (min b1.pen P) <;>
     simp only [h16, if_true, if_false, decide_true, decide_false,
       stageKS_same (h.2 c) _ _ (fun D b => stageKP_same h _ _ _ _ _ b),
-      stageKS_same (h.2 c) _ _ (fun D b => stageK_same h _ _ _ _ _ b), stageB_same h]
+      stageKS_same (h.2 c) _ _ (fun D b => stageK_same h _ _ _ _ _ b),
+      stageKS_same (h.2 c) _ _ (fun D b => stageB_same h _ _ _ _ _ _ b)]
 
 end
 
