@@ -1405,7 +1405,7 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
       have := sbound_mono x P hxP
       omega
     · unfold shifts
-      rw [List.mem_map]
+      rw [List.mem_mergeSort, List.mem_map]
       refine ⟨(bb + (gapBound sc0 (-(Q2 : Int)) : Int)).toNat, List.mem_range.2 (by omega), by omega⟩
     · rw [he16]; omega
     · rw [he16]; omega
