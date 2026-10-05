@@ -100,7 +100,7 @@ def Out.swap : Out → Out
   | .unmapped r k => .unmapped r k
 
 /-- Mate `A` (label `ma`) over the genome, mate `B` (label `mb`) near it first. -/
-@[inline] def stepR (ma mb : Mate) (lo hi : Nat) (mA : MateR) (nh : Placement → Bool) (mB : Unit → MateR) : Out :=
+@[inline] def stepR0 (ma mb : Mate) (lo hi : Nat) (mA : MateR) (nh : Placement → Bool) (mB : Unit → MateR) : Out :=
   match mA with
   | (none, h) => .unmapped (if h then .tie ma else .noHit ma) none
   | (some a, _) =>
@@ -108,6 +108,27 @@ def Out.swap : Out → Out
     match mB () with
     | (none, h) => .unmapped (if h then .tie mb else .noHit mb) none
     | (some b, _) => if properPair lo hi a.1 b.1 then .mapped (a, b) else .unmapped .notProper none
+
+/-- The step with the region's answer for mate `B` passed on: `rg a` (the region search
+near `a`), `nh` (no hit there), and `B`'s whole-genome search given `rg a` as a hint. -/
+@[inline] def stepR (ma mb : Mate) (lo hi : Nat) (mA : MateR) (rg : Placement → Nat) (nh : Nat → Bool)
+    (mB : Nat → MateR) : Out :=
+  match mA with
+  | (none, h) => .unmapped (if h then .tie ma else .noHit ma) none
+  | (some a, _) =>
+    let r := rg a.1
+    if nh r then .unmapped (.noPartner mb) (some a) else
+    match mB r with
+    | (none, h) => .unmapped (if h then .tie mb else .noHit mb) none
+    | (some b, _) => if properPair lo hi a.1 b.1 then .mapped (a, b) else .unmapped .notProper none
+
+theorem stepR_eq (ma mb : Mate) (lo hi : Nat) (mA : MateR) (rg : Placement → Nat) (nh : Nat → Bool)
+    (mB : Nat → MateR) : stepR ma mb lo hi mA rg nh mB =
+      stepR0 ma mb lo hi mA (fun p => nh (rg p)) (fun _ => match mA.1 with
+        | some a => mB (rg a.1)
+        | none => mB 0) := by
+  obtain ⟨x, f⟩ := mA
+  cases x <;> rfl
 
 /-! ### Pluggable pass kernel
 
@@ -122,7 +143,19 @@ structure PassKer where
   prep : ByteArray → Prep
   cost : Nat → Prep → Nat
   mate : Nat → ByteArray → Prep → MateR
-  region : Nat → ByteArray → Placement → Bool
+  /-- Region search near a placement at cap `P`: its best penalty (`> P`: no hit there). -/
+  region : Nat → ByteArray → Placement → Nat
+  /-- Search mate `B` over the genome first at the cap of its best region hit (`mateH`). -/
+  hint : Bool := true
+
+/-- Mate `B` over the genome at cap `P`, given hint `h` (the best penalty of its region
+search): first at cap `h`; when that search has any hit, its answer is the answer at `P`
+(`mapSpecBoth_mono`), else the search at `P`.  Exact for any hint (`mateH_ok`). -/
+def mateH (K : PassKer) (P : Nat) (R : ByteArray) (s : K.Prep) (h : Nat) : MateR :=
+  if K.hint && h < P && fastT h R then
+    let x := K.mate h R s
+    if x.1.isSome || x.2 then x else K.mate P R s
+  else K.mate P R s
 
 /-- **Pass kernel**: mates at caps `P1`, `P2` (both on the fast path, `fastT`); `ord`
 picks the mate searched over the genome (`some true` = mate 2), `none` = the cheaper
@@ -134,19 +167,46 @@ def passG (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 :
     | some o => o
     | none => decide (K.cost P2 s2 < K.cost P1 s1)
   if sw then
-    (stepR .two .one lo hi (K.mate P2 R2 s2) (K.region P1 R1) (fun _ => K.mate P1 R1 s1)).swap
+    (stepR .two .one lo hi (K.mate P2 R2 s2) (K.region P1 R1) (fun r => decide (P1 < r))
+      (mateH K P1 R1 s1)).swap
   else
-    stepR .one .two lo hi (K.mate P1 R1 s1) (K.region P2 R2) (fun _ => K.mate P2 R2 s2)
+    stepR .one .two lo hi (K.mate P1 R1 s1) (K.region P2 R2) (fun r => decide (P2 < r))
+      (mateH K P2 R2 s2)
 
 /-- **Known mate**: mate `ma`'s answer `a` is known; mate `mb` (read `RB`, cap `PB`) is
 searched near it first. -/
 def passKnownG (K : PassKer) (ma : Mate) (a : Placement × Int) (PB : Nat) (lo hi : Nat) (RB : ByteArray) : Out :=
-  let o := stepR ma ma.other lo hi (some a, true) (K.region PB RB) (fun _ => K.mate PB RB (K.prep RB))
+  let o := stepR ma ma.other lo hi (some a, true) (K.region PB RB) (fun r => decide (PB < r))
+    (fun r => mateH K PB RB (K.prep RB) r)
   match ma with
   | .one => o
   | .two => o.swap
 
-/-- Today's kernel: `mateKP` over the (packed) genome, `regionNoHitKP` near a placement. -/
+/-- `regionNoHitKP` returning the region search's best penalty (`P` when not run). -/
+def regionPenKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (rl : Nat → Nat → L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (b : Placement) : Nat :=
+  let c := b.1.chr
+  if c < pgs.size && fastT P R then
+    let x := regionB P lo hi R.size b
+    let x1 := min x.2 pgs[c]!.n
+    if x.1 < x1 then
+      let v := view pgs[c]! x.1 (x1 - x.1)
+      (mapChromsGBKG P (rl (offs[c]! + x.1) (offs[c]! + x1)) G #[0] #[v] #[v] R).pen
+    else P
+  else P
+
+theorem regionPenKP_lt {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (rl : Nat → Nat → L)
+    (G : ByteArray) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (b : Placement)
+    (h : P < regionPenKP P lo hi rl G offs pgs R b) : regionNoHitKP P lo hi rl G offs pgs R b = true := by
+  unfold regionPenKP at h
+  unfold regionNoHitKP
+  by_cases hc : (b.1.chr < pgs.size && fastT P R) = true
+  · by_cases hx : (regionB P lo hi R.size b).1 < min (regionB P lo hi R.size b).2 pgs[b.1.chr]!.n
+    · simp only [hc, hx, if_true, decide_eq_true_eq] at h ⊢; exact h
+    · simp only [hc, hx, if_true, if_false] at h; omega
+  · simp only [hc, Bool.false_eq_true, if_false] at h; omega
+
+/-- Today's kernel: `mateKP` over the (packed) genome, `regionPenKP` near a placement. -/
 def kpKer {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2]
     (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) : PassKer where
@@ -154,7 +214,7 @@ def kpKer {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhab
   prep R := prepMate ix R
   cost P s := costP ix P s
   mate P R s := mateKP P ix G offs pgs R s
-  region P R := regionNoHitKP P lo hi rl G offs pgs R
+  region P R := regionPenKP P lo hi rl G offs pgs R
 
 /-! ## Router -/
 
@@ -278,10 +338,10 @@ theorem stepR_ok (ma : Mate) (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd :
     (hAf : mA.1 = none → (mA.2 = true ↔ hitsBoth sc0 (T ma) g (rd ma) ≠ []))
     (hB : MateOk (T ma.other) g (rd ma.other) mB)
     (hnh : ∀ a, nh a = true → ∀ p ∈ hitsBoth sc0 (T ma.other) g (rd ma.other), properPair lo hi a p.1 = false) :
-    (∀ x, stepR ma ma.other lo hi mA nh (fun _ => mB) = .mapped x →
+    (∀ x, stepR0 ma ma.other lo hi mA nh (fun _ => mB) = .mapped x →
       mapSpecBoth sc0 (T ma) g (rd ma) = some x.1 ∧ mapSpecBoth sc0 (T ma.other) g (rd ma.other) = some x.2 ∧
         properPair lo hi x.1.1 x.2.1 = true) ∧
-    (∀ rs k, stepR ma ma.other lo hi mA nh (fun _ => mB) = .unmapped rs k →
+    (∀ rs k, stepR0 ma ma.other lo hi mA nh (fun _ => mB) = .unmapped rs k →
       (rs = .notProper → ∃ a b, mapSpecBoth sc0 (T ma) g (rd ma) = some a ∧
         mapSpecBoth sc0 (T ma.other) g (rd ma.other) = some b ∧ properPair lo hi a.1 b.1 = false) ∧
       (rs ≠ .notProper → rs.searched = true ∧ ReasonOk T lo hi g rd rs ∧ KnownOk T g rd rs k)) := by
@@ -292,8 +352,8 @@ theorem stepR_ok (ma : Mate) (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd :
   simp only at hA hAf hB1 hBf
   cases xA with
   | none =>
-    refine ⟨fun x h => by simp [stepR] at h, fun rs k h => ?_⟩
-    simp only [stepR, Out.unmapped.injEq] at h
+    refine ⟨fun x h => by simp [stepR0] at h, fun rs k h => ?_⟩
+    simp only [stepR0, Out.unmapped.injEq] at h
     obtain ⟨h, hk⟩ := h
     subst hk
     have hf := hAf rfl
@@ -311,8 +371,8 @@ theorem stepR_ok (ma : Mate) (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd :
       rw [hfa] at this; cases this
   | some a =>
     by_cases hn : nh a.1 = true
-    · refine ⟨fun x h => by simp [stepR, hn] at h, fun rs k h => ?_⟩
-      simp only [stepR, hn, if_true, Out.unmapped.injEq] at h
+    · refine ⟨fun x h => by simp [stepR0, hn] at h, fun rs k h => ?_⟩
+      simp only [stepR0, hn, if_true, Out.unmapped.injEq] at h
       obtain ⟨h, hk⟩ := h
       subst hk
       subst h
@@ -321,8 +381,8 @@ theorem stepR_ok (ma : Mate) (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd :
     · simp only [Bool.not_eq_true] at hn
       cases xB with
       | none =>
-        refine ⟨fun x h => by simp [stepR, hn] at h, fun rs k h => ?_⟩
-        simp only [stepR, hn, Bool.false_eq_true, if_false, Out.unmapped.injEq] at h
+        refine ⟨fun x h => by simp [stepR0, hn] at h, fun rs k h => ?_⟩
+        simp only [stepR0, hn, Bool.false_eq_true, if_false, Out.unmapped.injEq] at h
         obtain ⟨h, hk⟩ := h
         subst hk
         have hf := hBf rfl
@@ -340,13 +400,13 @@ theorem stepR_ok (ma : Mate) (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd :
           rw [hfb] at this; cases this
       | some b =>
         by_cases hp : properPair lo hi a.1 b.1 = true
-        · refine ⟨fun x h => ?_, fun rs k h => by simp [stepR, hn, hp] at h⟩
-          simp only [stepR, hn, hp, Bool.false_eq_true, if_false, if_true, Out.mapped.injEq] at h
+        · refine ⟨fun x h => ?_, fun rs k h => by simp [stepR0, hn, hp] at h⟩
+          simp only [stepR0, hn, hp, Bool.false_eq_true, if_false, if_true, Out.mapped.injEq] at h
           subst h
           exact ⟨hA.symm, hB1.symm, hp⟩
         · simp only [Bool.not_eq_true] at hp
-          refine ⟨fun x h => by simp [stepR, hn, hp] at h, fun rs k h => ?_⟩
-          simp only [stepR, hn, hp, Bool.false_eq_true, if_false, Out.unmapped.injEq] at h
+          refine ⟨fun x h => by simp [stepR0, hn, hp] at h, fun rs k h => ?_⟩
+          simp only [stepR0, hn, hp, Bool.false_eq_true, if_false, Out.unmapped.injEq] at h
           obtain ⟨h, hk⟩ := h
           subst hk
           subst h
@@ -370,7 +430,7 @@ miss rules out every proper partner among the read's hits. -/
 def KerOk (K : PassKer) : Prop :=
   ∀ (P : Nat) (R : ByteArray) (m : List Char), Encodes R m → fastT P R = true →
     MateOk (-(P : Int)) g m (K.mate P R (K.prep R)) ∧
-    ∀ a, K.region P R a = true → ∀ p ∈ hitsBoth sc0 (-(P : Int)) g m, properPair lo hi a p.1 = false
+    ∀ a, P < K.region P R a → ∀ p ∈ hitsBoth sc0 (-(P : Int)) g m, properPair lo hi a p.1 = false
 
 /-- The step in both orientations gives `PassOk`. -/
 theorem stepR_passOk (sw : Bool) (P1 P2 : Nat) (mA mB : MateR) (nh : Placement → Bool)
@@ -379,7 +439,7 @@ theorem stepR_passOk (sw : Bool) (P1 P2 : Nat) (mA mB : MateR) (nh : Placement �
     (hnh : ∀ a, nh a = true → ∀ p ∈ hitsBoth sc0 (-(((if sw then P1 else P2 : Nat)) : Int)) g (if sw then m1 else m2),
       properPair lo hi a p.1 = false) :
     PassOk lo hi g m1 m2 (-(P1 : Int)) (-(P2 : Int))
-      (if sw then (stepR .two .one lo hi mA nh (fun _ => mB)).swap else stepR .one .two lo hi mA nh (fun _ => mB)) := by
+      (if sw then (stepR0 .two .one lo hi mA nh (fun _ => mB)).swap else stepR0 .one .two lo hi mA nh (fun _ => mB)) := by
   cases sw with
   | false =>
     simp only [Bool.false_eq_true, if_false] at hA hB hnh ⊢
@@ -387,7 +447,7 @@ theorem stepR_passOk (sw : Bool) (P1 P2 : Nat) (mA mB : MateR) (nh : Placement �
       hA.1 hA.2 hB hnh
     simp only [Mate.other] at hm hu
     unfold PassOk
-    cases ho : stepR .one .two lo hi mA nh (fun _ => mB) with
+    cases ho : stepR0 .one .two lo hi mA nh (fun _ => mB) with
     | mapped x =>
       obtain ⟨ha, hb, hp⟩ := hm x ho
       show pairSpecT _ _ lo hi g m1 m2 = some x
@@ -405,7 +465,7 @@ theorem stepR_passOk (sw : Bool) (P1 P2 : Nat) (mA mB : MateR) (nh : Placement �
       hA.1 hA.2 hB hnh
     simp only [Mate.other] at hm hu
     unfold PassOk
-    cases ho : stepR .two .one lo hi mA nh (fun _ => mB) with
+    cases ho : stepR0 .two .one lo hi mA nh (fun _ => mB) with
     | mapped x =>
       obtain ⟨ha, hb, hp⟩ := hm x ho
       show pairSpecT _ _ lo hi g m1 m2 = some (x.2, x.1)
@@ -442,11 +502,40 @@ theorem passOk_settled (c1 c2 n : Nat) (o : Out) (h : PassOk lo hi g m1 m2 (-(c1
 variable (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (K : PassKer) (hK : KerOk lo hi g K)
 include h1 h2 hK
 
+omit h1 h2 in
+/-- Mate `B`'s search with any hint is the search at `P`. -/
+theorem mateH_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m) (hf : fastT P R = true) (h : Nat) :
+    MateOk (-(P : Int)) g m (mateH K P R (K.prep R) h) := by
+  unfold mateH
+  split
+  · next hc =>
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+    obtain ⟨⟨-, hlt⟩, hfh⟩ := hc
+    have hx := (hK h R m hr hfh).1
+    simp only []
+    generalize K.mate h R (K.prep R) = x at hx ⊢
+    obtain ⟨hx1, hx2⟩ := hx
+    split
+    · next hs =>
+      have hne : hitsBoth sc0 (-(h : Int)) g m ≠ [] := by
+        cases e : x.1 with
+        | some a => rw [e] at hx1; exact hitsBoth_ne_of_some hx1.symm
+        | none =>
+          rw [e] at hs
+          simp only [Option.isSome_none, Bool.false_or] at hs
+          exact (hx2 e).mp hs
+      have hmono := mapSpecBoth_mono (-(h : Int)) (-(P : Int)) (by omega) g m hne
+      refine ⟨by rw [hmono]; exact hx1, fun hn => ⟨fun _ => hitsBoth_ne_mono _ _ (by omega) hne, fun _ => ?_⟩⟩
+      simp only [hn, Option.isSome_none, Bool.false_or] at hs
+      exact hs
+    · exact (hK P R m hr hf).1
+  · exact (hK P R m hr hf).1
+
 /-- **Pass kernel = specification** at caps `P1`, `P2` (both mates on the fast path). -/
 theorem passG_ok (P1 P2 : Nat) (ord : Option Bool) (hf1 : fastT P1 R1 = true) (hf2 : fastT P2 R2 = true) :
     PassOk lo hi g m1 m2 (-(P1 : Int)) (-(P2 : Int)) (passG K P1 P2 ord lo hi R1 R2) := by
   unfold passG
-  simp only []
+  simp only [stepR_eq]
   generalize (match ord with
     | some o => o
     | none => decide (K.cost P2 (K.prep R2) < K.cost P1 (K.prep R1))) = sw
@@ -454,13 +543,11 @@ theorem passG_ok (P1 P2 : Nat) (ord : Option Bool) (hf1 : fastT P1 R1 = true) (h
   obtain ⟨k2, r2⟩ := hK P2 R2 m2 h2 hf2
   cases sw with
   | true =>
-    have := stepR_passOk lo hi g m1 m2 true P1 P2 _ _ _
-      (by simpa using k2) (by simpa using k1) (by simpa using r1)
-    simpa using this
+    exact stepR_passOk lo hi g m1 m2 true P1 P2 _ _ _ k2
+      (by cases (K.mate P2 R2 (K.prep R2)).1 <;> exact mateH_ok lo hi g K hK P1 R1 m1 h1 hf1 _) (fun a ha => r1 a (of_decide_eq_true ha))
   | false =>
-    have := stepR_passOk lo hi g m1 m2 false P1 P2 _ _ _
-      (by simpa using k1) (by simpa using k2) (by simpa using r2)
-    simpa using this
+    exact stepR_passOk lo hi g m1 m2 false P1 P2 _ _ _ k1
+      (by cases (K.mate P1 R1 (K.prep R1)).1 <;> exact mateH_ok lo hi g K hK P2 R2 m2 h2 hf2 _) (fun a ha => r2 a (of_decide_eq_true ha))
 
 /-- **Known mate = specification**: mate `ma`'s answer at its cap `PA` is `a`; mate
 `ma.other` at cap `PB`. -/
@@ -471,15 +558,19 @@ theorem passKnownG_ok (ma : Mate) (PA PB : Nat) (a : Placement × Int)
       (passKnownG K ma a PB lo hi (Mate.sel R1 R2 ma.other)) := by
   cases ma with
   | one =>
-    obtain ⟨k, r⟩ := hK PB R2 m2 h2 hf
-    have := stepR_passOk lo hi g m1 m2 false PA PB (some a, true) _ _
-      ⟨by simpa using ha.symm, fun h => by cases h⟩ (by simpa using k) (by simpa using r)
-    simpa [passKnownG, Mate.sel, Mate.other] using this
+    obtain ⟨-, r⟩ := hK PB R2 m2 h2 hf
+    have := stepR_passOk lo hi g m1 m2 false PA PB (some a, true)
+      (mateH K PB R2 (K.prep R2) (K.region PB R2 a.1)) (fun p => decide (PB < K.region PB R2 p))
+      ⟨by simpa using ha.symm, fun h => by cases h⟩ (mateH_ok lo hi g K hK PB R2 m2 h2 hf _)
+      (fun a' ha' => r a' (of_decide_eq_true ha'))
+    simpa [passKnownG, stepR_eq, Mate.sel, Mate.other] using this
   | two =>
-    obtain ⟨k, r⟩ := hK PB R1 m1 h1 hf
-    have := stepR_passOk lo hi g m1 m2 true PB PA (some a, true) _ _
-      ⟨by simpa using ha.symm, fun h => by cases h⟩ (by simpa using k) (by simpa using r)
-    simpa [passKnownG, Mate.sel, Mate.other] using this
+    obtain ⟨-, r⟩ := hK PB R1 m1 h1 hf
+    have := stepR_passOk lo hi g m1 m2 true PB PA (some a, true)
+      (mateH K PB R1 (K.prep R1) (K.region PB R1 a.1)) (fun p => decide (PB < K.region PB R1 p))
+      ⟨by simpa using ha.symm, fun h => by cases h⟩ (mateH_ok lo hi g K hK PB R1 m1 h1 hf _)
+      (fun a' ha' => r a' (of_decide_eq_true ha'))
+    simpa [passKnownG, stepR_eq, Mate.sel, Mate.other] using this
 
 /-- A pass with its length reasons. -/
 theorem passLenG_ok (P1 P2 : Nat) (ord : Option Bool) (n : Nat) :
@@ -606,7 +697,7 @@ include hcut hg hchk in
 theorem kpKer_ok : KerOk lo hi g (kpKer lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz))
     ByteArray.empty offs (cutAll G offs ns)) :=
   fun P R m hr hf => ⟨mateKP_ok g ix G offs ns P R m hr hg hcut hchk hf,
-    regionKP_ok lo hi g ix G offs ns P R m hr hg hcut hchk⟩
+    fun a h => regionKP_ok lo hi g ix G offs ns P R m hr hg hcut hchk a (regionPenKP_lt _ _ _ _ _ _ _ _ a h)⟩
 
 include hcut hg h1 h2 hchk in
 /-- **Router (today's kernel) = specification.** -/
