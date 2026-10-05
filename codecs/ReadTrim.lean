@@ -6,7 +6,7 @@ import ParStream
 
 Per base: Phred quality `q` (FASTQ byte − 33, at most 93) for A/C/G/T, scored
 `q − Q` for a neutral quality `Q ≤ 93` (`trimReadQ Q`; below `Q` costs); any other
-letter (N) scores `−1 000 000`.  `trimRead` is `trimReadQ defQ`.  The kept window is the best-scoring window of the frozen
+letter (N) scores `−1 000 000`.  `trimRead` is `trimReadQ defQ` (defQ = 25).  The kept window is the best-scoring window of the frozen
 contract (`get_best_window`, trimmer/ReadWindowTrimmer/Contract.lean), computed
 by the packed trimmer (`getBestWindowPacked`).
 
@@ -218,7 +218,7 @@ theorem trimRead_eq_contract (Q : Nat) (hQ : Q ≤ 93) (seq qual : ByteArray) (h
     simp [this.2.2 s (Nat.le_refl _) this.2.1]
 
 /-- The default neutral quality. -/
-def defQ : Nat := 20
+def defQ : Nat := 25
 
 /-- The trimmer at the default neutral quality. -/
 def trimRead (seq qual : ByteArray) : Option (Nat × Nat) := trimReadQ defQ seq qual
