@@ -755,7 +755,8 @@ def parChunk {α β : Type} [Inhabited α] [Inhabited β] (n cs : Nat) (f : α �
 
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
-    (prof : List (String × (ByteArray → Prof → IO Prof))) : IO Unit := do
+    (prof : List (String × (ByteArray → Prof → IO Prof)))
+    (margF : Option (ByteArray → (Placement × Int) → Nat → Nat × Nat) := none) : IO Unit := do
   -- WG_TASKS: comma list of `tasks` or `tasks/chunk` (chunk 0 = strided)
   let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map fun s => match s.splitOn "/" with
     | [a, c] => (a.toNat!, some c.toNat!)
@@ -840,6 +841,32 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
             else
               IO.FS.writeFile path txt
               say s!"dump {path}"
+          -- WG_MARGIN=k (bench only, NOT proved): per-mate margin of each kept pair, second-best
+          -- penalty over placements not overlapping the best window on its strand, searched to
+          -- L = min(P, best + k − 1) (k = 0: to P); margin = min(second, L + 1) − best.
+          -- Columns: p<i> pen1 margin1 pen2 margin2 min(margin1, margin2) (`none` = pair not kept).
+          match margF, (← IO.getEnv "WG_MARGIN") with
+          | some mf, some ks =>
+            let k := ks.toNat!
+            let kp : Array (Nat × (Placement × Int) × (Placement × Int)) := (rk.zip out).filterMap fun (j, x) =>
+              x.map fun (a, b) => (j, a, b)
+            let gm := fun (i : Nat) => match kp[i]? with
+              | some (j, a, b) => (mf r1[j]! a k, mf r2[j]! b k)
+              | none => ((0, 0), (0, 0))
+            let c5 ← cpuTicks
+            let t5 ← IO.monoNanosNow
+            let ms ← if tasks > 1 then parChunk tasks chunk gm (Array.range kp.size) else pure ((Array.range kp.size).map gm)
+            let t6 ← IO.monoNanosNow
+            let c6 ← cpuTicks
+            say s!"MARGIN k {k} set {name} mode {mode} tasks {tasks}: {kp.size} kept pairs, {secs t5 t6} s, cpu {Float.ofNat (c6.1 - c5.1) / 100} s; {← rss}"
+            if outDir != "" then
+              let mut res : Array String := Array.replicate n "none\n"
+              for ((j, a, b), (m1, m2)) in kp.zip ms do
+                res := res.set! idx[j]! s!"{(-a.2).toNat}\t{m1.2}\t{(-b.2).toNat}\t{m2.2}\t{min m1.2 m2.2}\n"
+              let path := s!"{outDir}/{mode}_{name}.margin_k{k}.tsv"
+              IO.FS.writeFile path (String.join ((Array.range n).toList.map fun i => s!"p{i + 1}\t{res[i]!}"))
+              say s!"margin dump {path}"
+          | _, _ => pure ()
 
 /-- All chromosomes packed into one genome as they are read; offsets and lengths. -/
 def loadPacked (files : List String) : IO (PGen × Array Nat × Array Nat) := do
@@ -1110,7 +1137,26 @@ def main (args : List String) : IO UInt32 := do
         let XK := (ax[3]?.getD "0").toNat!
         let XL := (ax[4]?.getD "0").toNat!
         (cf, fun (R : ByteArray) (pf : Prof) => profRead XA XN XF XK XL pk offs pgs (if P == 0 then penOf R else P) R pf)
-      runSets modes okLen prof
+      -- WG_MARGIN (bench only, NOT proved): second-best over placements not overlapping the best,
+      -- by the same search with the window kernels returning "no hit" (cap + 1) on the excluded
+      -- windows; exact only while stage B does not run (P ≤ 16: stage B ignores the kernel)
+      let margF : ByteArray → (Placement × Int) → Nat → Nat × Nat := fun R a k =>
+        let Pm := if P == 0 then penOf R else P
+        let bp := (-a.2).toNat
+        let L := if k == 0 then Pm else min Pm (bp + k - 1)
+        let n := pgs.size
+        let bc := if a.1.2 == Strand.fwd then a.1.1.chr else n + a.1.1.chr
+        let bst := a.1.1.start
+        let bl := a.1.1.len
+        let sp := prepMate pk R
+        let ex : Ker → Ker := fun kf c st len l =>
+          if c == bc && st < bst + bl && bst < st + len then l + 1 else kf c st len l
+        let gb := pgs ++ pgs
+        let b := mapChromsGBFG (ex (kerHKG R sp.K1 gb gb)) (ex (kerHKG sp.Rr sp.K2 gb gb)) L pk ByteArray.empty
+          offs pgs R sp.Rr sp.ps sp.pr
+        let sec := min b.pen (L + 1)
+        (sec, sec - bp)
+      runSets modes okLen prof (some margF)
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
   | _ => throw (IO.userError "usage: whole_genome build|bytes|map|pmap <index_prefix> ...")
