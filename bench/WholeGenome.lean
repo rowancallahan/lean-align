@@ -998,6 +998,109 @@ def uprofRun (rcfg : RouteCfg) (kK : PassKer) (pk : PkMz) (upN : Nat) (uout : St
     h.putStrLn s!"{k}\t{R1.size}\t{R2.size}\t{kK.cost P1 s1}\t{kK.cost P2 s2}\t{t1 - t0}\t{t2 - t1}\t{st1}\t{st2}\t{tr1}\t{tr2}\t{rp1}\t{rp2}"
   h.flush
 
+/-- Prototype measurement (bench only, unproved): flank-keyed lookups for high-count seeds.
+Per read strand with more than 1000 anchors: the seeds `hitsSK` looks up at cap 16; per
+anchor, the exact extension of the seed match into the read's left / right flank (capped at
+64). Distinct diagonals now, and kept when every occurrence of a seed with more than `C`
+occurrences must also match `f` flank letters on each side (fewer where the read ends). -/
+def flankOne (pk : PkMz) (R : ByteArray) (cs fs : List Nat) (acc : Array Nat) : Array Nat := Id.run do
+  let G := pk.2
+  let n := R.size
+  let m := n / 25
+  let Ls := n / m
+  let ps := prepG pk R m Ls
+  let J := (ordG (ps.map (LookG.size pk)) m).take (sbound 16 + 1)
+  let lk := J.map fun j => (j, LookG.look pk ByteArray.empty R (j * Ls) (n - j * Ls) ps[j]!)
+  let anch := lk.foldl (fun x a => x + a.2.size) 0
+  if anch ≤ 1000 then return acc
+  let mut acc := acc.modify 0 (· + 1)
+  acc := acc.modify 1 (· + anch)
+  -- (diagonal, seed count, left ext, right ext, left avail, right avail)
+  let mut ent : Array (Nat × Nat × Nat × Nat × Nat × Nat) := #[]
+  for (j, a) in lk do
+    let s := j * Ls
+    let la := min s 64
+    let ra := min (n - (s + 25)) 64
+    for e in a do
+      let D := e / 16
+      let p := D - (n - s)
+      let mut l := 0
+      while l < la && l < p && R.get! (s - 1 - l) == GRead.get G (p - 1 - l) do l := l + 1
+      let mut r := 0
+      while r < ra && R.get! (s + 25 + r) == GRead.get G (p + 25 + r) do r := r + 1
+      ent := ent.push (D, a.size, l, r, la, ra)
+  let now : Std.HashSet Nat := ent.foldl (fun h x => h.insert x.1) {}
+  acc := acc.modify 2 (· + now.size)
+  let mut i := 3
+  for C in cs do
+    for f in fs do
+      let keep : Std.HashSet Nat := ent.foldl (fun h (D, c, l, r, la, ra) =>
+        if c ≤ C || (min f la ≤ l && min f ra ≤ r) then h.insert D else h) {}
+      acc := acc.modify i (· + keep.size)
+      i := i + 1
+  return acc
+
+/-- Prototype measurement (bench only): the read cut into `sbound 16 + 1` pieces of
+`L = n / (sbound 16 + 1)` letters; piece `i` = the 25-mer at `i·L` and its next `L − 25`
+letters. Diagonals of the piece occurrences (25-mer occurrences whose extension matches),
+over all pieces; per strand with more than 1000 anchors of the `hitsSK` seeds. -/
+def pieceOne (pk : PkMz) (R : ByteArray) (acc : Array Nat) : Array Nat := Id.run do
+  let G := pk.2
+  let n := R.size
+  let m := n / 25
+  let Ls := n / m
+  let ps := prepG pk R m Ls
+  let J := (ordG (ps.map (LookG.size pk)) m).take (sbound 16 + 1)
+  let anch := J.foldl (fun x j => x + (LookG.look pk ByteArray.empty R (j * Ls) (n - j * Ls) ps[j]!).size) 0
+  if anch ≤ 1000 then return acc
+  let np := sbound 16 + 1
+  let L := n / np
+  let mut d25 : Std.HashSet Nat := {}
+  let mut dL : Std.HashSet Nat := {}
+  let mut occ25 := 0
+  let mut occL := 0
+  for i in [0:np] do
+    let s := i * L
+    let a := LookG.look pk ByteArray.empty R s (n - s) (LookG.prep pk (seedHashAt R s))
+    occ25 := occ25 + a.size
+    for e in a do
+      let D := e / 16
+      let p := D - (n - s)
+      d25 := d25.insert D
+      let mut r := 0
+      while r < L - 25 && R.get! (s + 25 + r) == GRead.get G (p + 25 + r) do r := r + 1
+      if r == L - 25 then
+        dL := dL.insert D
+        occL := occL + 1
+  return #[acc[0]! + 1, acc[1]! + occ25, acc[2]! + d25.size, acc[3]! + occL, acc[4]! + dL.size]
+
+def pieceProf (pk : PkMz) (N : Nat) (r1 r2 : Array ByteArray) : IO Unit := do
+  let mut acc : Array Nat := Array.replicate 5 0
+  for k in [0:min N r1.size] do
+    for R in [r1[k]!, r2[k]!] do
+      if R.size < 50 then continue
+      acc := pieceOne pk R acc
+      acc := pieceOne pk (revCompK R) acc
+  say s!"PIECES: slow read strands {acc[0]!}; 25-mer prefixes of the pieces: occurrences {acc[1]!}, diagonals {acc[2]!}; whole pieces: occurrences {acc[3]!}, diagonals {acc[4]!}"
+
+def flankProf (pk : PkMz) (N : Nat) (r1 r2 : Array ByteArray) : IO Unit := do
+  let cs := [1000, 10000, 50000]
+  let fs := [4, 8, 16, 25, 64]
+  let mut acc : Array Nat := Array.replicate (3 + cs.length * fs.length) 0
+  for k in [0:min N r1.size] do
+    for R in [r1[k]!, r2[k]!] do
+      if R.size < 50 then continue
+      acc := flankOne pk R cs fs acc
+      acc := flankOne pk (revCompK R) cs fs acc
+  say s!"FLANK: slow read strands {acc[0]!}, anchors {acc[1]!}, diagonals now {acc[2]!}"
+  let mut i := 3
+  for C in cs do
+    let mut line := s!"FLANK: C {C}:"
+    for f in fs do
+      line := line ++ s!" f{f} {acc[i]!}"
+      i := i + 1
+    say line
+
 /-- Proper-pair mode (`pairUKPR`, pairUKP_mz_eq): per pair, one thread, its time by class
 (how many mates have over 1000 seed anchors over both strands: 0 / 1 / 2 = both repeat), with
 kept and `pairTie` counts per class. -/
@@ -1837,6 +1940,10 @@ def main (args : List String) : IO UInt32 := do
       -- WG_UKPROF=N: mode U per pair on one thread, time by class (both-repeat pairs separately)
       let ukN ← envN "WG_UKPROF" 0
       let pprof := if ukN == 0 then pprof else pprof ++ [("ukprof", ukProf uR uAnch ukN)]
+      -- WG_FLANK=N: flank-keyed lookup prototype measurement on the first N pairs (bench only)
+      let flN ← envN "WG_FLANK" 0
+      let pprof := if flN == 0 then pprof else pprof ++ [("flank", flankProf pk flN)]
+      let pprof := if flN == 0 then pprof else pprof ++ [("pieces", pieceProf pk flN)]
       -- WG_UKDET=N: both-repeat pairs of mode U traced (hit lists vs pairing, stages of the hit lists)
       let udN ← envN "WG_UKDET" 0
       let a1f : ByteArray → ByteArray → Bool := fun a b =>
