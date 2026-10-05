@@ -6,7 +6,7 @@ import ReadTrim
 Trimmed paired FASTQ → proved trimmer → proved pair mapper → ordered TSV (unproved IO).
 
     lake exe trim_map <genome.fa> <R1.fq> <R2.fq> [out.tsv]
-    env: TM_TASKS (1) mapping tasks, TM_CHUNK (4096) pairs per chunk, TM_MZ=k (minimizer index,
+    env: TM_TASKS (1) mapping tasks, TM_CHUNK (1024) pairs per chunk, TM_MZ=k (minimizer index,
     else hashed), TM_MIN/TM_MAX (100/1000) insert range, TM_T (12) penalty bound, TM_MINLEN (30),
     TM_FQ=prefix (also write the trimmed, non-empty pairs as prefix_1.fq / prefix_2.fq),
     TM_MODE = pipe (default) | prep (read + prep only) | map (prep everything first, then time mapping alone),
@@ -352,7 +352,7 @@ def main (args : List String) : IO UInt32 := do
   let gpath :: p1 :: p2 :: rest := args
     | throw (IO.userError "usage: trim_map <genome.fa> <R1.fq> <R2.fq> [out.tsv]")
   let tasks0 ← getEnvNat "TM_TASKS" 1
-  let chunk ← getEnvNat "TM_CHUNK" 4096
+  let chunk ← getEnvNat "TM_CHUNK" 1024
   let mz ← getEnvNat "TM_MZ" 0
   let lo ← getEnvNat "TM_MIN" 100
   let hi ← getEnvNat "TM_MAX" 1000
