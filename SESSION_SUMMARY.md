@@ -172,7 +172,21 @@ Event-based pigeonhole — PROVED (9fade4e, 7e0b05c; check.sh green on 7e0b05c):
 | 1% | 28.6k (bytes 21.2k) | 1.24k | 238 | 48 |
 | 2% | 28.5k | 0.53k | | |
 
-  Above 16 the cost is stage B (banded DP over all shapes, band grows with P) for every read whose best stays above 16; the word kernels do not help there. Next for depth: exact kernels above 16 (gappedPen3 is exact to 17) or a cheaper stage B; not started.
+  Above 16 the cost is stage B (banded DP for reads whose best stays above 16).
+
+Fast deep caps — stage B pruning PROVED (de57fb5, 4b7b59b; check.sh green):
+- `pool/mapper/MapperBandPrune.lean`: a read block of 25 letters with no exact copy in the band costs ≥ 4 for any window (`block_step`); the banded pass dies once row value + 4·(spoiled blocks still ahead) < −cap (`bandEndP`, `bandEndP_spec` = `bandEnd2_spec`'s guarantee; gap-state threshold +4 instead of +6). Spoiled blocks checked directly per diagonal (`spoiledArr`, `spoiled_ok`).
+- Each pass capped at the current best `min best P` (`addBS_spec`/`stageBD_spec` for any cap with cap = P or best ≤ cap); end shifts nearest first.
+- chr21 2×250, 20k pairs, 1 task, pairs/s bytes / words (after the container restart; T=−16 runs ~10–20% faster than earlier tables on this box):
+
+| err | T=−16 | T=−24 | T=−32 | T=−39 |
+|---|---|---|---|---|
+| 0.5% | 32.4k / 45.4k | 7.8k / 8.2k | 3.18k / 3.26k | 627 / 623 |
+| 1% | 22.4k / 30.2k | 3.02k / 3.02k | 1.05k / 1.04k | 203 / 202 |
+| 2% | 23.7k / 29.2k | 1.63k / 1.69k | 426 / 416 | 76 / 77 |
+
+  Before (1%, words): −24 1.24k, −32 238, −39 48.
+- Next: skip whole diagonals by support at the current best (sound: need = #looked − sbound(min best P)); cheaper DP cells (bit-parallel / unboxed); kernels exact past 16 (roadmap on claude/upbeat-goldberg-kizkfd).
 
 ## Rowan's ranked speedup list — status (2026-10-04)
 Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest bucket first + early stop); 3 tighter bound (4 × 25); 5 stored seed rest / context; 7 threads (mark_mt fix); 9 rarest-first + P/4+1 stop + gaps only ≥ 8; 10 non-ACGT (per-letter place lists, N = mismatch). Partly: 4 unboxed (proved code uses ByteArray/fixed-width/tail recursion, but not yet the 2-bit packed genome + popcount → `speed/seed-schemes` proving a packed-Hamming kernel); 6 sampled whole-genome index (minimizer / mod-minimizer proved, whole genome not built). Not done: 8 batch lookups across reads (→ `speed/proto-tune` prototype).
