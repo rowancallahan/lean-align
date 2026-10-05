@@ -77,6 +77,13 @@ instance : Inhabited GS := ⟨⟨[], [], #[]⟩⟩
       ilG ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
     else (s1, s2, b)
 
+/-- Reverse complement, one byte at a time (`revCompB2_eq`: it is `revCompB`). -/
+def rcAux (R : ByteArray) : Nat → ByteArray → ByteArray
+  | 0, acc => acc
+  | i + 1, acc => rcAux R i (acc.push (complB (R.get! i)))
+
+@[inline] def revCompB2 (R : ByteArray) : ByteArray := rcAux R R.size (ByteArray.emptyWithCapacity R.size)
+
 /-- Prepared seeds of a read. -/
 @[inline] def prepG {L Pp : Type} [LookG L Pp] (ix : L) (R : ByteArray) (m Ls : Nat) : Array Pp :=
   (Array.range m).map fun j => LookG.prep ix (seedHashAt R (j * Ls))
@@ -86,7 +93,7 @@ instance : Inhabited GS := ⟨⟨[], [], #[]⟩⟩
     (offs : Array Nat) (gbs : Array Gt) (R : ByteArray) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
-  let Rr := revCompB R
+  let Rr := revCompB2 R
   let m := R.size / 25
   let Ls := R.size / m
   let ps := prepG ix R m Ls
@@ -118,6 +125,39 @@ def pairFastGB {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L
   match mapFastGB P ix G offs gbs R1, mapFastGB P ix G offs gbs R2 with
   | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
   | _, _ => none
+
+/-! ## The reverse complement -/
+
+theorem rcAux_toList (R : ByteArray) : ∀ i (acc : ByteArray), i ≤ R.size →
+    (rcAux R i acc).data.toList = acc.data.toList ++ ((R.data.toList.take i).map complB).reverse := by
+  intro i
+  induction i with
+  | zero => intro acc _; simp [rcAux]
+  | succ i ih =>
+    intro acc hi
+    rw [rcAux, ih _ (by omega), ByteArray.data_push, Array.toList_push]
+    have hlt : i < R.data.toList.length := by rw [Array.length_toList, ByteArray.size_data]; omega
+    have hget : R.get! i = R.data.toList[i] := by
+      cases R with
+      | mk d =>
+        simp only [ByteArray.get!, Array.getElem_toList]
+        exact getElem!_pos d i (by simpa using hlt)
+    rw [List.take_add_one, List.getElem?_eq_getElem hlt]
+    simp only [Option.toList_some, List.map_append, List.map_cons, List.map_nil, List.reverse_append,
+      List.reverse_cons, List.reverse_nil, List.nil_append, List.append_assoc, List.singleton_append, hget]
+
+theorem revCompB2_eq (R : ByteArray) : revCompB2 R = revCompB R := by
+  unfold revCompB2 revCompB
+  have h := rcAux_toList R R.size (ByteArray.emptyWithCapacity R.size) (Nat.le_refl _)
+  rw [List.take_of_length_le (by rw [Array.length_toList, ByteArray.size_data]; exact Nat.le_refl _)] at h
+  have h0 : (ByteArray.emptyWithCapacity R.size).data.toList = [] := rfl
+  rw [h0, List.nil_append] at h
+  cases e : rcAux R R.size (ByteArray.emptyWithCapacity R.size) with
+  | mk d =>
+    rw [e] at h
+    congr 1
+    apply Array.ext'
+    rw [h, Array.toList_reverse, Array.toList_map]
 
 /-! ## Slices -/
 
@@ -727,7 +767,7 @@ theorem mapChromsGB_inv (hm : 0 < R.size / 25) (hsb : sbound P < R.size / 25) :
     unfold cwB; rw [if_neg (by simp only; omega)]
     simp
   unfold mapChromsGB
-  simp only []
+  simp only [revCompB2_eq]
   generalize hLs : R.size / (R.size / 25) = Ls
   generalize hps : prepG ix R (R.size / 25) Ls = ps
   generalize hpr : prepG ix (revCompB R) (R.size / 25) Ls = pr
