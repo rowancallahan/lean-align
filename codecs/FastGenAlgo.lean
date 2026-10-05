@@ -4,6 +4,7 @@ import MapperGenScore
 import MapperGenLook
 import MapperGenSearch
 import MapperGen16
+import MapperGenShare
 import SeedMapper2
 
 /-!
@@ -102,6 +103,51 @@ def diags (acc : List (Array Nat)) : List Nat :=
 def stageK (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
   ds.foldl (fun b D => shs.foldl (fun b sh => addK R gbs c lim (dst R.size D sh) (wlen R.size sh) b) b) b
 
+/-! ### Stage K with shared profiles
+
+The kernels with the start diagonal's profile `pf` and the end diagonal's `pb`
+passed in (`kerHP_eq`: with the true profiles they are `kerH`); stage K computes
+the profiles of each diagonal's `2d + 1` start and end diagonals once
+(`stageKP_eq`: it is `stageK`). -/
+
+@[inline] def kerGP (R G : ByteArray) (st len lim : Nat) (pf pb : Nat × Nat × Nat) : Nat :=
+  if st + len ≤ G.size then
+    if len = R.size then
+      let h := hamming R G st (lim / 4) 0 R.size 0
+      if 4 * h ≤ lim then 4 * h else lim + 1
+    else gappedPen2P R G st len lim pf.1 pf.2.1 pb.1 pb.2.1
+  else lim + 1
+
+@[inline] def ker16P (R : ByteArray) (gbs : Array ByteArray) (c st len : Nat) (pf pb : Nat × Nat × Nat) : Nat :=
+  let k := kerGP R gbs[c]! st len 15 pf pb
+  if k ≤ 15 then k
+  else if st + len ≤ gbs[c]!.size ∧ len = R.size ∧ hamming R gbs[c]! st 4 0 R.size 0 = 4 then 16
+  else if st + len ≤ gbs[c]!.size ∧ twoGapBP R gbs[c]! st len pf.1 pb.1 = true then 16
+  else if filt16P R gbs[c]! st len pf.1 pb.1 pf.2.2 pb.2.2 then bandPen 16 R gbs ⟨c, st, len⟩ else 17
+
+@[inline] def kerHP (R : ByteArray) (gbs : Array ByteArray) (c st len l : Nat) (pf pb : Nat × Nat × Nat) : Nat :=
+  if l ≤ 15 then kerGP R gbs[c]! st len l pf pb else ker16P R gbs c st len pf pb
+
+@[inline] def addKP (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (pf pb : Nat × Nat × Nat)
+    (b : Best) : Best :=
+  if 0 ≤ st ∧ 0 ≤ len then
+    let l := min lim b.pen
+    let r := kerHP R gbs c st.toNat len.toNat l pf pb
+    if r ≤ l then b.add c st.toNat len.toNat r else b
+  else b
+
+/-- Largest shift of the shapes. -/
+def shapeR (shs : List (Int × Int)) : Nat := shs.foldl (fun m sh => max m (max sh.1.natAbs sh.2.natAbs)) 0
+
+def stageKP (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat)
+    (b : Best) : Best :=
+  let d := shapeR shs
+  ds.foldl (fun b (D : Nat) =>
+    let FA := (Array.range (2 * d + 1)).map fun (i : Nat) => fwdProf R gbs[c]! ((D : Int) - R.size - ((i : Int) - d)).toNat
+    let BA := (Array.range (2 * d + 1)).map fun (i : Nat) => bwdProf R gbs[c]! ((D : Int) + ((i : Int) - d)).toNat
+    shs.foldl (fun b sh => addKP R gbs c lim (dst R.size D sh) (wlen R.size sh)
+      FA[(sh.1 + d).toNat]! BA[(sh.2 + d).toNat]! b) b) b
+
 /-- Penalty of window `(·, len)` from the banded rows `opt` ending where it ends
 (`fits`: the window fits the chromosome); `bandPenE_eq`: this is `bandPen`. -/
 @[inline] def bandPenE (P n len : Nat) (fits : Bool) (opt : Option (Array Int)) : Nat :=
@@ -149,16 +195,18 @@ def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=
 /-- End shifts `−d … d`. -/
 def shifts (d : Nat) : List Int := (List.range (2 * d + 1)).map fun (i : Nat) => (i : Int) - d
 
-/-- Shapes allowed within penalty `x`. -/
+/-- Shapes allowed within penalty `x`, fewest gap letters first (an indel hit found
+early lowers the best and makes the remaining kernel calls cheap). -/
 @[inline] def shapesAt (x : Nat) : List (Int × Int) :=
-  shapes (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int)))
+  (shapes (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int)))).mergeSort
+    fun u v => decide (u.1.natAbs + u.2.natAbs ≤ v.1.natAbs + v.2.natAbs)
 
 /-- Stages K and B of chromosome `c`, from phase 1's anchor arrays `acc` and best `b1`. -/
 def chromKB (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageK R gbs c lim ((shapesAt Q1).filter (· != (0, 0)))
+      (if 16 ≤ min lim Q1 then stageKP else stageK) R gbs c lim ((shapesAt Q1).filter (· != (0, 0)))
         (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then

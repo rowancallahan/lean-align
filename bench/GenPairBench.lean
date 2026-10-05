@@ -1,4 +1,5 @@
-import FastGenPair
+import FastGenBatch
+import FastGenTier
 import ParMap
 
 /-!
@@ -9,7 +10,11 @@ mapper over one index of the concatenated genome (codecs/FastGenPair.lean:
     lake exe gen_pair_bench <genome.fa> <mate1.reads.txt> [mate2.reads.txt [dump.tsv]]
     env: GP_T=P (16), GP_MIN (100), GP_MAX (1000), GP_TASKS (1), GP_MZ=k [GP_MZ_B=B] (minimizer index),
     GP_CHECK=n (reads of 100–103 letters at P = 12: compare with the proved `mapFastC` on n reads)
-One mate file: single reads on both strands (`mapFastGB`); two: proper pairs (`pairFastGB`).
+One mate file: single reads on both strands (`mapFastGS`, short reads by the proved genome scan); two: proper pairs.
+GP_SHORTCHECK=n: the short-read path against the indexed path on n reads (both proved = mapSpecBoth).
+GP_CHUNK=c: chunks of c reads (mapChunkGS: short reads of a chunk in one genome pass; pairs as pairChunkGS);
+GP_CHUNKCHECK=n: chunked against read by read on n reads.
+GP_TIER1=1: the tier-1 mapper (cap from the length: >= 150 -> -16, 100-149 -> -12, shorter unmapped; pairTier1_eq).
 -/
 
 open MapSpec
@@ -78,11 +83,12 @@ def main (args : List String) : IO UInt32 := do
   let hi := ((← IO.getEnv "GP_MAX").getD "1000").toNat!
   let tasks := ((← IO.getEnv "GP_TASKS").getD "1").toNat!
   let mz := ((← IO.getEnv "GP_MZ").getD "0").toNat!
+  let tier1 := (← IO.getEnv "GP_TIER1").isSome   -- cap from the read length (mapTier1 / pairTier1_eq)
   let G := gbs.foldl (· ++ ·) ByteArray.empty
   let offs := (gbs.foldl (fun (o, n) g => (o.push n, n + g.size)) ((#[] : Array Nat), 0)).1
   assert! Fast.catOk G offs gbs
   IO.println s!"concatenated genome: {gbs.size} chromosomes, {G.size} letters, catOk; T = -{P}"
-  let mapOne : ByteArray → Option (Placement × Int) ← if mz == 0 then do
+  let (mapOne, mapChunk) : (ByteArray → Option (Placement × Int)) × (Array ByteArray → Array (Option (Placement × Int))) ← if mz == 0 then do
       let ix := Fast.buildIdx G
       let ok := Fast.checkAll #[ix] #[G]
       IO.println s!"index check: {ok}"
@@ -93,25 +99,124 @@ def main (args : List String) : IO UInt32 := do
           then n else n + 1) 0
         IO.println s!"check vs mapFastC (T = -12) on {rs.size} reads: {bad} differ"
         assert! bad == 0
+      if let some k := (← IO.getEnv "GP_SHORTCHECK") then
+        -- both proved = mapSpecBoth: the short-read scan against the indexed path
+        let rs := r1.extract 0 k.toNat!
+        let t0 ← IO.monoNanosNow
+        let bad := rs.foldl (fun n R => if Fast.decodeP gbs.size P (Fast.mapChromsShort P gbs R) ==
+          Fast.mapFastGB P ix G offs gbs R then n else n + 1) 0
+        IO.println s!"short-path check on {rs.size} reads: {bad} differ ({secs t0 (← IO.monoNanosNow)} s)"
+        assert! bad == 0
+      if (← IO.getEnv "GP_PROF").isSome then
+        -- timing only: mapChromsGB's interleaved lookups (ilG) vs stages K/B (chromKB)
+        let n := gbs.size
+        let gbs2 := gbs ++ gbs
+        let t0 ← IO.monoNanosNow
+        let xs ← (← IO.mkRef (r1.map fun R =>
+          let Rr := Fast.revCompB2 R
+          let m := R.size / 25
+          let Ls := R.size / m
+          let ps := Fast.prepG ix R m Ls
+          let pr := Fast.prepG ix Rr m Ls
+          (R, Rr, Fast.ilG ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+            ⟨Fast.ordG (ps.map (Fast.LookG.size ix)) m, [], Array.replicate n []⟩
+            ⟨Fast.ordG (pr.map (Fast.LookG.size ix)) m, [], Array.replicate n []⟩ (Fast.initP P)))).get
+        let t1 ← IO.monoNanosNow
+        let bs ← (← IO.mkRef (xs.map fun (R, Rr, x) =>
+          let b := (List.range n).foldl (fun b c => Fast.chromKB R gbs2 c P x.1.acc[c]! b) x.2.2
+          (List.range n).foldl (fun b c => Fast.chromKB Rr gbs2 (n + c) P x.2.1.acc[c]! b) b)).get
+        let t2 ← IO.monoNanosNow
+        let looks := xs.foldl (fun a (_, _, x) => a + x.1.J.length + x.2.1.J.length) 0
+        let anc := xs.foldl (fun a (_, _, x) => a + x.1.acc.foldl (fun a l => a + l.foldl (· + ·.size) 0) 0
+          + x.2.1.acc.foldl (fun a l => a + l.foldl (· + ·.size) 0) 0) 0
+        let dK := xs.foldl (fun a (R, _, x) =>
+          let Q1 := min x.2.2.pen P
+          a + x.1.acc.foldl (fun a acc => a + (Fast.diagsB acc (acc.length - Fast.sbound (min (min P 16) Q1))
+            (2 * gapBound sc0 (-(Q1 : Int)))).length) 0 + x.2.1.acc.foldl (fun a acc => a + (Fast.diagsB acc
+            (acc.length - Fast.sbound (min (min P 16) Q1)) (2 * gapBound sc0 (-(Q1 : Int)))).length) 0) 0
+        let t3 ← IO.monoNanosNow
+        let lk ← (← IO.mkRef (xs.foldl (fun a (R, Rr, x) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          let ps := Fast.prepG ix R m Ls
+          let pr := Fast.prepG ix Rr m Ls
+          let a := x.1.J.foldl (fun a j => a + (Fast.LookG.look ix G R (j * Ls) (R.size - j * Ls) ps[j]!).size) a
+          x.2.1.J.foldl (fun a j => a + (Fast.LookG.look ix G Rr (j * Ls) (Rr.size - j * Ls) pr[j]!).size) a) 0)).get
+        let t4 ← IO.monoNanosNow
+        let hsh ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          a + (Fast.prepG ix R m Ls).size + (Fast.prepG ix Rr m Ls).size + (Fast.revCompB2 R).size) 0)).get
+        let t5 ← IO.monoNanosNow
+        let hist := xs.foldl (fun (h : Array (Nat × Nat)) (R, _, x) =>
+          let Q1 := min x.2.2.pen P
+          let shs := ((Fast.shapesAt Q1).filter (· != (0, 0))).length
+          let nd := x.1.acc.foldl (fun a acc => a + (Fast.diagsB acc (acc.length - Fast.sbound (min (min P 16) Q1))
+            (2 * gapBound sc0 (-(Q1 : Int)))).length) 0 + x.2.1.acc.foldl (fun a acc => a + (Fast.diagsB acc
+            (acc.length - Fast.sbound (min (min P 16) Q1)) (2 * gapBound sc0 (-(Q1 : Int)))).length) 0
+          let k := if 0 < gapBound sc0 (-(Q1 : Int)) then nd * shs else 0
+          h.modify Q1 fun (c, w) => (c + 1, w + k)) (Array.replicate (P + 2) (0, 0))
+        IO.println s!"prof: by phase-1 best Q1: (reads, stage-K kernel calls) {(Array.range (P + 2)).toList.filterMap fun q => if hist[q]!.1 > 0 then some (q, hist[q]!) else none}"
+        let fin := (xs.zip bs).foldl (fun (h : Array Nat) ((_, _, x), b) =>
+          if min x.2.2.pen P == P then h.modify (min b.pen (P + 1)) (· + 1) else h) (Array.replicate (P + 2) 0)
+        IO.println s!"prof: final best of the reads with phase-1 best {P}: {(Array.range (P + 2)).toList.filterMap fun q => if fin[q]! > 0 then some (q, fin[q]!) else none}"
+        let t6 ← IO.monoNanosNow
+        let ords ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          let ps := Fast.prepG ix R m Ls
+          let pr := Fast.prepG ix Rr m Ls
+          a + (Fast.ordG (ps.map (Fast.LookG.size ix)) m).length + (Fast.ordG (pr.map (Fast.LookG.size ix)) m).length) 0)).get
+        let t7 ← IO.monoNanosNow
+        let hashes ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          (List.range m).foldl (fun a j => a + ((Fast.seedHashAt R (j * Ls)).getD 0).toNat % 2 + ((Fast.seedHashAt Rr (j * Ls)).getD 0).toNat % 2) a) 0)).get
+        let t8 ← IO.monoNanosNow
+        IO.println s!"prof: lookups alone {secs t3 t4} s ({lk}); prep+revcomp {secs t4 t5} s ({hsh}); prep+ordG {secs t6 t7} s ({ords}); hashes only {secs t7 t8} s ({hashes})"
+        IO.println s!"prof: ilG {secs t0 t1} s, chromKB {secs t1 t2} s ({bs.size}); lookups {looks}, anchors {anc}, stage-K diagonals (at phase-1 best) {dK}"
       if (← IO.getEnv "GP_TWO").isSome then
         -- estimate only (not the proved path): -12 first, -P for reads without a hit <= 12
-        pure fun R => if Fast.fastT 12 R then
+        pure (fun R => if Fast.fastT 12 R then
             let b := Fast.mapChromsGB 12 ix G offs gbs R
             if b.pen ≤ 12 then Fast.decodeP gbs.size 12 b else Fast.mapFastGB P ix G offs gbs R
-          else Fast.mapFastGB P ix G offs gbs R
+          else Fast.mapFastGB P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)
+      else if tier1 then
+        pure (fun R => Fast.mapTier1 ix G offs gbs R, fun rs => rs.map (Fast.mapTier1 ix G offs gbs))
       else
-      pure fun R => Fast.mapFastGB P ix G offs gbs R
+      pure (fun R => Fast.mapFastGS P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)
     else do
       let B := ((← IO.getEnv "GP_MZ_B").getD "24").toNat!
       let ix := Mz.buildW G mz B (25 - mz) 8 mz
       let ok := Fast.checkAllMz #[ix] #[G]
       IO.println s!"index check: {ok}  minimizer k={mz} B={B}"
       assert! ok
-      pure fun R => Fast.mapFastGB P ix G offs gbs R
+      if tier1 then
+        pure (fun R => Fast.mapTier1 ix G offs gbs R, fun rs => rs.map (Fast.mapTier1 ix G offs gbs))
+      else
+      pure (fun R => Fast.mapFastGS P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)
+  if (← IO.getEnv "GP_TBLTEST").isSome then
+    let t0 ← IO.monoNanosNow
+    let tb ← (← IO.mkRef (Fast.batchTbl #[] (if t0 == 1 then 2 else 1))).get
+    let t1 ← IO.monoNanosNow
+    let sc ← (← IO.mkRef (Fast.batchScan gbs[0]! (if t0 == 1 then #[] else #[⟨r1[0]!, 0, 20, 0⟩]))).get
+    let t2 ← IO.monoNanosNow
+    IO.println s!"batchTbl {secs t0 t1} s ({tb.size}); batchScan 1 seed {secs t1 t2} s ({sc.size})"
+  let chunk := ((← IO.getEnv "GP_CHUNK").getD "0").toNat!
+  let mapAll (rs : Array ByteArray) : Array (Option (Placement × Int)) :=
+    if chunk == 0 then rs.map mapOne
+    else ((Array.range ((rs.size + chunk - 1) / chunk)).map fun k => mapChunk (rs.extract (k * chunk) (k * chunk + chunk))).flatten
+  if let some k := (← IO.getEnv "GP_CHUNKCHECK") then
+    -- both proved = mapSpecBoth: chunked (short reads batched) against read by read
+    let rs := r1.extract 0 k.toNat!
+    let a := mapAll rs
+    let bad := (Array.range rs.size).foldl (fun n i => if a[i]! == mapOne rs[i]! then n else n + 1) 0
+    IO.println s!"chunk check on {rs.size} reads: {bad} differ"
+    assert! bad == 0
   match rest with
   | [] =>
     let t0 ← IO.monoNanosNow
-    let out ← (← IO.mkRef (if t0 == 1 then #[] else if tasks ≤ 1 then r1.map mapOne else ParMap.parMap tasks mapOne r1)).get
+    let out ← (← IO.mkRef (if t0 == 1 then #[] else if tasks ≤ 1 || chunk > 0 then mapAll r1 else ParMap.parMap tasks mapOne r1)).get
     let t1 ← IO.monoNanosNow
     IO.println s!"reads: {r1.size}  mapped: {(out.filter (·.isSome)).size}"
     IO.println s!"map_seconds: {secs t0 t1}  reads/s: {Float.ofNat r1.size / secs t0 t1}"
@@ -123,8 +228,15 @@ def main (args : List String) : IO UInt32 := do
       match mapOne p.1, mapOne p.2 with
       | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
       | _, _ => none
+    let pairAll : Array (Option ((Placement × Int) × (Placement × Int))) :=
+      let a1 := mapAll r1
+      let a2 := mapAll r2
+      (Array.range r1.size).map fun i => match a1[i]!, a2[i]! with
+        | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+        | _, _ => none
     let t0 ← IO.monoNanosNow
-    let out ← (← IO.mkRef (if t0 == 1 then #[] else if tasks ≤ 1 then ps.map f else ParMap.parMap tasks f ps)).get
+    let out ← (← IO.mkRef (if t0 == 1 then #[] else if chunk > 0 then pairAll
+      else if tasks ≤ 1 then ps.map f else ParMap.parMap tasks f ps)).get
     let t1 ← IO.monoNanosNow
     IO.println s!"pairs: {ps.size}  kept: {(out.filter (·.isSome)).size}"
     IO.println s!"map_seconds: {secs t0 t1}  pairs/s: {Float.ofNat ps.size / secs t0 t1}  reads/s: {Float.ofNat (2 * ps.size) / secs t0 t1}"

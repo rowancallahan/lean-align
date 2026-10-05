@@ -1,5 +1,6 @@
 import FastGenAlgo
 import FastGenCover
+import FastGenCoverL
 
 /-!
 # Proof of the general fast mapper (part 1: windows)
@@ -214,8 +215,10 @@ theorem shapeOk_mono (d d2 d' d2' : Nat) (a b : Int) (h1 : d ≤ d') (h2 : d2 �
   unfold shapeOk at *; omega
 
 theorem shapesAt_mem (x y : Nat) (h : x ≤ y) (a b : Int)
-    (hs : shapeOk (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int))) a b) : (a, b) ∈ shapesAt y :=
-  mem_shapes _ _ a b (shapeOk_mono _ _ _ _ a b (gapBound_mono x y h) (gapBound2_mono x y h) hs)
+    (hs : shapeOk (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int))) a b) : (a, b) ∈ shapesAt y := by
+  unfold shapesAt
+  rw [List.mem_mergeSort]
+  exact mem_shapes _ _ a b (shapeOk_mono _ _ _ _ a b (gapBound_mono x y h) (gapBound2_mono x y h) hs)
 
 /-! ## Adding windows -/
 
@@ -295,6 +298,81 @@ theorem addB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (st
   unfold addB; split
   · exact add_pen_le _ _ _ _ _
   · exact Nat.le_refl _
+
+/-! ## Stage K with shared profiles is stage K -/
+
+theorem kerGP_eq (R G : ByteArray) (st len lim : Nat) :
+    kerGP R G st len lim (fwdProf R G st) (bwdProf R G (st + len)) = kerG R G st len lim := by
+  unfold kerGP kerG
+  simp only [gappedPen2P_eq]
+
+theorem kerHP_eq (R : ByteArray) (gbs : Array ByteArray) (c st len l : Nat) :
+    kerHP R gbs c st len l (fwdProf R gbs[c]! st) (bwdProf R gbs[c]! (st + len)) = kerH R gbs c st len l := by
+  unfold kerHP kerH ker16P ker16
+  simp only [kerGP_eq, twoGapBP_eq, filt16P_eq]
+
+theorem addKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (pf pb : Nat × Nat × Nat)
+    (b : Best) (hf : 0 ≤ st → pf = fwdProf R gbs[c]! st.toNat)
+    (hb : 0 ≤ st → 0 ≤ len → pb = bwdProf R gbs[c]! (st.toNat + len.toNat)) :
+    addKP R gbs c lim st len pf pb b = addK R gbs c lim st len b := by
+  unfold addKP addK
+  split
+  · next h => rw [hf h.1, hb h.1 h.2]; simp only [kerHP_eq]
+  · rfl
+
+theorem shapeR_ge (shs : List (Int × Int)) :
+    ∀ sh ∈ shs, sh.1.natAbs ≤ shapeR shs ∧ sh.2.natAbs ≤ shapeR shs := by
+  have key : ∀ (l : List (Int × Int)) (m : Nat),
+      m ≤ l.foldl (fun m sh => max m (max sh.1.natAbs sh.2.natAbs)) m ∧
+      ∀ sh ∈ l, sh.1.natAbs ≤ l.foldl (fun m sh => max m (max sh.1.natAbs sh.2.natAbs)) m ∧
+        sh.2.natAbs ≤ l.foldl (fun m sh => max m (max sh.1.natAbs sh.2.natAbs)) m := by
+    intro l
+    induction l with
+    | nil => intro m; simp
+    | cons x l ih =>
+      intro m
+      obtain ⟨h1, h2⟩ := ih (max m (max x.1.natAbs x.2.natAbs))
+      simp only [List.foldl_cons]
+      refine ⟨by omega, fun sh hsh => ?_⟩
+      rcases List.mem_cons.mp hsh with rfl | hsh
+      · omega
+      · exact h2 sh hsh
+  exact (key shs 0).2
+
+theorem foldl_ext_mem {α β : Type} (f g : β → α → β) (l : List α) (h : ∀ b, ∀ a ∈ l, f b a = g b a) :
+    ∀ b, l.foldl f b = l.foldl g b := by
+  induction l with
+  | nil => intro b; rfl
+  | cons a l ih =>
+    intro b
+    simp only [List.foldl_cons]
+    rw [h b a List.mem_cons_self]
+    exact ih (fun b a ha => h b a (List.mem_cons_of_mem _ ha)) _
+
+theorem stageKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int))
+    (ds : List Nat) (b : Best) : stageKP R gbs c lim shs ds b = stageK R gbs c lim shs ds b := by
+  unfold stageKP stageK
+  simp only []
+  have hr := shapeR_ge shs
+  generalize shapeR shs = d at hr
+  apply foldl_ext_mem
+  intro b D _
+  apply foldl_ext_mem
+  intro b sh hsh
+  obtain ⟨h1, h2⟩ := hr sh hsh
+  apply addKP_eq
+  · intro _
+    rw [getElem!_pos _ _ (by simp; omega)]
+    simp only [Array.getElem_map, Array.getElem_range]
+    unfold dst; congr 2; omega
+  · intro hs hl
+    rw [getElem!_pos _ _ (by simp; omega)]
+    simp only [Array.getElem_map, Array.getElem_range]
+    unfold dst wlen at *
+    congr 1; omega
+
+theorem stageKP_fun : stageKP = stageK := by
+  funext R gbs c lim shs ds b; exact stageKP_eq R gbs c lim shs ds b
 
 /-! ## Phase 1 and the stages -/
 
@@ -511,32 +589,29 @@ variable (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : 
 
 include hg hr hc hm hsb hcw1 hcwc
 
+omit hm hsb in
 set_option maxHeartbeats 2000000 in
 /-- **Stages K and B of one chromosome**, from any anchor arrays `arr j` of the
 looked-up seeds `pre` (sorted, holding every exact seed place) whose same-length
 windows are in `S1`, under the stop rule: afterwards every window of chromosome `c`
-within penalty `min best P` was added. -/
-theorem chromKB_cover (arr : Nat → Array Nat)
-    (hArr : ∀ j, j < R.size / 25 → (arr j).toList.Pairwise (· < ·) ∧
-      ∀ p, MatchAt gbs[c]! p R (j * (R.size / (R.size / 25))) →
-        (p + (R.size - j * (R.size / (R.size / 25)))) * 16 + 0 ∈ (arr j).toList)
-    (pre : List Nat) (hpnd : pre.Nodup) (hpm : ∀ j ∈ pre, j < R.size / 25)
+within penalty `min best P` was added (any seed count `m`, lookup length `l`). -/
+theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs : R.size / m = Ls)
+    (hl0 : 0 < l) (hlL : l ≤ Ls) (arr : Nat → Array Nat)
+    (hArr : ∀ j, j < m → (arr j).toList.Pairwise (· < ·) ∧
+      ∀ p, MatchAtL gbs[c]! p R (j * Ls) l → (p + (R.size - j * Ls)) * 16 + 0 ∈ (arr j).toList)
+    (pre : List Nat) (hpnd : pre.Nodup) (hpm : ∀ j ∈ pre, j < m)
     (S1 : Window → Prop) (b1 : Best) (hinv1 : InvP P cw S1 b1)
     (hS1 : ∀ j ∈ pre, ∀ e ∈ (arr j).toList, ∀ w, GX P read g R c (min P 16) e w → S1 w)
-    (hstop : sbound (min b1.pen P) < pre.length ∨ pre.length = R.size / 25) :
+    (hstop : sbound (min b1.pen P) < pre.length ∨ pre.length = m) :
     ∃ S', InvP P cw S' (chromKB R gbs c P (pre.map arr).reverse b1) ∧ (∀ w, S1 w → S' w) ∧
       ∀ w, w.chr = c → cwT P read g w ≤ min (chromKB R gbs c P (pre.map arr).reverse b1).pen P → S' w := by
-  generalize hmv : R.size / 25 = m at *
-  generalize hLs : R.size / m = Ls at *
-  have hL25 : 25 ≤ Ls := by rw [← hLs, ← hmv]; exact le_div_seeds _ (by omega)
-  have hq : q = 25 := rfl
   have hn := hr.1
   have hmL : m * Ls ≤ R.size := by rw [← hLs]; exact Nat.div_mul_le_self _ _ |> fun h => by rw [Nat.mul_comm]; exact h
   generalize hacc0 : (pre.map arr).reverse = acc
   have hacc : acc = (pre.map arr).reverse := hacc0.symm
   obtain ⟨J, hJ⟩ : ∃ J, J = pre.reverse := ⟨_, rfl⟩
   unfold chromKB
-  simp only []
+  simp only [stageKP_fun, ite_self]
   -- stage K
   generalize hQ1 : min b1.pen P = Q1
   generalize hshK : (shapesAt Q1).filter (· != (0, 0)) = shK
@@ -589,7 +664,7 @@ theorem chromKB_cover (arr : Nat → Array Nat)
     · rw [hJ, List.length_reverse, h]
       have := sbound_mono Q1 P (by omega); omega
   obtain ⟨j, hj, p, a, bb, hcg, hmatch, hshape, ha1, ha2, hst, hwl⟩ :=
-    cover g read gbs R hg hr (-(x : Int)) (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
+    coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
       J hJn (fun j hj => by have := hJm j hj; omega) (by unfold sbound at hJl; omega) w (-(x : Int)) hws (Int.le_refl _)
   rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch ha1 hst
   rw [← hn] at hwl
@@ -630,7 +705,7 @@ theorem chromKB_cover (arr : Nat → Array Nat)
       apply Classical.byContradiction; intro hlt'
       have hsub := List.filter_sublist (p := fun j' => !(pred ∘ arr) j') (l := pre)
       obtain ⟨j', hj', p', a', bb', -, hmatch', hshape', ha1', -, hst', -⟩ :=
-        cover g read gbs R hg hr (-(x : Int)) (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
+        coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
           _ (hsub.nodup hpnd)
           (fun j hj => by have := hpm j (hsub.subset hj); omega)
           (by unfold sbound at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
@@ -714,6 +789,25 @@ theorem chromKB_cover (arr : Nat → Array Nat)
         rw [hd, hwlen (a, bb) rfl rfl]
         exact ⟨by omega, by omega, hwin, by rw [hx]; omega⟩
     · right; exact ⟨by omega, hband (by omega)⟩
+
+set_option maxHeartbeats 2000000 in
+/-- **Stages K and B of one chromosome**, from any anchor arrays `arr j` of the
+looked-up seeds `pre` (sorted, holding every exact seed place) whose same-length
+windows are in `S1`, under the stop rule: afterwards every window of chromosome `c`
+within penalty `min best P` was added. -/
+theorem chromKB_cover (arr : Nat → Array Nat)
+    (hArr : ∀ j, j < R.size / 25 → (arr j).toList.Pairwise (· < ·) ∧
+      ∀ p, MatchAt gbs[c]! p R (j * (R.size / (R.size / 25))) →
+        (p + (R.size - j * (R.size / (R.size / 25)))) * 16 + 0 ∈ (arr j).toList)
+    (pre : List Nat) (hpnd : pre.Nodup) (hpm : ∀ j ∈ pre, j < R.size / 25)
+    (S1 : Window → Prop) (b1 : Best) (hinv1 : InvP P cw S1 b1)
+    (hS1 : ∀ j ∈ pre, ∀ e ∈ (arr j).toList, ∀ w, GX P read g R c (min P 16) e w → S1 w)
+    (hstop : sbound (min b1.pen P) < pre.length ∨ pre.length = R.size / 25) :
+    ∃ S', InvP P cw S' (chromKB R gbs c P (pre.map arr).reverse b1) ∧ (∀ w, S1 w → S' w) ∧
+      ∀ w, w.chr = c → cwT P read g w ≤ min (chromKB R gbs c P (pre.map arr).reverse b1).pen P → S' w :=
+  chromKB_coverL P read g gbs R hg hr c hc cw hcw1 hcwc (R.size / 25) (R.size / (R.size / 25)) q hm hsb rfl
+    (by decide) (le_div_seeds _ hm) arr (fun j hj => ⟨(hArr j hj).1, fun p hp => (hArr j hj).2 p hp⟩)
+    pre hpnd hpm S1 b1 hinv1 hS1 hstop
 
 include hps hlook hnd hlt hlen in
 /-- **One chromosome.**  After `chromG`, every window of chromosome `c` within

@@ -542,7 +542,9 @@ theorem shapesNZ_eq (Q : Nat) : shapesNZ Q = (shapesAt Q).filter (· != (0, 0)) 
 
 theorem chromKBF_eq (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b : Best) :
     chromKBF (kerH R gbs) R gbs c P acc b = chromKB R gbs c P acc b := by
-  simp only [chromKBF, chromKB, shapesM_eq, shapesNZ_eq]; rfl
+  simp only [chromKBF, chromKB, shapesM_eq, shapesNZ_eq]
+  rw [show (if 16 ≤ min (min P 16) (min b.pen P) then stageKP else stageK) = stageK by split <;> first | rfl | (funext R gbs c lim shs ds b; exact stageKP_eq R gbs c lim shs ds b)]
+  rfl
 
 theorem advF_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R : ByteArray)
     (gbs2 : Array ByteArray) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) :
@@ -566,7 +568,7 @@ theorem mapChromsGBF_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix 
       (prepG ix (revCompB R) (R.size / 25) (R.size / (R.size / 25))) =
       mapChromsGB P ix G offs gbs R := by
   unfold mapChromsGBF mapChromsGB
-  simp only [ilGF_eq, chromKBF_eq]
+  simp only [ilGF_eq, chromKBF_eq, revCompB2_eq]
 
 theorem prepGK_eq {L Pp : Type} [LookG L Pp] (ix : L) (R : ByteArray) (m Ls : Nat) :
     prepGK ix R (packRP R) m Ls = prepG ix R m Ls := by
