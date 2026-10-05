@@ -264,6 +264,14 @@ theorem addK_inv (c lim : Nat) (hc : c < gbs.size)
   unfold addK
   by_cases hp : 0 ≤ st ∧ 0 ≤ len
   · rw [if_pos hp]
+    split
+    · next hw =>
+      apply inv_skipP P cw hcw1 S _ b h
+      rintro w ⟨-, -, rfl, -⟩
+      right; right
+      have e : (⟨c, st.toNat, len.toNat⟩ : Window) = b.win := by
+        unfold Best.win; rw [hw.2.1, hw.2.2.1, hw.2.2.2]
+      rw [e]; exact ⟨h.hit (by omega), Or.inr rfl⟩
     dsimp only
     have hm := cwT_kerH P read g gbs R hg hr c st.toNat len.toNat (min lim b.pen) hc (by omega) (by omega)
     by_cases hk : kerH R gbs c st.toNat len.toNat (min lim b.pen) ≤ min lim b.pen
@@ -303,7 +311,9 @@ end adds
 theorem addK_pen (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (b : Best) :
     (addK R gbs c lim st len b).pen ≤ b.pen := by
   unfold addK; split
-  · dsimp only; split
+  · split
+    · exact Nat.le_refl _
+    dsimp only; split
     · exact add_pen_le _ _ _ _ _
     · exact Nat.le_refl _
   · exact Nat.le_refl _
@@ -332,7 +342,9 @@ theorem addKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len :
     addKP R gbs c lim st len pf pb b = addK R gbs c lim st len b := by
   unfold addKP addK
   split
-  · next h => rw [hf h.1, hb h.1 h.2]; simp only [kerHP_eq]
+  · next h => split
+              · rfl
+              · rw [hf h.1, hb h.1 h.2]; simp only [kerHP_eq]
   · rfl
 
 theorem shapeR_ge (shs : List (Int × Int)) :

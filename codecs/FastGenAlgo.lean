@@ -63,9 +63,10 @@ only when `filt16` passes, and then the banded kernel decides. -/
   if l ≤ 15 then kerG R gbs[c]! st len l else ker16 R gbs c st len
 
 /-- Add window `(st, len)` scored by the kernel capped at `min lim best` (a window
-above the best cannot change it). -/
+above the best cannot change it; the best's own window is not scored again). -/
 @[inline] def addK (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (b : Best) : Best :=
   if 0 ≤ st ∧ 0 ≤ len then
+    if b.pen ≤ lim ∧ b.chr = c ∧ b.st = st.toNat ∧ b.len = len.toNat then b else
     let l := min lim b.pen
     let r := kerH R gbs c st.toNat len.toNat l
     if r ≤ l then b.add c st.toNat len.toNat r else b
@@ -134,6 +135,7 @@ the profiles of each diagonal's `2d + 1` start and end diagonals once
 @[inline] def addKP (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (pf pb : Nat × Nat × Nat)
     (b : Best) : Best :=
   if 0 ≤ st ∧ 0 ≤ len then
+    if b.pen ≤ lim ∧ b.chr = c ∧ b.st = st.toNat ∧ b.len = len.toNat then b else
     let l := min lim b.pen
     let r := kerHP R gbs c st.toNat len.toNat l pf pb
     if r ≤ l then b.add c st.toNat len.toNat r else b
