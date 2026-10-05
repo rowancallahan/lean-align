@@ -227,6 +227,30 @@ def unlookX (R : ByteArray) (G : PGen) (Ls r D sb : Nat) : List Nat → Nat → 
     if ok then unlookX R G Ls r D sb us fail
     else if sb < fail + 1 then false else unlookX R G Ls r D sb us (fail + 1)
 
+/-- Prototype word path: seed at read offset `s` spelled at some `p ∈ [lo, lo + w)`
+(window flagged, read packed): 25 letters compared as one 50-bit field. -/
+def nearSW (K : RP) (P : PGen) (s lo w : Nat) : Bool :=
+  let rw := K.w
+  let rs := comb rw[s / 32]! rw[s / 32 + 1]! (s % 32) (2 * (s % 32)).toUInt64 (64 - 2 * (s % 32)).toUInt64
+  go rs (P.o + lo) w
+where go (rs : UInt64) (a : Nat) : Nat → Bool
+  | 0 => false
+  | w + 1 =>
+    let g := comb (gword P.w (a / 32)) (gword P.w (a / 32 + 1)) (a % 32) (2 * (a % 32)).toUInt64 (64 - 2 * (a % 32)).toUInt64
+    ((g ^^^ rs) &&& 0x3FFFFFFFFFFFF) == 0 || go rs (a + 1) w
+
+def unlookW (K : RP) (R : ByteArray) (G : PGen) (Ls r D sb : Nat) : List Nat → Nat → Bool
+  | [], _ => true
+  | j :: us, fail =>
+    let a := D + j * Ls
+    let n := R.size
+    let ok := if a + r < n then false else
+      let lo := a + r - n - min (2 * r) (a + r - n)
+      let w := min (2 * r) (a + r - n) + 1
+      if K.ok && winOk G lo (w + 24) then nearSW K G (j * Ls) lo w else nearX R G (j * Ls) lo w
+    if ok then unlookW K R G Ls r D sb us fail
+    else if sb < fail + 1 then false else unlookW K R G Ls r D sb us (fail + 1)
+
 /-- Prototype: letters `[0, l)` of the piece at read offset `s` match at `p`. -/
 def matchLx (R : ByteArray) (G : PGen) (s p l : Nat) : Bool := go 0 l
 where go (k : Nat) : Nat → Bool
@@ -364,8 +388,8 @@ def chromKBX (XL : Nat) (kf : Ker) (KR : RP) (R : ByteArray) (gbs : Array PGen) 
         let Q := min lim b.pen
         let rq := 2 * gapBound sc0 (-(Q : Int))
         let fJ := acc.length - suppA acc D rq
-        if fJ ≤ sbound Q && unlookX R G Ls rq D (sbound Q) us fJ then
-          let (okF, ord) := if XL == 0 then (true, x.2) else if XL < 100 then (fineX R G XL rq D (sbound Q), x.2)
+        if fJ ≤ sbound Q && (if XL == 500 then unlookW KR R G Ls rq D (sbound Q) us fJ else unlookX R G Ls rq D (sbound Q) us fJ) then
+          let (okF, ord) := if XL == 0 || XL == 500 then (true, x.2) else if XL < 100 then (fineX R G XL rq D (sbound Q), x.2)
             else if 400 ≤ XL then (fineW KR R G (XL - 400) rq D (sbound Q), x.2)
             else
               let (o, fs) := fineM R G fl rq D (sbound Q) x.2
@@ -518,6 +542,57 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
   say s!"  best penalty histogram (0..16, 17 = none): {pf.penHist}"
   say s!"  lookups per read histogram (0..23, 24+): {pf.lkHist}"
+
+/-! ### Prototype: mate-anchored absence (a proper partner of `b` lies in a small region) -/
+
+/-- Lookup cost proxy of a read: the `sbound P + 1` smallest buckets, worse strand. -/
+def costX (ix : PkMz) (P : Nat) (R : ByteArray) : Nat :=
+  let m := R.size / 25
+  if m == 0 then 0 else
+  let Ls := R.size / m
+  let one := fun (X : ByteArray) =>
+    let ps := prepG ix X m Ls
+    let szs := (ps.toList.map (LookG.size ix)).mergeSort (· ≤ ·)
+    (szs.take (sbound P + 1)).foldl (· + ·) 0
+  max (one R) (one (revCompB2 R))
+
+/-- No hit (penalty `≤ P`) of read `R` in the region of chromosome `b.chr` where a proper
+partner of placement `b` could lie (`true` = certainly none). -/
+def regionNoHit (P lo hi : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray)
+    (b : Placement) : Bool :=
+  if !fastT P R then false else
+  let c := b.1.chr
+  let chrN := (pgs[c]!).n
+  let sl := R.size + gapBound sc0 (-(P : Int)) + 1
+  let (x0, x1) := if b.2 = Strand.rev then
+      -- partner forward: start in [end − hi, end − lo]
+      let e := b.1.start + b.1.len
+      (e - hi, e - lo + sl)
+    else
+      -- partner reverse: end in [start + lo, start + hi]
+      (b.1.start + lo - sl, b.1.start + hi)
+  let x1 := min x1 chrN
+  if x1 ≤ x0 then true else
+  let v := view pgs[c]! x0 (x1 - x0)
+  let bst := mapChromsGBKG P ix ByteArray.empty #[offs[c]! + x0] #[v] #[v] R
+  decide (P < bst.pen)
+
+/-- Prototype pair: the cheaper mate first; the other only if it has a hit near it. -/
+def pairRegionX (lo hi : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  let P1 := penOf R1
+  let P2 := penOf R2
+  let swap := decide (costX ix P2 R2 < costX ix P1 R1)
+  let (Ra, Pa, Rb, Pb) := if swap then (R2, P2, R1, P1) else (R1, P1, R2, P2)
+  match mapFastGBKP Pa ix ByteArray.empty offs pgs Ra with
+  | none => none
+  | some a =>
+    if regionNoHit Pb lo hi ix offs pgs Rb a.1 then none else
+    match mapFastGBKP Pb ix ByteArray.empty offs pgs Rb with
+    | none => none
+    | some b =>
+      let (x, y) := if swap then (b, a) else (a, b)
+      if properPair lo hi x.1 y.1 then some (x, y) else none
 
 /-- `f` over `xs` on `n` dedicated tasks, item `i` on task `i % n` (strided, so the few
 very slow pairs spread over the tasks), results in the order of `xs`. -/
@@ -731,7 +806,9 @@ def main (args : List String) : IO UInt32 := do
       let fK : ByteArray → ByteArray → PairOut := if P == 0 then pairDispatchKP lo hi pk ByteArray.empty offs pgs
         else pairFastGBKP P lo hi pk ByteArray.empty offs pgs
       let ms := ((← IO.getEnv "WG_MODES").getD "P,PK").splitOn ","
-      let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK) else none
+      let fR : ByteArray → ByteArray → PairOut := pairRegionX lo hi pk offs pgs
+      let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
+        else if m == "PR" then some ("PR", fR) else none
       -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
       let cfgs := ((← IO.getEnv "WG_PROF").getD "").splitOn "," |>.filter (· ≠ "")
       let prof : List (String × (ByteArray → Prof → IO Prof)) := cfgs.map fun (cf : String) =>
