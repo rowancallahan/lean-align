@@ -1,5 +1,6 @@
 import FastGenPair
-import MapperK250
+import FastGenProof
+import MapperK250Words
 
 /-!
 # Codec `pairFastGBK`: `pairFastGB` with the word kernels
@@ -158,4 +159,85 @@ def pairFastGBK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : 
   | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
   | _, _ => none
 
+/-! ## Proofs: kernels -/
+
+theorem revCompK_eq (R : ByteArray) : revCompK R = revCompB R := by
+  sorry
+
+/-- The packed chromosomes spell the byte chromosomes. -/
+def RepAll (pvs : Array PGen) (gbs : Array ByteArray) : Prop := ∀ c : Nat, Rep pvs[c]! gbs[c]!
+
+/-- **Penalty 16.** -/
+theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAll pvs gbs)
+    (c st len : Nat) : ker16K R (packRP R) gbs pvs c st len = ker16 R gbs c st len := by
+  sorry
+
+theorem kerHK_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAll pvs gbs)
+    (c st len l : Nat) : kerHK R (packRP R) gbs pvs c st len l = kerH R gbs c st len l := by
+  unfold kerHK kerH
+  split
+  · exact kerGK_kerG R gbs[c]! pvs[c]! (hrep c) st len l (by omega)
+  · exact ker16K_eq R gbs pvs hrep c st len
+
+/-! ## Proofs: the search -/
+
+/-- The runtime check of the packed chromosomes. -/
+def checkPGs (pvs : Array PGen) (gbs : Array ByteArray) : Bool :=
+  pvs.size == gbs.size && (List.range gbs.size).all fun c => checkPG pvs[c]! gbs[c]!
+
+theorem checkPGs_ok (pvs : Array PGen) (gbs : Array ByteArray) (h : checkPGs pvs gbs = true) :
+    RepAll (pvs ++ pvs) (gbs ++ gbs) := by
+  sorry
+
+theorem mapChromsGBF_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (R : ByteArray) :
+    mapChromsGBF (kerH R (gbs ++ gbs)) (kerH (revCompB R) (gbs ++ gbs)) P ix G offs gbs R (revCompB R) =
+      mapChromsGB P ix G offs gbs R := by
+  sorry
+
+theorem mapChromsGBK_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (hpg : checkPGs pvs gbs = true) (R : ByteArray) :
+    mapChromsGBK P ix G offs gbs pvs R = mapChromsGB P ix G offs gbs R := by
+  have hrep := checkPGs_ok pvs gbs hpg
+  unfold mapChromsGBK
+  simp only [revCompK_eq]
+  rw [← mapChromsGBF_eq]
+  congr 1
+  · funext c st len l; exact kerHK_eq R _ _ hrep c st len l
+  · funext c st len l; exact kerHK_eq (revCompB R) _ _ hrep c st len l
+
+theorem pairFastGBK_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (hpg : checkPGs pvs gbs = true) (R1 R2 : ByteArray) :
+    pairFastGBK P lo hi ix G offs gbs pvs R1 R2 = pairFastGB P lo hi ix G offs gbs R1 R2 := by
+  have h : ∀ R, mapFastGBK P ix G offs gbs pvs R = mapFastGB P ix G offs gbs R := fun R => by
+    unfold mapFastGBK mapFastGB; rw [mapChromsGBK_eq P ix G offs gbs pvs hpg]
+  unfold pairFastGBK pairFastGB
+  rw [h R1, h R2]
+  cases mapFastGB P ix G offs gbs R1 <;> cases mapFastGB P ix G offs gbs R2 <;> rfl
+
+/-! ## Top theorems -/
+
+/-- **Proper pairs, word kernels, hashed index over the concatenation.** -/
+theorem pairFastGBK_hashed_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
+    (pvs : Array PGen) (R1 R2 : ByteArray) (ix : HIdx) (G : ByteArray) (offs : Array Nat)
+    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
+    (hchk : checkAll #[ix] #[G] = true) (hpg : checkPGs pvs gbs = true) :
+    pairFastGBK P lo hi ix G offs gbs pvs R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
+  rw [pairFastGBK_eq P lo hi ix G offs gbs pvs hpg]
+  exact pairFastGB_hashed_eq_pairSpec P lo hi g m1 m2 gbs R1 R2 ix G offs hg h1 h2 hcat hchk
+
+/-- **Proper pairs, word kernels, minimizer index over the concatenation.** -/
+theorem pairFastGBK_mz_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
+    (pvs : Array PGen) (R1 R2 : ByteArray) (ix : Mz.MzIdx) (G : ByteArray) (offs : Array Nat)
+    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
+    (hchk : checkAllMz #[ix] #[G] = true) (hpg : checkPGs pvs gbs = true) :
+    pairFastGBK P lo hi ix G offs gbs pvs R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
+  rw [pairFastGBK_eq P lo hi ix G offs gbs pvs hpg]
+  exact pairFastGB_mz_eq_pairSpec P lo hi g m1 m2 gbs R1 R2 ix G offs hg h1 h2 hcat hchk
+
 end MapSpec.Fast
+
+#print axioms MapSpec.Fast.kerHK_eq
+#print axioms MapSpec.Fast.pairFastGBK_eq
+#print axioms MapSpec.Fast.pairFastGBK_hashed_eq_pairSpec
+#print axioms MapSpec.Fast.pairFastGBK_mz_eq_pairSpec

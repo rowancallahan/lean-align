@@ -52,12 +52,6 @@ def packRP (R : ByteArray) : RP :=
   (w.get! (b + 3)).toUInt64 <<< 24 ||| (w.get! (b + 4)).toUInt64 <<< 32 ||| (w.get! (b + 5)).toUInt64 <<< 40 |||
   (w.get! (b + 6)).toUInt64 <<< 48 ||| (w.get! (b + 7)).toUInt64 <<< 56
 
-/-- The 32 genome letters `[p, p + 32)` (absolute), letter `p` in the low bits. -/
-@[inline] def gwin (w : ByteArray) (p : Nat) : UInt64 :=
-  let s := p % 32
-  let a := gword w (p / 32)
-  if s = 0 then a else (a >>> (2 * s).toUInt64) ||| (gword w (p / 32 + 1) <<< (64 - 2 * s).toUInt64)
-
 /-- Each 2-bit field folded to its low bit. -/
 @[inline] def fold (x : UInt64) : UInt64 := (x ||| x >>> 1) &&& 0x5555555555555555
 
@@ -68,11 +62,6 @@ def packRP (R : ByteArray) : RP :=
 /-- Fields `[c, 32)` kept. -/
 @[inline] def highF (x : UInt64) (c : Nat) : UInt64 :=
   if c = 0 then x else if c < 32 then x &&& ~~~((1 <<< (2 * c).toUInt64) - 1) else 0
-
-/-- Mismatch mask of read chunk `j` (letters `[32j, 32j + 32)`) against the genome at
-absolute `a + 32j` (one bit per field). -/
-@[inline] def mmask (rw : Array UInt64) (gw : ByteArray) (a j : Nat) : UInt64 :=
-  fold (rw[j]! ^^^ gwin gw (a + 32 * j))
 
 /-- Index of the lowest set field (`m ≠ 0`, folded). -/
 @[inline] def lowIdx (m : UInt64) : Nat := Packed.cnt64 (m ^^^ (m - 1)) - 1

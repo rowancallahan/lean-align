@@ -72,7 +72,7 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperPGen, `MapperK250]
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperPGen, `MapperK250, `MapperK250Bits, `MapperK250Sel, `MapperK250Spec, `MapperK250Chunk, `MapperK250Loops, `MapperK250Words]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
