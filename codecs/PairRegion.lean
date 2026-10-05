@@ -38,10 +38,76 @@ def regionB (P lo hi n : Nat) (b : Placement) : Nat × Nat :=
     -- partner reverse: end in `[start + lo, start + hi]`
     (b.1.start + lo - sl, b.1.start + hi)
 
+/-! ### Lookups cut to a region
+
+Places in a bucket increase (`Mz.check`), so the entries of a bucket inside letters
+`[a, b)` of the genome are found by a binary search and a scan that stops at the
+first place past `b`. -/
+
+section MzR
+open Mz
+
+/-- Binary search: the first entry `t ∈ [l, r)` with place `≥ x` (places increase). -/
+def lbSlot (ix : MzIdx) (x : Nat) : (fuel l r : Nat) → Nat
+  | 0, l, _ => l
+  | f + 1, l, r =>
+    if l < r then
+      let m := (l + r) / 2
+      if ix.posOf (ix.slot m) < x then lbSlot ix x f (m + 1) r else lbSlot ix x f l m
+    else l
+
+/-- Where the region scan of bucket `[l, r)` starts: the binary search, checked
+(every earlier place is below `x`), else `l`. -/
+@[inline] def startSlot (ix : MzIdx) (x l r : Nat) : Nat :=
+  let t := lbSlot ix x 64 l r
+  if decide (l < t) && decide (t ≤ r) && decide (ix.posOf (ix.slot (t - 1)) < x) then t else l
+
+/-- `scanAP` cut to seed starts in `[a, b − q]`, counted from `a`; stops at the first
+place past the region. -/
+def scanAPR (ix : MzIdx) (G : PGen) (R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 hi base a b : Nat) (t : Nat)
+    (acc : Array Nat) : Array Nat :=
+  if t < hi then
+    let pos := ix.posOf (ix.slot t)
+    if b + o < pos + Mz.q then acc else
+    scanAPR ix G R s o key bw aw pmo o2 n1 a2 n2 hi base a b (t + 1)
+      (if decide (a + o ≤ pos) && okAtP ix G R s o key bw aw pmo o2 n1 a2 n2 t then
+        acc.push (anc base 0 (pos - o - a)) else acc)
+  else acc
+termination_by hi - t
+
+/-- `lookupPP` cut to the region `[a, b)`. -/
+@[inline] def lookupPPR (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base a b : Nat) : Array Nat :=
+  let o := p.o
+  let v := p.v
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  scanAPR ix G R s o (p.h &&& ix.kbM) ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+    ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+    (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
+    (ix.hiB p.b) base a b (startSlot ix (a + o) (ix.loB p.b) (ix.hiB p.b)) #[]
+
+end MzR
+
+/-- Keep an anchor (`bit = 0`) whose seed lies in `[a, b)`, counted from `a`. -/
+@[inline] def cutAnc (base a b e : Nat) : Option Nat :=
+  let p := e / 16 - base
+  if a ≤ p && p + q ≤ b then some (anc base 0 (p - a)) else none
+
+/-- Lookups cut to letters `[a, b)` of the packed genome, places counted from `a`. -/
+def mzLookRP (ix : Mz.MzIdx) (G : PGen) (a b : Nat) (R : ByteArray) (s base : Nat) (p : MzP) : Array Nat :=
+  if p.ok then lookupPPR ix G R s p base a b
+  else (lookupSeedAP ix G R s base 0).filterMap (cutAnc base a b)
+
+/-- A minimizer index on its packed genome, cut to a region `[a, b)`. -/
+abbrev RgMz := PkMz × Nat × Nat
+
+instance : LookG RgMz MzP :=
+  ⟨fun r => mzPrep r.1.1, fun r => mzSize r.1.1, fun r _ R s base p => mzLookRP r.1.1 r.1.2 r.2.1 r.2.2 R s base p⟩
+
 /-- `true`: read `R` certainly has no hit at `T = −P` (either strand) where a proper
 partner of `b` could lie.  The proved search on the region alone (a view of the
-packed chromosome). -/
-def regionNoHitKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)
+packed chromosome, lookups `rl a b` cut to it). -/
+def regionNoHitKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (rl : Nat → Nat → L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (b : Placement) : Bool :=
   let c := b.1.chr
   if c < pgs.size && fastT P R then
@@ -49,7 +115,7 @@ def regionNoHitKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix 
     let x1 := min x.2 pgs[c]!.n
     if x.1 < x1 then
       let v := view pgs[c]! x.1 (x1 - x.1)
-      decide (P < (mapChromsGBKG P ix G #[offs[c]! + x.1] #[v] #[v] R).pen)
+      decide (P < (mapChromsGBKG P (rl (offs[c]! + x.1) (offs[c]! + x1)) G #[0] #[v] #[v] R).pen)
     else false
   else false
 
@@ -77,15 +143,16 @@ the region has a hit. -/
 
 /-- **Pairs, mate-anchored**: length dispatch (`T = −16` / `−12` per mate), word
 kernels, packed genome; the cheaper mate first. -/
-def pairRegionKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lo hi : Nat) (ix : L) (G : ByteArray)
+def pairRegionKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (lo hi : Nat)
+    (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option ((Placement × Int) × (Placement × Int)) :=
   let P1 := penOf R1
   let P2 := penOf R2
   if seedCost ix P2 R2 < seedCost ix P1 R1 then
-    (pairRegionStep lo hi (mapFastGBKP P2 ix G offs pgs R2) (regionNoHitKP P1 lo hi ix G offs pgs R1)
+    (pairRegionStep lo hi (mapFastGBKP P2 ix G offs pgs R2) (regionNoHitKP P1 lo hi rl G offs pgs R1)
       (fun _ => mapFastGBKP P1 ix G offs pgs R1)).map fun x => (x.2, x.1)
   else
-    pairRegionStep lo hi (mapFastGBKP P1 ix G offs pgs R1) (regionNoHitKP P2 lo hi ix G offs pgs R2)
+    pairRegionStep lo hi (mapFastGBKP P1 ix G offs pgs R1) (regionNoHitKP P2 lo hi rl G offs pgs R2)
       (fun _ => mapFastGBKP P2 ix G offs pgs R2)
 
 /-! ## Proofs: pairs -/
