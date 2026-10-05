@@ -215,8 +215,10 @@ theorem shapeOk_mono (d d2 d' d2' : Nat) (a b : Int) (h1 : d ≤ d') (h2 : d2 �
   unfold shapeOk at *; omega
 
 theorem shapesAt_mem (x y : Nat) (h : x ≤ y) (a b : Int)
-    (hs : shapeOk (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int))) a b) : (a, b) ∈ shapesAt y :=
-  mem_shapes _ _ a b (shapeOk_mono _ _ _ _ a b (gapBound_mono x y h) (gapBound2_mono x y h) hs)
+    (hs : shapeOk (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int))) a b) : (a, b) ∈ shapesAt y := by
+  unfold shapesAt
+  rw [List.mem_mergeSort]
+  exact mem_shapes _ _ a b (shapeOk_mono _ _ _ _ a b (gapBound_mono x y h) (gapBound2_mono x y h) hs)
 
 /-! ## Adding windows -/
 
