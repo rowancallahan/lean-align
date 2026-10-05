@@ -384,6 +384,28 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 
   Every budget dump is a subset of ∞'s. mason: 0 wrong placements, and all 535 lost pairs were correct placements.
 - Reading: the budget takes HiSeq from 2.3× to 2.8× and NovaSeq from 1.05× to 1.4×, but barely moves mason (0.82× → 0.86×). mason's time is not in the repeat mates; it is spread over ordinary pairs (150 bp at cap 16, sbound close to m − 1). A budget alone does not reach 2× on 150 bp mates.
+- **Where mason's time goes** (bench `WG_MPROF=N`, profile only).
+  - Setup: 20k mason pairs, RT, 1 thread. RT total 4.44 s = 222 µs per pair.
+  - Buckets use the larger of the two mates' penalties in our answer; mason has 0 wrong placements, so this is the true penalty.
+  - Parts come from a re-run of each step. Lookups are timed alone; phase 1 is shown without them. Stage B never runs at caps ≤ 16. "other" = RT total − sum of parts (router, decoding, a second search after a failed hint).
+  - Trimming is outside the timed path: the inputs are pre-trimmed.
+
+  | bucket | pairs | time | RT µs/pair | prep | order | lookups | phase 1 | stage K | region | other | seeds/pair |
+  |---|---|---|---|---|---|---|---|---|---|---|---|
+  | 0 | 1,303 | 0.06 s | 43 | 5.1 | 2.5 | 4.6 | 5.1 | 7.6 | 5.4 | 13 | 4.0 |
+  | 1–4 | 5,661 | 0.40 s | 71 | 5.1 | 2.6 | 9.9 | 9.8 | 10.9 | 6.2 | 26 | 6.8 |
+  | 5–8 | 6,304 | 0.89 s | 141 | 5.3 | 2.6 | 25.6 | 20.2 | 40.1 | 8.3 | 39 | 9.6 |
+  | 9–12 | 3,607 | 1.29 s | 358 | 5.5 | 2.7 | 71.5 | 50.6 | 144.0 | 11.6 | 72 | 12.2 |
+  | 13–16 | 1,180 | 0.75 s | 639 | 5.5 | 2.9 | 126.2 | 114.6 | 272.1 | 18.6 | 100 | 14.4 |
+  | unmapped | 1,817 | 1.14 s | 628 | 5.5 | 2.9 | 84.2 | 95.0 | 350.0 | 4.7 | 85 | 6.7 |
+
+  - The 0–4 buckets are 35% of pairs and 10% of the time, at 43–71 µs per pair. minibwa's average is about 225 µs CPU per pair, so these pairs are already 3–5× cheaper than minibwa's average.
+  - 70% of the time goes to pairs at penalty ≥ 9 or unmapped (33% of pairs), mostly stage K and lookups. mason is not a low-error set: 66% of pairs are at penalty ≥ 5.
+  - A near-exact pair pays a fixed 43 µs:
+    - prep 5 µs, order 2.5 µs, lookups 4.6 µs, phase 1 5 µs, stage K 7.6 µs, region 5.4 µs, other 13 µs.
+    - A "found an exact/1-mismatch hit, prove uniqueness cheaply" path could at most skip order, region and part of stage K / phase 1: about 15–20 µs per pair.
+    - The cap-16 uniqueness proof still needs its seeds.
+    - On mason that is ≤ 0.1 s of 4.4 s (1 thread); the near-exact path is not where the gap is.
 - Mode H with the same gate (mason 20k): HB1000 kept 15,428, HB2000 15,793, vs PRB1000 15,224 and PRB2000 15,572; PR 17,413 and H 17,859 at ∞. Mode H places 8 of its 17,859 mason pairs wrongly; PR and RT place 0 wrongly.
 
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
