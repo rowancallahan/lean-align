@@ -1299,24 +1299,27 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
   -- stage B
   generalize hQ2 : min b2.pen P = Q2
   generalize hdsv : diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int))) = ds
-  have hB := stageB_spec P read g gbs R hg hr c cw hcw1 hcwc hc (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 _ i2
-  have hBp := stageB_pen P read g gbs R hg hr c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2
-  have h3 : InvP P cw (fun w => S2 w ∨
-        (min P 16 < Q2 ∧ BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds w))
-      (if min P 16 < Q2 then stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 else b2) ∧
-      (if min P 16 < Q2 then stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2 else b2).pen
-        ≤ b2.pen := by
+  have h3 : ∃ S3, InvP P cw S3 (if min P 16 < Q2 then stageKS (fun D b => stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b) R gbs[c]! acc us Ls P ds b2 else b2) ∧ (∀ w, S2 w → S3 w) ∧
+      (if min P 16 < Q2 then stageKS (fun D b => stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b) R gbs[c]! acc us Ls P ds b2 else b2).pen ≤ b2.pen ∧
+      (min P 16 < Q2 → ∀ D ∈ ds, ∀ w, BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] w →
+        (∀ b' : Best, (if min P 16 < Q2 then stageKS (fun D b => stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b) R gbs[c]! acc us Ls P ds b2 else b2).pen ≤ b'.pen →
+          kfilt R gbs[c]! acc us Ls P b' D = true) → S3 w) := by
     split
-    · next hk => exact ⟨inv_congrP P _ _ _ _ hB (fun w => by simp [hk]), hBp⟩
-    · next hk => exact ⟨inv_congrP P _ _ _ _ i2 (fun w => by simp [hk]), Nat.le_refl _⟩
-  refine ⟨_, h3.1, fun w hw => Or.inl (s2 w hw), ?_⟩
-  generalize (if min P 16 < Q2 then stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2
-    else b2) = bf at h3
+    · next hk =>
+      exact (stageKS_inv P cw _ R gbs[c]! acc us Ls P
+        (fun D w => BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] w)
+        (fun D S b h => stageB_spec P read g gbs R hg hr c cw hcw1 hcwc hc _ _ [D] b S h)
+        (fun D b => stageB_pen P read g gbs R hg hr c _ _ [D] b) ds S2 b2 i2).imp
+        fun S3 h => ⟨h.1, h.2.1, h.2.2.1, fun _ => h.2.2.2⟩
+    · next hk => exact ⟨S2, i2, fun w hw => hw, Nat.le_refl _, fun h => absurd h hk⟩
+  obtain ⟨S3, i3, s3, hb32, c3⟩ := h3
+  refine ⟨S3, i3, fun w hw => s3 w (s2 w hw), ?_⟩
+  generalize (if min P 16 < Q2 then stageKS (fun D b => stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b) R gbs[c]! acc us Ls P ds b2 else b2) = bf at i3 hb32 c3
   intro w hwc hcw
   generalize hx : cwT P read g w = x at hcw
   have hxP : x ≤ P := by omega
   have hxb : x ≤ bf.pen := by omega
-  have hbf2 := h3.2
+  have hbf2 := hb32
   have hx1 : x ≤ Q1 := by omega
   have hx2 : x ≤ Q2 := by omega
   -- the window scores `−x`
@@ -1410,15 +1413,15 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
       omega)
     omega
   -- the filter passes at `e / 16` at any best `≥ x`
-  have hfilt : x ≤ min P 16 → ∀ b' : Best, bf.pen ≤ b'.pen →
-      kfilt R gbs[c]! acc us Ls (min P 16) b' (e / 16) = true := by
-    intro hxl b' hb'
-    have hxQ : x ≤ min (min P 16) b'.pen := by omega
+  have hfiltG : ∀ lim, x ≤ lim → ∀ b' : Best, bf.pen ≤ b'.pen →
+      kfilt R gbs[c]! acc us Ls lim b' (e / 16) = true := by
+    intro lim hxl b' hb'
+    have hxQ : x ≤ min lim b'.pen := by omega
     have hgQ := gapBound_mono x _ hxQ
     have hsQ := sbound_mono x _ hxQ
     unfold kfilt
     simp only [Bool.and_eq_true, decide_eq_true_eq]
-    generalize hrq : 2 * gapBound sc0 (-((min (min P 16) b'.pen : Nat) : Int)) = rq
+    generalize hrq : 2 * gapBound sc0 (-((min lim b'.pen : Nat) : Int)) = rq
     have hrx : 2 * gapBound sc0 (-(x : Int)) ≤ rq := by omega
     have hJf := hsuppG rq hrx
     -- together: looked-up failures and unseen failures are disjoint seeds of one window
@@ -1515,12 +1518,15 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
       (by rw [he16]; omega) (by rw [he16]; omega)
     have := (List.mem_filter.1 hj').2
     rw [htj] at this; cases this
+  have hfilt : x ≤ min P 16 → ∀ b' : Best, bf.pen ≤ b'.pen →
+      kfilt R gbs[c]! acc us Ls (min P 16) b' (e / 16) = true := hfiltG _
   -- the band stage covers the windows above `lim`
-  have hband : min P 16 < x → BW R c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds w := by
+  have hband : min P 16 < x → S3 w := by
     intro hlx
     have hdx := gapBound_mono x Q2 hx2
     have hsa := hshape.1
-    refine ⟨e / 16, ?_, bb, ?_, ?_, (a, bb), shapesAt_mem x Q2 hx2 a bb hshape, rfl, ?_, ?_, ?_⟩
+    refine c3 (by omega) (e / 16) ?_ w ⟨e / 16, List.mem_singleton_self _, bb, ?_, ?_, (a, bb),
+      shapesAt_mem x Q2 hx2 a bb hshape, rfl, ?_, ?_, ?_⟩ (fun b' hb' => hfiltG P hxP b' (by omega))
     · rw [← hdsv]
       unfold diagsB diags
       rw [List.mem_filter, mem_dedupAdj, List.mem_mergeSort, List.mem_flatMap]
@@ -1539,8 +1545,7 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
   · -- the same-length window: phase 1, or the band stage
     obtain ⟨rfl, rfl⟩ := h00
     by_cases hxl : x ≤ min P 16
-    · left
-      apply s2
+    · apply s3; apply s2
       apply hS1 j hjpre e he
       unfold GX KX
       rw [he16]
@@ -1549,13 +1554,13 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
       rw [e1]
       refine ⟨by omega, by omega, ?_, by rw [hx]; omega⟩
       rw [e2]; exact hwin
-    · right; exact ⟨by omega, hband (by omega)⟩
+    · exact hband (by omega)
   · -- a gapped shape: stage K, or the band stage
     have hab : 1 ≤ a.natAbs + bb.natAbs := by omega
     have hgb : 0 < gapBound sc0 (-(Q1 : Int)) := by
       have := gapBound_mono x Q1 hx1; have := hshape.1; omega
     by_cases hxl : x ≤ min P 16
-    · left
+    · apply s3
       refine c2 hgb (e / 16) ?_ w ⟨e / 16, List.mem_singleton_self _, (a, bb), ?_, ?_⟩ ?_
       · unfold diags
         rw [mem_dedupAdj, List.mem_mergeSort, List.mem_flatMap]
@@ -1569,7 +1574,7 @@ theorem chromKBS_cover (arr : Nat → Array Nat)
         exact ⟨by omega, by omega, hwin, by rw [hx]; omega⟩
       · intro b' hb'
         exact hfilt hxl b' (by omega)
-    · right; exact ⟨by omega, hband (by omega)⟩
+    · exact hband (by omega)
 
 include hps hlook hnd hlt hlen in
 /-- **One chromosome.**  After `chromG`, every window of chromosome `c` within

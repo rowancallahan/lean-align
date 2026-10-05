@@ -223,7 +223,8 @@ def chromKBFG (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : Lis
         R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim (diags acc) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
-    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+    stageKS (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
+      R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) P
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
@@ -370,7 +371,8 @@ include h
 
 theorem chromKBFG_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
     chromKBFG kf R xs c P acc J b1 = chromKBFG kf R ys c P acc J b1 := by
-  simp only [chromKBFG, stageB_same h, stageKS_same (h.2 c) _ _ (fun D b => rfl)]
+  simp only [chromKBFG, stageKS_same (h.2 c) _ _ (fun D b => stageB_same h _ _ _ _ _ _ b),
+    stageKS_same (h.2 c) _ _ (fun D b => rfl)]
 
 theorem advFG_same (R : ByteArray) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) :
     s.advFG kf ix G R xs offs n t P Ls ps b = s.advFG kf ix G R ys offs n t P Ls ps b := by

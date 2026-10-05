@@ -430,6 +430,23 @@ def chromKBX (XL : Nat) (kf : Ker) (KR : RP) (R : ByteArray) (gbs : Array PGen) 
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
+/-- Prototype (profile only): `chromKBFG` with stage B's diagonals through `kfilt` at cap `P`. -/
+def chromKBPf (kf : Ker) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
+    (b1 : Best) : Best :=
+  let lim := min P 16
+  let Q1 := min b1.pen P
+  let us := unseen (R.size / 25) J
+  let Ls := R.size / (R.size / 25)
+  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
+      stageKS (fun D b => stageKF kf R.size c lim (shapesKT Q1) [D] b)
+        R gbs[c]! acc us Ls lim (diags acc) b1 else b1
+  let Q2 := min b2.pen P
+  if lim < Q2 then
+    let ds := (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))).filter
+      fun D => kfilt R gbs[c]! acc us Ls P b2 D
+    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2
+  else b2
+
 def ilX {L Pp : Type} [LookG L Pp] [Inhabited Pp] (A X : Nat) (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
     (gbs2 : Array PGen) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
     Nat → GS → GS → Best → GS × GS × Best
@@ -469,6 +486,13 @@ structure Prof where
   slowFiltNs : Nat := 0
   slowFine : Nat := 0
   slowDiagNs : Nat := 0
+  kOnlyNs : Nat := 0
+  bDiags : Nat := 0
+  bPass : Nat := 0
+  bFiltNs : Nat := 0
+  bReads : Nat := 0
+  bNone : Nat := 0
+  bTopNs : Array Nat := #[]
   penHist : Array Nat := Array.replicate 18 0
   lkHist : Array Nat := Array.replicate 25 0
 
@@ -509,6 +533,35 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
     else chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
   let b ← (← IO.mkRef b).get
   let t3 ← IO.monoNanosNow
+  -- stage K only (cap 16) and the filtered stage B prototype, timed separately
+  let kOnly := fun (Q : Nat) => (List.range n).foldl (fun b c => chromKBFG kf2 Rr gbs2 (n + c) Q x.2.1.acc[c]! x.2.1.J b)
+    ((List.range n).foldl (fun b c => chromKBFG kf1 R gbs2 c Q x.1.acc[c]! x.1.J b) x.2.2)
+  let w0 ← IO.monoNanosNow
+  let bk16 ← (← IO.mkRef (kOnly (min P 16))).get
+  let w1 ← IO.monoNanosNow
+  let bF := (List.range n).foldl (fun b c => chromKBPf kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b)
+    ((List.range n).foldl (fun b c => chromKBPf kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2)
+  let bF ← (← IO.mkRef bF).get
+  let w2 ← IO.monoNanosNow
+  if bF.pen != b.pen || bF.amb != b.amb then say s!"  PROTO DIFF read {pf.reads}: {b.pen}/{b.amb} vs {bF.pen}/{bF.amb}"
+  let isB := decide (min P 16 < min bk16.pen P)
+  let (nd, np) := if isB then
+      let cnt := fun (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun (a : Nat × Nat) c =>
+        let acc := s.acc[c]!
+        let q2 := min bk16.pen P
+        let ds := diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(q2 : Int)))
+        (a.1 + ds.length, a.2 + (ds.filter fun D => kfilt Rx gbs2[t + c]! acc (unseen (Rx.size / 25) s.J)
+          (Rx.size / (Rx.size / 25)) P bk16 D).length)) (0, 0)
+      let u := cnt R 0 x.1
+      let v := cnt Rr n x.2.1
+      (u.1 + v.1, u.2 + v.2)
+    else (0, 0)
+  let pf := { pf with kOnlyNs := pf.kOnlyNs + (w1 - w0) }
+  let pf := { pf with bFiltNs := pf.bFiltNs + (w2 - w1) }
+  let pf := { pf with bDiags := pf.bDiags + nd, bPass := pf.bPass + np }
+  let pf := { pf with bReads := pf.bReads + (if isB then 1 else 0) }
+  let pf := { pf with bNone := pf.bNone + (if isB && decide (b.pen > P) then 1 else 0) }
+  let pf := if isB then { pf with bTopNs := pf.bTopNs.push (t3 - t2) } else pf
   let lk := x.1.J.length + x.2.1.J.length
   let hits := (x.1.acc.toList ++ x.2.1.acc.toList).foldl (fun a l => a + l.foldl (fun a2 arr => a2 + arr.size) 0) 0
   let szs := (x.1.J.map fun j => LookG.size ix ps[j]!) ++ (x.2.1.J.map fun j => LookG.size ix pr[j]!)
@@ -567,6 +620,10 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
   say s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
   say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
+  say s!"  stage K only (cap 16) {secs 0 pf.kOnlyNs} s vs stages K/B {secs 0 pf.kbNs} s; prototype B through kfilt at P: {secs 0 pf.bFiltNs} s"
+  say s!"  reads reaching stage B: {pf.bReads} (none at P: {pf.bNone}); stage-B diagonals {pf.bDiags}, passing kfilt at P {pf.bPass}"
+  let tops := pf.bTopNs.qsort (· > ·)
+  say s!"  stage-K/B time of stage-B reads, top 10 (ms): {(tops.extract 0 10).map (· / 1000000)}; sum {secs 0 (tops.foldl (· + ·) 0)} s"
   say s!"  best penalty histogram (0..16, 17 = none): {pf.penHist}"
   say s!"  lookups per read histogram (0..23, 24+): {pf.lkHist}"
 
@@ -934,7 +991,15 @@ def main (args : List String) : IO UInt32 := do
       let ixT ← if (← IO.getEnv "WG_PACKONLY").isSome then pure (Task.pure (.error (IO.userError "pack only")))
         else IO.asTask (load pre) .dedicated
       let pk := ((← IO.getEnv "WG_PACK").getD "4").toNat!
-      let (G, offs, ns) ← if pk == 0 then loadPacked files else loadPackedPar files pk
+      -- WG_PKLOAD: the packed genome saved by an earlier run (<pre>.pgw/.pgx/.pgc, WG_PKSAVE; .pgw/.pgx as bench/pack_genome.py writes them) instead of
+      -- packing the FASTA; trusted only through the index hash below, which covers G.w, G.ex, n, o and the cuts
+      let (G, offs, ns) ← if (← IO.getEnv "WG_PKLOAD").isSome then do
+          let m := ((← IO.FS.readFile (pre ++ ".pgc")).trimAscii.toString.splitOn ";").map
+            fun (x : String) => ((x.splitOn ",").filter (· ≠ "")).toArray.map String.toNat!
+          let [hd, offs, ns] := m | throw (IO.userError s!"{pre}.pgc: bad format")
+          let G : PGen := ⟨hd[0]!, hd[1]!, ← readBin (pre ++ ".pgw"), ← readBin (pre ++ ".pgx")⟩
+          pure (G, offs, ns)
+        else if pk == 0 then loadPacked files else loadPackedPar files pk
       if !cutOk G offs ns then throw (IO.userError "cutOk failed")
       if (← IO.getEnv "WG_PACKONLY").isSome then
         say s!"packed genome hash {hashBytes G.w} {hashBytes G.ex} {G.n}; {← rss}"
@@ -967,6 +1032,11 @@ def main (args : List String) : IO UInt32 := do
         if stored.trim != hstr then
           throw (IO.userError s!"index hash differs from {hfile} (or none stored): run once with WG_CHECK=1")
         say s!"index hash = {hfile} (index checked by check3P when the hash was written)"
+        if (← IO.getEnv "WG_PKSAVE").isSome then
+          IO.FS.writeBinFile (pre ++ ".pgw") G.w
+          IO.FS.writeBinFile (pre ++ ".pgx") G.ex
+          IO.FS.writeFile (pre ++ ".pgc") s!"{G.n},{G.o};{String.join (offs.toList.map (s!"{·},"))};{String.join (ns.toList.map (s!"{·},"))}\n"
+          say s!"packed genome saved to {pre}.pgw/.pgx/.pgc (hash-verified)"
       let pk : PkMz := (ix, G)
       -- pairDispatchP_mz_eq / pairFastGBP_mz_eq_pairSpec; pairDispatchKP_mz_eq / pairFastGBKP_mz_eq_pairSpec
       let fP : ByteArray → ByteArray → PairOut := if P == 0 then pairDispatchP lo hi pk offs pgs
