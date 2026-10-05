@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperGRead, `MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperGenShare, `MapperPGen]
+  roots := #[`MapperGRead, `MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperGenShare, `MapperPGen, `MapperK250, `MapperK250Bits, `MapperK250Sel, `MapperK250Spec, `MapperK250Chunk, `MapperK250Loops, `MapperK250Words, `MapperK250Seed]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `MzPacked, `PairPacked, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `MzPacked, `PairPacked, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked, `FastGenK250, `PairDispatch, `ReadTrim]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -170,6 +170,10 @@ lean_exe proto0 where                 -- first speed prototype, kept for compari
   srcDir := "bench"
   root := `Proto0
 
+lean_exe k250_bench where             -- word kernels vs byte kernels on candidate windows (unproved IO)
+  srcDir := "bench"
+  root := `K250Bench
+
 lean_exe gen_pair_bench where         -- proved general-path pair mapper (pairFastGB) over a concatenated index (unproved IO)
   srcDir := "bench"
   root := `GenPairBench
@@ -181,3 +185,7 @@ lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate f
 lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
   srcDir := "bench"
   root := `PackedBench
+
+lean_exe trim_map where               -- trimmed FASTQ pairs → proved trimmer → proved pair mapper (unproved IO)
+  srcDir := "bench"
+  root := `TrimMap

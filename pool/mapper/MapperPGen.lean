@@ -50,13 +50,15 @@ def PGen.slow (P : PGen) (i : Nat) : UInt8 :=
 
 /-- Byte at place `i` of the blocks. -/
 @[inline] def PGen.raw (P : PGen) (i : Nat) : UInt8 :=
-  -- machine-word arithmetic (places < 2^64); the block offset is computed once
-  let u : USize := i.toUSize
-  let b : USize := (u >>> (6 : USize)) * (17 : USize)
-  let k : USize := b + (1 : USize) + ((u >>> (2 : USize)) &&& (15 : USize))
-  if P.w.get! b.toNat == 1 then
-    letter ((P.w.get! k.toNat >>> ((u.toUInt8 &&& 3) <<< 1)) &&& 3)
-  else P.slow i
+  if i < USize.size then
+    -- machine-word arithmetic; the block offset is computed once (`raw_eq`)
+    let u : USize := i.toUSize
+    let b : USize := (u >>> (6 : USize)) * (17 : USize)
+    let k : USize := b + (1 : USize) + ((u >>> (2 : USize)) &&& (15 : USize))
+    if P.w.get! b.toNat == 1 then
+      letter ((P.w.get! k.toNat >>> ((u.toUInt8 &&& 3) <<< 1)) &&& 3)
+    else P.slow i
+  else if P.w.get! (17 * (i >>> 6)) == 1 then letter (P.code i) else P.slow i
 
 @[inline] def PGen.get (P : PGen) (i : Nat) : UInt8 := if i < P.n then P.raw (P.o + i) else 0
 
@@ -98,6 +100,39 @@ def pack (G : ByteArray) : PGen := (G.foldl PB.push (PB.init G.size)).finish
 
 /-- `P` spells `G`: same size, same byte everywhere. -/
 def Rep (P : PGen) (G : ByteArray) : Prop := P.n = G.size ∧ ∀ i, P.get i = G.get! i
+
+theorem usizeLit (n : Nat) (h : n < 4294967296) : (OfNat.ofNat n : USize).toNat = n := by
+  have : 4294967296 ≤ USize.size := by rcases USize.size_eq with e | e <;> omega
+  exact USize.toNat_ofNat_of_lt' (by omega)
+
+/-- The machine-word form of `raw` is the plain one. -/
+theorem raw_eq (P : PGen) (i : Nat) :
+    P.raw i = if P.w.get! (17 * (i >>> 6)) == 1 then letter (P.code i) else P.slow i := by
+  unfold PGen.raw; split
+  · next h =>
+    have hs := USize.size_eq_two_pow
+    have hb : (i.toUSize >>> (6 : USize) * (17 : USize)).toNat = 17 * (i >>> 6) := by
+      rw [USize.toNat_mul, USize.toNat_shiftRight, USize.toNat_ofNat_of_lt' h, usizeLit 6 (by omega),
+        usizeLit 17 (by omega), Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow]
+      rw [hs] at h
+      rcases System.Platform.numBits_eq with e | e <;> rw [e] at h ⊢ <;>
+        simp only [Nat.reduceMod, Nat.reducePow] at h ⊢ <;> omega
+    have hk : (i.toUSize >>> (6 : USize) * (17 : USize) + (1 : USize) +
+        ((i.toUSize >>> (2 : USize)) &&& (15 : USize))).toNat = 17 * (i >>> 6) + 1 + ((i >>> 2) &&& 15) := by
+      have e15 : ((i >>> 2) &&& 15) ≤ 15 := Nat.and_le_right
+      rw [USize.toNat_add, USize.toNat_add, USize.toNat_mul, USize.toNat_and, USize.toNat_shiftRight,
+        USize.toNat_shiftRight, USize.toNat_ofNat_of_lt' h, usizeLit 6 (by omega), usizeLit 17 (by omega),
+        usizeLit 1 (by omega), usizeLit 2 (by omega), usizeLit 15 (by omega)]
+      rw [Nat.shiftRight_eq_div_pow] at e15 ⊢
+      rw [Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow]
+      rw [hs] at h
+      rcases System.Platform.numBits_eq with e | e <;> rw [e] at h ⊢ <;>
+        simp only [Nat.reduceMod, Nat.reducePow] at h e15 ⊢ <;> omega
+    have h8 : i.toUSize.toUInt8 = i.toUInt8 := by
+      apply UInt8.toNat_inj.1
+      rw [USize.toNat_toUInt8, USize.toNat_ofNat_of_lt' h, UInt8.toNat_ofNat']
+    simp only [hb, hk, h8]; rfl
+  · rfl
 
 theorem get!_out (G : ByteArray) (i : Nat) (h : G.size ≤ i) : G.get! i = 0 := by
   cases G with
