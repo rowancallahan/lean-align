@@ -244,7 +244,12 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 
   5k HG002 at 4 tasks: PK (both mates whole genome) 2,159–3,480 pairs/s vs PR 4,533–5,450. Target was 17.5 s for HG002 200k at 4 tasks (2× minibwa); not reached.
 - Profile: lookups 25–40 µs per mate; the cost is verification (stage K/B) on reads with big buckets; a few pairs dominate (polyA mate with 6 seeds of 291k entries: 1.1 s in PK, 0.24 s in PR). Parallel efficiency at 4 tasks ~60% (tail pairs).
-- Next: proof-of-absence that does not redo the full lookups for the region (look up only anchors inside the region: sliceA over the region range), skip seedCost's extra prep, then the pair-level tie exit / lower-bound prune.
+- **Region lookups cut to the region — PROVED** (`mzLookRP`, `RgMz`): places in a bucket increase (`Mz.check`), so the region search binary-searches each bucket to the region start (`lbSlot`, result re-checked at runtime in `startSlot`) and stops at the first place past the region; the region bytes alone are the genome (offset 0). `lookupPPR_eq` (= full scan cut by `cutAnc`), `lookOk_cut` / `lookOk_rg` (exact lookups on the region bytes), `pairRegionKP_mz_eq` still = `pairSpecT`.
+- **hg38.hash written** (Rowan's call: check3V passed on these exact files earlier, wk/map.log "index check ... true"); every load verifies it.
+- Bench: chunked work queue (`parChunk`, 16 pairs per grab from a shared counter, `WG_CHUNK`, `WG_TASKS=4/16,4/0` = tasks/chunk, 0 = strided); RESULT lines print process CPU time and host steal. Task use 93–97% (strided ~73%).
+- After merging claude/upbeat-goldberg-kizkfd (stage-B cap, MapperBandPrune) + region lookups + queue: **HG002 200k, 4 tasks: 16.7 s mapping (11,864 pairs/s, CPU 64.9 s), kept 162,106, dump identical, peak RSS 6.54 GB** (target 17.5 s). Host noise is large: the same build measured 15.8 / 30.6 / 16.7 s; compare runs by CPU time or interleaved in one process (`WG_TASKS=4/0,4/16,...`). 2 tasks: 36.2 s.
+- Profile now (50k, PR): region search is negligible; mate A's whole-genome search is ~90%: stage K kernels (gappedPen2Pk fwdMis/bwdMis, gapAll2P eqRun) ~1/3, phase-1 hamming ~12%, seed pre-filter (matchQ) ~7%, lookups (scanAP, lbound) ~8%.
+- Next: seeds prepared once for the mate-order choice, tie exit, stage-B seed lower-bound prune (MapperBandPrune), 10-letter pre-filter for heavy candidates.
 
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
