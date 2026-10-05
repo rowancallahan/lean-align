@@ -186,7 +186,10 @@ Fast deep caps — stage B pruning PROVED (de57fb5, 4b7b59b; check.sh green):
 | 2% | 23.7k / 29.2k | 1.63k / 1.69k | 426 / 416 | 76 / 77 |
 
   Before (1%, words): −24 1.24k, −32 238, −39 48.
-- Next: skip whole diagonals by support at the current best (sound: need = #looked − sbound(min best P)); cheaper DP cells (bit-parallel / unboxed); kernels exact past 16 (roadmap on claude/upbeat-goldberg-kizkfd).
+- Then (69d22e1) thresholds from a per-diagonal count array (`bandRowsC = bandRowsP`, `prefCnt`), and (efd14c9) the pass on bytes (`pool/mapper/MapperBandBytes.lean`: penalties saturated at P + 1, `bandRowsCB_rel`, `bandPenE_B`). chr21 2×250 1% error, word kernels: T=−24 5.18k, T=−32 1.66k, T=−39 321 pairs/s (from 1.24k / 238 / 48).
+- Tried, no measurable gain (not kept): skipping diagonals by support at the current best; ordering diagonals by support.
+- Remaining cost at T=−24 (callgrind, stages K+B): band pass ~46%, stage K's ker16 band fallback ~12% (byte-kernel path), spoiled-block checks ~4%, per-pass shape filter ~5%.
+- Next: group shapes by end shift once per stage; bit-parallel band pass; kernels exact past 16 for one-gap windows (roadmap).
 
 ## Rowan's ranked speedup list — status (2026-10-04)
 Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest bucket first + early stop); 3 tighter bound (4 × 25); 5 stored seed rest / context; 7 threads (mark_mt fix); 9 rarest-first + P/4+1 stop + gaps only ≥ 8; 10 non-ACGT (per-letter place lists, N = mismatch). Partly: 4 unboxed (proved code uses ByteArray/fixed-width/tail recursion, but not yet the 2-bit packed genome + popcount → `speed/seed-schemes` proving a packed-Hamming kernel); 6 sampled whole-genome index (minimizer / mod-minimizer proved, whole genome not built). Not done: 8 batch lookups across reads (→ `speed/proto-tune` prototype).
