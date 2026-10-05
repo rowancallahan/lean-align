@@ -232,6 +232,12 @@ structure RouteCfg where
   /-- Pass 1: which mate goes over the genome first (`some true` = mate 2; `none` =
   the kernel's cost); any choice is exact. -/
   ord1 : ByteArray → ByteArray → Option Bool := fun _ _ => none
+  /-- Pass 2 on `noHit m`: the other mate over the genome first (`true`), or the cheaper
+  lookups (`false`); any choice is exact. -/
+  swap2 : Bool := false
+  /-- Pass 2 only for pairs passing this gate (e.g. a lookup-cost budget); a pair held
+  back keeps its pass-1 answer, settled at the pass-1 caps. -/
+  gate2 : ByteArray → ByteArray → Bool := fun _ _ => true
 
 /-- A routed pair: the answer, the pass that settled it (0 = trimmed away, 1, 2), and the
 per-mate caps of that pass. -/
@@ -256,7 +262,7 @@ def passLenG (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R
   else passG K P1 P2 ord lo hi R1 R2
 
 /-- Pass 2 for a pair pass 1 left with reason `r` (pass-1 caps `A1 A2`, pass-2 caps `B1 B2`). -/
-def pass2G (K : PassKer) (A1 A2 B1 B2 : Nat) (r : Reason) (lo hi : Nat) (R1 R2 : ByteArray)
+def pass2G (K : PassKer) (swap : Bool) (A1 A2 B1 B2 : Nat) (r : Reason) (lo hi : Nat) (R1 R2 : ByteArray)
     (known : Option (Placement × Int)) : Out :=
   match r, known with
   | .noPartner .two, some a =>
@@ -266,8 +272,8 @@ def pass2G (K : PassKer) (A1 A2 B1 B2 : Nat) (r : Reason) (lo hi : Nat) (R1 R2 :
     if A2 ≤ B2 && fastT B1 R1 then passKnownG K .two a B1 lo hi R1
     else passLenG K B1 B2 none lo hi R1 R2
   -- the mate without hits goes near the other one
-  | .noHit .one, _ => passLenG K B1 B2 (some true) lo hi R1 R2
-  | .noHit .two, _ => passLenG K B1 B2 (some false) lo hi R1 R2
+  | .noHit .one, _ => passLenG K B1 B2 (if swap then some true else none) lo hi R1 R2
+  | .noHit .two, _ => passLenG K B1 B2 (if swap then some false else none) lo hi R1 R2
   | _, _ => passLenG K B1 B2 none lo hi R1 R2
 
 /-- **Router**: pass 1 (kernel `K1`), then (option) pass 2 (kernel `K2`) on the pairs
@@ -285,8 +291,8 @@ def routeG (cfg : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (O1 O2 : Option Byte
     | .unmapped r k =>
       let B1 := cap2Of cfg R1
       let B2 := cap2Of cfg R2
-      if cfg.pass2 && cfg.goOn r && !(B1 == A1 && B2 == A2) then
-        ⟨pass2G K2 A1 A2 B1 B2 r lo hi R1 R2 k, 2, B1, B2⟩
+      if cfg.pass2 && cfg.goOn r && cfg.gate2 R1 R2 && !(B1 == A1 && B2 == A2) then
+        ⟨pass2G K2 cfg.swap2 A1 A2 B1 B2 r lo hi R1 R2 k, 2, B1, B2⟩
       else ⟨o, 1, A1, A2⟩
 
 /-- The router with today's kernel in both passes. -/
@@ -593,9 +599,9 @@ theorem passLenG_ok (P1 P2 : Nat) (ord : Option Bool) (n : Nat) :
 
 /-- Pass 2 after pass 1 left the pair unmapped with reason `r` (and the other mate's
 answer `k` for `noPartner`), settled at the pass-1 caps `A1`, `A2`. -/
-theorem pass2G_ok (A1 A2 B1 B2 : Nat) (r : Reason) (k : Option (Placement × Int)) (n : Nat)
+theorem pass2G_ok (swap : Bool) (A1 A2 B1 B2 : Nat) (r : Reason) (k : Option (Placement × Int)) (n : Nat)
     (h : Settled lo hi g m1 m2 R1 R2 ⟨.unmapped r k, 1, A1, A2⟩) :
-    Settled lo hi g m1 m2 R1 R2 ⟨pass2G K A1 A2 B1 B2 r lo hi R1 R2 k, n, B1, B2⟩ := by
+    Settled lo hi g m1 m2 R1 R2 ⟨pass2G K swap A1 A2 B1 B2 r lo hi R1 R2 k, n, B1, B2⟩ := by
   have pl := fun ord => passLenG_ok lo hi g m1 m2 R1 R2 h1 h2 K hK B1 B2 ord n
   unfold pass2G
   split
@@ -637,7 +643,7 @@ theorem routeG_ok (cfg : RouteCfg) (K1 K2 : PassKer) (hK1 : KerOk lo hi g K1) (h
   | unmapped r k =>
     simp only []
     split
-    · exact pass2G_ok lo hi g m1 m2 R1 R2 h1 h2 K2 hK2 _ _ _ _ r k 2 hp
+    · exact pass2G_ok lo hi g m1 m2 R1 R2 h1 h2 K2 hK2 _ _ _ _ _ r k 2 hp
     · exact hp
 
 end generic
