@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `MzPacked, `PairPacked, `PairConcatPacked]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `MzPacked, `PairPacked, `PairConcatPacked, `MzView]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -181,3 +181,7 @@ lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate f
 lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
   srcDir := "bench"
   root := `PackedBench
+
+lean_exe whole_genome where           -- whole genome held once: index over a view of the chromosomes (unproved IO)
+  srcDir := "bench"
+  root := `WholeGenome
