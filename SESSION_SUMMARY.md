@@ -268,4 +268,9 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
 - Bit-parallel banded DP (Myers / Hyyrö-style bit vectors, affine variant): band ≤ 64 fits one word per column.
 - Iterative deepening per read: −16, then −24, then −39, only on reads not settled; ambiguity early exit (two hits ≤ T tie → unmapped in default unique mode).
 - Batch the slow reads (stragglers) so their genome windows are fetched together.
-- ASK ROWAN after whole-genome testing: 125–149 bp mates now have a proved cap of 19, so length dispatch could run them at T=−16 instead of −12 (pure dispatch change, proof already covers it). Not changed yet.
+- 125–149 bp mates at T=−16 instead of −12: Rowan approved (2026-10-05) if still fast; A/B in progress on speed/wg-speed.
+
+### TODO (Rowan, 2026-10-05)
+- Repeat-masked genome as a separate comparison: hg38 here is unmasked (all uppercase). Map HG002 against a repeat-masked hg38 (RepeatMasker/soft-mask → hard-mask) and compare kept %, speed and MAPQ-0 ties against the unmasked run. Check whether genotyping pipelines normally use masked references (GATK-style WGS uses the unmasked analysis set, with masking/filters applied downstream; verify).
+- Deeper errors: 7.5% of HG002 pairs exceed the new proved caps. Options: (a) run proved caps up to the pigeonhole limit (cost measured by the cap sweep); (b) a second tier (deepening) only for unmapped pairs; (c) past the pigeonhole limit, a new filter proof (shorter seeds / q-gram counting lemma); (d) 47% of these pairs (6,989 of 14,981) have a soft-clipped mate in minibwa: a spec with end clipping (local or clip penalty) would keep them without deeper caps; this is a spec change for Rowan.
+- Bigger/denser index: up to 7.6 GB RSS allowed; measure what it saves on lookups (~32% of time).
