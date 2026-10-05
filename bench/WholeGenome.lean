@@ -179,13 +179,15 @@ trimmed away) or `>name`/sequence pairs of lines (untrimmed). -/
 def readMates (path : String) : IO (Array (Option ByteArray)) := do
   let ls ← readLines path
   if ls.size == 0 then return #[]
+  -- WG_TRIMQ: the trimmer's neutral quality (default `ReadTrim.defQ`; proved for Q ≤ 93)
+  let tq := ((← IO.getEnv "WG_TRIMQ").bind String.toNat?).getD ReadTrim.defQ
   if ls[0]!.get! 0 == 64 then
     if ls.size % 4 != 0 then throw (IO.userError s!"{path}: {ls.size} lines, not 4 per record")
     return (Array.range (ls.size / 4)).map fun r =>
       let s := ls[4 * r + 1]!
       let q := ls[4 * r + 3]!
       if s.size != q.size then none else
-      match ReadTrim.trimRead s q with
+      match ReadTrim.trimReadQ tq s q with
       | some (b, e) => some (s.extract b e)
       | none => none
   else
