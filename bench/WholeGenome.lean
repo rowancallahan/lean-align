@@ -55,6 +55,15 @@ def hashBytes (b : ByteArray) : UInt64 :=
 
 def envN (k : String) (d : Nat) : IO Nat := do return ((← IO.getEnv k).map String.toNat!).getD d
 
+/-- Process CPU time (user + system, clock ticks of 10 ms) and the machine's steal ticks. -/
+def cpuTicks : IO (Nat × Nat) := do
+  let s ← IO.FS.readFile "/proc/self/stat"
+  let rest := (s.splitOn ") ").getLast!
+  let fs := rest.splitOn " "
+  let st ← IO.FS.readFile "/proc/stat"
+  let cpu := ((st.splitOn "\n").head!.splitOn " ").filter (· ≠ "")
+  return (fs[11]!.toNat! + fs[12]!.toNat!, cpu[8]!.toNat!)
+
 /-- A one-record FASTA, sequence only, into one buffer of the file's size (no copy). -/
 def readChrom (path : String) : IO ByteArray := do
   let total := (← System.FilePath.metadata path).byteSize.toNat
@@ -574,10 +583,44 @@ def parQueue {α β : Type} [Inhabited α] [Inhabited β] (n : Nat) (f : α → 
     | .error e => throw e
   return out
 
+/-- `f` over `xs` on `n` dedicated workers, each taking the next chunk of `cs` items
+from a shared counter; results in the order of `xs`.  Prints each worker's finish time. -/
+def parChunk {α β : Type} [Inhabited α] [Inhabited β] (n cs : Nat) (f : α → β) (xs : Array α) : IO (Array β) := do
+  let cs := max cs 1
+  let nch := (xs.size + cs - 1) / cs
+  let ctr ← IO.mkRef 0
+  let t0 ← IO.monoNanosNow
+  let worker : IO (Array (Nat × Array β) × Nat) := do
+    let mut acc : Array (Nat × Array β) := #[]
+    repeat
+      let k ← ctr.modifyGet fun i => (i, i + 1)
+      if k ≥ nch then break
+      let lo := k * cs
+      let hi := min xs.size (lo + cs)
+      let ys ← (← IO.mkRef ((Array.range (hi - lo)).map fun i => f xs[lo + i]!)).get
+      acc := acc.push (lo, ys)
+    let t1 ← IO.monoNanosNow
+    return (acc, t1 - t0)
+  let ts ← (List.range (max n 1)).mapM fun _ => IO.asTask worker (prio := .dedicated)
+  let mut out : Array β := Array.replicate xs.size default
+  let mut fin : Array Nat := #[]
+  for t in ts do
+    match ← IO.wait t with
+    | .ok (rs, dt) =>
+      fin := fin.push (dt / 1000000)
+      for (lo, ys) in rs do
+        for i in [0:ys.size] do out := out.set! (lo + i) ys[i]!
+    | .error e => throw e
+  IO.eprintln s!"  workers finished at (ms): {fin}"
+  return out
+
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
     (prof : List (String × (ByteArray → Prof → IO Prof))) : IO Unit := do
-  let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map String.toNat!
+  -- WG_TASKS: comma list of `tasks` or `tasks/chunk` (chunk 0 = strided)
+  let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map fun s => match s.splitOn "/" with
+    | [a, c] => (a.toNat!, some c.toNat!)
+    | _ => (s.toNat!, none)
   let sets := ((← IO.getEnv "WG_READS").getD "").splitOn ";" |>.filter (· ≠ "")
   let outDir := (← IO.getEnv "WG_OUT").getD ""
   for st in sets do
@@ -624,14 +667,20 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
             | some (a, b) => s!"{showHit a} | {showHit b}"
             | none => "none"
           say s!"  pair {idx[k]! + 1}: {secs 0 t} s, mates {r1[k]!.size}/{r2[k]!.size}, {os}"
+    let chunk ← envN "WG_CHUNK" 16
     for (mode, f) in modes do
       let g (k : Nat) : PairOut := f r1[k]! r2[k]!
       let mut first : Option (Array PairOut) := none
-      for tasks in taskL do
+      for (tasks, ch) in taskL do
+        let chunk := ch.getD chunk
+        let c3 ← cpuTicks
         let t3 ← IO.monoNanosNow
-        let out ← if t3 == 1 then pure #[] else (← IO.mkRef (if tasks ≤ 1 then rk.map g else parStrided tasks g rk)).get
+        let out ← if t3 == 1 then pure #[] else
+          if tasks > 1 && chunk > 0 then parChunk tasks chunk g rk
+          else (← IO.mkRef (if tasks ≤ 1 then rk.map g else parStrided tasks g rk)).get
         let t4 ← IO.monoNanosNow
-        say s!"RESULT set {name} mode {mode} tasks {tasks}: mapped {idx.size} pairs, kept {(out.filter (·.isSome)).size}, {secs t3 t4} s, pairs/s {Float.ofNat idx.size / secs t3 t4}; {← rss}"
+        let c4 ← cpuTicks
+        say s!"RESULT set {name} mode {mode} tasks {tasks} chunk {chunk}: mapped {idx.size} pairs, kept {(out.filter (·.isSome)).size}, {secs t3 t4} s, pairs/s {Float.ofNat idx.size / secs t3 t4}, cpu {Float.ofNat (c4.1 - c3.1) / 100} s, host steal {Float.ofNat (c4.2 - c3.2) / 100} cpu-s; {← rss}"
         match first with
         | some o => if o != out then say s!"MISMATCH between task counts ({mode})"
         | none =>
@@ -891,7 +940,7 @@ def main (args : List String) : IO UInt32 := do
         else pairFastGBKP P lo hi pk ByteArray.empty offs pgs
       let ms := ((← IO.getEnv "WG_MODES").getD "P,PK").splitOn ","
       -- pairRegionKP_mz_eq: the cheaper mate first, the other near it first
-      let fR : ByteArray → ByteArray → PairOut := pairRegionKP lo hi pk ByteArray.empty offs pgs
+      let fR : ByteArray → ByteArray → PairOut := pairRegionKP lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
         else if m == "PR" then some ("PR", fR) else none
       -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
