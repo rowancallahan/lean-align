@@ -201,16 +201,25 @@ early lowers the best and makes the remaining kernel calls cheap). -/
   (shapes (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int)))).mergeSort
     fun u v => decide (u.1.natAbs + u.2.natAbs ≤ v.1.natAbs + v.2.natAbs)
 
+/-- `shapesAt x` and its gapped shapes for `x < 33`, computed once (`shapesT_eq`, `shapesKT_eq`). -/
+def shapesTbl : Array (List (Int × Int) × List (Int × Int)) :=
+  ((List.range 33).map fun x => (shapesAt x, (shapesAt x).filter (· != (0, 0)))).toArray
+
+@[inline] def shapesT (x : Nat) : List (Int × Int) := if x < 33 then shapesTbl[x]!.1 else shapesAt x
+
+@[inline] def shapesKT (x : Nat) : List (Int × Int) :=
+  if x < 33 then shapesTbl[x]!.2 else (shapesAt x).filter (· != (0, 0))
+
 /-- Stages K and B of chromosome `c`, from phase 1's anchor arrays `acc` and best `b1`. -/
 def chromKB (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      (if 16 ≤ min lim Q1 then stageKP else stageK) R gbs c lim ((shapesAt Q1).filter (· != (0, 0)))
+      (if 16 ≤ min lim Q1 then stageKP else stageK) R gbs c lim (shapesKT Q1)
         (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
-    stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 

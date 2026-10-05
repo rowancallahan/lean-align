@@ -607,7 +607,7 @@ theorem chromKB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) 
     · exact foldl_pen _ (fun b sh => addBS_pen' P R gbs c D _ b sh) _ b
     · exact Nat.le_refl _
   unfold chromKB
-  simp only [stageKP_fun, ite_self]
+  simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
   have h2 : (if 0 < gapBound sc0 (-((min b.pen P : Nat) : Int)) then
       stageK R gbs c (min P 16) ((shapesAt (min b.pen P)).filter (· != (0, 0)))
         (diagsB acc (acc.length - sbound (min (min P 16) (min b.pen P))) (2 * gapBound sc0 (-((min b.pen P : Nat) : Int)))) b

@@ -214,6 +214,16 @@ theorem shapeOk_mono (d d2 d' d2' : Nat) (a b : Int) (h1 : d ≤ d') (h2 : d2 �
     shapeOk d' d2' a b := by
   unfold shapeOk at *; omega
 
+theorem shapesT_eq (x : Nat) : shapesT x = shapesAt x := by
+  unfold shapesT shapesTbl; split
+  · next h => simp [getElem!_pos, h]
+  · rfl
+
+theorem shapesKT_eq (x : Nat) : shapesKT x = (shapesAt x).filter (· != (0, 0)) := by
+  unfold shapesKT shapesTbl; split
+  · next h => simp [getElem!_pos, h]
+  · rfl
+
 theorem shapesAt_mem (x y : Nat) (h : x ≤ y) (a b : Int)
     (hs : shapeOk (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int))) a b) : (a, b) ∈ shapesAt y := by
   unfold shapesAt
@@ -611,7 +621,7 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
   have hacc : acc = (pre.map arr).reverse := hacc0.symm
   obtain ⟨J, hJ⟩ : ∃ J, J = pre.reverse := ⟨_, rfl⟩
   unfold chromKB
-  simp only [stageKP_fun, ite_self]
+  simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
   -- stage K
   generalize hQ1 : min b1.pen P = Q1
   generalize hshK : (shapesAt Q1).filter (· != (0, 0)) = shK
