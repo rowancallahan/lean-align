@@ -1,4 +1,5 @@
 import FastGenBatch
+import FastGenTier
 import ParMap
 
 /-!
@@ -13,6 +14,7 @@ One mate file: single reads on both strands (`mapFastGS`, short reads by the pro
 GP_SHORTCHECK=n: the short-read path against the indexed path on n reads (both proved = mapSpecBoth).
 GP_CHUNK=c: chunks of c reads (mapChunkGS: short reads of a chunk in one genome pass; pairs as pairChunkGS);
 GP_CHUNKCHECK=n: chunked against read by read on n reads.
+GP_TIER1=1: the tier-1 mapper (cap from the length: >= 150 -> -16, 100-149 -> -12, shorter unmapped; pairTier1_eq).
 -/
 
 open MapSpec
@@ -81,6 +83,7 @@ def main (args : List String) : IO UInt32 := do
   let hi := ((← IO.getEnv "GP_MAX").getD "1000").toNat!
   let tasks := ((← IO.getEnv "GP_TASKS").getD "1").toNat!
   let mz := ((← IO.getEnv "GP_MZ").getD "0").toNat!
+  let tier1 := (← IO.getEnv "GP_TIER1").isSome   -- cap from the read length (mapTier1 / pairTier1_eq)
   let G := gbs.foldl (· ++ ·) ByteArray.empty
   let offs := (gbs.foldl (fun (o, n) g => (o.push n, n + g.size)) ((#[] : Array Nat), 0)).1
   assert! Fast.catOk G offs gbs
@@ -110,6 +113,8 @@ def main (args : List String) : IO UInt32 := do
             let b := Fast.mapChromsGB 12 ix G offs gbs R
             if b.pen ≤ 12 then Fast.decodeP gbs.size 12 b else Fast.mapFastGB P ix G offs gbs R
           else Fast.mapFastGB P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)
+      else if tier1 then
+        pure (fun R => Fast.mapTier1 ix G offs gbs R, fun rs => rs.map (Fast.mapTier1 ix G offs gbs))
       else
       pure (fun R => Fast.mapFastGS P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)
     else do
@@ -118,6 +123,9 @@ def main (args : List String) : IO UInt32 := do
       let ok := Fast.checkAllMz #[ix] #[G]
       IO.println s!"index check: {ok}  minimizer k={mz} B={B}"
       assert! ok
+      if tier1 then
+        pure (fun R => Fast.mapTier1 ix G offs gbs R, fun rs => rs.map (Fast.mapTier1 ix G offs gbs))
+      else
       pure (fun R => Fast.mapFastGS P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)
   if (← IO.getEnv "GP_TBLTEST").isSome then
     let t0 ← IO.monoNanosNow
