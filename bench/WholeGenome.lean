@@ -1060,8 +1060,10 @@ def main (args : List String) : IO UInt32 := do
         | some x => x.2
         | none => 0
       let rcfg : RouteCfg := { cap1 := cap1F, pass2 := (← IO.getEnv "WG_PASS2").getD "0" == "1", cap2 := cap2F }
-      let route (a b : ByteArray) : Routed :=
-        routeKP rcfg lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs (some a) (some b)
+      -- WG_HINT=0: mate B over the genome at its full cap (no region-hit hint; mateH_ok holds either way)
+      let hint := (← IO.getEnv "WG_HINT").getD "1" == "1"
+      let kK := { kpKer lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs with hint := hint }
+      let route (a b : ByteArray) : Routed := routeG rcfg kK kK lo hi (some a) (some b)
       let fRT : ByteArray → ByteArray → PairOut := fun a b => (route a b).out.toOpt
       let showR (r : Routed) : String :=
         let m (x : Mate) := match x with | .one => "1" | .two => "2"
