@@ -80,15 +80,23 @@ abbrev Ker := Nat → Nat → Nat → Nat → Nat
 def stageKF (kf : Ker) (n c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
   ds.foldl (fun b D => shs.foldl (fun b sh => addKF kf c lim (dst n D sh) (wlen n sh) b) b) b
 
+/-- `shapesAt Q` and `shapesAt Q` without `(0, 0)`, computed once for `Q ≤ 16`. -/
+def shTab : Array (List (Int × Int)) := (Array.range 17).map shapesAt
+def shTabNZ : Array (List (Int × Int)) := (Array.range 17).map fun Q => (shapesAt Q).filter (· != (0, 0))
+
+@[inline] def shapesM (Q : Nat) : List (Int × Int) := if Q < 17 then shTab[Q]! else shapesAt Q
+@[inline] def shapesNZ (Q : Nat) : List (Int × Int) :=
+  if Q < 17 then shTabNZ[Q]! else (shapesAt Q).filter (· != (0, 0))
+
 def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageKF kf R.size c lim ((shapesAt Q1).filter (· != (0, 0)))
+      stageKF kf R.size c lim (shapesNZ Q1)
         (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
-    stageB P R gbs c (shapesAt Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+    stageB P R gbs c (shapesM Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
@@ -522,8 +530,19 @@ theorem checkPGs_ok (pvs : Array PGen) (gbs : Array ByteArray) (h : checkPGs pvs
 theorem stageKF_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat)
     (b : Best) : stageKF (kerH R gbs) R.size c lim shs ds b = stageK R gbs c lim shs ds b := rfl
 
+theorem shapesM_eq (Q : Nat) : shapesM Q = shapesAt Q := by
+  unfold shapesM shTab; split
+  · rw [getElem!_pos _ Q (by simpa using ‹Q < 17›)]; simp
+  · rfl
+
+theorem shapesNZ_eq (Q : Nat) : shapesNZ Q = (shapesAt Q).filter (· != (0, 0)) := by
+  unfold shapesNZ shTabNZ; split
+  · rw [getElem!_pos _ Q (by simpa using ‹Q < 17›)]; simp
+  · rfl
+
 theorem chromKBF_eq (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b : Best) :
-    chromKBF (kerH R gbs) R gbs c P acc b = chromKB R gbs c P acc b := rfl
+    chromKBF (kerH R gbs) R gbs c P acc b = chromKB R gbs c P acc b := by
+  simp only [chromKBF, chromKB, shapesM_eq, shapesNZ_eq]; rfl
 
 theorem advF_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R : ByteArray)
     (gbs2 : Array ByteArray) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) :
