@@ -10,6 +10,7 @@ Trimmed paired FASTQ → proved trimmer → proved pair mapper → ordered TSV (
     else hashed), TM_MIN/TM_MAX (100/1000) insert range, TM_T (12) penalty bound, TM_MINLEN (30),
     TM_FQ=prefix (also write the trimmed, non-empty pairs as prefix_1.fq / prefix_2.fq),
     TM_MODE = pipe (default) | prep (read + prep only) | map (prep everything first, then time mapping alone),
+    TM_K=1: word kernels (pairDispatchK / pairFastGBK, packed chromosome copies checked by checkPGs),
     TM_T=0: per-mate dispatch (pairDispatch: mate ≥ 150 letters at T = −16, 100–149 at −12),
     TM_IDX=path (minimizer index: load if present, else build and save), TM_RUNS=mode:tasks:P,... (several runs after one startup; out.tsv gets suffix .<mode><tasks>_T<P>)
 
@@ -372,11 +373,17 @@ def main (args : List String) : IO UInt32 := do
   let G := gbs.foldl (· ++ ·) ByteArray.empty
   let offs := (gbs.foldl (fun (o, n) g => (o.push n, n + g.size)) ((#[] : Array Nat), 0)).1
   assert! catOk G offs gbs
+  -- TM_K=1: word kernels on a packed copy of each chromosome (pairDispatchK_eq / pairFastGBK_eq, checkPGs)
+  let useK := (← IO.getEnv "TM_K").isSome
+  let pvs := if useK then gbs.map pack else #[]
+  assert! !useK || checkPGs pvs gbs
   let mk : Nat → PairMapper ← if mz == 0 then do
       let ix := buildIdx G
       assert! checkAll #[ix] #[G]
       IO.eprintln s!"hashed index over the concatenated genome: catOk, checkAll ok"
-      pure fun P => if P == 0 then ⟨dispatchOk, pairDispatch lo hi ix G offs gbs⟩
+      pure fun P => if useK then (if P == 0 then ⟨dispatchOk, pairDispatchK lo hi ix G offs gbs pvs⟩
+          else ⟨fastT P, pairFastGBK P lo hi ix G offs gbs pvs⟩)
+        else if P == 0 then ⟨dispatchOk, pairDispatch lo hi ix G offs gbs⟩
         else ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
     else do
       let ip := (← IO.getEnv "TM_IDX").getD ""
@@ -389,7 +396,9 @@ def main (args : List String) : IO UInt32 := do
       -- checkAllMzPar_eq: the parallel check is checkAllMz
       assert! checkAllMzPar 4 #[ix] #[G]
       IO.eprintln s!"minimizer index k={mz} over the concatenated genome: catOk, checkAllMz ok ({secs ((← IO.monoNanosNow) - tc)} s)"
-      pure fun P => if P == 0 then ⟨dispatchOk, pairDispatch lo hi ix G offs gbs⟩
+      pure fun P => if useK then (if P == 0 then ⟨dispatchOk, pairDispatchK lo hi ix G offs gbs pvs⟩
+          else ⟨fastT P, pairFastGBK P lo hi ix G offs gbs pvs⟩)
+        else if P == 0 then ⟨dispatchOk, pairDispatch lo hi ix G offs gbs⟩
         else ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
   let t1 ← IO.monoNanosNow
   IO.eprintln s!"startup (genome {gbs.size} chromosomes, index build + check): {secs (t1 - t0)} s"

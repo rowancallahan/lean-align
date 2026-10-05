@@ -1,4 +1,5 @@
 import FastGenPair
+import FastGenK250
 
 /-!
 # Codec `pairDispatch`: each mate at a threshold set by its length
@@ -68,6 +69,41 @@ theorem pairDispatch_mz (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Ar
     pairDispatch lo hi ix G offs gbs R1 R2 = pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 :=
   pairDispatch_eq_pairSpecT lo hi g m1 m2 gbs R1 R2 ix G offs hg h1 h2 hcat (lookG_mz G ix hchk)
 
+/-- `pairDispatch` with the word kernels (`mapFastGBK`, packed genome copies `pvs`). -/
+def pairDispatchK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lo hi : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (R1 R2 : ByteArray) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  match mapFastGBK (penOf R1) ix G offs gbs pvs R1, mapFastGBK (penOf R2) ix G offs gbs pvs R2 with
+  | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+  | _, _ => none
+
+theorem pairDispatchK_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lo hi : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (hpg : checkPGs pvs gbs = true)
+    (R1 R2 : ByteArray) :
+    pairDispatchK lo hi ix G offs gbs pvs R1 R2 = pairDispatch lo hi ix G offs gbs R1 R2 := by
+  have h : ∀ P R, mapFastGBK P ix G offs gbs pvs R = mapFastGB P ix G offs gbs R := fun P R => by
+    unfold mapFastGBK mapFastGB; rw [mapChromsGBK_eq P ix G offs gbs pvs hpg]
+  unfold pairDispatchK pairDispatch
+  rw [h, h]
+
+theorem pairDispatchK_mz (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
+    (pvs : Array PGen) (R1 R2 : ByteArray) (ix : Mz.MzIdx) (G : ByteArray) (offs : Array Nat)
+    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
+    (hchk : checkAllMz #[ix] #[G] = true) (hpg : checkPGs pvs gbs = true) :
+    pairDispatchK lo hi ix G offs gbs pvs R1 R2 =
+      pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
+  rw [pairDispatchK_eq lo hi ix G offs gbs pvs hpg]
+  exact pairDispatch_mz lo hi g m1 m2 gbs R1 R2 ix G offs hg h1 h2 hcat hchk
+
+theorem pairDispatchK_hashed (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
+    (pvs : Array PGen) (R1 R2 : ByteArray) (ix : HIdx) (G : ByteArray) (offs : Array Nat)
+    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
+    (hchk : checkAll #[ix] #[G] = true) (hpg : checkPGs pvs gbs = true) :
+    pairDispatchK lo hi ix G offs gbs pvs R1 R2 =
+      pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
+  rw [pairDispatchK_eq lo hi ix G offs gbs pvs hpg]
+  exact pairDispatch_hashed lo hi g m1 m2 gbs R1 R2 ix G offs hg h1 h2 hcat hchk
+
 /-- The dispatch takes exactly the mates of at least 100 letters. -/
 theorem dispatchOk_iff (R : ByteArray) : dispatchOk R = true ↔ 100 ≤ R.size := by
   unfold dispatchOk fastT penOf
@@ -79,3 +115,5 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.pairDispatch_mz
 #print axioms MapSpec.Fast.pairSpecT_same
 #print axioms MapSpec.Fast.dispatchOk_iff
+#print axioms MapSpec.Fast.pairDispatchK_mz
+#print axioms MapSpec.Fast.pairDispatchK_hashed
