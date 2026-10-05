@@ -117,7 +117,7 @@ theorem cwT_ker16 (P : Nat) (hP : 16 ≤ P) (read : List Char) (g : Genome) (gbs
     (hg : GenomeBytes gbs g) (hr : Encodes R read) (c st len : Nat) (hc : c < gbs.size) :
     min (cwT P read g ⟨c, st, len⟩) 17 = ker16 R gbs c st len := by
   have hk := cwT_ker P read g gbs R hg hr c st len 15 hc (by omega) (by omega)
-  unfold ker16
+  unfold ker16; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   dsimp only
   generalize kerG R gbs[c]! st len 15 = k at hk
   by_cases h15 : k ≤ 15
@@ -328,12 +328,12 @@ theorem addB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (st
 
 theorem kerGP_eq (R G : ByteArray) (st len lim : Nat) :
     kerGP R G st len lim (fwdProf R G st) (bwdProf R G (st + len)) = kerG R G st len lim := by
-  unfold kerGP kerG
+  unfold kerGP kerG; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only [gappedPen2P_eq]
 
 theorem kerHP_eq (R : ByteArray) (gbs : Array ByteArray) (c st len l : Nat) :
     kerHP R gbs c st len l (fwdProf R gbs[c]! st) (bwdProf R gbs[c]! (st + len)) = kerH R gbs c st len l := by
-  unfold kerHP kerH ker16P ker16
+  unfold kerHP kerH ker16P ker16; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only [kerGP_eq, twoGapBP_eq, filt16P_eq]
 
 theorem addKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (pf pb : Nat × Nat × Nat)
@@ -398,7 +398,7 @@ theorem stageKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : 
     unfold dst wlen at *
     congr 1; omega
 
-theorem stageKP_fun : stageKP = stageK := by
+theorem stageKP_fun : stageKP (Gt := ByteArray) = stageK := by
   funext R gbs c lim shs ds b; exact stageKP_eq R gbs c lim shs ds b
 
 /-! ## Phase 1 and the stages -/
@@ -489,7 +489,7 @@ theorem stageK_spec (hc : c < gbs.size) (shs : List (Int × Int)) (ds : List Nat
 theorem bandPenE_eq (c st len : Nat) (hc : c < gbs.size) :
     bandPenE P R.size len (decide (st + len ≤ gbs[c]!.size))
       (bandEnd2 sc0 (-(P : Int)) (bandOf sc0 (-(P : Int))) R gbs[c]! (st + len)) = bandPen P R gbs ⟨c, st, len⟩ := by
-  unfold bandPenE bandPen bandScore
+  unfold bandPenE bandPen bandScore; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only []
   rw [dif_pos hc, getElem!_pos gbs c hc]
   by_cases hf : st + len ≤ gbs[c].size ∧ R.size ≤ len + bandOf sc0 (-(P : Int)) ∧ len ≤ R.size + bandOf sc0 (-(P : Int))
@@ -505,7 +505,7 @@ def BW (c : Nat) (shs : List (Int × Int)) (bs : List Int) (ds : List Nat) (w : 
 
 theorem addBS_pen (c D : Nat) (opt : Option (Array Int)) (b : Best) (sh : Int × Int) :
     (addBS P R gbs c D opt b sh).pen ≤ b.pen := by
-  unfold addBS; simp only []; split
+  unfold addBS; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]; simp only []; split
   · exact add_pen_le _ _ _ _ _
   · exact Nat.le_refl _
 
@@ -526,7 +526,7 @@ theorem addBS_spec (hc : c < gbs.size) (D : Nat) (bb : Int) (sh : Int × Int) (h
     InvP P cw (fun w => S w ∨ (0 ≤ (D : Int) - R.size - sh.1 ∧ 0 ≤ (R.size : Int) + sh.1 + sh.2 ∧
         w = ⟨c, ((D : Int) - R.size - sh.1).toNat, ((R.size : Int) + sh.1 + sh.2).toNat⟩))
       (addBS P R gbs c D (bandEndAt P R gbs c D bb) b sh) := by
-  unfold addBS
+  unfold addBS; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only []
   split
   · next hp =>

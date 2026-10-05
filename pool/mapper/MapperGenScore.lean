@@ -334,8 +334,8 @@ theorem gappedPen2_specX (R G : ByteArray) (st len lim : Nat) (hne : len ≠ R.s
         omega
 
 /-- The window kernel: penalty of window `(st, len)` capped at `lim + 1` (`lim ≤ 15`). -/
-def kerG (R G : ByteArray) (st len lim : Nat) : Nat :=
-  if st + len ≤ G.size then
+@[specialize] def kerG {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (st len lim : Nat) : Nat :=
+  if st + len ≤ GRead.size G then
     if len = R.size then
       let h := hamming R G st (lim / 4) 0 R.size 0
       if 4 * h ≤ lim then 4 * h else lim + 1
@@ -344,7 +344,7 @@ def kerG (R G : ByteArray) (st len lim : Nat) : Nat :=
 
 theorem kerG_eq (R G : ByteArray) (st len lim : Nat) (hlim : lim ≤ 15) :
     kerG R G st len lim = if st + len ≤ G.size then min (fB R G st len) (lim + 1) else lim + 1 := by
-  unfold kerG
+  unfold kerG; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   split
   · unfold fB
     split

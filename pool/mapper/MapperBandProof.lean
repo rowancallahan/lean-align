@@ -26,12 +26,12 @@ theorem cellVals_rel (sc : Scoring) (hv : ValidScoring sc) (T : Int) (xs gs : Li
   · subst hin
     by_cases hpe : p = e
     · subst hpe
-      simp only [cellVals, beq_self_eq_true, if_true, cv_last_end]
+      simp only [cellVals, beq_self_eq_true, if_true, cv_last_end, GRead.get_bytes, GRead.size_bytes]
       exact ⟨Rel.refl _ _, Rel.refl _ _, Rel.refl _ _⟩
     · have hpe' : (p == e) = false := by simp [hpe]
       have hlt : p < e := by omega
       simp only [cellVals, beq_self_eq_true, if_true, hpe', Bool.false_eq_true, if_false,
-        cv_last sc xs gs e he _ p hlt, gapXCost]
+        cv_last sc xs gs e he _ p hlt, gapXCost, GRead.get_bytes, GRead.size_bytes]
       simp only [reduceCtorEq, if_false]
       exact ⟨rel_add (hxX hlt) (by omega), rel_add (hxX hlt) (by omega),
         rel_add (hxX hlt) (by omega)⟩
@@ -40,7 +40,7 @@ theorem cellVals_rel (sc : Scoring) (hv : ValidScoring sc) (T : Int) (xs gs : Li
     by_cases hpe : p = e
     · subst hpe
       simp only [cellVals, hin', beq_self_eq_true, Bool.false_eq_true, if_false, if_true,
-        cv_end sc xs gs p _ i hlt, gapYCost]
+        cv_end sc xs gs p _ i hlt, gapYCost, GRead.get_bytes, GRead.size_bytes]
       simp only [reduceCtorEq, if_false]
       exact ⟨rel_add (hyY hlt) (by omega), rel_add (hyY hlt) (by omega),
         rel_add (hyY hlt) (by omega)⟩
@@ -53,7 +53,7 @@ theorem cellVals_rel (sc : Scoring) (hv : ValidScoring sc) (T : Int) (xs gs : Li
         rw [hbeq, diagCost]; simp
       have hDle : diagCost sc xs[i] gs[p] ≤ 0 := by unfold diagCost; split <;> omega
       simp only [cellVals, hin', hpe', Bool.false_eq_true, if_false, hD,
-        cv_main sc xs gs e he _ i p hlt hplt, gapXCost, gapYCost]
+        cv_main sc xs gs e he _ i p hlt hplt, gapXCost, gapYCost, GRead.get_bytes, GRead.size_bytes]
       simp only [reduceCtorEq, if_false]
       have h1 := hdN hlt hplt
       have h2 := hxX hplt
