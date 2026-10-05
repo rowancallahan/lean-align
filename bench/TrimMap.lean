@@ -1,4 +1,5 @@
-import FastGenPair
+import PairDispatch
+import MzCheckPar
 import ReadTrim
 
 /-!
@@ -9,16 +10,17 @@ Trimmed paired FASTQ → proved trimmer → proved pair mapper → ordered TSV (
     else hashed), TM_MIN/TM_MAX (100/1000) insert range, TM_T (12) penalty bound, TM_MINLEN (30),
     TM_FQ=prefix (also write the trimmed, non-empty pairs as prefix_1.fq / prefix_2.fq),
     TM_MODE = pipe (default) | prep (read + prep only) | map (prep everything first, then time mapping alone),
-    TM_RUNS=mode:tasks:P,... (several runs after one startup; out.tsv gets suffix .<mode><tasks>_T<P>)
+    TM_T=0: per-mate dispatch (pairDispatch: mate ≥ 150 letters at T = −16, 100–149 at −12),
+    TM_IDX=path (minimizer index: load if present, else build and save), TM_RUNS=mode:tasks:P,... (several runs after one startup; out.tsv gets suffix .<mode><tasks>_T<P>)
 
 Stages, pipelined (prep of chunk i+1 and writing of chunk i−1 overlap mapping of chunk i):
   read  (main thread): exactly TM_CHUNK records from each file;
   prep  (one task per chunk): parse, pair, `ReadTrim.trimRead` both mates (trimRead_acgt: kept
         windows are A/C/G/T only), flag pairs trimmed away (`unmapped: trimmed`) or not taken by the
-        mapper (`unmapped: length`);
+        mapper (`unmapped: too short`);
   map   (≤ TM_TASKS tasks at once): the per-pair mapper, a parameter (`PairMapper`); here
         `pairFastGB` over one concatenated index (pairFastGB_hashed/mz_eq_pairSpec); mates the
-        general fast path does not take (`fastT`: too few 25-letter seeds) are `unmapped: length`;
+        general fast path does not take (`fastT`: too few 25-letter seeds) are `unmapped: too short`;
   write (one task chain, in chunk order).
 The written text is `formatAll fmt (pairs.map (map ∘ prep))` (ParMap.chunks_text, stages_text).
 -/
@@ -77,7 +79,7 @@ def showHit (multi : Bool) (h : Hit) : String :=
 def fmt (multi : Bool) (np : String × Out) : String :=
   match np.2 with
   | .trimmed => s!"{np.1}\tunmapped: trimmed\n"
-  | .length => s!"{np.1}\tunmapped: length\n"
+  | .length => s!"{np.1}\tunmapped: too short\n"
   | .mapped none => s!"{np.1}\tnone\n"
   | .mapped (some (a, b)) => s!"{np.1}\t{showHit multi a}\t{showHit multi b}\n"
 
@@ -87,18 +89,28 @@ def fmt (multi : Bool) (np : String × Out) : String :=
 
 /-! ## Parsing -/
 
+/-- Bench-only scan loop (`partial`: not part of any proof). -/
+partial def scanGo (b : ByteArray) (need : Nat) (j : USize) (found : Nat) : USize × Nat :=
+  if h : j < b.size.toUSize then
+    have hj : j.toNat < b.size := by
+      have := USize.lt_iff_toNat_lt.1 h; rw [Nat.toUSize, USize.toNat_ofNat'] at this
+      exact Nat.lt_of_lt_of_le this (Nat.mod_le _ _)
+    if found < need then scanGo b need (j + 1) (if b.uget j hj == 10 then found + 1 else found)
+    else (j, found)
+  else (j, found)
+
 /-- From `i`: the position after the `need`-th newline (or the end), and the newlines found. -/
 def scanNL (b : ByteArray) (i need found : Nat) : Nat × Nat :=
-  if h : i < b.size then
-    if found < need then scanNL b (i + 1) need (if b[i] == 10 then found + 1 else found) else (i, found)
-  else (i, found)
-termination_by b.size - i
+  let r := scanGo b need i.toUSize found
+  (r.1.toNat, r.2)
 
 /-- Start of each line, and one past the end of the last. -/
-def lineStarts (b : ByteArray) (i : Nat) (out : Array Nat) : Array Nat :=
-  if h : i < b.size then lineStarts b (i + 1) (if b[i] == 10 then out.push (i + 1) else out)
+def lineStartsGo (b : ByteArray) (i : Nat) (out : Array Nat) : Array Nat :=
+  if h : i < b.size then lineStartsGo b (i + 1) (if b[i] == 10 then out.push (i + 1) else out)
   else if b.size > 0 && b[b.size - 1]! != 10 then out.push (b.size + 1) else out
 termination_by b.size - i
+
+def lineStarts (b : ByteArray) : Array Nat := lineStartsGo b 0 #[0]
 
 /-- Read name: header without `@`, up to the first blank, a trailing `/1` or `/2` dropped. -/
 def nameOf (b : ByteArray) (s e : Nat) : ByteArray := Id.run do
@@ -122,8 +134,8 @@ def takeRecs (h : IO.FS.Handle) (buf : ByteArray) (pos n : Nat) : IO (ByteArray 
 
 /-- The prep stage: parse both chunks, pair, trim. -/
 def prepChunk (minLen : Nat) (ok : ByteArray → Bool) (c1 c2 : ByteArray) : Array Prep := Id.run do
-  let l1 := lineStarts c1 0 #[0]
-  let l2 := lineStarts c2 0 #[0]
+  let l1 := lineStarts c1
+  let l2 := lineStarts c2
   let n := (l1.size - 1) / 4
   assert! (l1.size - 1) % 4 == 0 && l2.size == l1.size
   let mut out := Array.mkEmpty n
@@ -201,6 +213,40 @@ def peakRssMB : IO Nat := do
   let st ← IO.FS.readFile "/proc/self/status"
   let line := ((st.splitOn "\n").find? (·.startsWith "VmHWM:")).get!
   return ((line.splitOn " ").filter (· ≠ "")).getD 1 "0" |>.toNat! |> (· / 1024)
+
+/-! ## Minimizer index on disk (trusted IO; the loaded index is checked like a built one) -/
+
+def readFull (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
+  let mut b := ByteArray.emptyWithCapacity n
+  while b.size < n do
+    let c ← h.read (USize.ofNat (min (n - b.size) 268435456))
+    assert! !c.isEmpty
+    b := b ++ c
+  return b
+
+def saveMz (path : String) (ix : Mz.MzIdx) : IO Unit := do
+  let h ← IO.FS.Handle.mk path .write
+  let nums := [ix.k, ix.B, ix.w, ix.c, ix.kb, ix.kf, ix.T, ix.kmU.toNat, ix.t, ix.tmU.toNat, ix.kbM, ix.fM, ix.tM,
+    ix.bsh, ix.ash, ix.fsh, ix.sw, ix.offs.size, ix.sl.size]
+  h.putStrLn (" ".intercalate (nums.map toString))
+  h.putStrLn (" ".intercalate (ix.pm.toList.map toString))
+  h.putStrLn (" ".intercalate (ix.runs.toList.map toString))
+  h.write ix.offs
+  h.write ix.sl
+  h.flush
+
+def loadMz (path : String) : IO Mz.MzIdx := do
+  let h ← IO.FS.Handle.mk path .read
+  let nums (l : String) : Array Nat := ((l.trimAsciiEnd.toString.splitOn " ").filter (· ≠ "")).toArray.map String.toNat!
+  let v := nums (← h.getLine)
+  assert! v.size == 19
+  let pm := nums (← h.getLine)
+  let runs := nums (← h.getLine)
+  let offs ← readFull h v[17]!
+  let sl ← readFull h v[18]!
+  return { k := v[0]!, B := v[1]!, w := v[2]!, c := v[3]!, kb := v[4]!, kf := v[5]!, T := v[6]!,
+           kmU := v[7]!.toUInt64, t := v[8]!, tmU := v[9]!.toUInt64, kbM := v[10]!, fM := v[11]!, tM := v[12]!,
+           pm, bsh := v[13]!, ash := v[14]!, fsh := v[15]!, offs, sw := v[16]!, sl, runs }
 
 def getEnvNat (k : String) (d : Nat) : IO Nat := do
   return ((← IO.getEnv k).getD (toString d)).toNat!
@@ -295,7 +341,7 @@ def run (mode : String) (tasks P chunk minLen : Nat) (m : PairMapper) (multi : B
   let s ← st.get
   let n := Float.ofNat s.pairs
   IO.println s!"mode {mode}  tasks {tasks}  chunk {chunk}  T -{P}  pairs {s.pairs}"
-  IO.println s!"counts: trimmed-away {s.trimmed}  length-skipped {s.length}  sent to mapper {s.sent}  mapped (proper pair) {s.mapped}"
+  IO.println s!"counts: trimmed-away {s.trimmed}  too-short {s.length}  sent to mapper {s.sent}  mapped (proper pair) {s.mapped}"
   IO.println s!"read (main thread): {secs s.readNs} s  ({n / secs s.readNs} pairs/s)"
   IO.println s!"prep (task time):   {secs s.prepNs} s  ({n / secs s.prepNs} pairs/s per core)"
   IO.println s!"map (task time):    {secs s.mapNs} s  ({n / secs s.mapNs} pairs/s per core)"
@@ -330,12 +376,21 @@ def main (args : List String) : IO UInt32 := do
       let ix := buildIdx G
       assert! checkAll #[ix] #[G]
       IO.eprintln s!"hashed index over the concatenated genome: catOk, checkAll ok"
-      pure fun P => ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
+      pure fun P => if P == 0 then ⟨dispatchOk, pairDispatch lo hi ix G offs gbs⟩
+        else ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
     else do
-      let ix := Mz.buildW G mz 24 (25 - mz) 8 mz
-      assert! checkAllMz #[ix] #[G]
-      IO.eprintln s!"minimizer index k={mz} over the concatenated genome: catOk, checkAllMz ok"
-      pure fun P => ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
+      let ip := (← IO.getEnv "TM_IDX").getD ""
+      let ix ← if ip != "" && (← System.FilePath.pathExists ip) then loadMz ip else do
+        let ix := Mz.buildW G mz 24 (25 - mz) 8 mz
+        if ip != "" then saveMz ip ix
+        pure ix
+      let tc ← IO.monoNanosNow
+      IO.eprintln s!"index built or loaded: {secs (tc - t0)} s"
+      -- checkAllMzPar_eq: the parallel check is checkAllMz
+      assert! checkAllMzPar 4 #[ix] #[G]
+      IO.eprintln s!"minimizer index k={mz} over the concatenated genome: catOk, checkAllMz ok ({secs ((← IO.monoNanosNow) - tc)} s)"
+      pure fun P => if P == 0 then ⟨dispatchOk, pairDispatch lo hi ix G offs gbs⟩
+        else ⟨fastT P, pairFastGB P lo hi ix G offs gbs⟩
   let t1 ← IO.monoNanosNow
   IO.eprintln s!"startup (genome {gbs.size} chromosomes, index build + check): {secs (t1 - t0)} s"
   let outPath := rest.headD "/dev/null"
