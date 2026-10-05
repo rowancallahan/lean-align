@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperGRead, `MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperGenShare, `MapperPGen, `MapperK250, `MapperK250Bits, `MapperK250Sel, `MapperK250Spec, `MapperK250Chunk, `MapperK250Loops, `MapperK250Words, `MapperK250Seed]
+  roots := #[`MapperGRead, `MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperEvents, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperGenShare, `MapperPGen, `MapperK250, `MapperK250Bits, `MapperK250Sel, `MapperK250Spec, `MapperK250Chunk, `MapperK250Loops, `MapperK250Words, `MapperK250Seed]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenTierK, `MzPacked, `PairPacked, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked, `FastGenK250, `PairDispatch, `ReadTrim, `PairUnique, `PairSched, `MzView, `WgPacked]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `FastGenCoverE, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenTierK, `MzPacked, `PairPacked, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked, `FastGenK250, `PairDispatch, `ReadTrim, `PairUnique, `PairSched, `MzView, `WgPacked]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -193,3 +193,7 @@ lean_exe trim_map where               -- trimmed FASTQ pairs → proved trimmer 
 lean_exe whole_genome where           -- whole genome held once: index over a view of the chromosomes (unproved IO)
   srcDir := "bench"
   root := `WholeGenome
+
+lean_exe seed_lab where               -- seed lookup cost on the whole genome (benchmark only, unproved IO)
+  srcDir := "bench"
+  root := `SeedLab

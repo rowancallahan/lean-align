@@ -817,11 +817,11 @@ theorem mapShortBatch_get (P : Nat) (gbs : Array ByteArray) (rs : Array ByteArra
   rw [key (List.range gbs.size) (fun c hc => List.mem_range.mp hc), hrep]
 
 theorem mapChromsShortC_inv (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : ByteArray)
-    (hg : GenomeBytes gbs g) (hr : Encodes R read) (hn : sbound P + 1 ≤ R.size) :
+    (hg : GenomeBytes gbs g) (hr : Encodes R read) (hn : 2 * (sbound P + 1) ≤ R.size) :
     ∃ S, InvP P (cwB P read g) S (mapChromsShortC P gbs R) ∧ ∀ w, cwB P read g w ≤ P → S w := by
   have hsz : gbs.size = g.length := hg.1
   have hrr := revCompB_encodes R read hr
-  have hrn : sbound P + 1 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
+  have hrn : 2 * (sbound P + 1) ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
   have hcw1 : ∀ c, c < gbs.size → ∀ st len,
       cwB P read g ⟨0 + c, st, len⟩ = cwT P read (g ++ g) ⟨0 + c, st, len⟩ := by
     intro c hc st len
@@ -914,7 +914,7 @@ theorem lookup_zip {α : Type} (ks : List Nat) (vs : List α) (hnd : ks.Nodup) (
 
 /-- The short reads of a chunk (too few 25-letter seeds, more than `sbound P` letters). -/
 def shortIdx (P : Nat) (rs : Array ByteArray) : List Nat :=
-  (List.range rs.size).filter fun i => !fastT P rs[i]! && decide (sbound P + 1 ≤ rs[i]!.size)
+  (List.range rs.size).filter fun i => !fastT P rs[i]! && decide (2 * (sbound P + 1) ≤ rs[i]!.size)
 
 /-- Map a chunk of reads on both strands at `T = −P`: indexed reads one by one,
 the short reads of the chunk in one batch (`mapShortBatch`). -/
@@ -924,7 +924,7 @@ def mapChunkGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G :
   let tab := sh.zip (mapShortBatch P gbs (sh.toArray.map fun i => rs[i]!)).toList
   (Array.range rs.size).map fun i =>
     if fastT P rs[i]! then decodeP gbs.size P (mapChromsGB P ix G offs gbs rs[i]!)
-    else if sbound P + 1 ≤ rs[i]!.size then decodeP gbs.size P ((tab.lookup i).getD {})
+    else if 2 * (sbound P + 1) ≤ rs[i]!.size then decodeP gbs.size P ((tab.lookup i).getD {})
     else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB gbs) (decodeBytes rs[i]!)
 
 /-- **A chunk of reads, both strands, `T = −P`.** -/

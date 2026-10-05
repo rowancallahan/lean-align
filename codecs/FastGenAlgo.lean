@@ -5,6 +5,7 @@ import MapperGenLook
 import MapperGenSearch
 import MapperGen16
 import MapperGenShare
+import MapperEvents
 import SeedMapper2
 
 /-!
@@ -77,10 +78,10 @@ above the best cannot change it; the best's own window is not scored again). -/
 
 /-- The seed count for the penalty bound `x`: how many seeds a window within
 penalty `x` can spoil. -/
-def sbTbl : Array Nat := ((List.range 33).map fun (x : Nat) => seedBound sc0 (-(x : Int))).toArray
+def sbTbl : Array Nat := ((List.range 33).map fun (x : Nat) => seedBoundE sc0 (-(x : Int))).toArray
 
-/-- (`sbound_def`: `seedBound sc0 (−x)`, from a table below `33`.) -/
-@[inline] def sbound (x : Nat) : Nat := if x < 33 then sbTbl[x]! else seedBound sc0 (-(x : Int))
+/-- (`sbound_def`: `seedBoundE sc0 (−x)` = `x / 4`, events counted; from a table below `33`.) -/
+@[inline] def sbound (x : Nat) : Nat := if x < 33 then sbTbl[x]! else seedBoundE sc0 (-(x : Int))
 
 /-- Look up the seeds of `ord`; each anchor's same-length window goes through the
 kernel.  Returns the best, the anchor arrays and the seeds looked up (newest first). -/

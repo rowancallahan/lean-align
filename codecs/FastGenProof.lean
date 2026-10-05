@@ -1,6 +1,7 @@
 import FastGenAlgo
 import FastGenCover
 import FastGenCoverL
+import FastGenCoverE
 
 /-!
 # Proof of the general fast mapper (part 1: windows)
@@ -186,16 +187,16 @@ theorem cwT_kerH (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArra
 
 /-! ## Monotonicity of the bounds -/
 
-theorem sbound_def (x : Nat) : sbound x = seedBound sc0 (-(x : Int)) := by
+theorem sbound_def (x : Nat) : sbound x = seedBoundE sc0 (-(x : Int)) := by
   unfold sbound sbTbl; split
   · next h => simp [getElem!_pos, h]
   · rfl
 
-theorem sbound_eq (x : Nat) : sbound x = max ((x : Int) / 4).toNat (((x : Int) - 6) / 2).toNat := by
-  rw [sbound_def]; unfold seedBound sc0
-  simp only [Int.neg_neg, show min (4 : Int) (-(-6 + -2)) = 4 by decide, show min (4 : Int) 2 = 2 by decide,
-    show (-(-2 : Int)) = 2 by decide, show (-(-4 : Int)) = 4 by decide]
-  congr 2
+theorem sbound_eq (x : Nat) : sbound x = x / 4 := by
+  rw [sbound_def]; unfold seedBoundE sc0
+  simp only [Int.neg_neg, show min (4 : Int) (min 6 (-2 * -2)) = 4 by decide, show (-(-6 : Int)) = 6 by decide,
+    show (-(-4 : Int)) = 4 by decide]
+  omega
 
 theorem gapBound_eq (x : Nat) : gapBound sc0 (-(x : Int)) = (((x : Int) - 6) / 2).toNat := by
   unfold gapBound sc0; simp only [Int.neg_neg, show (-(-2 : Int)) = 2 by decide]; congr 2
@@ -204,10 +205,7 @@ theorem gapBound2_eq (x : Nat) : gapBound2 sc0 (-(x : Int)) = (((x : Int) - 12) 
   unfold gapBound2 sc0; simp only [Int.neg_neg, show (-(-2 : Int)) = 2 by decide]; congr 2
 
 theorem sbound_mono (x y : Nat) (h : x ≤ y) : sbound x ≤ sbound y := by
-  rw [sbound_eq, sbound_eq]
-  have a : ((x : Int) / 4).toNat ≤ ((y : Int) / 4).toNat := Int.toNat_le_toNat (by omega)
-  have b : (((x : Int) - 6) / 2).toNat ≤ (((y : Int) - 6) / 2).toNat := Int.toNat_le_toNat (by omega)
-  omega
+  rw [sbound_eq, sbound_eq]; exact Nat.div_le_div_right h
 
 theorem gapBound_mono (x y : Nat) (h : x ≤ y) : gapBound sc0 (-(x : Int)) ≤ gapBound sc0 (-(y : Int)) := by
   rw [gapBound_eq, gapBound_eq]; exact Int.toNat_le_toNat (by omega)
@@ -706,7 +704,7 @@ set_option maxHeartbeats 2000000 in
 looked-up seeds `pre` (sorted, holding every exact seed place) whose same-length
 windows are in `S1`, under the stop rule: afterwards every window of chromosome `c`
 within penalty `min best P` was added (any seed count `m`, lookup length `l`). -/
-theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs : R.size / m = Ls)
+theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs : R.size / m = Ls) (hL2 : 2 ≤ Ls)
     (hl0 : 0 < l) (hlL : l ≤ Ls) (arr : Nat → Array Nat)
     (hArr : ∀ j, j < m → (arr j).toList.Pairwise (· < ·) ∧
       ∀ p, MatchAtL gbs[c]! p R (j * Ls) l → (p + (R.size - j * Ls)) * 16 + 0 ∈ (arr j).toList)
@@ -775,7 +773,8 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
     · rw [hJ, List.length_reverse, h]
       have := sbound_mono Q1 P (by omega); omega
   obtain ⟨j, hj, p, a, bb, hcg, hmatch, hshape, ha1, ha2, hst, hwl⟩ :=
-    coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
+    coverLE g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
+      (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
       J hJn (fun j hj => by have := hJm j hj; omega) (by rw [sbound_def] at hJl; omega) w (-(x : Int)) hws (Int.le_refl _)
   rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch ha1 hst
   rw [← hn] at hwl
@@ -816,7 +815,8 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
       apply Classical.byContradiction; intro hlt'
       have hsub := List.filter_sublist (p := fun j' => !(pred ∘ arr) j') (l := pre)
       obtain ⟨j', hj', p', a', bb', -, hmatch', hshape', ha1', -, hst', -⟩ :=
-        coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
+        coverLE g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
+          (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
           _ (hsub.nodup hpnd)
           (fun j hj => by have := hpm j (hsub.subset hj); omega)
           (by rw [sbound_def] at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
@@ -917,6 +917,7 @@ theorem chromKB_cover (arr : Nat → Array Nat)
     ∃ S', InvP P cw S' (chromKB R gbs c P (pre.map arr).reverse b1) ∧ (∀ w, S1 w → S' w) ∧
       ∀ w, w.chr = c → cwT P read g w ≤ min (chromKB R gbs c P (pre.map arr).reverse b1).pen P → S' w :=
   chromKB_coverL P read g gbs R hg hr c hc cw hcw1 hcwc (R.size / 25) (R.size / (R.size / 25)) q hm hsb rfl
+    (by have := le_div_seeds R.size hm; unfold q at this; omega)
     (by decide) (le_div_seeds _ hm) arr (fun j hj => ⟨(hArr j hj).1, fun p hp => (hArr j hj).2 p hp⟩)
     pre hpnd hpm S1 b1 hinv1 hS1 hstop
 

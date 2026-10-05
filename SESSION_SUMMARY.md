@@ -160,8 +160,19 @@ Done (all proved, check.sh green on 58b0faf):
 - Merged speed/packed-genome (GRead), claude/upbeat-goldberg-kizkfd (word kernels), speed/pair-unique, speed/chrom-scaling. `PGen.raw` USize path guarded by `i < USize.size` (`raw_eq`); FastGenK250 copies aligned (addKF skip, shape tables); `RepAll` in FastGenK250 → `RepAllK`.
 - `codecs/FastGenTierK.lean` `pairTier1K_{hashed,mz}_eq` = `pairSpecTier1` (+ `checkPGs`): word kernels at cap 16, bytes at cap 12. chr21 tier-1 pairs: 2×250 22–30k → 34–38k pairs/s; 2×100 76k. `gen_pair_bench GP_TIER1=1 GP_K=1 [GP_KCHECK=k]`.
 - Tried and dropped: two-pass stage K (slower), USize seedCode (≈2%).
-In progress: event-based pigeonhole (task from Rowan). Plan: spoiled seeds ≤ mis + x-runs + Σ over y-runs (1 + (L−1)/25) (a y-run = read letters not in the genome; seeds are disjoint 25-letter read slices ≥ 25 apart), every term costs ≥ 4 ⇒ ≤ ⌊P/4⌋. No new search code: `coverL` already lets the clean seed sit on a shifted diagonal (shape within gapBound). Changes: a new counting lemma (replacing `errReps`' per-column y coordinates by run starts + seed starts), then `sbound` := P/4 in fastT / stop rule / support filter. Deepest guaranteed P: 100 bp → 15, 150 → 23, 250 → 39.
-Next: that proof; then speeds at the deeper caps (chr21 2×250, 0.5–2% error).
+Event-based pigeonhole — PROVED (9fade4e, 7e0b05c; check.sh green on 7e0b05c):
+- `pool/mapper/MapperEvents.lean` `exists_clean_seed_amongE`: with seeds of ≥ 2 letters a walk within `−T` leaves at most `seedBoundE sc T = (−T) / min(M, O, 2E)` seeds unclean (`errRepsL`: a gapY run charged at its start and per seed boundary crossed; `errRepsL_clean`, `errRepsL_length_le`, `cost_boundE`). `codecs/FastGenCoverE.lean` `coverLE`.
+- `sbound x = x / 4` (was max(x/4, (x−6)/2)) in fastT, phase-1 stop rule and stage-K/B support filter; `chromKB_coverL` takes `2 ≤ Ls`; short path guard `2·(sbound P + 1) ≤ |R|`. No new search code; theorem statements unchanged.
+- Deepest guaranteed cap: 100 bp 13 → 15, 150 bp 17 → 23, 250 bp 25 → 39. Indexed path = short scan on 300 slice reads at T = −16, −24, −39.
+- Speed, chr21 2×250, 20k pairs, 1 task (GP_K=1 word kernels; K=0 bytes):
+
+| error | T=−16 | T=−24 | T=−32 | T=−39 |
+|---|---|---|---|---|
+| 0.5% | 44.7k pairs/s | 4.1k | | |
+| 1% | 28.6k (bytes 21.2k) | 1.24k | 238 | 48 |
+| 2% | 28.5k | 0.53k | | |
+
+  Above 16 the cost is stage B (banded DP over all shapes, band grows with P) for every read whose best stays above 16; the word kernels do not help there. Next for depth: exact kernels above 16 (gappedPen3 is exact to 17) or a cheaper stage B; not started.
 
 ## Rowan's ranked speedup list — status (2026-10-04)
 Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest bucket first + early stop); 3 tighter bound (4 × 25); 5 stored seed rest / context; 7 threads (mark_mt fix); 9 rarest-first + P/4+1 stop + gaps only ≥ 8; 10 non-ACGT (per-letter place lists, N = mismatch). Partly: 4 unboxed (proved code uses ByteArray/fixed-width/tail recursion, but not yet the 2-bit packed genome + popcount → `speed/seed-schemes` proving a packed-Hamming kernel); 6 sampled whole-genome index (minimizer / mod-minimizer proved, whole genome not built). Not done: 8 batch lookups across reads (→ `speed/proto-tune` prototype).
@@ -204,3 +215,13 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 - hg38, 24 chromosomes (3.09 G letters), k22 B26 c0 W5 t6: 843.6M entries, 1.45 B/letter; build 1173 s, peak 7.72 GB. Saved at /home/user/data/wg/hg38.*. Index check (check3V, 4 tasks) 979 s.
 - hg38.pe250 sim, 100k pairs, T = −16: 1,515 pairs/s at 1 thread, 5,401 at 4; 89,437 kept; RSS 7.6 GB (byte genome 3.07 GB; packing it would give ≈ 5.4 GB). The run then hit an IO error (HG002 step, not diagnosed).
 - TODO: switch to the packed genome; whole-genome HG002; minibwa whole-genome index (OOM-killed so far; needs ~9 GB free); why it is ~25× slower per pair than chr21 (lookup hits per seed?).
+
+### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
+Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
+- Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
+- Lower bounds from seeds: a candidate window with k spoiled seeds costs ≥ 4k (same event argument); skip windows whose bound > T or > current best (unique mode: > second best).
+- Word kernels past 16: extend ker16 / stage K (one gap, shared mismatch profiles) to gap length ≤ (T−6)/2 (16 shifts at −39), then two-gap kernels; only reads that fail these reach the banded step.
+- Bit-parallel banded DP (Myers / Hyyrö-style bit vectors, affine variant): band ≤ 64 fits one word per column.
+- Iterative deepening per read: −16, then −24, then −39, only on reads not settled; ambiguity early exit (two hits ≤ T tie → unmapped in default unique mode).
+- Batch the slow reads (stragglers) so their genome windows are fetched together.
+- ASK ROWAN after whole-genome testing: 125–149 bp mates now have a proved cap of 19, so length dispatch could run them at T=−16 instead of −12 (pure dispatch change, proof already covers it). Not changed yet.
