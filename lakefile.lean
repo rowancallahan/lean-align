@@ -77,7 +77,7 @@ lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `MzPacked, `PairPacked, `PairConcatPacked, `FastGenCoverL, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenK250]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `MzPacked, `PairPacked, `PairConcatPacked, `FastGenCoverL, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenK250, `PairDispatch, `ReadTrim]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -185,3 +185,7 @@ lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate f
 lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
   srcDir := "bench"
   root := `PackedBench
+
+lean_exe trim_map where               -- trimmed FASTQ pairs → proved trimmer → proved pair mapper (unproved IO)
+  srcDir := "bench"
+  root := `TrimMap
