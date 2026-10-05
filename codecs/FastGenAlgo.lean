@@ -208,12 +208,12 @@ spoiled blocks `sp` (`bandEndP_spec`). -/
   if 0 ≤ (D : Int) + bb then (shs.filter (·.2 == bb)).foldl (addBS P R gbs c D (bandEndAt P R gbs c D sp bb)) b
   else b
 
-/-- The band stage over diagonals `ds` and end shifts `bs`. -/
+/-- The band stage over diagonals `ds` and end shifts `bs`; each pass is capped at the current best. -/
 @[specialize] def stageB {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c : Nat) (shs : List (Int × Int))
     (bs : List Int) (ds : List Nat) (b : Best) : Best :=
   ds.foldl (fun b D =>
     let A := spoiledArr R gbs[c]! D (shiftMax bs) (bandOf sc0 (-(P : Int)))
-    bs.foldl (stageBD P R gbs c shs D fun j => A[j]?.getD false) b) b
+    bs.foldl (fun b bb => stageBD (min b.pen P) R gbs c shs D (fun j => A[j]?.getD false) b bb) b) b
 
 /-- Seeds (anchor arrays) with an anchor within `r` diagonals of `D`. -/
 def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
@@ -223,8 +223,9 @@ def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
 def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=
   (diags acc).filter fun D => decide (need ≤ suppA acc D r)
 
-/-- End shifts `−d … d`. -/
-def shifts (d : Nat) : List Int := (List.range (2 * d + 1)).map fun (i : Nat) => (i : Int) - d
+/-- End shifts `−d … d`, nearest first (the best found early lowers the later passes' caps). -/
+def shifts (d : Nat) : List Int :=
+  ((List.range (2 * d + 1)).map fun (i : Nat) => (i : Int) - d).mergeSort fun u v => decide (u.natAbs ≤ v.natAbs)
 
 /-- Shapes allowed within penalty `x`, fewest gap letters first (an indel hit found
 early lowers the best and makes the remaining kernel calls cheap). -/

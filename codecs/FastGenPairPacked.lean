@@ -182,9 +182,10 @@ theorem bandEndAt_same (P : Nat) (R : ByteArray) (c D : Nat) (sp : Nat → Bool)
 
 theorem stageB_same (P : Nat) (R : ByteArray) (c : Nat) (shs : List (Int × Int)) (bs : List Int) (ds : List Nat)
     (b : Best) : stageB P R xs c shs bs ds b = stageB P R ys c shs bs ds b := by
-  have e : stageBD P R xs c shs = stageBD P R ys c shs := by
+  have e : ∀ Pc, stageBD Pc R xs c shs = stageBD Pc R ys c shs := by
+    intro Pc
     funext D sp b bb
-    have e2 : addBS P R xs c D = addBS P R ys c D := by
+    have e2 : addBS Pc R xs c D = addBS Pc R ys c D := by
       funext opt b sh; simp only [addBS, (h.2 c).1]
     simp only [stageBD, bandEndAt_same h, e2]
   simp only [stageB, e, spoiledArr_same (h.2 c)]
