@@ -81,7 +81,9 @@ def K12 : Nat := 12
 length of the ACGT run ending at `x` (capped at `K`). -/
 @[inline] def roll (G : ByteArray) (x : Nat) (st : Nat × Nat) : Nat × Nat :=
   let v := acgtV (G.get! x)
-  if v < 4 then ((st.1 * 4 + v) % 4 ^ K12, min (st.2 + 1) K12) else (0, 0)
+  if v < 4 then ((st.1 * 4 + v) % 16777216, min (st.2 + 1) 12) else (0, 0)
+
+theorem pow_K12 : 4 ^ K12 = 16777216 := rfl
 
 /-- The state after the letters `[0, x)`. -/
 structure RollOk (G : ByteArray) (x : Nat) (st : Nat × Nat) : Prop where
@@ -117,6 +119,7 @@ theorem rollOk_step (G : ByteArray) (x : Nat) (st : Nat × Nat) (h : RollOk G x 
   obtain ⟨hle, hlx, hcode, hrun⟩ := h
   unfold roll
   dsimp only
+  rw [← pow_K12, show (12 : Nat) = K12 from rfl]
   have hK : K12 = 12 := rfl
   split
   · next hv =>
@@ -194,9 +197,25 @@ def batchKeys (sds : Array Seed) : Array Nat :=
   (((List.range sds.size).filterMap fun i => (seedKey sds[i]!).map fun k => k * sds.size + i).mergeSort
     (fun a b => decide (a ≤ b))).toArray
 
+/-- `n` zero bytes. -/
+def zerosAux : Nat → ByteArray → ByteArray
+  | 0, t => t
+  | k + 1, t => zerosAux k (t.push 0)
+
+def zeros (n : Nat) : ByteArray := zerosAux n (ByteArray.emptyWithCapacity n)
+
+theorem zeros_size (n : Nat) : (zeros n).size = n := by
+  unfold zeros
+  have : ∀ k (t : ByteArray), (zerosAux k t).size = t.size + k := by
+    intro k
+    induction k with
+    | zero => intro t; rfl
+    | succ k ih => intro t; rw [zerosAux, ih, ByteArray.size_push]; omega
+  rw [this]; show 0 + n = n; omega
+
 /-- `1` at every seed prefix code. -/
 def batchTbl (ks : Array Nat) (S : Nat) : ByteArray :=
-  ks.foldl (fun t e => t.set! (e / S) 1) ⟨Array.replicate (4 ^ K12) 0⟩
+  ks.foldl (fun t e => t.set! (e / S) 1) (zeros (4 ^ K12))
 
 /-- Candidate key `e` at window start `p`: verify the seed and record the anchor. -/
 @[inline] def visit (G : ByteArray) (sds : Array Seed) (p : Nat) (out : Array (Array Nat)) (e : Nat) :
@@ -218,12 +237,48 @@ def batchAux (G : ByteArray) (sds : Array Seed) (ks : Array Nat) (tbl : ByteArra
   else out
 termination_by G.size - x
 
-/-- Every seed's anchors in `G` (`batchScan_eq`: exactly `scanL`). -/
-def batchScan (G : ByteArray) (sds : Array Seed) : Array (Array Nat) :=
-  let ks := batchKeys sds
-  batchAux G sds ks (batchTbl ks sds.size) 0 (0, 0)
+/-- `batchAux` with the rolling state as two numbers (no pair per letter). -/
+def batchAux2 (G : ByteArray) (sds : Array Seed) (ks : Array Nat) (tbl : ByteArray) (x c r : Nat)
+    (out : Array (Array Nat)) : Array (Array Nat) :=
+  if x < G.size then
+    let v := acgtV (G.get! x)
+    let c' := if v < 4 then (c * 4 + v) % 16777216 else 0
+    let r' := if v < 4 then min (r + 1) 12 else 0
+    let out' := if K12 ≤ r' ∧ tbl[c']! = 1 then
+        (ks.extract (lbA ks (c' * sds.size) 0 ks.size) (lbA ks ((c' + 1) * sds.size) 0 ks.size)).foldl
+          (visit G sds (x + 1 - K12)) out
+      else out
+    batchAux2 G sds ks tbl (x + 1) c' r' out'
+  else out
+termination_by G.size - x
+
+theorem batchAux2_eq (G : ByteArray) (sds : Array Seed) (ks : Array Nat) (tbl : ByteArray) :
+    ∀ d x c r out, G.size - x = d → batchAux2 G sds ks tbl x c r out = batchAux G sds ks tbl x (c, r) out := by
+  intro d
+  induction d with
+  | zero =>
+    intro x c r out hd
+    rw [batchAux2, batchAux, if_neg (by omega), if_neg (by omega)]
+  | succ d ih =>
+    intro x c r out hd
+    rw [batchAux2, batchAux, if_pos (by omega), if_pos (by omega)]
+    simp only [roll]
+    split
+    · rw [ih _ _ _ _ (by omega)]
+    · rw [ih _ _ _ _ (by omega)]
+
+/-- The scan with the keys and the table computed once for all chromosomes. -/
+def batchScanK (G : ByteArray) (sds : Array Seed) (ks : Array Nat) (tbl : ByteArray) : Array (Array Nat) :=
+  batchAux2 G sds ks tbl 0 0 0
     ((Array.range sds.size).map fun i =>
       if (seedKey sds[i]!).isSome then #[] else scanL G sds[i]!.R sds[i]!.s sds[i]!.l sds[i]!.base)
+
+/-- Every seed's anchors in `G` (`batchScan_eq`: exactly `scanL`). -/
+def batchScan (G : ByteArray) (sds : Array Seed) : Array (Array Nat) :=
+  batchScanK G sds (batchKeys sds) (batchTbl (batchKeys sds) sds.size)
+
+theorem batchScanK_eq (G : ByteArray) (sds : Array Seed) :
+    batchScanK G sds (batchKeys sds) (batchTbl (batchKeys sds) sds.size) = batchScan G sds := rfl
 
 /-! ## Proof: the batch is `scanL` -/
 
@@ -247,6 +302,7 @@ theorem codeW_lt (A : ByteArray) (p : Nat) : ∀ k c, codeW A p k = some c → c
 
 theorem roll_lt (G : ByteArray) (x : Nat) (st : Nat × Nat) : (roll G x st).1 < 4 ^ K12 := by
   unfold roll; dsimp only
+  rw [← pow_K12]
   split
   · exact Nat.mod_lt _ (Nat.pow_pos (by decide))
   · exact Nat.pow_pos (by decide)
@@ -322,7 +378,7 @@ theorem batchTbl_hit (ks : Array Nat) (S : Nat) (hks : ∀ e ∈ ks.toList, e / 
       · rcases List.mem_cons.mp he' with rfl | he'
         · exact a2 _ (by rw [ByteArray.getElem!_set!_self _ _ _ he])
         · exact a3 e' he'
-  exact (key ks.toList _ (by show (Array.replicate (4 ^ K12) (0 : UInt8)).size = 4 ^ K12; simp) hks).2.2
+  exact (key ks.toList _ (zeros_size _) hks).2.2
 
 section visit
 variable (G : ByteArray) (sds : Array Seed)
@@ -610,6 +666,8 @@ theorem batchScan_eq (i : Nat) (hi : i < sds.size) :
       simp only [Array.getElem_map, Array.getElem_range, hk]
       rfl
   have hfin : ∃ st', BInv G sds G.size st' (batchScan G sds) := by
+    unfold batchScan batchScanK
+    rw [batchAux2_eq G sds _ _ _ 0 0 0 _ rfl]
     rcases batchAux_spec G sds hS _ 0 (0, 0) _ rfl (Nat.zero_le _) h0 with h | h
     · exact ⟨_, h⟩
     · exact h
@@ -623,6 +681,345 @@ theorem batchScan_eq (i : Nat) (hi : i < sds.size) :
 
 end main2
 
+/-! ## Short reads in batches -/
+
+instance : Inhabited Best := ⟨{}⟩
+
+/-- `shortChrom` with the seed anchors passed in. -/
+def shortChromA (R : ByteArray) (gbs2 : Array ByteArray) (t c P : Nat) (arrs : List (Array Nat)) (b : Best) : Best :=
+  let b1 := arrs.foldl (fun b a =>
+    a.foldl (fun b e => addK R gbs2 (t + c) (min P 16) ((e / 16 : Nat) - (R.size : Int)) R.size b) b) b
+  chromKB R gbs2 (t + c) P arrs.reverse b1
+
+theorem shortChromA_eq (R : ByteArray) (gbs2 : Array ByteArray) (t c P m Ls : Nat) (b : Best) :
+    shortChromA R gbs2 t c P ((List.range m).map fun j => scanL gbs2[t + c]! R (j * Ls) Ls (R.size - j * Ls)) b =
+      shortChrom R gbs2 t c P m Ls b := rfl
+
+/-- One read, chromosome by chromosome (both strands of a chromosome together). -/
+def mapChromsShortC (P : Nat) (gbs : Array ByteArray) (R : ByteArray) : Best :=
+  let n := gbs.size
+  let m := sbound P + 1
+  let Ls := R.size / m
+  (List.range n).foldl (fun b c =>
+    shortChrom (revCompB R) (gbs ++ gbs) n c P m Ls (shortChrom R (gbs ++ gbs) 0 c P m Ls b)) (initP P)
+
+/-- The seeds of a batch: read `i`, strand `st`, seed `j` at `(2i + st)·m + j`. -/
+def batchSeeds (m : Nat) (rs rr : Array ByteArray) : Array Seed :=
+  (Array.range (2 * rs.size * m)).map fun sid =>
+    let i := sid / (2 * m)
+    let R := if (sid / m) % 2 = 0 then rs[i]! else rr[i]!
+    let Ls := rs[i]!.size / m
+    ⟨R, (sid % m) * Ls, Ls, R.size - (sid % m) * Ls⟩
+
+/-- A batch of short reads: one `batchScan` per chromosome. -/
+def mapShortBatch (P : Nat) (gbs : Array ByteArray) (rs : Array ByteArray) : Array Best :=
+  let n := gbs.size
+  let m := sbound P + 1
+  let rr := rs.map revCompB
+  let sds := batchSeeds m rs rr
+  let ks := batchKeys sds
+  let tbl := batchTbl ks sds.size
+  (List.range n).foldl (fun bs c =>
+    let out := batchScanK gbs[c]! sds ks tbl
+    (Array.range rs.size).map fun i =>
+      let b := shortChromA rs[i]! (gbs ++ gbs) 0 c P ((List.range m).map fun j => out[(2 * i) * m + j]!) bs[i]!
+      shortChromA rr[i]! (gbs ++ gbs) n c P ((List.range m).map fun j => out[(2 * i + 1) * m + j]!) b)
+    (Array.replicate rs.size (initP P))
+
+theorem sid_parts (m i st j : Nat) (hj : j < m) (hst : st < 2) :
+    ((2 * i + st) * m + j) / (2 * m) = i ∧ (((2 * i + st) * m + j) / m) % 2 = st ∧ ((2 * i + st) * m + j) % m = j := by
+  have hm : 0 < m := by omega
+  have e1 : ((2 * i + st) * m + j) / m = 2 * i + st := by
+    rw [Nat.add_comm, Nat.add_mul_div_right _ _ hm, Nat.div_eq_of_lt hj]; omega
+  have e2 : ((2 * i + st) * m + j) % m = j := by
+    rw [Nat.add_comm, Nat.add_mul_mod_self_right]; exact Nat.mod_eq_of_lt hj
+  refine ⟨?_, by rw [e1]; omega, e2⟩
+  rw [Nat.mul_comm 2 m, ← Nat.div_div_eq_div_mul, e1]
+  omega
+
+theorem batchSeeds_get (m : Nat) (rs rr : Array ByteArray) (i st j : Nat) (hi : i < rs.size) (hj : j < m)
+    (hst : st < 2) :
+    (batchSeeds m rs rr)[(2 * i + st) * m + j]! =
+      ⟨if st = 0 then rs[i]! else rr[i]!, j * (rs[i]!.size / m), rs[i]!.size / m,
+        (if st = 0 then rs[i]! else rr[i]!).size - j * (rs[i]!.size / m)⟩ := by
+  have hlt : (2 * i + st) * m + j < 2 * rs.size * m := by
+    have : (2 * i + st) * m + m ≤ 2 * rs.size * m := by rw [← Nat.succ_mul]; exact Nat.mul_le_mul_right _ (by omega)
+    omega
+  unfold batchSeeds
+  rw [getElem!_pos _ _ (by simpa using hlt)]
+  simp only [Array.getElem_map, Array.getElem_range]
+  obtain ⟨a1, a2, a3⟩ := sid_parts m i st j hj hst
+  rw [a1, a2, a3]
+
+theorem batchSeeds_size (m : Nat) (rs rr : Array ByteArray) : (batchSeeds m rs rr).size = 2 * rs.size * m := by
+  unfold batchSeeds; simp
+
+theorem mapShortBatch_get (P : Nat) (gbs : Array ByteArray) (rs : Array ByteArray) (i : Nat) (hi : i < rs.size) :
+    (mapShortBatch P gbs rs)[i]! = mapChromsShortC P gbs rs[i]! := by
+  unfold mapShortBatch mapChromsShortC
+  simp only [batchScanK_eq]
+  have hm : 0 < sbound P + 1 := by omega
+  generalize sbound P + 1 = m at *
+  -- the anchors of read `i` on chromosome `c` are its `scanL` anchors
+  have hout : ∀ (c st j : Nat), st < 2 → j < m →
+      (batchScan gbs[c]! (batchSeeds m rs (rs.map revCompB)))[(2 * i + st) * m + j]! =
+        scanL gbs[c]! (if st = 0 then rs[i]! else (rs.map revCompB)[i]!) (j * (rs[i]!.size / m)) (rs[i]!.size / m)
+          ((if st = 0 then rs[i]! else (rs.map revCompB)[i]!).size - j * (rs[i]!.size / m)) := by
+    intro c st j hst hj
+    have hlt : (2 * i + st) * m + j < (batchSeeds m rs (rs.map revCompB)).size := by
+      rw [batchSeeds_size]
+      have : (2 * i + st) * m + m ≤ 2 * rs.size * m := by rw [← Nat.succ_mul]; exact Nat.mul_le_mul_right _ (by omega)
+      omega
+    rw [batchScan_eq _ _ _ hlt, batchSeeds_get m rs _ i st j hi hj hst]
+  have hrr : (rs.map revCompB)[i]! = revCompB rs[i]! := by
+    rw [getElem!_pos _ i (by simpa using hi), getElem!_pos _ i hi]; simp
+  have key : ∀ (l : List Nat), (∀ c ∈ l, c < gbs.size) → ∀ (bs : Array Best),
+      (l.foldl (fun bs c =>
+        (Array.range rs.size).map fun i =>
+          shortChromA (rs.map revCompB)[i]! (gbs ++ gbs) gbs.size c P
+            ((List.range m).map fun j => (batchScan gbs[c]! (batchSeeds m rs (rs.map revCompB)))[(2 * i + 1) * m + j]!)
+            (shortChromA rs[i]! (gbs ++ gbs) 0 c P
+              ((List.range m).map fun j => (batchScan gbs[c]! (batchSeeds m rs (rs.map revCompB)))[(2 * i) * m + j]!)
+              bs[i]!)) bs)[i]! =
+        l.foldl (fun b c => shortChrom (revCompB rs[i]!) (gbs ++ gbs) gbs.size c P m (rs[i]!.size / m)
+          (shortChrom rs[i]! (gbs ++ gbs) 0 c P m (rs[i]!.size / m) b)) bs[i]! := by
+    intro l
+    induction l with
+    | nil => intro _ bs; rfl
+    | cons c l ih =>
+      intro hl bs
+      have hc : c < gbs.size := hl c List.mem_cons_self
+      simp only [List.foldl_cons]
+      rw [ih (fun c' h' => hl c' (List.mem_cons_of_mem _ h'))]
+      congr 1
+      rw [getElem!_pos _ i (by simpa using hi)]
+      simp only [Array.getElem_map, Array.getElem_range]
+      have h0 : ((List.range m).map fun j => (batchScan gbs[c]! (batchSeeds m rs (rs.map revCompB)))[(2 * i) * m + j]!) =
+          (List.range m).map fun j => scanL (gbs ++ gbs)[0 + c]! rs[i]! (j * (rs[i]!.size / m)) (rs[i]!.size / m)
+            (rs[i]!.size - j * (rs[i]!.size / m)) := by
+        apply List.map_congr_left
+        intro j hj
+        have := hout c 0 j (by decide) (List.mem_range.mp hj)
+        simp only [Nat.add_zero, if_true] at this
+        rw [this, gbs2_get gbs 0 c (Or.inl rfl) hc]
+      have h1 : ((List.range m).map fun j => (batchScan gbs[c]! (batchSeeds m rs (rs.map revCompB)))[(2 * i + 1) * m + j]!) =
+          (List.range m).map fun j => scanL (gbs ++ gbs)[gbs.size + c]! (revCompB rs[i]!) (j * (rs[i]!.size / m))
+            (rs[i]!.size / m) ((revCompB rs[i]!).size - j * (rs[i]!.size / m)) := by
+        apply List.map_congr_left
+        intro j hj
+        have := hout c 1 j (by decide) (List.mem_range.mp hj)
+        simp only [show (1 : Nat) ≠ 0 by decide, if_false, hrr] at this
+        rw [this, gbs2_get gbs gbs.size c (Or.inr rfl) hc]
+      rw [h0, h1, hrr]
+      simp only [shortChromA_eq]
+  have hrep : (Array.replicate rs.size (initP P))[i]! = initP P := by
+    rw [getElem!_pos (Array.replicate rs.size (initP P)) i (by simpa using hi)]; simp
+  rw [key (List.range gbs.size) (fun c hc => List.mem_range.mp hc), hrep]
+
+theorem mapChromsShortC_inv (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : ByteArray)
+    (hg : GenomeBytes gbs g) (hr : Encodes R read) (hn : sbound P + 1 ≤ R.size) :
+    ∃ S, InvP P (cwB P read g) S (mapChromsShortC P gbs R) ∧ ∀ w, cwB P read g w ≤ P → S w := by
+  have hsz : gbs.size = g.length := hg.1
+  have hrr := revCompB_encodes R read hr
+  have hrn : sbound P + 1 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
+  have hcw1 : ∀ c, c < gbs.size → ∀ st len,
+      cwB P read g ⟨0 + c, st, len⟩ = cwT P read (g ++ g) ⟨0 + c, st, len⟩ := by
+    intro c hc st len
+    rw [Nat.zero_add, cwT_app_left P read g _ (by simp only; omega)]
+    unfold cwB; rw [if_pos (by simp only; omega)]
+  have hcw2 : ∀ c, c < gbs.size → ∀ st len,
+      cwB P read g ⟨gbs.size + c, st, len⟩ = cwT P (revComp read) (g ++ g) ⟨gbs.size + c, st, len⟩ := by
+    intro c hc st len
+    rw [hsz, cwT_app_right]
+    unfold cwB; rw [if_neg (by simp only; omega)]
+    simp
+  unfold mapChromsShortC
+  simp only []
+  have step : ∀ (l : List Nat) (S : Window → Prop) (b : Best), (∀ c ∈ l, c < gbs.size) →
+      InvP P (cwB P read g) S b →
+      ∃ S', InvP P (cwB P read g) S' (l.foldl (fun b c =>
+          shortChrom (revCompB R) (gbs ++ gbs) gbs.size c P (sbound P + 1) (R.size / (sbound P + 1))
+            (shortChrom R (gbs ++ gbs) 0 c P (sbound P + 1) (R.size / (sbound P + 1)) b)) b) ∧
+        (∀ w, S w → S' w) ∧ ∀ c ∈ l, ∀ w, (w.chr = c ∨ w.chr = gbs.size + c) → cwB P read g w ≤ P → S' w := by
+    intro l
+    induction l with
+    | nil => intro S b _ hi; exact ⟨S, hi, fun w hw => hw, fun c hc => by simp at hc⟩
+    | cons c l ih =>
+      intro S b hl hi
+      have hc := hl c List.mem_cons_self
+      obtain ⟨S1, i1, s1, c1⟩ := shortChrom_cover P read g gbs hg R read hr 0 (Or.inl rfl) hcw1 hn c hc S b hi
+      have e := shortChrom_cover P read g gbs hg (revCompB R) (revComp read) hrr gbs.size (Or.inr rfl) hcw2 hrn
+        c hc S1 _ i1
+      rw [revCompB_size] at e
+      obtain ⟨S2, i2, s2, c2⟩ := e
+      obtain ⟨S3, i3, s3, c3⟩ := ih S2 _ (fun c' h' => hl c' (List.mem_cons_of_mem _ h')) i2
+      simp only [List.foldl_cons]
+      refine ⟨S3, i3, fun w hw => s3 w (s2 w (s1 w hw)), fun c' hc' w hwc hwP => ?_⟩
+      rcases List.mem_cons.mp hc' with rfl | hc'
+      · rcases hwc with hwc | hwc
+        · exact s3 w (s2 w (c1 w (by simpa using hwc) hwP))
+        · exact s3 w (c2 w hwc hwP)
+      · exact c3 c' hc' w hwc hwP
+  obtain ⟨S, hi, -, hc⟩ := step (List.range gbs.size) (fun _ => False) (initP P)
+    (fun c hc => List.mem_range.mp hc) (inv_initP P (cwB P read g))
+  refine ⟨S, hi, fun w hw => ?_⟩
+  have hw2 := cwB_chr_lt P read g w hw
+  by_cases hwc : w.chr < gbs.size
+  · exact hc w.chr (List.mem_range.mpr hwc) w (Or.inl rfl) hw
+  · exact hc (w.chr - gbs.size) (List.mem_range.mpr (by omega)) w (Or.inr (by omega)) hw
+
+theorem foldl_map_size {β : Type} (n : Nat) (f : Array β → Nat → Nat → β) :
+    ∀ (l : List Nat) (bs : Array β), bs.size = n →
+      (l.foldl (fun bs c => (Array.range n).map fun i => f bs c i) bs).size = n := by
+  intro l
+  induction l with
+  | nil => intro bs h; exact h
+  | cons c l ih => intro bs _; exact ih _ (by simp)
+
+theorem mapShortBatch_size (P : Nat) (gbs : Array ByteArray) (rs : Array ByteArray) :
+    (mapShortBatch P gbs rs).size = rs.size := by
+  unfold mapShortBatch
+  simp only [batchScanK_eq]
+  exact foldl_map_size rs.size (fun bs c i =>
+      shortChromA (rs.map revCompB)[i]! (gbs ++ gbs) gbs.size c P
+        ((List.range (sbound P + 1)).map fun j =>
+          (batchScan gbs[c]! (batchSeeds (sbound P + 1) rs (rs.map revCompB)))[(2 * i + 1) * (sbound P + 1) + j]!)
+        (shortChromA rs[i]! (gbs ++ gbs) 0 c P
+          ((List.range (sbound P + 1)).map fun j =>
+            (batchScan gbs[c]! (batchSeeds (sbound P + 1) rs (rs.map revCompB)))[(2 * i) * (sbound P + 1) + j]!)
+          bs[i]!)) _ _ (by simp)
+
+theorem lookup_zip {α : Type} (ks : List Nat) (vs : List α) (hnd : ks.Nodup) (hl : ks.length = vs.length) :
+    ∀ k (hk : k < ks.length), (ks.zip vs).lookup ks[k] = some (vs[k]'(by omega)) := by
+  induction ks generalizing vs with
+  | nil => intro k hk; simp at hk
+  | cons a ks ih =>
+    cases vs with
+    | nil => simp at hl
+    | cons v vs =>
+      intro k hk
+      simp only [List.zip_cons_cons, List.lookup_cons]
+      rw [List.nodup_cons] at hnd
+      cases k with
+      | zero => simp
+      | succ k =>
+        simp only [List.getElem_cons_succ]
+        have hne : (ks[k]'(by simp at hk; omega) == a) = false := by
+          simp only [beq_eq_false_iff_ne, ne_eq]
+          intro he; exact hnd.1 (he ▸ List.getElem_mem _)
+        rw [hne]
+        exact ih vs hnd.2 (by simpa using hl) k (by simp at hk; omega)
+
+/-! ## A chunk of reads -/
+
+/-- The short reads of a chunk (too few 25-letter seeds, more than `sbound P` letters). -/
+def shortIdx (P : Nat) (rs : Array ByteArray) : List Nat :=
+  (List.range rs.size).filter fun i => !fastT P rs[i]! && decide (sbound P + 1 ≤ rs[i]!.size)
+
+/-- Map a chunk of reads on both strands at `T = −P`: indexed reads one by one,
+the short reads of the chunk in one batch (`mapShortBatch`). -/
+def mapChunkGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (rs : Array ByteArray) : Array (Option (Placement × Int)) :=
+  let sh := shortIdx P rs
+  let tab := sh.zip (mapShortBatch P gbs (sh.toArray.map fun i => rs[i]!)).toList
+  (Array.range rs.size).map fun i =>
+    if fastT P rs[i]! then decodeP gbs.size P (mapChromsGB P ix G offs gbs rs[i]!)
+    else if sbound P + 1 ≤ rs[i]!.size then decodeP gbs.size P ((tab.lookup i).getD {})
+    else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB gbs) (decodeBytes rs[i]!)
+
+/-- **A chunk of reads, both strands, `T = −P`.** -/
+theorem mapChunkGS_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (g : Genome) (gbs : Array ByteArray)
+    (ix : L) (G : ByteArray) (offs : Array Nat) (rs : Array ByteArray) (reads : Nat → List Char)
+    (hg : GenomeBytes gbs g) (hr : ∀ i, i < rs.size → Encodes rs[i]! (reads i)) (hcat : catOk G offs gbs = true)
+    (hlk : ∀ (R' : ByteArray) s base, s + q ≤ R'.size →
+      LookOkS G R' s base 0 (LookG.look ix G R' s base (LookG.prep ix (seedHashAt R' s))))
+    (i : Nat) (hi : i < rs.size) :
+    (mapChunkGS P ix G offs gbs rs)[i]! = mapSpecBoth sc0 (-(P : Int)) g (reads i) := by
+  have hgs := mapFastGS_eq_mapSpecBoth P g (reads i) gbs rs[i]! ix G offs hg (hr i hi) hcat hlk
+  unfold mapFastGS at hgs
+  unfold mapChunkGS
+  simp only []
+  rw [getElem!_pos _ i (by simpa using hi)]
+  simp only [Array.getElem_map, Array.getElem_range]
+  split
+  · next h => rw [if_pos h] at hgs; exact hgs
+  · next h =>
+    rw [if_neg h] at hgs
+    split
+    · next hn =>
+      -- the batch holds this read's best
+      have hmem : i ∈ shortIdx P rs := by
+        unfold shortIdx
+        rw [List.mem_filter, List.mem_range]
+        exact ⟨hi, by simp [h, hn]⟩
+      obtain ⟨k, hk, hki⟩ := List.getElem_of_mem hmem
+      have hnd : (shortIdx P rs).Nodup := List.nodup_range.filter _
+      have hlen : (shortIdx P rs).length = (mapShortBatch P gbs ((shortIdx P rs).toArray.map fun i => rs[i]!)).toList.length := by
+        simp [mapShortBatch_size]
+      have hlk' := lookup_zip _ _ hnd hlen k hk
+      rw [hki] at hlk'
+      rw [hlk', Option.getD_some]
+      have hb : (mapShortBatch P gbs ((shortIdx P rs).toArray.map fun i => rs[i]!)).toList[k]'(by rw [← hlen]; exact hk)
+          = mapChromsShortC P gbs rs[i]! := by
+        rw [Array.getElem_toList, ← getElem!_pos _ k (by rw [mapShortBatch_size]; simpa using hk),
+          mapShortBatch_get P gbs _ k (by simpa using hk)]
+        congr 1
+        rw [getElem!_pos _ k (by simpa using hk)]
+        simp only [Array.getElem_map, List.getElem_toArray, hki]
+      rw [hb]
+      obtain ⟨S, hinv, hall⟩ := mapChromsShortC_inv P (reads i) g gbs rs[i]! hg (hr i hi) hn
+      rw [hg.1]
+      exact decodeP_eq P g (reads i) S _ hinv hall
+    · next hn => rw [if_neg hn] at hgs; exact hgs
+
+/-- Proper pairs for a chunk of pairs (mates `r1s[i]`, `r2s[i]`). -/
+def pairChunkGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array ByteArray) (r1s r2s : Array ByteArray) :
+    Array (Option ((Placement × Int) × (Placement × Int))) :=
+  let a1 := mapChunkGS P ix G offs gbs r1s
+  let a2 := mapChunkGS P ix G offs gbs r2s
+  (Array.range r1s.size).map fun i =>
+    match a1[i]!, a2[i]! with
+    | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+    | _, _ => none
+
+/-- **A chunk of pairs, `T = −P`.** -/
+theorem pairChunkGS_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (g : Genome)
+    (gbs : Array ByteArray) (ix : L) (G : ByteArray) (offs : Array Nat) (r1s r2s : Array ByteArray)
+    (m1 m2 : Nat → List Char) (hg : GenomeBytes gbs g) (hsz : r1s.size = r2s.size)
+    (h1 : ∀ i, i < r1s.size → Encodes r1s[i]! (m1 i)) (h2 : ∀ i, i < r2s.size → Encodes r2s[i]! (m2 i))
+    (hcat : catOk G offs gbs = true)
+    (hlk : ∀ (R' : ByteArray) s base, s + q ≤ R'.size →
+      LookOkS G R' s base 0 (LookG.look ix G R' s base (LookG.prep ix (seedHashAt R' s))))
+    (i : Nat) (hix : i < r1s.size) :
+    (pairChunkGS P lo hi ix G offs gbs r1s r2s)[i]! = pairSpec sc0 (-(P : Int)) lo hi g (m1 i) (m2 i) := by
+  unfold pairChunkGS pairSpec
+  simp only []
+  rw [getElem!_pos _ i (by simpa using hix)]
+  simp only [Array.getElem_map, Array.getElem_range]
+  rw [mapChunkGS_eq P g gbs ix G offs r1s m1 hg h1 hcat hlk i hix,
+    mapChunkGS_eq P g gbs ix G offs r2s m2 hg h2 hcat hlk i (by omega)]
+  cases mapSpecBoth sc0 (-(P : Int)) g (m1 i) <;> cases mapSpecBoth sc0 (-(P : Int)) g (m2 i) <;> rfl
+
+theorem pairChunkGS_mz_eq (P lo hi : Nat) (g : Genome) (gbs : Array ByteArray) (ix : Mz.MzIdx) (G : ByteArray)
+    (offs : Array Nat) (r1s r2s : Array ByteArray) (m1 m2 : Nat → List Char) (hg : GenomeBytes gbs g)
+    (hsz : r1s.size = r2s.size)
+    (h1 : ∀ i, i < r1s.size → Encodes r1s[i]! (m1 i)) (h2 : ∀ i, i < r2s.size → Encodes r2s[i]! (m2 i))
+    (hcat : catOk G offs gbs = true) (hchk : checkAllMz #[ix] #[G] = true) (i : Nat) (hix : i < r1s.size) :
+    (pairChunkGS P lo hi ix G offs gbs r1s r2s)[i]! = pairSpec sc0 (-(P : Int)) lo hi g (m1 i) (m2 i) :=
+  pairChunkGS_eq P lo hi g gbs ix G offs r1s r2s m1 m2 hg hsz h1 h2 hcat (lookG_mz G ix hchk) i hix
+
+theorem pairChunkGS_hashed_eq (P lo hi : Nat) (g : Genome) (gbs : Array ByteArray) (ix : HIdx) (G : ByteArray)
+    (offs : Array Nat) (r1s r2s : Array ByteArray) (m1 m2 : Nat → List Char) (hg : GenomeBytes gbs g)
+    (hsz : r1s.size = r2s.size)
+    (h1 : ∀ i, i < r1s.size → Encodes r1s[i]! (m1 i)) (h2 : ∀ i, i < r2s.size → Encodes r2s[i]! (m2 i))
+    (hcat : catOk G offs gbs = true) (hchk : checkAll #[ix] #[G] = true) (i : Nat) (hix : i < r1s.size) :
+    (pairChunkGS P lo hi ix G offs gbs r1s r2s)[i]! = pairSpec sc0 (-(P : Int)) lo hi g (m1 i) (m2 i) :=
+  pairChunkGS_eq P lo hi g gbs ix G offs r1s r2s m1 m2 hg hsz h1 h2 hcat (lookG_hashed G ix hchk) i hix
+
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.batchScan_eq
+#print axioms MapSpec.Fast.mapChunkGS_eq
+#print axioms MapSpec.Fast.pairChunkGS_mz_eq
+#print axioms MapSpec.Fast.pairChunkGS_hashed_eq
