@@ -345,7 +345,8 @@ def fineOk {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (l Ls r D sb : Nat) :
 /-- Seeds `0 … m−1` not in `J`. -/
 def unseen (m : Nat) (J : List Nat) : List Nat := (List.range m).filter fun j => !J.contains j
 
-/-- `chromKB` with the seed filter in stage K (`J`: the seeds looked up). -/
+/-- `chromKB` with the seed filter in stages K and B (`J`: the seeds looked up); stage B's
+filter runs at `lim = P`, so a diagonal is skipped once its misses exceed `sbound (min P best)`. -/
 @[specialize] def chromKBS {Gt : Type} [GRead Gt] [Inhabited Gt] (R : ByteArray) (gbs : Array Gt) (c P : Nat)
     (acc : List (Array Nat)) (J : List Nat) (b1 : Best) : Best :=
   let lim := min P 16
@@ -355,7 +356,8 @@ def unseen (m : Nat) (J : List Nat) : List Nat := (List.range m).filter fun j =>
         R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim (diags acc) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
-    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+    stageKS (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
+      R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) P
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
