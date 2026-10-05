@@ -301,3 +301,16 @@ Stage-B seed filter — PROVED (`chromKBS`, `chromKBF`, `chromKBFG`; `chromKBS_c
 - Each stage-B diagonal goes through `kfilt` at `lim = P` (25-letter seeds looked up and unseen, plus 8-letter pieces, at most `sbound (min P best)` missed), re-evaluated at the best of the moment (`stageKS`). Proof: `hfilt` generalized to any `lim ≥ x` (`hfiltG`), stage B via `stageKS_inv`.
 - chr21 2×250 1% sim, 20k pairs, 1 task, GP_K=1, pairs/s before → after (dumps identical): T=−20 4.95k → 5.33k, T=−24 3.22k → 3.78k, T=−32 1.04k → 1.91k.
 - Real HG002 2×250 (first 20k ACGT-only pairs of D1_S1_L001_R{1,2}_004, not trimmed) vs chr21 (mostly off-target): T=−16 52.2k → 57.2k, T=−20 9.18k → 31.0k, T=−24 3.66k → 17.4k, T=−32 367 → 3.70k (dumps identical).
+
+### Cap ceiling vs minibwa unique proper pairs (bench/cap_table.py, Q25, HG002 200k cut, 2026-10-05)
+minibwa alignments re-scored with the spec after Q25 trimming; share of minibwa proper pairs (both MAPQ > 0: 188,963 / both MAPQ ≥ 20: 185,217) whose both mates are within the cap. Upper bound for our mapper (ignores our ties).
+| cap | MAPQ>0, ≥50 bp, within proved | MAPQ>0, ≥50 bp, cap only | MAPQ≥20, ≥50 bp, within proved | MAPQ≥20, ≥50 bp, cap only |
+|---|---|---|---|---|
+| 16 | 92.3% | 92.7% | 93.3% | 93.7% |
+| 20 | 93.4% | 94.1% | 94.4% | 95.0% |
+| 24 | 94.0% | 94.9% | 94.9% | 95.7% |
+| 30 | 94.5% | 95.6% | 95.3% | 96.3% |
+| 39 | 94.7% | 96.2% | 95.5% | 96.8% |
+| 80 | 94.7% | 97.3% | 95.5% | 97.7% |
+| ∞ | 94.7% | 98.5% | 95.5% | 98.5% |
+1.5% of pairs have a mate < 50 bp after Q25 trimming. Proved caps (4·(n/25)−1) top out at 94.7% / 95.5%; the rest needs a longer-reach filter proof or end clipping in the spec.
