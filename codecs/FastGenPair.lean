@@ -77,10 +77,13 @@ instance : Inhabited GS := ⟨⟨[], [], #[]⟩⟩
       ilG ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
     else (s1, s2, b)
 
+/-- `complB` as a table (`complTab_get`): no branches on the letters. -/
+def complTab : ByteArray := ⟨(Array.range 256).map fun i => complB i.toUInt8⟩
+
 /-- Reverse complement, one byte at a time (`revCompB2_eq`: it is `revCompB`). -/
 def rcAux (R : ByteArray) : Nat → ByteArray → ByteArray
   | 0, acc => acc
-  | i + 1, acc => rcAux R i (acc.push (complB (R.get! i)))
+  | i + 1, acc => rcAux R i (acc.push (complTab.get! (R.get! i).toNat))
 
 @[inline] def revCompB2 (R : ByteArray) : ByteArray := rcAux R R.size (ByteArray.emptyWithCapacity R.size)
 
@@ -128,6 +131,13 @@ def pairFastGB {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L
 
 /-! ## The reverse complement -/
 
+theorem complTab_get (b : UInt8) : complTab.get! b.toNat = complB b := by
+  have h := b.toNat_lt
+  unfold complTab
+  simp only [ByteArray.get!]
+  rw [getElem!_pos _ _ (by simpa using h)]
+  simp
+
 theorem rcAux_toList (R : ByteArray) : ∀ i (acc : ByteArray), i ≤ R.size →
     (rcAux R i acc).data.toList = acc.data.toList ++ ((R.data.toList.take i).map complB).reverse := by
   intro i
@@ -135,7 +145,7 @@ theorem rcAux_toList (R : ByteArray) : ∀ i (acc : ByteArray), i ≤ R.size →
   | zero => intro acc _; simp [rcAux]
   | succ i ih =>
     intro acc hi
-    rw [rcAux, ih _ (by omega), ByteArray.data_push, Array.toList_push]
+    rw [rcAux, complTab_get, ih _ (by omega), ByteArray.data_push, Array.toList_push]
     have hlt : i < R.data.toList.length := by rw [Array.length_toList, ByteArray.size_data]; omega
     have hget : R.get! i = R.data.toList[i] := by
       cases R with

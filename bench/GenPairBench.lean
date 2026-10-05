@@ -174,6 +174,16 @@ def main (args : List String) : IO UInt32 := do
           (List.range m).foldl (fun a j => a + ((Fast.seedHashAt R (j * Ls)).getD 0).toNat % 2 + ((Fast.seedHashAt Rr (j * Ls)).getD 0).toNat % 2) a) 0)).get
         let t8 ← IO.monoNanosNow
         IO.println s!"prof: lookups alone {secs t3 t4} s ({lk}); prep+revcomp {secs t4 t5} s ({hsh}); prep+ordG {secs t6 t7} s ({ords}); hashes only {secs t7 t8} s ({hashes})"
+        let ddup := xs.foldl (fun a (_, _, x) =>
+          a + x.1.acc.foldl (fun a acc => a + (Fast.diags acc).length) 0 + x.2.1.acc.foldl (fun a acc => a + (Fast.diags acc).length) 0) 0
+        let ta ← IO.monoNanosNow
+        let ak ← (← IO.mkRef (xs.foldl (fun a (R, Rr, x) =>
+          let f := fun (R : ByteArray) (t : Nat) (accs : Array (List (Array Nat))) (b : MapSpec.Fast.Best) =>
+            (List.range n).foldl (fun b c => accs[c]!.foldl (fun b arr => arr.foldl (fun b e =>
+              Fast.addK R gbs2 (t + c) (min P 16) ((e / 16 : Nat) - (R.size : Int)) R.size b) b) b) b
+          a + (f Rr n x.2.1.acc (f R 0 x.1.acc (Fast.initP P))).pen) 0)).get
+        let tb ← IO.monoNanosNow
+        IO.println s!"prof: distinct anchor diagonals {ddup} of {anc} anchors; anchor kernels from initP {secs ta tb} s ({ak})"
         IO.println s!"prof: ilG {secs t0 t1} s, chromKB {secs t1 t2} s ({bs.size}); lookups {looks}, anchors {anc}, stage-K diagonals (at phase-1 best) {dK}"
       if (← IO.getEnv "GP_TWO").isSome then
         -- estimate only (not the proved path): -12 first, -P for reads without a hit <= 12
