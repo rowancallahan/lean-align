@@ -4,7 +4,7 @@ import WgPacked
 import PairRegion
 import ReadTrim
 import PairRouter
-import PairLadderF
+import PairHybrid
 
 /-!
 Benchmark only (unproved IO).  Whole genome with the genome held once
@@ -952,6 +952,10 @@ def uprofRun (rcfg : RouteCfg) (kK : PassKer) (pk : PkMz) (upN : Nat) (uout : St
 kept and `pairTie` counts per class. -/
 def ukProf (f : ByteArray → ByteArray → Option PairHit × Bool) (anch : ByteArray → Nat) (N : Nat)
     (r1 r2 : Array ByteArray) : IO Unit := do
+  let out ← IO.getEnv "WG_UKOUT"
+  let h? ← match out with
+    | some p => some <$> IO.FS.Handle.mk p IO.FS.Mode.write
+    | none => pure none
   let mut tot : Array Nat := #[0, 0, 0]
   let mut cnt : Array Nat := #[0, 0, 0]
   let mut kept : Array Nat := #[0, 0, 0]
@@ -967,6 +971,8 @@ def ukProf (f : ByteArray → ByteArray → Option PairHit × Bool) (anch : Byte
     cnt := cnt.modify cl (· + 1)
     if r.1.isSome then kept := kept.modify cl (· + 1)
     else if r.2 then tie := tie.modify cl (· + 1)
+    if let some h := h? then
+      h.putStrLn s!"{k}\t{R1.size}\t{R2.size}\t{cl}\t{t1 - t0}\t{if r.1.isSome then "mapped" else if r.2 then "pairTie" else "none"}"
   for cl in [0:3] do
     say s!"UKPROF class {cl} (mates over 1000 anchors): pairs {cnt[cl]!}, {secs 0 tot[cl]!} s, kept {kept[cl]!}, pairTie {tie[cl]!}"
   let all := tot.foldl (· + ·) 0
@@ -985,6 +991,7 @@ structure HDet where
   nKer : Nat := 0
   nHit : Nat := 0
   calls : Nat := 0
+  byCap : Array (Nat × Nat × Nat) := Array.replicate 5 (0, 0, 0)
 
 def hitsSKT {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
     (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) (d : HDet) : IO HDet := do
@@ -1025,8 +1032,13 @@ def hitsKPT {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (
     (pgs : Array PGen) (R : ByteArray) (lim : Nat) (d : HDet) : IO HDet := do
   if fastT lim R then
     let n := pgs.size
+    let t0 ← IO.monoNanosNow
+    let n0 := d.nDiag
     let d ← hitsSKT ix G offs (pgs ++ pgs) n 0 lim R d
     let d ← hitsSKT ix G offs (pgs ++ pgs) n n lim (revCompK R) d
+    let t1 ← IO.monoNanosNow
+    let i := min (lim / 4) 4
+    let d := { d with byCap := d.byCap.modify i fun x => (x.1 + 1, x.2.1 + (t1 - t0), x.2.2 + (d.nDiag - n0)) }
     return { d with calls := d.calls + 1 }
   else return d
 
@@ -1045,6 +1057,9 @@ def ukDet {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (offs : Array Nat) 
   let mut np := 0
   let mut exits : Array Nat := Array.replicate 7 0
   let mut d : HDet := {}
+  let mut tC := 0
+  let mut tF := 0
+  let mut nF := 0
   for k in [0:min N r1.size] do
     let R1 := r1[k]!
     let R2 := r2[k]!
@@ -1052,7 +1067,14 @@ def ukDet {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (offs : Array Nat) 
     np := np + 1
     let P1 := penOf R1
     let P2 := penOf R2
-    let a1 := a1f R1 R2
+    let f0 ← IO.monoNanosNow
+    let a1 ← (← IO.mkRef (a1f R1 R2)).get
+    let f1 ← IO.monoNanosNow
+    let x1 ← (← IO.mkRef (mapFastGBKP P1 ix ByteArray.empty offs pgs R1)).get
+    let x2 ← (← IO.mkRef (if x1.isSome then mapFastGBKP P2 ix ByteArray.empty offs pgs R2 else none)).get
+    let f2 ← IO.monoNanosNow
+    tC := tC + (f1 - f0); tF := tF + (f2 - f1)
+    if x1.isSome && x2.isSome then nF := nF + 1
     let mut rung := 0
     let mut fin := false
     for c in capsU do
@@ -1103,6 +1125,8 @@ def ukDet {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (offs : Array Nat) 
     exits := exits.modify (min rung 6) (· + 1)
   say s!"UKDET both-repeat pairs {np}: hits {secs 0 tH} s in {nH} lists (mean len {sLen / max nH 1}, max {mLen}); pairing {secs 0 tP} s (proper pairs total {nPr}, max {mPr}); exit rung {exits}"
   say s!"UKDET stages ({d.calls} calls): look {secs 0 d.tLook} s, slices+diags {secs 0 d.tDiag} s, filter {secs 0 d.tFilt} s, kernels {secs 0 d.tKer} s; anchors {d.nAnch}, diags {d.nDiag}, passed {d.nPass}, kernel calls {d.nKer}, hits {d.nHit}"
+  say s!"UKDET by cap 0/4/8/12/16 (calls, ns, diags): {d.byCap}"
+  say s!"UKDET costP {secs 0 tC} s, fast path {secs 0 tF} s (both mates unique {nF})"
 
 /-- Map every read set with each mode and task count; dumps and timings. -/
 def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (okLen : ByteArray → Bool)
@@ -1576,12 +1600,21 @@ def main (args : List String) : IO UInt32 := do
         let a1 := !decide (costP pk P2 (prepMate pk b : PrepM MzP) < costP pk P1 (prepMate pk a : PrepM MzP))
         pairUKPRF udc usl lo hi P1 P2 capsU a1 pk ByteArray.empty offs pgs a b
       let fU : ByteArray → ByteArray → PairOut := fun a b => (uR a b).1
+      -- Mode H (pairUKH_mz_eq / pairUKH_tie, codecs/PairHybrid.lean): pairRegionKP (mode PR) first, kept when
+      -- proper under properPairU at distance cost 0; else the ladder.  Same answers as mode U.
+      let hR : ByteArray → ByteArray → Option PairHit × Bool := fun a b =>
+        let a1 := !decide (costP pk (penOf b) (prepMate pk b : PrepM MzP) < costP pk (penOf a) (prepMate pk a : PrepM MzP))
+        pairUKH udc usl lo hi capsU a1 pk (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs a b
+      let fH : ByteArray → ByteArray → PairOut := fun a b => (hR a b).1
+      -- WG_UKH=1: the kind tally and the profile below run mode H instead of mode U
+      let uR0 := uR
+      let uR := if (← IO.getEnv "WG_UKH").getD "0" == "1" then hR else uR
       let uAnch : ByteArray → Nat := fun R =>
         let s : PrepM MzP := prepMate pk R
         s.ps.foldl (fun x p => x + LookG.size pk p) 0 + s.pr.foldl (fun x p => x + LookG.size pk p) 0
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
         else if m == "PR" then some ("PR", fR) else if m == "RT" then some ("RT", fRT)
-        else if m == "U" then some ("U", fU) else none
+        else if m == "U" then some ("U", fU) else if m == "H" then some ("H", fH) else none
       let okLen : ByteArray → Bool := if ms == ["RT"] then (fun _ => true) else okLen
       let tally := if (← IO.getEnv "WG_REASONS").getD "0" == "1" then [("router", fun a b => showR (route a b))] else []
       -- WG_UKIND=1: answer kinds of mode U (mapped / pairTie / none)
@@ -1590,6 +1623,9 @@ def main (args : List String) : IO UInt32 := do
         | (some _, _) => "mapped"
         | (none, true) => "pairTie"
         | (none, false) => "none")] else tally
+      -- WG_HUCHK=1: mode H's answer and flag against mode U's
+      let tally := if (← IO.getEnv "WG_HUCHK").getD "0" == "1" then tally ++ [("h=u", fun a b =>
+        if decide (hR a b = uR0 a b) then "same" else "diff")] else tally
       -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
       let cfgs := ((← IO.getEnv "WG_PROF").getD "").splitOn "," |>.filter (· ≠ "")
       let prof : List (String × (ByteArray → Prof → IO Prof)) := cfgs.map fun (cf : String) =>
