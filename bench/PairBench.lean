@@ -12,6 +12,7 @@ Benchmark only (unproved IO).  Runs the PROVED pair mapper `Fast.pairFast`
     env: PAIR_MIN (100), PAIR_MAX (1000), PAIR_TASKS (1), PAIR_JOINT (shared-best strand search, pairFastJ),
     PAIR_INTERLEAVE (strands interleaved one lookup at a time, pairFastI),
     PAIR_MODES=I,S1,S2 (several mappers on one index; dumps <dump>.<mode>; RSS is the peak over all),
+    mode X: pairFastX (S2 keys + exact early exits), mode F: unproved experiment (slower, kept for the record),
     PAIR_STATS (lookups and anchors per read of the S modes), PAIR_SCHED=m (one lookup scheduler over all chromosomes and strands, pairFastS; m = 1: key (k, size),
     2: (size, k); mate 2 searches mate 1's chromosome on the other strand first),
     PAIR_MZ=k [PAIR_MZ_B=B] (minimizer index, with PAIR_JOINT / PAIR_INTERLEAVE: pairFastJ/I_mz_eq_pairSpec)
@@ -56,13 +57,71 @@ def showHit (h : Placement × Int) : String :=
 
 /-- Lookups and anchors of the scheduled search of one read (same code as `mapChromsS`). -/
 def schedStats {L P : Type} [Inhabited L] [Inhabited P] (lk : Fast.Look L P) (key : Nat → Nat → Nat → Nat)
-    (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray) : Nat × Nat :=
+    (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray) : Nat × Nat × Nat :=
   let n := gbs.size
   let Rr := Fast.revCompB R
   let pss := (Array.range (2 * n)).map fun i => Fast.prepAll lk idxs[Fast.sChr n i]! (Fast.seedHashes (Fast.sRead n R Rr i))
   let ss0 := (Array.range (2 * n)).map fun i => Fast.LzS.init lk idxs[Fast.sChr n i]! pss[i]!
   let r := Fast.schedLoop lk key gbs idxs R Rr pss (8 * n) ss0 {}
-  r.1.foldl (fun (a, b) s => (a + s.k, b + s.as.size)) (0, 0)
+  let t := r.1.foldl (fun (a, b) s => (a + s.k, b + s.as.size)) (0, 0)
+  (t.1, t.2, r.2.pen)
+
+namespace MapSpec.Fast
+
+/-- EXPERIMENT (unproved, bench only): the third lookup of a slot skips its gap
+stage when the best is still ≥ 12, and the fourth lookup follows at once. -/
+def advF {L P : Type} [Inhabited P] (R G : ByteArray) (c : Nat) (lk : Look L P) (ix : L) (ps : Array P)
+    (s : LzS) (b : Best) : LzS × Best :=
+  match s.ord with
+  | j :: j2 :: rest =>
+    if s.k == 2 then
+      let lj := lk.look ix G R j ps[j]!
+      let fresh := newOnly s.as lj 0 0 #[]
+      let as := merge s.as lj 0 0 #[]
+      let looked := s.looked + pow2 j
+      let b1 := fresh.foldl (sameStep2 R G c) b
+      if 12 ≤ b1.pen then
+        let r := lzStep R G c lk ix ps j2 3 as looked b1
+        (⟨rest, 4, r.1, looked + pow2 j2⟩, r.2)
+      else (⟨j2 :: rest, 3, as, looked⟩, if 8 ≤ b1.pen then gapAll2 R G c as looked as.size 0 b1 else b1)
+    else s.adv R G c lk ix ps b
+  | _ => s.adv R G c lk ix ps b
+
+def schedLoopF {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
+    (key : Nat → Nat → Nat → Nat) (gbs : Array ByteArray) (idxs : Array L) (R Rr : ByteArray)
+    (pss : Array (Array P)) : Nat → Array LzS → Best → Array LzS × Best
+  | 0, ss, b => (ss, b)
+  | f + 1, ss, b =>
+    let n := gbs.size
+    match pickLive (fun i => ss[i]!.live b)
+        (fun i => key i ss[i]!.k (ss[i]!.next lk idxs[sChr n i]! pss[i]!)) (List.range ss.size) none with
+    | none => (ss, b)
+    | some i =>
+      let r := advF (sRead n R Rr i) gbs[sChr n i]! i lk idxs[sChr n i]! pss[i]! ss[i]! b
+      schedLoopF lk key gbs idxs R Rr pss f (ss.set! i r.1) r.2
+
+def mapFastF {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (key : Nat → Nat → Nat → Nat)
+    (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray) : Option (Placement × Int) :=
+  let n := gbs.size
+  let Rr := revCompB R
+  let pss := (Array.range (2 * n)).map fun i => prepAll lk idxs[sChr n i]! (seedHashes (sRead n R Rr i))
+  let ss0 := (Array.range (2 * n)).map fun i => LzS.init lk idxs[sChr n i]! pss[i]!
+  let r := schedLoopF lk key gbs idxs R Rr pss (8 * n) ss0 {}
+  decodeJ n ((List.range (2 * n)).foldl (fun b i =>
+    drain lk (sRead n R Rr i) gbs[sChr n i]! i idxs[sChr n i]! pss[i]! 4 r.1[i]! b) r.2)
+
+def pairFastF {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
+    (key1 : Nat → Nat → Nat → Nat) (key2 : Placement → Nat → Nat → Nat → Nat) (lo hi : Nat)
+    (gbs : Array ByteArray) (idxs : Array L) (R1 R2 : ByteArray) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  match mapFastF lk key1 gbs idxs R1 with
+  | none => none
+  | some a =>
+    match mapFastF lk (key2 a.1) gbs idxs R2 with
+    | some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+    | none => none
+
+end MapSpec.Fast
 
 def secs (t0 t1 : Nat) : Float := Float.ofNat (t1 - t0) / 1e9
 
@@ -109,22 +168,38 @@ def main (args : List String) : IO UInt32 := do
           let st := ps.map fun p => match Fast.mapFastS Fast.mzL (key1 m) gbs idxs p.1 with
             | some a => let x := schedStats Fast.mzL (key1 m) gbs idxs p.1
               let y := schedStats Fast.mzL (key2 m a.1) gbs idxs p.2
-              (2, x.1 + y.1, x.2 + y.2)
-            | none => let x := schedStats Fast.mzL (key1 m) gbs idxs p.1; (1, x.1, x.2)
+              (2, x.1 + y.1, x.2.1 + y.2.1)
+            | none => let x := schedStats Fast.mzL (key1 m) gbs idxs p.1; (1, x.1, x.2.1)
           let t := st.foldl (fun (a, b, c) (x, y, z) => (a + x, b + y, c + z)) (0, 0, 0)
           IO.println s!"stats {m}: reads {t.1}  lookups/read {Float.ofNat t.2.1 / Float.ofNat t.1}  anchors/read {Float.ofNat t.2.2 / Float.ofNat t.1}"
       if (← IO.getEnv "PAIR_PROF").isSome then
         -- time per mate-1 read by class: anchors ≤ 64 / > 64, mapped or not
-        let mut acc : Array (Nat × Nat) := #[(0, 0), (0, 0), (0, 0), (0, 0)]
+        let mut acc : Array (Nat × Nat × Nat × Nat) := Array.replicate 8 (0, 0, 0, 0)
         for p in ps do
           let t0 ← IO.monoNanosNow
-          let st ← pure (schedStats Fast.mzL (key1 "S2") gbs idxs p.1)
+          -- depends on t0 so the compiler cannot move it before the clock read
+          let st ← pure (schedStats Fast.mzL (key1 "S2") gbs idxs (if t0 == 0 then ByteArray.empty else p.1))
+          if st.1 == 123456789 then IO.println "."  -- used before the second clock read
           let t1 ← IO.monoNanosNow
-          let r := Fast.mapFastS Fast.mzL (key1 "S2") gbs idxs p.1
-          let c := (if st.2 > 64 then 2 else 0) + (if r.isSome then 1 else 0)
-          acc := acc.modify c fun (n, t) => (n + 1, t + (t1 - t0))
-        IO.println s!"prof (count, ns) [≤64 unmapped, ≤64 mapped, >64 unmapped, >64 mapped]: {acc}"
-      pure fun m p => if m.startsWith "S" then Fast.pairFastS Fast.mzL (key1 m) (key2 m) lo hi gbs idxs p.1 p.2
+                    -- class: anchors > 64, final best penalty 0-3 / 4-7 / 8-12 / none
+          let c := (if st.2.1 > 64 then 4 else 0) + min 3 (st.2.2 / 4)
+          acc := acc.modify c fun (n, t, l, a) => (n + 1, t + (t1 - t0), l + st.1, a + st.2.1)
+        -- mate 2 (pairs whose mate 1 maps): time by outcome kept / not kept
+        let mut m2 : Array (Nat × Nat) := #[(0, 0), (0, 0)]
+        for p in ps do
+          if let some a := Fast.mapFastS Fast.mzL (key1 "S2") gbs idxs p.1 then
+            let t0 ← IO.monoNanosNow
+            let r ← pure (Fast.mapFastS Fast.mzL (key2 "S2" a.1) gbs idxs (if t0 == 0 then ByteArray.empty else p.2))
+            if r.isSome && t0 == 0 then IO.println "."
+            let t1 ← IO.monoNanosNow
+            let c := match r with | some b => if properPair lo hi a.1 b.1 then 0 else 1 | none => 1
+            m2 := m2.modify c fun (n, t) => (n + 1, t + (t1 - t0))
+        IO.println s!"prof mate 2 (count, ns) [kept, not kept]: {m2}"
+        for c in [0:8] do
+          IO.println s!"prof anchors{if c ≥ 4 then ">64" else "≤64"} pen{["0-3", "4-7", "8-11", "12+"][c % 4]!}: (count, ns, lookups, anchors) {acc[c]!}"
+      pure fun m p => if m == "X" then Fast.pairFastX Fast.mzL (key1 "S2") (key2 "S2") lo hi gbs idxs p.1 p.2
+        else if m.startsWith "F" then Fast.pairFastF Fast.mzL (key1 "S2") (key2 "S2") lo hi gbs idxs p.1 p.2
+        else if m.startsWith "S" then Fast.pairFastS Fast.mzL (key1 m) (key2 m) lo hi gbs idxs p.1 p.2
         else if m == "I" then Fast.pairFastI Fast.mzL lo hi gbs idxs p.1 p.2
         else Fast.pairFastJ Fast.mzL lo hi gbs idxs p.1 p.2
   for m in modes do

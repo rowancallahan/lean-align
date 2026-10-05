@@ -17,6 +17,9 @@ finishes any slot still live (never in practice).
 
     … → mapFastS lk key gbs idxs R = mapSpecBoth sc0 (-12) g read             (mapFastS_eq_mapSpecBoth)
     … → pairFastS lk key lo hi gbs idxs R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 (pairFastS_eq_pairSpec)
+    … → pairFastX lk key1 key2 lo hi gbs idxs R1 R2 = pairSpec …               (pairFastX_eq_pairSpec)
+
+`pairFastX` adds two exact early exits (`amb0_final`, `target_final`, see `pairFastX`).
 -/
 
 namespace MapSpec.Fast
@@ -92,6 +95,69 @@ def pairFastS {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
   | some a =>
     match mapFastS lk (key2 a.1) gbs idxs R2 with
     | some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+    | none => none
+
+/-! ## Early exit
+
+`stop ss b` ends the search early; the caller decides what a stopped search means.
+Two exact uses (`pairFastX`): a best of penalty 0 that is ambiguous stays so
+(the read is unmapped), and for mate 2, once the slot of mate 1's chromosome on
+the other strand is finished, the pair is kept only if the current best is
+already a proper partner (a better or tying window elsewhere would only make it
+not proper or ambiguous). -/
+
+@[specialize] def schedLoopX {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
+    (key : Nat → Nat → Nat → Nat) (stop : Array LzS → Best → Bool) (gbs : Array ByteArray) (idxs : Array L)
+    (R Rr : ByteArray) (pss : Array (Array P)) : Nat → Array LzS → Best → Array LzS × Best × Bool
+  | 0, ss, b => (ss, b, false)
+  | f + 1, ss, b =>
+    if stop ss b then (ss, b, true) else
+    let n := gbs.size
+    match pickLive (fun i => ss[i]!.live b)
+        (fun i => key i ss[i]!.k (ss[i]!.next lk idxs[sChr n i]! pss[i]!)) (List.range ss.size) none with
+    | none => (ss, b, false)
+    | some i =>
+      let r := ss[i]!.adv (sRead n R Rr i) gbs[sChr n i]! i lk idxs[sChr n i]! pss[i]! b
+      schedLoopX lk key stop gbs idxs R Rr pss f (ss.set! i r.1) r.2
+
+/-- The best, and whether `stop` ended the search. -/
+@[specialize] def mapChromsX {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
+    (key : Nat → Nat → Nat → Nat) (stop : Array LzS → Best → Bool) (R : ByteArray) (gbs : Array ByteArray)
+    (idxs : Array L) : Best × Bool :=
+  let n := gbs.size
+  let Rr := revCompB R
+  let pss := (Array.range (2 * n)).map fun i =>
+    prepAll lk idxs[sChr n i]! (seedHashes (sRead n R Rr i))
+  let ss0 := (Array.range (2 * n)).map fun i => LzS.init lk idxs[sChr n i]! pss[i]!
+  let r := schedLoopX lk key stop gbs idxs R Rr pss (8 * n) ss0 {}
+  if r.2.2 then (r.2.1, true) else
+  ((List.range (2 * n)).foldl (fun b i =>
+    drain lk (sRead n R Rr i) gbs[sChr n i]! i idxs[sChr n i]! pss[i]! 4 r.1[i]! b) r.2.1, false)
+
+/-- Ambiguous at penalty 0. -/
+@[inline] def amb0 (b : Best) : Bool := b.pen == 0 && b.amb
+
+/-- Slot of mate 2 that can hold a proper partner of mate 1 at `a`. -/
+@[inline] def partnerSlot (n : Nat) (a : Placement) : Nat := if a.2 == Strand.fwd then n + a.1.chr else a.1.chr
+
+def pairFastX {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
+    (key1 : Nat → Nat → Nat → Nat) (key2 : Placement → Nat → Nat → Nat → Nat) (lo hi : Nat)
+    (gbs : Array ByteArray) (idxs : Array L) (R1 R2 : ByteArray) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  let n := gbs.size
+  let r1 := mapChromsX lk key1 (fun _ b => amb0 b) R1 gbs idxs
+  if r1.2 then none else
+  match decodeJ n r1.1 with
+  | none => none
+  | some a =>
+    let t := partnerSlot n a.1
+    let ok (b : Best) : Bool := match decodeJ n b with
+      | some x => properPair lo hi a.1 x.1
+      | none => false
+    let r2 := mapChromsX lk (key2 a.1) (fun ss b => amb0 b || (!ss[t]!.live b && !ok b)) R2 gbs idxs
+    if r2.2 then none else
+    match decodeJ n r2.1 with
+    | some x => if properPair lo hi a.1 x.1 then some (a, x) else none
     | none => none
 
 /-! ## Proofs -/
@@ -247,37 +313,46 @@ theorem drain_inv (i : Nat) (hi : i < 2 * gbs.size) :
         (sRead_size R gbs hn i) s b S h (by simpa using hl)
       exact ⟨S', i', s', Nat.le_refl _, cv⟩
 
-include hn hlk in
-theorem mapChromsS_inv (key : Nat → Nat → Nat → Nat) :
-    ∃ S, Inv (cwJ R gbs) S (mapChromsS lk key R gbs idxs) ∧ ∀ w, cwJ R gbs w ≤ 12 → S w := by
-  have hp : PssOk lk R gbs idxs ((Array.range (2 * gbs.size)).map fun i =>
-      prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i))) := fun i hi => by
-    simp [Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?, hi]
-  have h0 : AllOk R gbs ((Array.range (2 * gbs.size)).map fun i => LzS.init lk idxs[sChr gbs.size i]!
+omit [Inhabited P] hn hlk in
+theorem pss_ok : PssOk lk R gbs idxs ((Array.range (2 * gbs.size)).map fun i =>
+    prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i))) := fun i hi => by
+  simp [Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?, hi]
+
+omit hn hlk in
+theorem ss0_ok : AllOk R gbs ((Array.range (2 * gbs.size)).map fun i => LzS.init lk idxs[sChr gbs.size i]!
+    ((Array.range (2 * gbs.size)).map fun i =>
+      prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i)))[i]!) {} (fun _ => False) := by
+  refine ⟨inv_init _ (cwJ_le R gbs), by simp, fun i hi => ?_⟩
+  have e : ((Array.range (2 * gbs.size)).map fun i => LzS.init lk idxs[sChr gbs.size i]!
       ((Array.range (2 * gbs.size)).map fun i =>
-        prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i)))[i]!) {} (fun _ => False) := by
-    refine ⟨inv_init _ (cwJ_le R gbs), by simp, fun i hi => ?_⟩
-    have e : ((Array.range (2 * gbs.size)).map fun i => LzS.init lk idxs[sChr gbs.size i]!
-        ((Array.range (2 * gbs.size)).map fun i =>
-          prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i)))[i]!)[i]! =
-        LzS.init lk idxs[sChr gbs.size i]!
-          (prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i))) := by
-      rw [← hp i hi]; simp [Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?, hi]
-    rw [e]
-    exact init_ok _ _ _ i lk _ {} _ (inv_init _ (cwJ_le R gbs))
-  obtain ⟨S1, h1, -, -⟩ := schedLoop_inv lk R gbs idxs hn hlk key _ hp (8 * gbs.size) _ {} _ h0
-  generalize hr : schedLoop lk key gbs idxs R (revCompB R) _ (8 * gbs.size) _ {} = r at h1
-  -- drain every slot in turn
+        prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i)))[i]!)[i]! =
+      LzS.init lk idxs[sChr gbs.size i]!
+        (prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i))) := by
+    rw [← pss_ok lk R gbs idxs i hi]; simp [Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?, hi]
+  rw [e]
+  exact init_ok _ _ _ i lk _ {} _ (inv_init _ (cwJ_le R gbs))
+
+include hn hlk in
+/-- Draining every slot from any good state covers every window. -/
+theorem drainAll_inv (pss : Array (Array P)) (hp : PssOk lk R gbs idxs pss) (ss : Array LzS) (bL : Best)
+    (S1 : Window → Prop) (h1 : AllOk R gbs ss bL S1) :
+    ∃ S', Inv (cwJ R gbs) S' ((List.range (2 * gbs.size)).foldl (fun b i =>
+        drain lk (sRead gbs.size R (revCompB R) i) gbs[sChr gbs.size i]! i idxs[sChr gbs.size i]!
+          pss[i]! 4 ss[i]! b) bL) ∧ (∀ w, S1 w → S' w) ∧
+      ((List.range (2 * gbs.size)).foldl (fun b i =>
+        drain lk (sRead gbs.size R (revCompB R) i) gbs[sChr gbs.size i]! i idxs[sChr gbs.size i]!
+          pss[i]! 4 ss[i]! b) bL).pen ≤ bL.pen ∧ ∀ w, cwJ R gbs w ≤ 12 → S' w := by
   have step : ∀ (l : List Nat) S b, (∀ i ∈ l, i < 2 * gbs.size) → Inv (cwJ R gbs) S b →
-      (∀ w, S1 w → S w) → b.pen ≤ r.2.pen →
+      (∀ w, S1 w → S w) → b.pen ≤ bL.pen →
       ∃ S', Inv (cwJ R gbs) S' (l.foldl (fun b i =>
           drain lk (sRead gbs.size R (revCompB R) i) gbs[sChr gbs.size i]! i idxs[sChr gbs.size i]!
-            ((Array.range (2 * gbs.size)).map fun i =>
-              prepAll lk idxs[sChr gbs.size i]! (seedHashes (sRead gbs.size R (revCompB R) i)))[i]! 4 r.1[i]! b) b) ∧
-        (∀ w, S w → S' w) ∧ ∀ i ∈ l, ∀ st len, cwJ R gbs ⟨i, st, len⟩ ≤ 12 → S' ⟨i, st, len⟩ := by
+            pss[i]! 4 ss[i]! b) b) ∧ (∀ w, S w → S' w) ∧
+        (l.foldl (fun b i => drain lk (sRead gbs.size R (revCompB R) i) gbs[sChr gbs.size i]! i
+            idxs[sChr gbs.size i]! pss[i]! 4 ss[i]! b) b).pen ≤ b.pen ∧
+        ∀ i ∈ l, ∀ st len, cwJ R gbs ⟨i, st, len⟩ ≤ 12 → S' ⟨i, st, len⟩ := by
     intro l
     induction l with
-    | nil => intro S b _ h _ _; exact ⟨S, h, fun w hw => hw, fun i hi => by simp at hi⟩
+    | nil => intro S b _ h _ _; exact ⟨S, h, fun w hw => hw, Nat.le_refl _, fun i hi => by simp at hi⟩
     | cons i l ih =>
       intro S b hl h hS1 hb
       have hi := hl i List.mem_cons_self
@@ -286,20 +361,92 @@ theorem mapChromsS_inv (key : Nat → Nat → Nat → Nat) :
       simp only [List.foldl_cons]
       rw [hp i hi]
       obtain ⟨S2, i2, s2, p2, cv2⟩ := drain_inv lk R gbs idxs hn hlk i hi 4 _ b S hs (by omega)
-      obtain ⟨S', i', s', cv⟩ := ih S2 _ (fun i' h' => hl i' (List.mem_cons_of_mem _ h')) i2
+      obtain ⟨S', i', s', p', cv⟩ := ih S2 _ (fun i' h' => hl i' (List.mem_cons_of_mem _ h')) i2
         (fun w hw => s2 w (hS1 w hw)) (Nat.le_trans p2 hb)
-      refine ⟨S', i', fun w hw => s' w (s2 w hw), fun i' hi' st len hw => ?_⟩
+      refine ⟨S', i', fun w hw => s' w (s2 w hw), Nat.le_trans p' p2, fun i' hi' st len hw => ?_⟩
       rcases List.mem_cons.mp hi' with rfl | hi'
       · exact s' _ (cv2 st len hw)
       · exact cv i' hi' st len hw
-  obtain ⟨S', h', -, cov⟩ := step (List.range (2 * gbs.size)) S1 r.2 (fun i hi => List.mem_range.mp hi)
+  obtain ⟨S', h', hsub, hpen, cov⟩ := step (List.range (2 * gbs.size)) S1 bL (fun i hi => List.mem_range.mp hi)
     h1.1 (fun w hw => hw) (Nat.le_refl _)
-  refine ⟨S', ?_, fun w hw => ?_⟩
-  · subst hr; dsimp only [mapChromsS]; exact h'
+  refine ⟨S', h', hsub, hpen, fun w hw => ?_⟩
   · rcases w with ⟨c, st, len⟩
     by_cases hc : c < 2 * gbs.size
     · exact cov c (List.mem_range.mpr hc) st len hw
     · unfold cwJ at hw; simp [show ¬ c < gbs.size by omega, hc] at hw
+
+include hn hlk in
+theorem mapChromsS_inv (key : Nat → Nat → Nat → Nat) :
+    ∃ S, Inv (cwJ R gbs) S (mapChromsS lk key R gbs idxs) ∧ ∀ w, cwJ R gbs w ≤ 12 → S w := by
+  obtain ⟨S1, h1, -, -⟩ := schedLoop_inv lk R gbs idxs hn hlk key _ (pss_ok lk R gbs idxs) (8 * gbs.size) _ {} _
+    (ss0_ok lk R gbs idxs)
+  obtain ⟨S', h', -, -, cov⟩ := drainAll_inv lk R gbs idxs hn hlk _ (pss_ok lk R gbs idxs) _ _ _ h1
+  exact ⟨S', h', cov⟩
+
+include hn hlk in
+theorem schedLoopX_inv (key : Nat → Nat → Nat → Nat) (stop : Array LzS → Best → Bool) (pss : Array (Array P))
+    (hp : PssOk lk R gbs idxs pss) :
+    ∀ f ss b S, AllOk R gbs ss b S →
+      ∃ S', AllOk R gbs (schedLoopX lk key stop gbs idxs R (revCompB R) pss f ss b).1
+        (schedLoopX lk key stop gbs idxs R (revCompB R) pss f ss b).2.1 S' ∧ (∀ w, S w → S' w) ∧
+        ((schedLoopX lk key stop gbs idxs R (revCompB R) pss f ss b).2.2 = true →
+          stop (schedLoopX lk key stop gbs idxs R (revCompB R) pss f ss b).1
+            (schedLoopX lk key stop gbs idxs R (revCompB R) pss f ss b).2.1 = true) := by
+  intro f
+  induction f with
+  | zero => intro ss b S h; simp only [schedLoopX]; exact ⟨S, h, fun w hw => hw, fun h => nomatch h⟩
+  | succ f ih =>
+    intro ss b S h
+    unfold schedLoopX
+    simp only []
+    split
+    · next hs => exact ⟨S, h, fun w hw => hw, fun _ => hs⟩
+    · split
+      · exact ⟨S, h, fun w hw => hw, fun h => nomatch h⟩
+      · next i hpk =>
+        rcases pickLive_some _ _ _ _ _ hpk with h0 | ⟨hm, hl⟩
+        · cases h0
+        have hi : i < 2 * gbs.size := by rw [← h.2.1]; exact List.mem_range.mp hm
+        rw [hp i hi]
+        obtain ⟨S2, k2, hS, hpen, -⟩ := adv_ok (cwJ R gbs) (cwJ_le R gbs) _ _ i (cwJ_slot R gbs i hi)
+          (sRead_size R gbs hn i) lk idxs[sChr gbs.size i]! (slot_lk lk R gbs idxs hlk i hi) ss[i]! b S
+          (h.2.2 i hi) (fun e => by simp [LzS.live, e] at hl)
+        have hsz : i < ss.size := by rw [h.2.1]; exact hi
+        have h2 : AllOk R gbs (ss.set! i (ss[i]!.adv (sRead gbs.size R (revCompB R) i) gbs[sChr gbs.size i]! i lk
+            idxs[sChr gbs.size i]! (prepAll lk idxs[sChr gbs.size i]!
+              (seedHashes (sRead gbs.size R (revCompB R) i))) b).1)
+            (ss[i]!.adv (sRead gbs.size R (revCompB R) i) gbs[sChr gbs.size i]! i lk
+              idxs[sChr gbs.size i]! (prepAll lk idxs[sChr gbs.size i]!
+                (seedHashes (sRead gbs.size R (revCompB R) i))) b).2 S2 := by
+          refine ⟨k2.inv, by simp [h.2.1], fun i' hi' => ?_⟩
+          by_cases e : i' = i
+          · subst e; rw [set!_self _ _ _ hsz]; exact k2
+          · rw [set!_ne _ _ _ _ e]; exact (h.2.2 i' hi').mono k2.inv hS hpen
+        obtain ⟨S', h', s', st'⟩ := ih _ _ S2 h2
+        exact ⟨S', h', fun w hw => s' w (hS w hw), st'⟩
+
+include hn hlk in
+/-- The early-exit search: either it ran to the end (`bF`), or it stopped in a
+good state `(ss, bL)` with `stop ss bL`; `bF` is what the full search gives from there. -/
+theorem mapChromsX_inv (key : Nat → Nat → Nat → Nat) (stop : Array LzS → Best → Bool) :
+    ∃ ss bL S bF SF, AllOk R gbs ss bL S ∧ Inv (cwJ R gbs) SF bF ∧ bF.pen ≤ bL.pen ∧
+      (∀ w, cwJ R gbs w ≤ 12 → SF w) ∧
+      ((mapChromsX lk key stop R gbs idxs).2 = false → (mapChromsX lk key stop R gbs idxs).1 = bF) ∧
+      ((mapChromsX lk key stop R gbs idxs).2 = true →
+        (mapChromsX lk key stop R gbs idxs).1 = bL ∧ stop ss bL = true) := by
+  obtain ⟨S1, h1, -, hst⟩ := schedLoopX_inv lk R gbs idxs hn hlk key stop _ (pss_ok lk R gbs idxs)
+    (8 * gbs.size) _ {} _ (ss0_ok lk R gbs idxs)
+  generalize hr : schedLoopX lk key stop gbs idxs R (revCompB R) _ (8 * gbs.size) _ {} = r at h1 hst
+  obtain ⟨SF, hF, -, hpen, cov⟩ := drainAll_inv lk R gbs idxs hn hlk _ (pss_ok lk R gbs idxs) _ _ _ h1
+  refine ⟨r.1, r.2.1, S1, _, SF, h1, hF, hpen, cov, fun h => ?_, fun h => ?_⟩
+  · dsimp only [mapChromsX] at h ⊢; rw [hr] at h ⊢
+    by_cases hs : r.2.2 = true
+    · simp only [if_pos hs] at h; cases h
+    · simp only [if_neg hs]
+  · dsimp only [mapChromsX] at h ⊢; rw [hr] at h ⊢
+    by_cases hs : r.2.2 = true
+    · simp only [if_pos hs]; exact ⟨trivial, hst hs⟩
+    · simp only [if_neg hs] at h; cases h
 
 end sched
 
@@ -325,6 +472,156 @@ theorem pairFastS_eq_pairSpec {L P : Type} [Inhabited L] [Inhabited P] (lk : Loo
     rw [mapFastS_eq_mapSpecBoth lk _ g m2 gbs idxs R2 hg h2 hlk hok2]
     cases mapSpecBoth sc0 (-12) g m2 <;> rfl
 
+/-! ### Early exits are exact -/
+
+/-- Ambiguous at penalty 0 stays ambiguous. -/
+theorem amb0_final (cw : Window → Nat) (S SF : Window → Prop) (b bF : Best) (hb : Inv cw S b)
+    (hF : Inv cw SF bF) (hp : bF.pen ≤ b.pen) (cov : ∀ w, cw w ≤ 12 → SF w) (h : amb0 b = true) :
+    result bF = none := by
+  unfold amb0 at h
+  simp only [Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨h0, ha⟩ := h
+  obtain ⟨w', hw', hne, hcw⟩ := (hb.amb (by omega)).mp ha
+  have hF0 : bF.pen = 0 := by omega
+  have hbw : cw b.win = 0 := by rw [hb.hit (by omega), h0]
+  have : bF.amb = true := by
+    rw [hF.amb (by omega)]
+    by_cases e : b.win = bF.win
+    · exact ⟨w', cov w' (by omega), by rw [← e]; exact hne, by omega⟩
+    · exact ⟨b.win, cov _ (by omega), e, by omega⟩
+  unfold result; simp [this]
+
+/-- Once every window of tag `t` was looked at, a final answer on tag `t` is already the current one. -/
+theorem target_final (cw : Window → Nat) (t : Nat) (S SF : Window → Prop) (b bF : Best) (hb : Inv cw S b)
+    (ht : ∀ st len, cw ⟨t, st, len⟩ ≤ 12 → S ⟨t, st, len⟩) (hF : Inv cw SF bF) (hp : bF.pen ≤ b.pen)
+    (cov : ∀ w, cw w ≤ 12 → SF w) (st len p : Nat) (hr : result bF = some (t, st, len, p)) :
+    result b = result bF := by
+  have hr' := hr
+  unfold result at hr'
+  split at hr'
+  · next hc =>
+    simp only [Option.some.injEq, Prod.mk.injEq] at hr'
+    obtain ⟨e1, -, -, -⟩ := hr'
+    simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true'] at hc
+    obtain ⟨hc12, hna⟩ := hc
+    unfold cap at hc12
+    have hwF : cw bF.win = bF.pen := hF.hit hc12
+    have hS : S bF.win := by
+      have := ht bF.st bF.len; unfold Best.win at hwF ⊢; rw [e1] at hwF ⊢; exact this (by omega)
+    have hbp : b.pen = bF.pen := Nat.le_antisymm (by have := hb.min _ hS; omega) hp
+    have hbw : cw b.win = b.pen := hb.hit (by omega)
+    have hwin : b.win = bF.win := by
+      by_cases e : b.win = bF.win
+      · exact e
+      have : bF.amb = true := (hF.amb hc12).mpr ⟨b.win, cov _ (by omega), e, by omega⟩
+      rw [hna] at this; cases this
+    have hba : b.amb = false := by
+      cases e : b.amb
+      · rfl
+      · obtain ⟨w', hw', hne, hcw⟩ := (hb.amb (by omega)).mp e
+        have : bF.amb = true := (hF.amb hc12).mpr ⟨w', cov _ (by omega), by rw [← hwin]; exact hne, by omega⟩
+        rw [hna] at this; cases this
+    unfold Best.win at hwin
+    simp only [Window.mk.injEq] at hwin
+    obtain ⟨w1, w2, w3⟩ := hwin
+    have hb12 : b.pen ≤ 12 := by omega
+    unfold result
+    simp only [hba, hna, cap, w1, w2, w3, hbp, Bool.not_false, Bool.and_true, decide_eq_true_eq]
+    simp [hc12]
+  · cases hr'
+
+/-- A decoded proper partner of `a` lies in `partnerSlot n a`. -/
+theorem decode_partner (lo hi n : Nat) (b : Best) (a : Placement) (x : Placement × Int)
+    (hd : decodeJ n b = some x) (hpp : properPair lo hi a x.1 = true) :
+    ∃ st len p, result b = some (partnerSlot n a, st, len, p) := by
+  unfold decodeJ at hd
+  split at hd
+  · next c st len pen hres =>
+    refine ⟨st, len, pen, ?_⟩
+    rw [hres]
+    simp only [Option.some.injEq] at hd
+    subst hd
+    obtain ⟨⟨ac, ast, alen⟩, astr⟩ := a
+    unfold properPair at hpp
+    unfold partnerSlot
+    by_cases hc : c < n <;> cases astr <;> simp [hc] at hpp ⊢ <;> omega
+  · cases hd
+
+/-- **Early exits.** -/
+theorem pairFastX_eq_pairSpec {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P)
+    (key1 : Nat → Nat → Nat → Nat) (key2 : Placement → Nat → Nat → Nat → Nat) (lo hi : Nat)
+    (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray) (idxs : Array L) (R1 R2 : ByteArray)
+    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hlk : LookAll lk gbs idxs)
+    (hok1 : fastOk R1 = true) (hok2 : fastOk R2 = true) :
+    pairFastX lk key1 key2 lo hi gbs idxs R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 := by
+  have hn1 : 100 ≤ R1.size := by unfold fastOk q at hok1; simp at hok1; omega
+  have hn2 : 100 ≤ R2.size := by unfold fastOk q at hok2; simp at hok2; omega
+  have dnone : ∀ b : Best, result b = none → decodeJ gbs.size b = none := fun b h => by
+    unfold decodeJ; rw [h]
+  unfold pairFastX pairSpec
+  dsimp only
+  obtain ⟨ss1, bL1, S1, bF1, SF1, hA1, hF1, hp1, cov1, hno1, hyes1⟩ :=
+    mapChromsX_inv lk R1 gbs idxs hn1 hlk key1 (fun _ b => amb0 b)
+  have e1 := decodeJ_eq_mapSpecBoth g m1 gbs R1 bF1 hg h1 ⟨SF1, hF1, cov1⟩
+  generalize mapChromsX lk key1 (fun _ b => amb0 b) R1 gbs idxs = r1 at hno1 hyes1
+  obtain ⟨rb1, rs1⟩ := r1
+  cases rs1 with
+  | true =>
+    obtain ⟨-, hs⟩ := hyes1 (by simp)
+    rw [← e1, dnone _ (amb0_final _ _ _ _ _ hA1.1 hF1 hp1 cov1 hs)]
+    rfl
+  | false =>
+    simp only at hno1 ⊢
+    rw [if_neg (by simp), hno1 (by simp), e1]
+    cases mapSpecBoth sc0 (-12) g m1 with
+    | none => rfl
+    | some a =>
+      simp only
+      obtain ⟨ss2, bL2, S2, bF2, SF2, hA2, hF2, hp2, cov2, hno2, hyes2⟩ :=
+        mapChromsX_inv lk R2 gbs idxs hn2 hlk (key2 a.1) (fun ss b => amb0 b ||
+          (!ss[partnerSlot gbs.size a.1]!.live b && !(match decodeJ gbs.size b with
+            | some x => properPair lo hi a.1 x.1
+            | none => false)))
+      have e2 := decodeJ_eq_mapSpecBoth g m2 gbs R2 bF2 hg h2 ⟨SF2, hF2, cov2⟩
+      generalize mapChromsX lk (key2 a.1) _ R2 gbs idxs = r2 at hno2 hyes2
+      obtain ⟨rb2, rs2⟩ := r2
+      cases rs2 with
+      | false =>
+        simp only at hno2 ⊢
+        rw [if_neg (by simp), hno2 (by simp), e2]
+        cases mapSpecBoth sc0 (-12) g m2 <;> rfl
+      | true =>
+        obtain ⟨-, hs⟩ := hyes2 (by simp)
+        simp only [if_true]
+        rw [← e2]
+        simp only [Bool.or_eq_true, Bool.and_eq_true, Bool.not_eq_true'] at hs
+        rcases hs with hs | ⟨hd, hok⟩
+        · rw [dnone _ (amb0_final _ _ _ _ _ hA2.1 hF2 hp2 cov2 hs)]
+        · -- every window of the partner slot was looked at
+          have cov_t : ∃ S', Inv (cwJ R2 gbs) S' bL2 ∧ ∀ st len,
+              cwJ R2 gbs ⟨partnerSlot gbs.size a.1, st, len⟩ ≤ 12 → S' ⟨partnerSlot gbs.size a.1, st, len⟩ := by
+            by_cases ht : partnerSlot gbs.size a.1 < 2 * gbs.size
+            · obtain ⟨S', i', -, cv⟩ := dead_cover (cwJ R2 gbs) (cwJ_le R2 gbs) _ _ _
+                (cwJ_slot R2 gbs _ ht) (sRead_size R2 gbs hn2 _) _ bL2 S2 (hA2.2.2 _ ht) hd
+              exact ⟨S', i', cv⟩
+            · refine ⟨S2, hA2.1, fun st len hw => ?_⟩
+              unfold cwJ at hw; simp [show ¬ partnerSlot gbs.size a.1 < gbs.size by omega, ht] at hw
+          obtain ⟨S', hS', hcv⟩ := cov_t
+          cases hdF : decodeJ gbs.size bF2 with
+          | none => rfl
+          | some x =>
+            simp only
+            cases hpp : properPair lo hi a.1 x.1 with
+            | false => rfl
+            | true =>
+              exfalso
+              obtain ⟨st, len, p, hres⟩ := decode_partner lo hi gbs.size bF2 a.1 x hdF hpp
+              have := target_final _ _ _ _ _ _ hS' hcv hF2 (Nat.le_trans hp2 (Nat.le_refl _)) cov2 st len p hres
+              have hdL : decodeJ gbs.size bL2 = some x := by
+                rw [← hdF]; unfold decodeJ; rw [this]
+              rw [hdL] at hok
+              simp [hpp] at hok
+
 /-- The same through minimizer indexes that pass the checker. -/
 theorem pairFastS_mz_eq_pairSpec (key1 : Nat → Nat → Nat → Nat) (key2 : Placement → Nat → Nat → Nat → Nat)
     (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
@@ -338,8 +635,22 @@ theorem pairFastS_mz_eq_pairSpec (key1 : Nat → Nat → Nat → Nat) (key2 : Pl
   simp only [List.all_eq_true, List.mem_range] at hchk
   exact mzLook_ok _ _ _ _ hj (by rw [← Mz.check2_eq]; exact hchk c hc)
 
+theorem pairFastX_mz_eq_pairSpec (key1 : Nat → Nat → Nat → Nat) (key2 : Placement → Nat → Nat → Nat → Nat)
+    (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
+    (idxs : Array Mz.MzIdx) (R1 R2 : ByteArray) (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1)
+    (h2 : Encodes R2 m2) (hchk : checkAllMz idxs gbs = true)
+    (hok1 : fastOk R1 = true) (hok2 : fastOk R2 = true) :
+    pairFastX mzL key1 key2 lo hi gbs idxs R1 R2 = pairSpec sc0 (-12) lo hi g m1 m2 := by
+  apply pairFastX_eq_pairSpec mzL key1 key2 lo hi g m1 m2 gbs idxs R1 R2 hg h1 h2 _ hok1 hok2
+  intro c hc R' j hj
+  unfold checkAllMz at hchk
+  simp only [List.all_eq_true, List.mem_range] at hchk
+  exact mzLook_ok _ _ _ _ hj (by rw [← Mz.check2_eq]; exact hchk c hc)
+
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.mapFastS_eq_mapSpecBoth
 #print axioms MapSpec.Fast.pairFastS_eq_pairSpec
 #print axioms MapSpec.Fast.pairFastS_mz_eq_pairSpec
+#print axioms MapSpec.Fast.pairFastX_eq_pairSpec
+#print axioms MapSpec.Fast.pairFastX_mz_eq_pairSpec
