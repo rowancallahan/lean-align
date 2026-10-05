@@ -2,6 +2,7 @@ import FastGenPairPacked
 import FastGenK250
 import PairDispatch
 import FastGenWordFilt
+import FastGenSupp
 import MzCheckPar
 import MzPacked
 import MzView
@@ -231,7 +232,8 @@ def chromKBFG0 (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : Li
   else b2
 
 /-- Stages K and B of one chromosome, the filter by words where it applies (`kfiltV`;
-the read is packed once, when the chromosome has anchors). -/
+the read is packed once, when the chromosome has anchors; stage K reads the seed
+supports from one sweep, `suppCntC`). -/
 def chromKBFG [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
     (b1 : Best) : Best :=
   match diags acc with
@@ -241,8 +243,10 @@ def chromKBFG [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (
   let lim := min P 16
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageKSV (fun D b => stageKF kf R.size c lim (shapesKT Q1) [D] b)
-        K R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim ds b1 else b1
+      let r0 := 2 * gapBound sc0 (-((min lim b1.pen : Nat) : Int))
+      stageKSS (fun D b => stageKF kf R.size c lim (shapesKT Q1) [D] b)
+        K R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim r0 (suppCntC acc r0 ds) ds 0 b1
+    else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
     let need := acc.length - sbound P
@@ -396,7 +400,7 @@ theorem chromKBFG_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] (kf : Ker) (
   generalize diags acc = ds
   cases ds with
   | nil => simp [stageKS]
-  | cons D ds => simp only [stageKSV_eq]
+  | cons D ds => simp only [stageKSS_cnt, stageKSV_eq]
 
 section
 variable {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] {xs : Array G1} {ys : Array G2}
