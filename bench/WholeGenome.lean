@@ -678,6 +678,133 @@ def loadPacked (files : List String) : IO (PGen × Array Nat × Array Nat) := do
   say s!"genome packed: {ns.size} chromosomes, {G.n} letters, {G.w.size + 4 * G.ex.size} bytes ({secs t0 t1} s); {← rss}"
   return (G, offs, ns)
 
+/-- FASTA bytes from `i` without the header line and line ends. -/
+def stripFa (raw : ByteArray) : ByteArray :=
+  let rec skip (i : Nat) : Nat :=
+    if h : i < raw.size then (if raw[i] == 10 then i + 1 else skip (i + 1)) else i
+  termination_by raw.size - i
+  let rec go (i : Nat) (out : ByteArray) : ByteArray :=
+    if h : i < raw.size then
+      let b := raw[i]
+      go (i + 1) (if b == 10 || b == 13 then out else out.push b)
+    else out
+  termination_by raw.size - i
+  go (skip 0) (.emptyWithCapacity raw.size)
+
+/-- The sequence part `[b0, b1)` of a one-record FASTA (after the header line, before
+trailing line ends). -/
+def faBody (raw : ByteArray) : Nat × Nat :=
+  let rec skip (i : Nat) : Nat :=
+    if h : i < raw.size then (if raw[i] == 10 then i + 1 else skip (i + 1)) else i
+  termination_by raw.size - i
+  let rec back (j : Nat) : Nat :=
+    match j with
+    | 0 => 0
+    | j + 1 => if raw[j]! == 10 || raw[j]! == 13 then back j else j + 1
+  let b0 := skip 0
+  (b0, max b0 (back raw.size))
+
+/-- A line end in `raw[i, j)`. -/
+def hasNL (raw : ByteArray) (i j : Nat) : Bool :=
+  if h : i < j then (if raw[i]! == 10 || raw[i]! == 13 then true else hasNL raw (i + 1) j) else false
+termination_by j - i
+
+/-- All of `L[i, i + 64)` is ACGT. -/
+def allAcgt (L : ByteArray) (i : Nat) : Nat → Bool
+  | 0 => true
+  | k + 1 => acgt L[i]! && allAcgt L (i + 1) k
+
+/-- 16 bytes of 2-bit codes of `L[i, i + 64)` pushed onto `w`. -/
+def codes64 (L : ByteArray) (i : Nat) (w : ByteArray) : Nat → ByteArray
+  | 0 => w
+  | k + 1 =>
+    let b := (c2 L[i]! ||| (c2 L[i + 1]! <<< 2) ||| (c2 L[i + 2]! <<< 4) ||| (c2 L[i + 3]! <<< 6)).toUInt8
+    codes64 L (i + 4) (w.push b) k
+
+/-- Push letters `L[i, j)` (a whole ACGT block at a block start at once: flag 1, 16 code bytes,
+as 64 `PB.push` would). -/
+def pushLoop (L : ByteArray) (i j : Nat) (s : PB) : PB :=
+  if h : i < j then
+    if s.n % 64 == 0 && i + 64 ≤ j && allAcgt L i 64 then
+      match s with
+      | ⟨n, w, _, _, _, ex, _⟩ =>
+        let fp := w.size
+        pushLoop L (i + 64) j ⟨n + 64, codes64 L i (w.push 1) 16, 0, 1, fp, ex, L[i + 63]!⟩
+    else pushLoop L (i + 1) j (s.push L[i]!)
+  else s
+termination_by j - i
+
+/-- Runs `ex1 ++ ex2`, the run of `ex1` ending at `a` joined with the one of `ex2` starting there
+(same letter), as `PB.push` builds them. -/
+def mergeEx (ex1 ex2 : Array UInt32) (a : Nat) : Array UInt32 :=
+  if 3 ≤ ex1.size && 3 ≤ ex2.size && ex1[ex1.size - 2]!.toNat == a && ex2[0]!.toNat == a &&
+      ex1[ex1.size - 1]! == ex2[2]! then
+    (ex1.set! (ex1.size - 2) ex2[1]!) ++ ex2.extract 3 ex2.size
+  else ex1 ++ ex2
+
+/-- `s` (at a block start) followed by `t` (built from `s.n` on). -/
+def appendPB (s t : PB) : PB :=
+  -- taken apart so that `w` is unshared and grows in place
+  match s, t with
+  | ⟨n, w, _, _, _, ex, _⟩, ⟨n2, w2, cur2, f2, fpos2, ex2, prev2⟩ =>
+    let sz := w.size
+    ⟨n2, w ++ w2, cur2, f2, sz + fpos2, mergeEx ex ex2 n, prev2⟩
+
+/-- `loadPacked` with each file read whole, stripped, and packed in `k` block-aligned pieces
+on dedicated tasks (the same `PGen` as pushing every letter in order). -/
+def loadPackedPar (files : List String) (k : Nat) : IO (PGen × Array Nat × Array Nat) := do
+  let t0 ← IO.monoNanosNow
+  let mut total := 0
+  for f in files do total := total + (← System.FilePath.metadata f).byteSize.toNat
+  let mut s := PB.init total
+  let mut offs : Array Nat := #[]
+  let mut tR := 0
+  let mut tS := 0
+  let mut tP := 0
+  -- the next file is read while this one is packed
+  let fa := files.toArray
+  let mut next ← IO.asTask (IO.FS.readBinFile fa[0]!) .dedicated
+  for fi in [0:fa.size] do
+    offs := offs.push s.n
+    let ta ← IO.monoNanosNow
+    let raw ← IO.ofExcept next.get
+    if fi + 1 < fa.size then next ← IO.asTask (IO.FS.readBinFile fa[fi + 1]!) .dedicated
+    let tb ← IO.monoNanosNow
+    let (b0, b1) := faBody raw
+    let nlT := (List.range k).map fun t => Task.spawn (prio := .dedicated) fun _ =>
+      hasNL raw (b0 + t * ((b1 - b0) / k + 1)) (min b1 (b0 + (t + 1) * ((b1 - b0) / k + 1)))
+    let one := !(nlT.any (·.get))
+    -- one-line record: pack straight from the file bytes; else strip first
+    let L ← (← IO.mkRef (if one then raw else stripFa raw)).get
+    let (b0, b1) := if one then (b0, b1) else (0, L.size)
+    let tc ← IO.monoNanosNow
+    tR := tR + (tb - ta)
+    tS := tS + (tc - tb)
+    -- letters up to the next block start, in order
+    let a0 := min b1 (b0 + (64 - s.n % 64) % 64)
+    s := pushLoop L b0 a0 s
+    if a0 < b1 then
+      let nb := (b1 - a0 + 63) / 64
+      let per := (nb + k - 1) / k
+      -- only the count goes into the tasks, so `s.w` stays unshared and grows in place
+      let n0 := s.n
+      let ts := (List.range k).filterMap fun t =>
+        let i := a0 + t * per * 64
+        let j := min b1 (a0 + (t + 1) * per * 64)
+        if i < j then
+          some (Task.spawn (prio := .dedicated) fun _ =>
+            pushLoop L i j { n := n0 + (i - a0), w := .emptyWithCapacity (17 * (per + 1)) })
+        else none
+      for tk in ts do s := appendPB s tk.get
+    let td ← IO.monoNanosNow
+    tP := tP + (td - tc)
+  say s!"  read {Float.ofNat tR / 1e9} s, strip {Float.ofNat tS / 1e9} s, pack {Float.ofNat tP / 1e9} s"
+  let G := s.finish
+  let ns := (Array.range offs.size).map fun c => (offs[c + 1]?.getD G.n) - offs[c]!
+  let t1 ← IO.monoNanosNow
+  say s!"genome packed ({k} tasks per file): {ns.size} chromosomes, {G.n} letters, {G.w.size + 4 * G.ex.size} bytes ({secs t0 t1} s); {← rss}"
+  return (G, offs, ns)
+
 def main (args : List String) : IO UInt32 := do
   let k ← envN "WG_K" 22
   let B ← envN "WG_B" 26
@@ -718,13 +845,20 @@ def main (args : List String) : IO UInt32 := do
       runSets [("B", f)] okLen []
       return 0
     else if mode == "pmap" then
-      let (G, offs, ns) ← loadPacked files
-      if !cutOk G offs ns then throw (IO.userError "cutOk failed")
-      let pgs := cutAll G offs ns
       let t0 ← IO.monoNanosNow
-      let ix ← load pre
+      -- the index is read while the genome is packed
+      let ixT ← if (← IO.getEnv "WG_PACKONLY").isSome then pure (Task.pure (.error (IO.userError "pack only")))
+        else IO.asTask (load pre) .dedicated
+      let pk := ((← IO.getEnv "WG_PACK").getD "4").toNat!
+      let (G, offs, ns) ← if pk == 0 then loadPacked files else loadPackedPar files pk
+      if !cutOk G offs ns then throw (IO.userError "cutOk failed")
+      if (← IO.getEnv "WG_PACKONLY").isSome then
+        say s!"packed genome hash {hashBytes G.w} {hashBytes G.ex} {G.n}; {← rss}"
+        return 0
+      let pgs := cutAll G offs ns
+      let ix ← IO.ofExcept ixT.get
       let t1 ← IO.monoNanosNow
-      say s!"index loaded {secs t0 t1} s: {ix.sl.size / ix.sw} entries; {← rss}"
+      say s!"genome packed + index loaded (overlapped) {secs t0 t1} s: {ix.sl.size / ix.sw} entries; {← rss}"
       -- index hash: index files + packed genome + chromosome cuts; stored next to the index once
       -- the full check (check3P) passed on them (WG_CHECK=1), verified on every other run
       let mt ← IO.FS.readFile (pre ++ ".meta")
