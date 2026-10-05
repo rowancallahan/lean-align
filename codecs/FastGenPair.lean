@@ -14,8 +14,8 @@ strands and proper pairs, in the form of `pairFastC` (codecs/PairConcat.lean):
   of `gbs ++ gbs`, sharing one `Best`;
 * phase 1 interleaves the two strands' lookups (`ilG`: the live strand with
   fewer lookups goes next; a strand stops once `sbound (min best P)` is below
-  its lookup count), then stages K and B (`chromKB`) run per virtual chromosome
-  on its slices (`chromKB_cover`).
+  its lookup count), then stages K and B (`chromKBS`) run per virtual chromosome
+  on its slices, stage K behind the exact seed filter (`chromKBS_cover`).
 
     … → mapFastGB P ix G offs gbs R = mapSpecBoth sc0 (−P) g read            (mapFastGB_eq_mapSpecBoth)
     … → pairFastGB P lo hi ix G offs gbs R1 R2 = pairSpec sc0 (−P) lo hi g m1 m2 (pairFastGB_eq_pairSpec)
@@ -104,8 +104,8 @@ def rcAux (R : ByteArray) : Nat → ByteArray → ByteArray
   let x := ilG ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
-  let b := (List.range n).foldl (fun b c => chromKB R gbs2 c P x.1.acc[c]! b) x.2.2
-  (List.range n).foldl (fun b c => chromKB Rr gbs2 (n + c) P x.2.1.acc[c]! b) b
+  let b := (List.range n).foldl (fun b c => chromKBS R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
+  (List.range n).foldl (fun b c => chromKBS Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
 
 /-- Virtual window → placement. -/
 def decodeP (n P : Nat) (b : Best) : Option (Placement × Int) :=
@@ -630,6 +630,39 @@ theorem chromKB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) 
   · exact Nat.le_trans (hB _ _ _ _) h2
   · exact h2
 
+theorem chromKBS_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (acc : List (Array Nat))
+    (J : List Nat) (b : Best) : (chromKBS R gbs c P acc J b).pen ≤ b.pen := by
+  have hK : ∀ lim shs ds b, (stageK R gbs c lim shs ds b).pen ≤ b.pen := fun lim shs ds b => by
+    unfold stageK
+    exact foldl_pen _ (fun b D => foldl_pen _ (fun b sh => addK_pen _ _ _ _ _ _ b) _ b) _ b
+  have hB : ∀ shs bs ds b, (stageB P R gbs c shs bs ds b).pen ≤ b.pen := fun shs bs ds b => by
+    unfold stageB
+    refine foldl_pen _ (fun b D => foldl_pen _ (fun b bb => ?_) bs b) ds b
+    unfold stageBD; split
+    · exact foldl_pen _ (fun b sh => addBS_pen' _ R gbs c D _ b sh) _ b
+    · exact Nat.le_refl _
+  have hS : ∀ (body : Nat → Best → Best), (∀ D b, (body D b).pen ≤ b.pen) →
+      ∀ us Ls lim ds b, (stageKS body R gbs[c]! acc us Ls lim ds b).pen ≤ b.pen := by
+    intro body hb us Ls lim ds b
+    unfold stageKS
+    refine foldl_pen _ (fun b D => ?_) ds b
+    split
+    · exact hb _ _
+    · exact Nat.le_refl _
+  unfold chromKBS
+  simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
+  have h2 : (if 0 < gapBound sc0 (-((min b.pen P : Nat) : Int)) then
+      stageKS (fun D b' => stageK R gbs c (min P 16) ((shapesAt (min b.pen P)).filter (· != (0, 0))) [D] b')
+        R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) (min P 16) (diags acc) b
+      else b).pen ≤ b.pen := by
+    split
+    · exact hS _ (fun D b' => hK _ _ _ _) _ _ _ _ _
+    · exact Nat.le_refl _
+  generalize (if 0 < gapBound sc0 (-((min b.pen P : Nat) : Int)) then _ else b) = b2 at h2 ⊢
+  split
+  · exact Nat.le_trans (hB _ _ _ _) h2
+  · exact h2
+
 section kb
 variable (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (hg : GenomeBytes gbs g)
   {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
@@ -650,9 +683,9 @@ theorem kbFold (s : GS) : ∀ (l : List Nat) (S : Window → Prop) (b : Best), (
     GSok P g gbs ix G offs Rs reads t Ls ps S ord0 s →
     InvP P (cwB P read g) S b → (sbound (min b.pen P) < s.J.length ∨ s.ord = []) →
     ∃ S', InvP P (cwB P read g) S'
-        (l.foldl (fun b c => chromKB Rs (gbs ++ gbs) (t + c) P s.acc[c]! b) b) ∧
+        (l.foldl (fun b c => chromKBS Rs (gbs ++ gbs) (t + c) P s.acc[c]! s.J b) b) ∧
       (∀ w, S w → S' w) ∧
-      (l.foldl (fun b c => chromKB Rs (gbs ++ gbs) (t + c) P s.acc[c]! b) b).pen ≤ b.pen ∧
+      (l.foldl (fun b c => chromKBS Rs (gbs ++ gbs) (t + c) P s.acc[c]! s.J b) b).pen ≤ b.pen ∧
       ∀ c ∈ l, ∀ w, w.chr = t + c → cwB P read g w ≤ P → S' w := by
   have hg2 := genomeBytes_app gbs g hg
   subst hLs
@@ -667,7 +700,7 @@ theorem kbFold (s : GS) : ∀ (l : List Nat) (S : Window → Prop) (b : Best), (
     have hJ : List.Sublist s.J.reverse ord0 := by rw [← hord]; exact List.sublist_append_left _ _
     have hcatc := catOk_spec G offs gbs hcat c hc
     have hgc := gbs2_get gbs t c ht hc
-    obtain ⟨S1, i1, s1, c1⟩ := chromKB_cover P reads (g ++ g) (gbs ++ gbs) Rs hg2 hrs (t + c) hc2 hm hsb
+    obtain ⟨S1, i1, s1, c1⟩ := chromKBS_cover P reads (g ++ g) (gbs ++ gbs) Rs hg2 hrs (t + c) hc2 hm hsb
       (cwB P read g) (cwB_le P read g) (hcwc c hc) (arrS gbs ix G offs Rs t (Rs.size / (Rs.size / 25)) ps c)
       (fun j hj => by
         unfold arrS
@@ -675,16 +708,16 @@ theorem kbFold (s : GS) : ∀ (l : List Nat) (S : Window → Prop) (b : Best), (
         have hfit := seed_fits Rs.size j hm hj
         rw [hgc]
         exact sliceG_ok G gbs[c]! Rs _ _ _ _ (hlk _ _ hfit) hcatc.1 hcatc.2)
-      s.J.reverse (hJ.nodup hnd) (fun j hj => hlt j (hJ.subset hj)) S b hi
+      s.J.reverse (hJ.nodup hnd) (fun j hj => hlt j (hJ.subset hj)) s.J (fun j => List.mem_reverse.symm) S b hi
       (fun j hj e he w hw => hwin c hc j (List.mem_reverse.mp hj) e he w hw)
       (by
         rcases hst with h | h
         · left; rw [List.length_reverse]; exact h
         · right; rw [h, List.append_nil] at hord; rw [hord, hlen])
     rw [List.map_reverse, List.reverse_reverse, ← hacc c hc] at i1 c1
-    have hpen := chromKB_pen P Rs (gbs ++ gbs) (t + c) s.acc[c]! b
+    have hpen := chromKBS_pen P Rs (gbs ++ gbs) (t + c) s.acc[c]! s.J b
     simp only [List.foldl_cons]
-    generalize chromKB Rs (gbs ++ gbs) (t + c) P s.acc[c]! b = b1 at i1 c1 hpen
+    generalize chromKBS Rs (gbs ++ gbs) (t + c) P s.acc[c]! s.J b = b1 at i1 c1 hpen
     -- the windows of chromosome `t + c` not added cannot beat or tie the best
     have i1' := inv_skipP P (cwB P read g) (cwB_le P read g) S1
       (fun w => w.chr = t + c ∧ cwB P read g w ≤ P ∧ ¬ S1 w) b1 i1 (by
@@ -802,7 +835,7 @@ theorem mapChromsGB_inv (hm : 0 < R.size / 25) (hsb : sbound P < R.size / 25) :
     ps Ls hLs.symm (fun j hj => by rw [← hps]; exact prepG_get ix R _ _ j hj) (hlk R) ord1 nd1 lt1 len1 x.1
     (List.range gbs.size) S1 x.2.2 (fun c hc => List.mem_range.mp hc) o1 i1 (stop _ _ l1)
   simp only [Nat.zero_add] at i2 p2 c2
-  generalize (List.range gbs.size).foldl (fun b c => chromKB R (gbs ++ gbs) c P x.1.acc[c]! b) x.2.2 = b1 at i2 p2 c2
+  generalize (List.range gbs.size).foldl (fun b c => chromKBS R (gbs ++ gbs) c P x.1.acc[c]! x.1.J b) x.2.2 = b1 at i2 p2 c2
   obtain ⟨S3, i3, s3, -, c3⟩ := kbFold P read g gbs hg ix G offs hcat (revCompB R) (revComp read) hrr gbs.size
     (Or.inr rfl) hcw2 (by rw [hsz]; exact hm) (by rw [hsz]; exact hsb) pr Ls (by rw [hsz, hLs])
     (fun j hj => by rw [← hpr]; rw [hsz] at hj; exact prepG_get ix _ _ _ j hj) (hlk _) ord2 nd2
