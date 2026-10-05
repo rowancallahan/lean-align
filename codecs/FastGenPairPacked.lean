@@ -48,7 +48,7 @@ theorem nearS_same (R : ByteArray) (s : Nat) : ∀ w lo, nearS R x s lo w = near
   | succ w ih => intro lo; simp only [nearS, h.1, matchQ_same h, ih]
 
 theorem seedNear_same (R : ByteArray) (Ls r D j : Nat) : seedNear R x Ls r D j = seedNear R y Ls r D j := by
-  simp only [seedNear, nearS_same h]
+  simp only [seedNear, nearS_same h, matchQ_same h, h.1]
 
 theorem unlook_same (R : ByteArray) (Ls r D sb : Nat) :
     ∀ us f, unlook R x Ls r D sb us f = unlook R y Ls r D sb us f := by
@@ -74,7 +74,7 @@ theorem fineOk_same (R : ByteArray) (l Ls r D sb : Nat) :
   intro k
   induction k with
   | zero => intro j f; rfl
-  | succ k ih => intro j f; simp only [fineOk, pieceNear, nearL_same h, ih]
+  | succ k ih => intro j f; simp only [fineOk, pieceNear, nearL_same h, matchLn_same h, h.1, ih]
 
 theorem kfilt_same (R : ByteArray) (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
     kfilt R x acc us Ls lim b D = kfilt R y acc us Ls lim b D := by
