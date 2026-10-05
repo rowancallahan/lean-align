@@ -6,6 +6,7 @@ import MapperGenSearch
 import MapperGen16
 import MapperGenShare
 import MapperEvents
+import MapperBandPrune
 import SeedMapper2
 
 /-!
@@ -165,10 +166,32 @@ def shapeR (shs : List (Int × Int)) : Nat := shs.foldl (fun m sh => max m (max 
     | none => P + 1
   else P + 1
 
-/-- Banded rows ending at `D + bb` (`D` a diagonal, `bb` an end shift). -/
-@[inline] def bandEndAt {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c D : Nat) (bb : Int) :
-    Option (Array Int) :=
-  bandEnd2 sc0 (-(P : Int)) (bandOf sc0 (-(P : Int))) R gbs[c]! ((D : Int) + bb).toNat
+/-- The last `k` letters of read block `[a, a + 25)` occur at `p + 25 - k …`. -/
+def blockEq {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (a p : Nat) : Nat → Bool
+  | 0 => true
+  | k + 1 => R.get! (a + 25 - (k + 1)) == GRead.get G (p + 25 - (k + 1)) && blockEq R G a p k
+
+/-- Read block `[a, a + 25)` occurs in `G` at one of `lo, lo + 1, …, lo + t − 1`. -/
+def anyCopy {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (a : Nat) (lo : Int) : Nat → Bool
+  | 0 => false
+  | t + 1 =>
+    (decide (0 ≤ lo + t) && decide ((lo + t).toNat + 25 ≤ GRead.size G) && blockEq R G a (lo + t).toNat 25) ||
+      anyCopy R G a lo t
+
+/-- Spoiled blocks of diagonal `D` (end shifts within `d`, band `B`): read block `j`
+has no exact copy at any position a band cell of any end `D ± d` can reach. -/
+def spoiledArr {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (D d B : Nat) : Array Bool :=
+  (Array.range (R.size / 25)).map fun j =>
+    !anyCopy R G (25 * j) ((D : Int) - d - R.size + (25 * j : Nat) - B) (2 * (d + B) + 1)
+
+/-- Largest end shift. -/
+def shiftMax (bs : List Int) : Nat := bs.foldl (fun m bb => max m bb.natAbs) 0
+
+/-- Banded rows ending at `D + bb` (`D` a diagonal, `bb` an end shift), pruned by the
+spoiled blocks `sp` (`bandEndP_spec`). -/
+@[inline] def bandEndAt {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c D : Nat)
+    (sp : Nat → Bool) (bb : Int) : Option (Array Int) :=
+  bandEndP (-(P : Int)) (bandOf sc0 (-(P : Int))) sp R gbs[c]! ((D : Int) + bb).toNat
 
 /-- Add the window of diagonal `D` and shape `sh`, read from the rows `opt`. -/
 @[inline] def addBS {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c D : Nat) (opt : Option (Array Int))
@@ -181,14 +204,16 @@ def shapeR (shs : List (Int × Int)) : Nat := shs.foldl (fun m sh => max m (max 
 
 /-- One diagonal and end shift: one banded pass, every shape with that end. -/
 @[inline] def stageBD {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c : Nat) (shs : List (Int × Int))
-    (D : Nat) (b : Best) (bb : Int) : Best :=
-  if 0 ≤ (D : Int) + bb then (shs.filter (·.2 == bb)).foldl (addBS P R gbs c D (bandEndAt P R gbs c D bb)) b
+    (D : Nat) (sp : Nat → Bool) (b : Best) (bb : Int) : Best :=
+  if 0 ≤ (D : Int) + bb then (shs.filter (·.2 == bb)).foldl (addBS P R gbs c D (bandEndAt P R gbs c D sp bb)) b
   else b
 
 /-- The band stage over diagonals `ds` and end shifts `bs`. -/
 @[specialize] def stageB {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c : Nat) (shs : List (Int × Int))
     (bs : List Int) (ds : List Nat) (b : Best) : Best :=
-  ds.foldl (fun b D => bs.foldl (stageBD P R gbs c shs D) b) b
+  ds.foldl (fun b D =>
+    let A := spoiledArr R gbs[c]! D (shiftMax bs) (bandOf sc0 (-(P : Int)))
+    bs.foldl (stageBD P R gbs c shs D fun j => A[j]?.getD false) b) b
 
 /-- Seeds (anchor arrays) with an anchor within `r` diagonals of `D`. -/
 def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
