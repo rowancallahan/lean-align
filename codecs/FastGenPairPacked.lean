@@ -34,6 +34,37 @@ section
 variable {G1 G2 : Type} [GRead G1] [GRead G2] {x : G1} {y : G2} (h : SameG x y)
 include h
 
+theorem matchQ_same (R : ByteArray) (s p : Nat) : ∀ k, matchQ R x s p k = matchQ R y s p k := by
+  intro k
+  induction k with
+  | zero => rfl
+  | succ k ih => simp only [matchQ, h.2, ih]
+
+theorem nearS_same (R : ByteArray) (s : Nat) : ∀ w lo, nearS R x s lo w = nearS R y s lo w := by
+  intro w
+  induction w with
+  | zero => intro lo; rfl
+  | succ w ih => intro lo; simp only [nearS, h.1, matchQ_same h, ih]
+
+theorem seedNear_same (R : ByteArray) (Ls r D j : Nat) : seedNear R x Ls r D j = seedNear R y Ls r D j := by
+  simp only [seedNear, nearS_same h]
+
+theorem unlook_same (R : ByteArray) (Ls r D sb : Nat) :
+    ∀ us f, unlook R x Ls r D sb us f = unlook R y Ls r D sb us f := by
+  intro us
+  induction us with
+  | nil => intro f; rfl
+  | cons j us ih => intro f; simp only [unlook, seedNear_same h, ih]
+
+theorem kfilt_same (R : ByteArray) (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
+    kfilt R x acc us Ls lim b D = kfilt R y acc us Ls lim b D := by
+  simp only [kfilt, unlook_same h]
+
+theorem stageKS_same (body1 body2 : Nat → Best → Best) (hb : ∀ D b, body1 D b = body2 D b) (R : ByteArray)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) :
+    stageKS body1 R x acc us Ls lim ds b = stageKS body2 R y acc us Ls lim ds b := by
+  simp only [stageKS, kfilt_same h, hb]
+
 theorem gappedPen2_same (r : ByteArray) (st len lim : Nat) : gappedPen2 r x st len lim = gappedPen2 r y st len lim := by
   simp only [gappedPen2, fwdMis_same' h, bwdMis_same' h]
 
@@ -196,6 +227,14 @@ theorem chromKB_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : 
   by_cases h16 : 16 ≤ min (min P 16) (min b1.pen P) <;>
     simp only [h16, if_true, if_false, decide_true, decide_false, stageKP_same h, stageK_same h, stageB_same h]
 
+theorem chromKBS_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
+    chromKBS R xs c P acc J b1 = chromKBS R ys c P acc J b1 := by
+  unfold chromKBS
+  by_cases h16 : 16 ≤ min (min P 16) (min b1.pen P) <;>
+    simp only [h16, if_true, if_false, decide_true, decide_false,
+      stageKS_same (h.2 c) _ _ (fun D b => stageKP_same h _ _ _ _ _ b),
+      stageKS_same (h.2 c) _ _ (fun D b => stageK_same h _ _ _ _ _ b), stageB_same h]
+
 end
 
 /-! ## The pair mapper's search -/
@@ -248,7 +287,7 @@ theorem mapChromsGB_same {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [In
     (hl : ∀ R s base p, LookG.look ix G R s base p = LookG.look ix G' R s base p) (offs : Array Nat) (R : ByteArray) :
     mapChromsGB P ix G offs xs R = mapChromsGB P ix G' offs ys R := by
   have h2 := sameA_append h hd
-  simp only [mapChromsGB, h.1, ilG_same h2 hl, chromKB_same h2]
+  simp only [mapChromsGB, h.1, ilG_same h2 hl, chromKBS_same h2]
 
 /-! ## Minimizer index bundled with its packed genome -/
 
@@ -278,11 +317,26 @@ def mapFastGBP (P : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : 
   if fastT P R then decodeP pgs.size P (mapChromsGB P ix ByteArray.empty offs pgs R)
   else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB (pgs.map Mz.unpack)) (decodeBytes R)
 
+/-- A pair from its mates' answers, mate 2 mapped only when mate 1 has an answer
+(the pair needs both): `pairLazy_match`. -/
+@[inline] def pairLazy (lo hi : Nat) (m1 : Option (Placement × Int)) (m2 : Unit → Option (Placement × Int)) :
+    Option ((Placement × Int) × (Placement × Int)) :=
+  match m1 with
+  | none => none
+  | some a =>
+    match m2 () with
+    | some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+    | none => none
+
+theorem pairLazy_match (lo hi : Nat) (m1 m2 : Option (Placement × Int)) :
+    pairLazy lo hi m1 (fun _ => m2) = (match m1, m2 with
+      | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
+      | _, _ => none) := by
+  cases m1 <;> cases m2 <;> rfl
+
 def pairFastGBP (P lo hi : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
     Option ((Placement × Int) × (Placement × Int)) :=
-  match mapFastGBP P ix offs pgs R1, mapFastGBP P ix offs pgs R2 with
-  | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
-  | _, _ => none
+  pairLazy lo hi (mapFastGBP P ix offs pgs R1) (fun _ => mapFastGBP P ix offs pgs R2)
 
 /-! ## Theorem -/
 
@@ -312,7 +366,7 @@ theorem pairFastGBP_mz_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Ch
     pairFastGBP P lo hi (ix, G) offs (cutAll G offs ns) R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
   have e : pairFastGBP P lo hi (ix, G) offs (cutAll G offs ns) R1 R2 =
       pairFastGB P lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
-    unfold pairFastGBP pairFastGB; rw [mapFastGBP_eq, mapFastGBP_eq]; rfl
+    unfold pairFastGBP pairFastGB; rw [pairLazy_match, mapFastGBP_eq, mapFastGBP_eq]; rfl
   rw [e]
   refine pairFastGB_eq_pairSpec P lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut) ?_
   intro R' s base hs

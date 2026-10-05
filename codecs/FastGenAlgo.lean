@@ -255,6 +255,72 @@ def shapesTbl : Array (List (Int × Int) × List (Int × Int)) :=
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
+/-! ### Stage K with a seed filter (`chromKBS_cover`)
+
+Before the shapes of an anchor diagonal `D`, at the current best (`Q = min lim best`,
+`r = 2·gapBound Q`): a window within penalty `Q` near `D` spoils at most `sbound Q`
+of all `m` seeds, and every other seed is spelled within `r` diagonals of `D`.  So
+the looked-up seeds without an anchor within `r` of `D`, plus the seeds not looked
+up (`us`) whose 25 letters are spelled at no place within `r` of `D` (compared
+letter by letter, stopping at the first difference), may number at most
+`sbound Q`; otherwise `D` is skipped. -/
+
+/-- Letters `[q − k, q)` of the seed at `s` are spelled at `p` (first difference stops). -/
+def matchQ {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s p : Nat) : Nat → Bool
+  | 0 => true
+  | k + 1 => GRead.get G (p + (q - (k + 1))) == R.get! (s + (q - (k + 1))) && matchQ R G s p k
+
+/-- The seed at `s` is spelled at some place of `[lo, lo + w)`. -/
+def nearS {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (s : Nat) : Nat → Nat → Bool
+  | _, 0 => false
+  | lo, w + 1 => (decide (lo + q ≤ GRead.size G) && matchQ R G s lo q) || nearS R G s (lo + 1) w
+
+/-- Seed `j` is spelled at an anchor diagonal within `r` of `D`. -/
+@[inline] def seedNear {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D j : Nat) : Bool :=
+  let a := D + j * Ls
+  if a + r < R.size then false
+  else
+    let hi := a + r - R.size
+    let w := min (2 * r) hi
+    nearS R G (j * Ls) (hi - w) (w + 1)
+
+/-- The seeds `us` checked in turn: `false` once more than `sb` failed (`f` so far). -/
+def unlook {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (Ls r D sb : Nat) : List Nat → Nat → Bool
+  | [], _ => true
+  | j :: us, f =>
+    if seedNear R G Ls r D j then unlook R G Ls r D sb us f
+    else if sb < f + 1 then false else unlook R G Ls r D sb us (f + 1)
+
+/-- The filter of diagonal `D` at best `b`. -/
+@[inline] def kfilt {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat)
+    (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
+  let Q := min lim b.pen
+  let r := 2 * gapBound sc0 (-(Q : Int))
+  let fJ := acc.length - suppA acc D r
+  decide (fJ ≤ sbound Q) && unlook R G Ls r D (sbound Q) us fJ
+
+/-- Stage K over the diagonals `ds`, each through the filter at the best of the moment. -/
+@[specialize] def stageKS {Gt : Type} [GRead Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) : Best :=
+  ds.foldl (fun b D => if kfilt R G acc us Ls lim b D then body D b else b) b
+
+/-- Seeds `0 … m−1` not in `J`. -/
+def unseen (m : Nat) (J : List Nat) : List Nat := (List.range m).filter fun j => !J.contains j
+
+/-- `chromKB` with the seed filter in stage K (`J`: the seeds looked up). -/
+@[specialize] def chromKBS {Gt : Type} [GRead Gt] [Inhabited Gt] (R : ByteArray) (gbs : Array Gt) (c P : Nat)
+    (acc : List (Array Nat)) (J : List Nat) (b1 : Best) : Best :=
+  let lim := min P 16
+  let Q1 := min b1.pen P
+  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
+      stageKS (fun D b => (if 16 ≤ min lim Q1 then stageKP else stageK) R gbs c lim (shapesKT Q1) [D] b)
+        R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) lim (diags acc) b1 else b1
+  let Q2 := min b2.pen P
+  if lim < Q2 then
+    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+      (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
+  else b2
+
 /-- One chromosome. -/
 def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (gbs : Array ByteArray)
     (c P Ls : Nat) (ps : Array Pp) (ord : List Nat) (b : Best) : Best :=
