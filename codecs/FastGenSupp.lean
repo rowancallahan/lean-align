@@ -298,3 +298,8 @@ theorem stageKSS_cnt {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Be
   stageKSS_eq body R G acc us Ls lim r0 _ ds 0 b (fun t ht => by rw [Nat.zero_add]; exact suppCntC_get acc r0 ds t ht)
 
 end MapSpec.Fast
+
+#print axioms MapSpec.Fast.kfiltVF_supp
+#print axioms MapSpec.Fast.suppCntC_get
+#print axioms MapSpec.Fast.stageKSS_eq
+#print axioms MapSpec.Fast.stageKSS_cnt

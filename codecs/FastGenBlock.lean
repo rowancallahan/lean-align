@@ -66,3 +66,6 @@ theorem blkOff_le (size : Option UInt64 → Nat) (R : ByteArray) (K : RP) (Ls j 
     · exact ha
 
 end MapSpec.Fast
+
+#print axioms MapSpec.Fast.coverLE_blk
+#print axioms MapSpec.Fast.blkOff_le
