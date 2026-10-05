@@ -3,6 +3,7 @@ import FastGenTier
 import ParMap
 import FastGenPairPacked
 import FastGenTierPacked
+import FastGenTierK
 
 /-!
 Benchmark only (unproved IO).  The PROVED general-path both-strand / proper-pair
@@ -20,6 +21,8 @@ GP_PACKED=1 with GP_MZ=k [GP_MZ_B GP_MZ_C GP_MZ_W GP_MZ_T] and two mate files: n
 as it is read (one PGen, chromosomes are views), the index is built and checked on it, pairs by `pairFastGBP`
 (`pairFastGBP_mz_eq_pairSpec`; with GP_TIER1 `pairTier1P`, `pairTier1P_mz_eq`).  Prints peak and current RSS.
 GP_TIER1=1: the tier-1 mapper (cap from the length: >= 150 -> -16, 100-149 -> -12, shorter unmapped; pairTier1_eq).
+GP_K=1: word kernels on packed chromosome copies (checkPGs asserted): mapTier1K (pairTier1K_eq) with GP_TIER1,
+else mapFastGBK (pairFastGBK_eq).  GP_KCHECK=k: the first k reads, word kernels vs bytes, asserted equal.
 -/
 
 open MapSpec
@@ -162,6 +165,11 @@ def main (args : List String) : IO UInt32 := do
   let tasks := ((← IO.getEnv "GP_TASKS").getD "1").toNat!
   let mz := ((← IO.getEnv "GP_MZ").getD "0").toNat!
   let tier1 := (← IO.getEnv "GP_TIER1").isSome   -- cap from the read length (mapTier1 / pairTier1_eq)
+  let useK := (← IO.getEnv "GP_K").isSome
+  let pvs := if useK then gbs.map Fast.pack else #[]
+  assert! !useK || Fast.checkPGs pvs gbs
+  let kcheck := ((← IO.getEnv "GP_KCHECK").getD "0").toNat!
+  if kcheck > 0 then assert! useK
   let G := gbs.foldl (· ++ ·) ByteArray.empty
   let offs := (gbs.foldl (fun (o, n) g => (o.push n, n + g.size)) ((#[] : Array Nat), 0)).1
   assert! Fast.catOk G offs gbs
@@ -269,6 +277,14 @@ def main (args : List String) : IO UInt32 := do
             let b := Fast.mapChromsGB 12 ix G offs gbs R
             if b.pen ≤ 12 then Fast.decodeP gbs.size 12 b else Fast.mapFastGB P ix G offs gbs R
           else Fast.mapFastGB P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)
+      else if useK then do
+        let fK := fun R => if tier1 then Fast.mapTier1K ix G offs gbs pvs R else Fast.mapFastGBK P ix G offs gbs pvs R
+        let fB := fun R => if tier1 then Fast.mapTier1 ix G offs gbs R else Fast.mapFastGB P ix G offs gbs R
+        let rs := r1.extract 0 kcheck
+        let bad := rs.foldl (fun n R => if fK R == fB R then n else n + 1) 0
+        if kcheck > 0 then IO.println s!"word-kernel check on {rs.size} reads: {bad} differ"
+        assert! bad == 0
+        pure (fK, fun rs => rs.map fK)
       else if tier1 then
         pure (fun R => Fast.mapTier1 ix G offs gbs R, fun rs => rs.map (Fast.mapTier1 ix G offs gbs))
       else
@@ -279,7 +295,15 @@ def main (args : List String) : IO UInt32 := do
       let ok := Fast.checkAllMz #[ix] #[G]
       IO.println s!"index check: {ok}  minimizer k={mz} B={B}"
       assert! ok
-      if tier1 then
+      if useK then do
+        let fK := fun R => if tier1 then Fast.mapTier1K ix G offs gbs pvs R else Fast.mapFastGBK P ix G offs gbs pvs R
+        let fB := fun R => if tier1 then Fast.mapTier1 ix G offs gbs R else Fast.mapFastGB P ix G offs gbs R
+        let rs := r1.extract 0 kcheck
+        let bad := rs.foldl (fun n R => if fK R == fB R then n else n + 1) 0
+        if kcheck > 0 then IO.println s!"word-kernel check on {rs.size} reads: {bad} differ"
+        assert! bad == 0
+        pure (fK, fun rs => rs.map fK)
+      else if tier1 then
         pure (fun R => Fast.mapTier1 ix G offs gbs R, fun rs => rs.map (Fast.mapTier1 ix G offs gbs))
       else
       pure (fun R => Fast.mapFastGS P ix G offs gbs R, fun rs => Fast.mapChunkGS P ix G offs gbs rs)

@@ -198,7 +198,7 @@ theorem revCompK_eq (R : ByteArray) : revCompK R = revCompB R := by
     simp only [Array.getElem_toList, List.length_map, hs]
 
 /-- The packed chromosomes spell the byte chromosomes. -/
-def RepAll (pvs : Array PGen) (gbs : Array ByteArray) : Prop := ∀ c : Nat, Rep pvs[c]! gbs[c]!
+def RepAllK (pvs : Array PGen) (gbs : Array ByteArray) : Prop := ∀ c : Nat, Rep pvs[c]! gbs[c]!
 
 /-! ### `ker16K_eq`: helpers -/
 
@@ -426,7 +426,7 @@ theorem cwT_penQ (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArra
     · rw [he.1] at h16; omega
 
 /-- **Penalty 16.** -/
-theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAll pvs gbs)
+theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAllK pvs gbs)
     (c st len : Nat) : ker16K R (packRP R) gbs pvs c st len = ker16 R gbs c st len := by
   unfold ker16K
   by_cases hc : gbs.size ≤ c
@@ -478,7 +478,7 @@ theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hr
       exact hfit (by rw [he.1]; exact hfit')
     omega
 
-theorem kerHK_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAll pvs gbs)
+theorem kerHK_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAllK pvs gbs)
     (c st len l : Nat) : kerHK R (packRP R) gbs pvs c st len l = kerH R gbs c st len l := by
   unfold kerHK kerH
   split
@@ -495,7 +495,7 @@ theorem rep_default : Rep (default : PGen) (default : ByteArray) :=
   ⟨rfl, fun i => by rw [get_out _ i (Nat.zero_le _), get!_out _ i (Nat.zero_le _)]⟩
 
 theorem checkPGs_ok (pvs : Array PGen) (gbs : Array ByteArray) (h : checkPGs pvs gbs = true) :
-    RepAll (pvs ++ pvs) (gbs ++ gbs) := by
+    RepAllK (pvs ++ pvs) (gbs ++ gbs) := by
   unfold checkPGs at h
   simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, List.mem_range] at h
   obtain ⟨hs, hall⟩ := h
