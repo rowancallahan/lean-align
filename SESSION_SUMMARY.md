@@ -224,3 +224,4 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
 - Bit-parallel banded DP (Myers / Hyyrö-style bit vectors, affine variant): band ≤ 64 fits one word per column.
 - Iterative deepening per read: −16, then −24, then −39, only on reads not settled; ambiguity early exit (two hits ≤ T tie → unmapped in default unique mode).
 - Batch the slow reads (stragglers) so their genome windows are fetched together.
+- ASK ROWAN after whole-genome testing: 125–149 bp mates now have a proved cap of 19, so length dispatch could run them at T=−16 instead of −12 (pure dispatch change, proof already covers it). Not changed yet.
