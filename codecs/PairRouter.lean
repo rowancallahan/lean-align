@@ -1,4 +1,4 @@
-import PairReason
+import PairJoin
 
 /-!
 # Codec `routeKP`: pass kernels in sequence, unmapped pairs with a reason
@@ -147,6 +147,9 @@ structure PassKer where
   region : Nat → ByteArray → Placement → Nat
   /-- Search mate `B` over the genome first at the cap of its best region hit (`mateH`). -/
   hint : Bool := true
+  /-- Pair-level pre-check at caps `P1`, `P2`: `true` = no proper pair of hits
+  (reason `noPair`, e.g. `noPairJ`); `false` = run the pass. -/
+  noPair : Nat → Nat → ByteArray → ByteArray → Bool := fun _ _ _ _ => false
 
 /-- Mate `B` over the genome at cap `P`, given hint `h` (the best penalty of its region
 search): first at cap `h`; when that search has any hit, its answer is the answer at `P`
@@ -161,6 +164,7 @@ def mateH (K : PassKer) (P : Nat) (R : ByteArray) (s : K.Prep) (h : Nat) : MateR
 picks the mate searched over the genome (`some true` = mate 2), `none` = the cheaper
 lookups (`K.cost`). -/
 def passG (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) : Out :=
+  if K.noPair P1 P2 R1 R2 then .unmapped .noPair none else
   let s1 := K.prep R1
   let s2 := K.prep R2
   let sw := match ord with
@@ -215,6 +219,13 @@ def kpKer {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhab
   cost P s := costP ix P s
   mate P R s := mateKP P ix G offs pgs R s
   region P R := regionPenKP P lo hi rl G offs pgs R
+
+/-- Today's kernel, the B-cap hint `hint`, and (when `j`) the pair-level anchor join
+`noPairJ` before the search. -/
+def kpKerB {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2]
+    (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (j hint : Bool) : PassKer :=
+  { kpKer lo hi ix rl G offs pgs with hint := hint, noPair := fun P1 P2 R1 R2 => j && noPairJ P1 P2 hi ix G R1 R2 }
 
 /-! ## Router -/
 
@@ -333,6 +344,7 @@ theorem settled_none (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (R1 R2 : Byt
   | tie m => exact e h.1
   | noPartner m => exact e h.1
   | notProper => exact e h.1
+  | noPair => exact e h.1
 
 /-! ## Proofs: the step -/
 
@@ -437,9 +449,12 @@ def PassOk (T1 T2 : Int) (o : Out) : Prop :=
 whole-genome search gives the specification's answer and any-hit flag, and a region
 miss rules out every proper partner among the read's hits. -/
 def KerOk (K : PassKer) : Prop :=
-  ∀ (P : Nat) (R : ByteArray) (m : List Char), Encodes R m → fastT P R = true →
+  (∀ (P : Nat) (R : ByteArray) (m : List Char), Encodes R m → fastT P R = true →
     MateOk (-(P : Int)) g m (K.mate P R (K.prep R)) ∧
-    ∀ a, P < K.region P R a → ∀ p ∈ hitsBoth sc0 (-(P : Int)) g m, properPair lo hi a p.1 = false
+    ∀ a, P < K.region P R a → ∀ p ∈ hitsBoth sc0 (-(P : Int)) g m, properPair lo hi a p.1 = false) ∧
+  ∀ (P1 P2 : Nat) (R1 R2 : ByteArray) (m1 m2 : List Char), Encodes R1 m1 → Encodes R2 m2 →
+    K.noPair P1 P2 R1 R2 = true → ∀ a ∈ hitsBoth sc0 (-(P1 : Int)) g m1, ∀ b ∈ hitsBoth sc0 (-(P2 : Int)) g m2,
+      properPair lo hi a.1 b.1 = false
 
 /-- The step in both orientations gives `PassOk`. -/
 theorem stepR_passOk (sw : Bool) (P1 P2 : Nat) (mA mB : MateR) (nh : Placement → Bool)
@@ -507,6 +522,7 @@ theorem passOk_settled (c1 c2 n : Nat) (o : Out) (h : PassOk lo hi g m1 m2 (-(c1
     | tie m => exact hr
     | noPartner m => exact hr
     | notProper => exact hr
+    | noPair => exact hr
 
 variable (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (K : PassKer) (hK : KerOk lo hi g K)
 include h1 h2 hK
@@ -520,7 +536,7 @@ theorem mateH_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m) (h
   · next hc =>
     simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
     obtain ⟨⟨-, hlt⟩, hfh⟩ := hc
-    have hx := (hK h R m hr hfh).1
+    have hx := (hK.1 h R m hr hfh).1
     simp only []
     generalize K.mate h R (K.prep R) = x at hx ⊢
     obtain ⟨hx1, hx2⟩ := hx
@@ -537,19 +553,23 @@ theorem mateH_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m) (h
       refine ⟨by rw [hmono]; exact hx1, fun hn => ⟨fun _ => hitsBoth_ne_mono _ _ (by omega) hne, fun _ => ?_⟩⟩
       simp only [hn, Option.isSome_none, Bool.false_or] at hs
       exact hs
-    · exact (hK P R m hr hf).1
-  · exact (hK P R m hr hf).1
+    · exact (hK.1 P R m hr hf).1
+  · exact (hK.1 P R m hr hf).1
 
 /-- **Pass kernel = specification** at caps `P1`, `P2` (both mates on the fast path). -/
 theorem passG_ok (P1 P2 : Nat) (ord : Option Bool) (hf1 : fastT P1 R1 = true) (hf2 : fastT P2 R2 = true) :
     PassOk lo hi g m1 m2 (-(P1 : Int)) (-(P2 : Int)) (passG K P1 P2 ord lo hi R1 R2) := by
   unfold passG
+  by_cases hn : K.noPair P1 P2 R1 R2 = true
+  · rw [if_pos hn]
+    exact ⟨rfl, hK.2 P1 P2 R1 R2 m1 m2 h1 h2 hn, trivial⟩
+  rw [if_neg hn]
   simp only [stepR_eq]
   generalize (match ord with
     | some o => o
     | none => decide (K.cost P2 (K.prep R2) < K.cost P1 (K.prep R1))) = sw
-  obtain ⟨k1, r1⟩ := hK P1 R1 m1 h1 hf1
-  obtain ⟨k2, r2⟩ := hK P2 R2 m2 h2 hf2
+  obtain ⟨k1, r1⟩ := hK.1 P1 R1 m1 h1 hf1
+  obtain ⟨k2, r2⟩ := hK.1 P2 R2 m2 h2 hf2
   cases sw with
   | true =>
     exact stepR_passOk lo hi g m1 m2 true P1 P2 _ _ _ k2
@@ -567,14 +587,14 @@ theorem passKnownG_ok (ma : Mate) (PA PB : Nat) (a : Placement × Int)
       (passKnownG K ma a PB lo hi (Mate.sel R1 R2 ma.other)) := by
   cases ma with
   | one =>
-    obtain ⟨-, r⟩ := hK PB R2 m2 h2 hf
+    obtain ⟨-, r⟩ := hK.1 PB R2 m2 h2 hf
     have := stepR_passOk lo hi g m1 m2 false PA PB (some a, true)
       (mateH K PB R2 (K.prep R2) (K.region PB R2 a.1)) (fun p => decide (PB < K.region PB R2 p))
       ⟨by simpa using ha.symm, fun h => by cases h⟩ (mateH_ok lo hi g K hK PB R2 m2 h2 hf _)
       (fun a' ha' => r a' (of_decide_eq_true ha'))
     simpa [passKnownG, stepR_eq, Mate.sel, Mate.other] using this
   | two =>
-    obtain ⟨-, r⟩ := hK PB R1 m1 h1 hf
+    obtain ⟨-, r⟩ := hK.1 PB R1 m1 h1 hf
     have := stepR_passOk lo hi g m1 m2 true PB PA (some a, true)
       (mateH K PB R1 (K.prep R1) (K.region PB R1 a.1)) (fun p => decide (PB < K.region PB R1 p))
       ⟨by simpa using ha.symm, fun h => by cases h⟩ (mateH_ok lo hi g K hK PB R1 m1 h1 hf _)
@@ -705,8 +725,30 @@ include hcut hg hchk in
 /-- Today's kernel meets `KerOk`. -/
 theorem kpKer_ok : KerOk lo hi g (kpKer lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz))
     ByteArray.empty offs (cutAll G offs ns)) :=
-  fun P R m hr hf => ⟨mateKP_ok g ix G offs ns P R m hr hg hcut hchk hf,
-    fun a h => regionKP_ok lo hi g ix G offs ns P R m hr hg hcut hchk a (regionPenKP_lt _ _ _ _ _ _ _ _ a h)⟩
+  ⟨fun P R m hr hf => ⟨mateKP_ok g ix G offs ns P R m hr hg hcut hchk hf,
+    fun a h => regionKP_ok lo hi g ix G offs ns P R m hr hg hcut hchk a (regionPenKP_lt _ _ _ _ _ _ _ _ a h)⟩,
+   fun _ _ _ _ _ _ _ _ h => by simp [kpKer] at h⟩
+
+include hcut hg hchk in
+/-- Today's kernel with the pair-level anchor join (`noPairJ`) as pre-check when `j`
+(any `hint`) meets `KerOk`. -/
+theorem kpKerB_ok (j hint : Bool) : KerOk lo hi g (kpKerB lo hi ((ix, G) : PkMz)
+    (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs (cutAll G offs ns) j hint) := by
+  refine ⟨(kpKer_ok lo hi g ix G offs ns hcut hg hchk).1, fun P1 P2 R1 R2 m1 m2 h1 h2 h => ?_⟩
+  simp only [kpKerB, Bool.and_eq_true] at h
+  exact noPairJ_ok ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) g hg
+    (catOk_cut G offs ns hcut) (lookOk_pk ix G hchk) lo hi P1 P2 m1 m2 R1 R2 h1 h2 h.2
+
+include hcut hg h1 h2 hchk in
+/-- **Router with the anchor join (`j1` in pass 1, `j2` in pass 2) = specification.** -/
+theorem routeKPB_ok (cfg : RouteCfg) (j1 j2 hint : Bool) :
+    Settled lo hi g m1 m2 R1 R2 (routeG cfg
+      (kpKerB lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs
+        (cutAll G offs ns) j1 hint)
+      (kpKerB lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs
+        (cutAll G offs ns) j2 hint) lo hi (some R1) (some R2)) :=
+  routeG_ok lo hi g m1 m2 R1 R2 h1 h2 cfg _ _ (kpKerB_ok lo hi g ix G offs ns hcut hg hchk j1 hint)
+    (kpKerB_ok lo hi g ix G offs ns hcut hg hchk j2 hint)
 
 include hcut hg h1 h2 hchk in
 /-- **Router (today's kernel) = specification.** -/
@@ -730,3 +772,5 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.routeG_ok
 #print axioms MapSpec.Fast.routeKP_ok
 #print axioms MapSpec.Fast.settled_none
+#print axioms MapSpec.Fast.kpKerB_ok
+#print axioms MapSpec.Fast.routeKPB_ok
