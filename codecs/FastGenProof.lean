@@ -560,25 +560,25 @@ theorem stageKS_inv {Gt : Type} [GRead Gt] (P : Nat) (cw : Window → Nat) (body
 
 /-- `sp` counts only blocks with no exact copy that a band cell of end `e` can reach. -/
 def SpOk (read : List Char) (gs : List Char) (B : Nat) (sp : Nat → Bool) (e : Nat) : Prop :=
-  ∀ j, sp j = true → 25 * j + 25 ≤ read.length → ∀ p, p ≤ e →
-    ((((e - p : Nat) : Int) - ((read.length - 25 * j : Nat) : Int)).natAbs ≤ B) →
-    ¬(p + 25 ≤ e ∧ ExactAt read gs (25 * j) (25 * j + 25) p)
+  ∀ j, sp j = true → 8 * j + 8 ≤ read.length → ∀ p, p ≤ e →
+    ((((e - p : Nat) : Int) - ((read.length - 8 * j : Nat) : Int)).natAbs ≤ B) →
+    ¬(p + 8 ≤ e ∧ ExactAt read gs (8 * j) (8 * j + 8) p)
 
 theorem blockEq_of (R G : ByteArray) (a p : Nat) :
-    ∀ k, k ≤ 25 → (∀ u, 25 - k ≤ u → u < 25 → R.get! (a + u) = G.get! (p + u)) → blockEq R G a p k = true := by
+    ∀ k, k ≤ 8 → (∀ u, 8 - k ≤ u → u < 8 → R.get! (a + u) = G.get! (p + u)) → blockEq R G a p k = true := by
   intro k
   induction k with
   | zero => intro _ _; rfl
   | succ k ih =>
     intro hk h
     unfold blockEq
-    have e1 := h (25 - (k + 1)) (Nat.le_refl _) (by omega)
-    rw [show a + (25 - (k + 1)) = a + 25 - (k + 1) by omega, show p + (25 - (k + 1)) = p + 25 - (k + 1) by omega] at e1
+    have e1 := h (8 - (k + 1)) (Nat.le_refl _) (by omega)
+    rw [show a + (8 - (k + 1)) = a + 8 - (k + 1) by omega, show p + (8 - (k + 1)) = p + 8 - (k + 1) by omega] at e1
     simp only [GRead.get_bytes, e1, beq_self_eq_true, Bool.true_and]
     exact ih (by omega) (fun u h1 h2 => h u (by omega) h2)
 
 theorem anyCopy_of (R G : ByteArray) (a : Nat) (lo : Int) :
-    ∀ (t s : Nat), s < t → 0 ≤ lo + s → (lo + s).toNat + 25 ≤ G.size → blockEq R G a (lo + s).toNat 25 = true →
+    ∀ (t s : Nat), s < t → 0 ≤ lo + s → (lo + s).toNat + 8 ≤ G.size → blockEq R G a (lo + s).toNat 8 = true →
       anyCopy R G a lo t = true := by
   intro t
   induction t with
@@ -617,36 +617,36 @@ theorem spoiled_ok (R : ByteArray) (read : List Char) (hr : Encodes R read) (G :
   intro j hj hjl p hp hband ⟨hpe, hex⟩
   dsimp only at hj
   have hn := hr.1
-  have hjA : j < R.size / 25 := by
+  have hjA : j < R.size / 8 := by
     apply Classical.byContradiction
     intro hc
     have : (spoiledArr R G D d B)[j]? = none := by
       unfold spoiledArr; simp; omega
     simp only [this, Option.getD_none] at hj
     cases hj
-  have hA : (spoiledArr R G D d B)[j]? = some (!anyCopy R G (25 * j) ((D : Int) - d - R.size + (25 * j : Nat) - B)
+  have hA : (spoiledArr R G D d B)[j]? = some (!anyCopy R G (8 * j) ((D : Int) - d - R.size + (8 * j : Nat) - B)
       (2 * (d + B) + 1)) := by
     unfold spoiledArr; simp [hjA]
   rw [hA] at hj
   simp only [Option.getD_some, Bool.not_eq_true'] at hj
   -- the copy at `p` is one of the positions tried
-  have hlen : ((read.drop (25 * j)).take (25 * j + 25 - 25 * j)).length = 25 := by simp; omega
-  have hglen : p + 25 ≤ gs.length := by
+  have hlen : ((read.drop (8 * j)).take (8 * j + 8 - 8 * j)).length = 8 := by simp; omega
+  have hglen : p + 8 ≤ gs.length := by
     unfold ExactAt at hex
     rw [hex] at hlen; simp at hlen; omega
-  have heq : ∀ u, u < 25 → R.get! (25 * j + u) = G.get! (p + u) := by
+  have heq : ∀ u, u < 8 → R.get! (8 * j + u) = G.get! (p + u) := by
     intro u hu
-    have h1 : ((read.drop (25 * j)).take (25 * j + 25 - 25 * j))[u]'(by rw [hlen]; exact hu) =
-        ((gs.drop p).take (25 * j + 25 - 25 * j))[u]'(by rw [← hex, hlen]; exact hu) := by
+    have h1 : ((read.drop (8 * j)).take (8 * j + 8 - 8 * j))[u]'(by rw [hlen]; exact hu) =
+        ((gs.drop p).take (8 * j + 8 - 8 * j))[u]'(by rw [← hex, hlen]; exact hu) := by
       unfold ExactAt at hex; simp only [hex]
     simp only [List.getElem_take, List.getElem_drop] at h1
     apply UInt8.toNat_inj.mp
-    rw [hr.2 (25 * j + u) (by omega), hG.2 (p + u) (by omega), h1]
+    rw [hr.2 (8 * j + u) (by omega), hG.2 (p + u) (by omega), h1]
   have hgs : G.size = gs.length := hG.1
-  rw [anyCopy_of R G (25 * j) _ (2 * (d + B) + 1) (p - ((D : Int) - d - R.size + (25 * j : Nat) - B)).toNat
+  rw [anyCopy_of R G (8 * j) _ (2 * (d + B) + 1) (p - ((D : Int) - d - R.size + (8 * j : Nat) - B)).toNat
     (by omega) (by omega) (by omega) (by
-      rw [show (((D : Int) - d - R.size + (25 * j : Nat) - B) + ((p - ((D : Int) - d - R.size + (25 * j : Nat) - B)).toNat : Int)).toNat = p by omega]
-      exact blockEq_of R G (25 * j) p 25 (Nat.le_refl _) (fun u _ hu => heq u hu))] at hj
+      rw [show (((D : Int) - d - R.size + (8 * j : Nat) - B) + ((p - ((D : Int) - d - R.size + (8 * j : Nat) - B)).toNat : Int)).toNat = p by omega]
+      exact blockEq_of R G (8 * j) p 8 (Nat.le_refl _) (fun u _ hu => heq u hu))] at hj
   cases hj
 
 theorem SpOk.mono {read gs : List Char} {B B' : Nat} {sp : Nat → Bool} {e : Nat} (h : SpOk read gs B sp e)
@@ -710,7 +710,7 @@ theorem bandPenE_B (P : Nat) (R : ByteArray) (G : ByteArray) (cnt : Array Nat) (
 theorem bandPenE_P (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : ByteArray)
     (hg : GenomeBytes gbs g) (hr : Encodes R read) (c st len : Nat) (hc : c < gbs.size) (sp : Nat → Bool)
     (hsp : ∀ (hc' : c < g.length), SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp (st + len))
-    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 25]! = blocksAbove sp i) :
+    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 8]! = blocksAbove sp i) :
     bandPenE P R.size len (decide (st + len ≤ gbs[c]!.size))
       (bandEndC (-(P : Int)) (bandOf sc0 (-(P : Int))) cnt R gbs[c]! (st + len)) =
     bandPenE P R.size len (decide (st + len ≤ gbs[c]!.size))
@@ -883,7 +883,7 @@ theorem addBS_spec (hc : c < gbs.size) (Pc : Nat) (hPc : Pc ≤ P) (D : Nat) (bb
     (hsb : sh.2 = bb) (sp : Nat → Bool)
     (hsp : 0 ≤ (D : Int) + bb → ∀ (hc' : c < g.length),
       SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp ((D : Int) + bb).toNat)
-    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 25]! = blocksAbove sp i) (S : Window → Prop)
+    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 8]! = blocksAbove sp i) (S : Window → Prop)
     (b : Best) (hbP : Pc = P ∨ b.pen ≤ Pc) (h : InvP P cw S b) :
     InvP P cw (fun w => S w ∨ (0 ≤ (D : Int) - R.size - sh.1 ∧ 0 ≤ (R.size : Int) + sh.1 + sh.2 ∧
         w = ⟨c, ((D : Int) - R.size - sh.1).toNat, ((R.size : Int) + sh.1 + sh.2).toNat⟩))
@@ -924,7 +924,7 @@ theorem stageBD_spec (hc : c < gbs.size) (Pc : Nat) (hPc : Pc ≤ P) (shs : List
     (sp : Nat → Bool) (bb : Int)
     (hsp : 0 ≤ (D : Int) + bb → ∀ (hc' : c < g.length),
       SpOk read g[c].seq (bandOf sc0 (-(P : Int))) sp ((D : Int) + bb).toNat)
-    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 25]! = blocksAbove sp i) (S : Window → Prop)
+    (cnt : Array Nat) (hcnt : ∀ i, i ≤ R.size → cnt[i / 8]! = blocksAbove sp i) (S : Window → Prop)
     (b : Best) (hbP : Pc = P ∨ b.pen ≤ Pc) (h : InvP P cw S b) :
     InvP P cw (fun w => S w ∨ (0 ≤ (D : Int) + bb ∧ ∃ sh ∈ shs, sh.2 = bb ∧
         0 ≤ (D : Int) - R.size - sh.1 ∧ 0 ≤ (R.size : Int) + sh.1 + sh.2 ∧

@@ -16,7 +16,8 @@ codecs/WgPacked.lean: `check3P_eq`, `pairDispatch_view_eq`, `pairDispatchP_mz_eq
     WG_READS='name=r1:r2:limit|0;…' WG_TASKS=1,4 WG_OUT=dir lake exe whole_genome map <index_prefix> <chr.fa>...
         byte chromosomes, genome held once as a view (mode B: pairDispatch_view_eq / pairFastGB_view_eq_pairSpec)
     … lake exe whole_genome pmap <index_prefix> <chr.fa>...
-        genome packed while read (no byte genome), index checked on it (check3P_eq); WG_MODES=P,PK
+        packed genome loaded from <prefix>.pgw/.pgx/.pgc (hash-checked; WG_FASTA=1 or no .pgc: packed
+        while the FASTA is read; no byte genome), index checked on it (check3P_eq); WG_MODES=P,PK
         P: pairDispatchP / pairFastGBP; PK: word kernels pairDispatchKP / pairFastGBKP
     env: WG_K (22) WG_B (26) WG_C (0) WG_W (5) WG_T (6)  index; WG_P (0 = length dispatch: −16 from
          150 letters, −12 from 100, shorter pairs skipped; else one T = −P) WG_MIN (100) WG_MAX (1000)
@@ -430,6 +431,67 @@ def chromKBX (XL : Nat) (kf : Ker) (KR : RP) (R : ByteArray) (gbs : Array PGen) 
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
+/-- Prototype word test for any window width: read letters `[s, s + l)` (`l ≤ 16`) at some
+genome start in `[lo, lo + w)` (window flagged, read packed); one 64-bit genome field per
+`33 − l` starts. -/
+def nearWL (K : RP) (P : PGen) (l s lo w : Nat) : Bool :=
+  let mk : UInt64 := (1 <<< (2 * l).toUInt64) - 1
+  let rw := K.w
+  let rp := comb rw[s / 32]! rw[s / 32 + 1]! (s % 32) (2 * (s % 32)).toUInt64 (64 - 2 * (s % 32)).toUInt64 &&& mk
+  outer mk rp (P.o + lo) w (w + 1)
+where
+  inner (mk rp g : UInt64) : Nat → Bool
+    | 0 => false
+    | i + 1 => (g &&& mk) == rp || inner mk rp (g >>> 2) i
+  outer (mk rp : UInt64) (a w : Nat) : Nat → Bool
+    | 0 => false
+    | f + 1 =>
+      if w == 0 then false else
+      let c := min w (33 - l)
+      let g := comb (gword P.w (a / 32)) (gword P.w (a / 32 + 1)) (a % 32) (2 * (a % 32)).toUInt64 (64 - 2 * (a % 32)).toUInt64
+      inner mk rp g c || outer mk rp (a + c) (w - c) f
+
+/-- Prototype: `fineOk` (pieces of `l` letters) with the word test where the window is flagged. -/
+def fineWL (K : RP) (R : ByteArray) (G : PGen) (l Ls r D sb : Nat) : Nat → Nat → Nat → Bool
+  | _, _, 0 => true
+  | j, f, k + 1 =>
+    let a := D + j * Ls
+    let n := R.size
+    let ok := if a + r < n then false else
+      let lo := a + r - n - min (2 * r) (a + r - n)
+      let w := min (2 * r) (a + r - n) + 1
+      if K.ok && decide (lo + w + l ≤ GRead.size G) && winOk G lo (w + l - 1) then nearWL K G l (j * Ls) lo w
+      else nearL R G (j * Ls) l lo w
+    if ok then fineWL K R G l Ls r D sb (j + 1) f k
+    else if sb < f + 1 then false else fineWL K R G l Ls r D sb (j + 1) (f + 1) k
+
+/-- Prototype: `kfilt` with word tests (unseen seeds: `unlookW`; pieces: `fineWL`). -/
+@[inline] def kfiltW (K : RP) (R : ByteArray) (G : PGen) (acc : List (Array Nat)) (us : List Nat)
+    (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
+  let Q := min lim b.pen
+  let r := 2 * gapBound sc0 (-(Q : Int))
+  let fJ := acc.length - suppA acc D r
+  decide (fJ ≤ sbound Q) && unlookW K R G Ls r D (sbound Q) us fJ &&
+    fineWL K R G pl (R.size / (R.size / pl)) r D (sbound Q) 0 0 (R.size / pl)
+
+/-- Prototype (profile only): `chromKBFG` with stage B's diagonals through `kfiltW` at cap `P`. -/
+def chromKBPw (kf : Ker) (K : RP) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : List (Array Nat))
+    (J : List Nat) (b1 : Best) (noB : Bool := false) (noF : Bool := false) : Best :=
+  let lim := min P 16
+  let Q1 := min b1.pen P
+  let us := unseen (R.size / 25) J
+  let Ls := R.size / (R.size / 25)
+  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
+      stageKS (fun D b => stageKF kf R.size c lim (shapesKT Q1) [D] b)
+        R gbs[c]! acc us Ls lim (diags acc) b1 else b1
+  let Q2 := min b2.pen P
+  if lim < Q2 then
+    let ds := (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))).filter
+      fun D => !noF && kfiltW K R gbs[c]! acc us Ls P b2 D
+    if noB then { b2 with pen := b2.pen + ds.length } else
+    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) ds b2
+  else b2
+
 /-- Prototype (profile only): `chromKBFG` with stage B's diagonals through `kfilt` at cap `P`. -/
 def chromKBPf (kf : Ker) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
     (b1 : Best) : Best :=
@@ -493,6 +555,9 @@ structure Prof where
   bReads : Nat := 0
   bNone : Nat := 0
   bTopNs : Array Nat := #[]
+  bWordNs : Nat := 0
+  bNoBNs : Nat := 0
+  bDiagNs : Nat := 0
   penHist : Array Nat := Array.replicate 18 0
   lkHist : Array Nat := Array.replicate 25 0
 
@@ -543,6 +608,21 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
     ((List.range n).foldl (fun b c => chromKBPf kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2)
   let bF ← (← IO.mkRef bF).get
   let w2 ← IO.monoNanosNow
+  let bW := (List.range n).foldl (fun b c => chromKBPw kf2 K2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b)
+    ((List.range n).foldl (fun b c => chromKBPw kf1 K1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2)
+  let bW ← (← IO.mkRef bW).get
+  let w3 ← IO.monoNanosNow
+  if bW.pen != bF.pen || bW.amb != bF.amb || bW.chr != bF.chr || bW.st != bF.st || bW.len != bF.len then say s!"  WORD DIFF read {pf.reads}"
+  let bN := (List.range n).foldl (fun b c => chromKBPw kf2 K2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b true)
+    ((List.range n).foldl (fun b c => chromKBPw kf1 K1 R gbs2 c P x.1.acc[c]! x.1.J b true) x.2.2)
+  let bN ← (← IO.mkRef bN).get
+  let w4 ← IO.monoNanosNow
+  let bD := (List.range n).foldl (fun b c => chromKBPw kf2 K2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b true true)
+    ((List.range n).foldl (fun b c => chromKBPw kf1 K1 R gbs2 c P x.1.acc[c]! x.1.J b true true) x.2.2)
+  let bD ← (← IO.mkRef bD).get
+  let w5 ← IO.monoNanosNow
+  let pf := { pf with bWordNs := pf.bWordNs + (w3 - w2), bNoBNs := pf.bNoBNs + (w4 - w3) + 0 * bN.pen }
+  let pf := { pf with bDiagNs := pf.bDiagNs + (w5 - w4) + 0 * bD.pen }
   if bF.pen != b.pen || bF.amb != b.amb then say s!"  PROTO DIFF read {pf.reads}: {b.pen}/{b.amb} vs {bF.pen}/{bF.amb}"
   let isB := decide (min P 16 < min bk16.pen P)
   let (nd, np) := if isB then
@@ -620,7 +700,7 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  reads > 1 ms: {pf.slowReads} taking {secs 0 pf.slowNs} s of {secs 0 (pf.p1Ns + pf.kbNs)} s; their lookups {Float.ofNat pf.slowLookups / Float.ofNat (max pf.slowReads 1)}, anchors {Float.ofNat pf.slowHits / Float.ofNat (max pf.slowReads 1)} per read"
   say s!"  reads > 1 ms: phase 1 {secs 0 pf.slowP1} s; ambiguous {pf.slowAmb} (at 0: {pf.slowAmb0}), none {pf.slowNone}"
   say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
-  say s!"  stage K only (cap 16) {secs 0 pf.kOnlyNs} s vs stages K/B {secs 0 pf.kbNs} s; prototype B through kfilt at P: {secs 0 pf.bFiltNs} s"
+  say s!"  stage K only (cap 16) {secs 0 pf.kOnlyNs} s vs stages K/B {secs 0 pf.kbNs} s; prototype B through kfilt at P: {secs 0 pf.bFiltNs} s; word kfilt: {secs 0 pf.bWordNs} s (of which stage K + diagsB + word filter, no stage B: {secs 0 pf.bNoBNs} s; stage K + diagsB only: {secs 0 pf.bDiagNs} s)"
   say s!"  reads reaching stage B: {pf.bReads} (none at P: {pf.bNone}); stage-B diagonals {pf.bDiags}, passing kfilt at P {pf.bPass}"
   let tops := pf.bTopNs.qsort (· > ·)
   say s!"  stage-K/B time of stage-B reads, top 10 (ms): {(tops.extract 0 10).map (· / 1000000)}; sum {secs 0 (tops.foldl (· + ·) 0)} s"
@@ -1031,9 +1111,14 @@ def main (args : List String) : IO UInt32 := do
       let ixT ← if (← IO.getEnv "WG_PACKONLY").isSome then pure (Task.pure (.error (IO.userError "pack only")))
         else IO.asTask (load pre) .dedicated
       let pk := ((← IO.getEnv "WG_PACK").getD "4").toNat!
-      -- WG_PKLOAD: the packed genome saved by an earlier run (<pre>.pgw/.pgx/.pgc, WG_PKSAVE; .pgw/.pgx as bench/pack_genome.py writes them) instead of
-      -- packing the FASTA; trusted only through the index hash below, which covers G.w, G.ex, n, o and the cuts
-      let (G, offs, ns) ← if (← IO.getEnv "WG_PKLOAD").isSome then do
+      -- Default: the packed genome saved by an earlier run (<pre>.pgw/.pgx/.pgc, WG_PKSAVE; .pgw/.pgx as
+      -- bench/pack_genome.py writes them) instead of packing the FASTA; trusted only through the index hash
+      -- below, which covers G.w, G.ex, n, o and the cuts.  The FASTA is packed instead when WG_FASTA is set,
+      -- when <pre>.pgc is missing, and always for WG_CHECK / WG_PACKONLY (the hash is then made from the FASTA).
+      let useFa := (← IO.getEnv "WG_FASTA").isSome || (← IO.getEnv "WG_CHECK").isSome ||
+        (← IO.getEnv "WG_PACKONLY").isSome || !(← System.FilePath.pathExists (pre ++ ".pgc"))
+      let (G, offs, ns) ← if !useFa then do
+          say s!"genome: loading the saved packed genome {pre}.pgw/.pgx/.pgc (WG_FASTA=1 packs the FASTA)"
           let m := ((← IO.FS.readFile (pre ++ ".pgc")).trimAscii.toString.splitOn ";").map
             fun (x : String) => ((x.splitOn ",").filter (· ≠ "")).toArray.map String.toNat!
           let [hd, offs, ns] := m | throw (IO.userError s!"{pre}.pgc: bad format")

@@ -164,8 +164,8 @@ theorem block_step (xs gs : List Char) (e : Nat) (he : e ≤ gs.length) (a L : N
   · simpa [show L ≠ 0 by omega] using h3
   · simpa [show L ≠ 0 by omega, show L ≠ 1 by omega] using h4
 
-/-- Spoiled blocks wholly above row `i` (block `j` is rows `[25j, 25j + 25)`). -/
-def blocksAbove (sp : Nat → Bool) (i : Nat) : Nat := ((List.range (i / 25)).filter sp).length
+/-- Spoiled blocks wholly above row `i` (block `j` is rows `[8j, 8j + 8)`). -/
+def blocksAbove (sp : Nat → Bool) (i : Nat) : Nat := ((List.range (i / 8)).filter sp).length
 
 /-- The none threshold of row `i`. -/
 def tNr (T : Int) (sp : Nat → Bool) (i : Nat) : Int := T + 4 * (blocksAbove sp i : Int)
@@ -177,23 +177,23 @@ def tGr (T : Int) (sp : Nat → Bool) (i : Nat) : Int :=
 theorem blocksAbove_zero (sp : Nat → Bool) : blocksAbove sp 0 = 0 := by simp [blocksAbove]
 
 theorem blocksAbove_succ_same (sp : Nat → Bool) (i : Nat)
-    (h : (i + 1) % 25 ≠ 0 ∨ sp ((i + 1) / 25 - 1) = false) :
+    (h : (i + 1) % 8 ≠ 0 ∨ sp ((i + 1) / 8 - 1) = false) :
     blocksAbove sp i = blocksAbove sp (i + 1) := by
   unfold blocksAbove
-  by_cases hm : (i + 1) % 25 = 0
-  · have hq : (i + 1) / 25 = i / 25 + 1 := by omega
+  by_cases hm : (i + 1) % 8 = 0
+  · have hq : (i + 1) / 8 = i / 8 + 1 := by omega
     rw [hq, List.range_succ, List.filter_append]
-    have hs : sp (i / 25) = false := by
+    have hs : sp (i / 8) = false := by
       rcases h with h | h
       · exact absurd hm h
       · rwa [hq] at h
     simp [hs]
-  · rw [show (i + 1) / 25 = i / 25 by omega]
+  · rw [show (i + 1) / 8 = i / 8 by omega]
 
 theorem blocksAbove_block (sp : Nat → Bool) (j : Nat) (h : sp j = true) :
-    blocksAbove sp (25 * j + 25) = blocksAbove sp (25 * j) + 1 := by
+    blocksAbove sp (8 * j + 8) = blocksAbove sp (8 * j) + 1 := by
   unfold blocksAbove
-  rw [show (25 * j + 25) / 25 = j + 1 by omega, show 25 * j / 25 = j by omega, List.range_succ,
+  rw [show (8 * j + 8) / 8 = j + 1 by omega, show 8 * j / 8 = j by omega, List.range_succ,
     List.filter_append]
   simp [h]
 
@@ -201,9 +201,9 @@ theorem blocksAbove_block (sp : Nat → Bool) (j : Nat) (h : sp j = true) :
 with no exact copy at any in-band position) makes row `0` dead at `T`. -/
 theorem prune_down (T : Int) (B : Nat) (hb : BandOK sc0 T B) (xs gs : List Char) (e : Nat)
     (he : e ≤ gs.length) (sp : Nat → Bool)
-    (hsp : ∀ j, sp j = true → 25 * j + 25 ≤ xs.length → ∀ p, p ≤ e →
-      ((((e - p : Nat) : Int) - ((xs.length - 25 * j : Nat) : Int)).natAbs ≤ B) →
-      ¬(p + 25 ≤ e ∧ ExactAt xs gs (25 * j) (25 * j + 25) p)) :
+    (hsp : ∀ j, sp j = true → 8 * j + 8 ≤ xs.length → ∀ p, p ≤ e →
+      ((((e - p : Nat) : Int) - ((xs.length - 8 * j : Nat) : Int)).natAbs ≤ B) →
+      ¬(p + 8 ≤ e ∧ ExactAt xs gs (8 * j) (8 * j + 8) p)) :
     ∀ i, i ≤ xs.length → DeadRow2 xs gs e i (tNr T sp i) (tGr T sp i) → DeadRow sc0 T xs gs e 0 := by
   have hv : ValidScoring sc0 := by unfold ValidScoring sc0; decide
   intro i
@@ -217,41 +217,41 @@ theorem prune_down (T : Int) (B : Nat) (hb : BandOK sc0 T B) (xs gs : List Char)
       simp only [tGr, tNr, blocksAbove_zero] at h1 h2 h3
       refine ⟨by simpa using h1, ?_, ?_⟩ <;> simp only [sc0] at * <;> simp at * <;> omega
     | succ i =>
-      by_cases hblk : (i + 1) % 25 = 0 ∧ sp ((i + 1) / 25 - 1) = true
+      by_cases hblk : (i + 1) % 8 = 0 ∧ sp ((i + 1) / 8 - 1) = true
       · -- a spoiled block ends at row `i + 1`: jump to its start
         obtain ⟨hm, hs⟩ := hblk
-        generalize hj : (i + 1) / 25 - 1 = j at hs
-        have hij : i + 1 = 25 * j + 25 := by omega
+        generalize hj : (i + 1) / 8 - 1 = j at hs
+        have hij : i + 1 = 8 * j + 8 := by omega
         have hba := blocksAbove_block sp j hs
         rw [← hij] at hba
-        have hd' : DeadRow2 xs gs e (25 * j + 25) (tNr T sp (i + 1)) (tNr T sp (i + 1) + 4) := by
+        have hd' : DeadRow2 xs gs e (8 * j + 8) (tNr T sp (i + 1)) (tNr T sp (i + 1) + 4) := by
           intro p hp
           have := hd p hp
           rw [← hij]
           unfold tGr at this
           rw [if_neg (by omega)] at this
           exact this
-        have hst := block_step xs gs e he (25 * j) 25 (by omega) (by omega) _ hd'
-        apply ih (25 * j) (by omega) (by omega)
+        have hst := block_step xs gs e he (8 * j) 8 (by omega) (by omega) _ hd'
+        apply ih (8 * j) (by omega) (by omega)
         intro p hp
         obtain ⟨hn, hx, hy⟩ := hst p hp
-        have htn : tNr T sp (25 * j) = tNr T sp (i + 1) - 4 := by unfold tNr; rw [hba]; push_cast; omega
-        have htg : tNr T sp (i + 1) ≤ tGr T sp (25 * j) := by
+        have htn : tNr T sp (8 * j) = tNr T sp (i + 1) - 4 := by unfold tNr; rw [hba]; push_cast; omega
+        have htg : tNr T sp (i + 1) ≤ tGr T sp (8 * j) := by
           unfold tGr; rw [htn]; split <;> omega
         refine ⟨?_, by omega, by omega⟩
         rw [htn]
         rcases hn with hn | hex
         · exact hn
         · -- an exact copy: outside the band, below `T`
-          by_cases hband : ((((e - p : Nat) : Int) - ((xs.length - 25 * j : Nat) : Int)).natAbs ≤ B)
+          by_cases hband : ((((e - p : Nat) : Int) - ((xs.length - 8 * j : Nat) : Int)).natAbs ≤ B)
           · exact absurd hex (hsp j hs (by omega) p hp hband)
-          · have := cv_off_band sc0 hv T B hb xs gs e he none (25 * j) p (by omega)
+          · have := cv_off_band sc0 hv T B hb xs gs e he none (8 * j) p (by omega)
             simp only [thr] at this
             have : T ≤ tNr T sp (i + 1) - 4 := by unfold tNr; rw [hba]; push_cast; omega
             omega
       · -- no spoiled block ends here: one row up, same thresholds
         have hsame := blocksAbove_succ_same sp i (by
-          by_cases hm : (i + 1) % 25 = 0
+          by_cases hm : (i + 1) % 8 = 0
           · right; simpa [hm] using hblk
           · left; exact hm)
         apply ih i (by omega) (by omega)
@@ -371,9 +371,9 @@ block counted by `sp` has no exact copy in the band. -/
 theorem bandRowsP_spec (T : Int) (B : Nat) (hb : BandOK sc0 T B)
     (xs gs : List Char) (e : Nat) (he : e ≤ gs.length) (rb gb : ByteArray) (hr : Encodes rb xs)
     (hg : Encodes gb gs) (sp : Nat → Bool)
-    (hsp : ∀ j, sp j = true → 25 * j + 25 ≤ xs.length → ∀ p, p ≤ e →
-      ((((e - p : Nat) : Int) - ((xs.length - 25 * j : Nat) : Int)).natAbs ≤ B) →
-      ¬(p + 25 ≤ e ∧ ExactAt xs gs (25 * j) (25 * j + 25) p)) :
+    (hsp : ∀ j, sp j = true → 8 * j + 8 ≤ xs.length → ∀ p, p ≤ e →
+      ((((e - p : Nat) : Int) - ((xs.length - 8 * j : Nat) : Int)).natAbs ≤ B) →
+      ¬(p + 8 ≤ e ∧ ExactAt xs gs (8 * j) (8 * j + 8) p)) :
     ∀ i (N X Y : Array Int), i ≤ xs.length → RowShape T B N X Y →
     (∀ k, k < 2 * B + 1 → i < xs.length → Valid xs.length B e (i + 1) k →
       CellRelP sc0 T B xs gs e (i + 1) k N X Y) →
@@ -510,9 +510,9 @@ theorem bandRowsP_spec (T : Int) (B : Nat) (hb : BandOK sc0 T B)
 theorem bandEndP_spec (T : Int) (B : Nat) (hb : BandOK sc0 T B)
     (xs gs : List Char) (e : Nat) (he : e ≤ gs.length) (rb gb : ByteArray) (hr : Encodes rb xs)
     (hg : Encodes gb gs) (sp : Nat → Bool)
-    (hsp : ∀ j, sp j = true → 25 * j + 25 ≤ xs.length → ∀ p, p ≤ e →
-      ((((e - p : Nat) : Int) - ((xs.length - 25 * j : Nat) : Int)).natAbs ≤ B) →
-      ¬(p + 25 ≤ e ∧ ExactAt xs gs (25 * j) (25 * j + 25) p)) :
+    (hsp : ∀ j, sp j = true → 8 * j + 8 ≤ xs.length → ∀ p, p ≤ e →
+      ((((e - p : Nat) : Int) - ((xs.length - 8 * j : Nat) : Int)).natAbs ≤ B) →
+      ¬(p + 8 ≤ e ∧ ExactAt xs gs (8 * j) (8 * j + 8) p)) :
     match bandEndP T B sp rb gb e with
     | some A => A.size = 2 * B + 3 ∧ ∀ k, k < 2 * B + 1 → Valid xs.length B e 0 k →
         Rel T A[k + 1]! (cv sc0 xs gs e none 0 (pOf xs.length B e 0 k))
@@ -526,12 +526,12 @@ theorem bandEndP_spec (T : Int) (B : Nat) (hb : BandOK sc0 T B)
 
 /-! ## Thresholds from a count array -/
 
-/-- `bandRowsP` with the spoiled-block counts read from `cnt` (`cnt[i / 25]` blocks above row `i`). -/
+/-- `bandRowsP` with the spoiled-block counts read from `cnt` (`cnt[i / 8]` blocks above row `i`). -/
 @[specialize] def bandRowsC (T : Int) (B : Nat) (cnt : Array Nat) {Gt : Type} [GRead Gt] (rb : ByteArray) (gb : Gt)
     (e : Nat) : Nat → Array Int → Array Int → Array Int → Option (Array Int)
   | i, N, X, Y =>
     if rb.size ≤ e + i + B then
-      let h := cnt[i / 25]!
+      let h := cnt[i / 8]!
       let tN := T + 4 * (h : Int)
       match bandLoop sc0 tN (tN + (if h = 0 then 6 else 4)) rb gb e i (i == rb.size) (min (2 * B) (e + i + B - rb.size))
           (i + B - rb.size) (e + i + B - rb.size - (i + B - rb.size)) N X Y false with
@@ -549,7 +549,7 @@ theorem bandEndP_spec (T : Int) (B : Nat) (hb : BandOK sc0 T B)
     (Array.replicate (2 * B + 3) (T - 1)) (Array.replicate (2 * B + 3) (T - 1))
 
 theorem bandRowsC_eq (T : Int) (B : Nat) (cnt : Array Nat) (sp : Nat → Bool) {Gt : Type} [GRead Gt]
-    (rb : ByteArray) (gb : Gt) (e : Nat) (hcnt : ∀ i, i ≤ rb.size → cnt[i / 25]! = blocksAbove sp i) :
+    (rb : ByteArray) (gb : Gt) (e : Nat) (hcnt : ∀ i, i ≤ rb.size → cnt[i / 8]! = blocksAbove sp i) :
     ∀ i N X Y, i ≤ rb.size → bandRowsC T B cnt rb gb e i N X Y = bandRowsP T B sp rb gb e i N X Y := by
   intro i
   induction i with
@@ -565,7 +565,7 @@ theorem bandRowsC_eq (T : Int) (B : Nat) (cnt : Array Nat) (sp : Nat → Bool) {
     rfl
 
 theorem bandEndC_eq (T : Int) (B : Nat) (cnt : Array Nat) (sp : Nat → Bool) {Gt : Type} [GRead Gt]
-    (rb : ByteArray) (gb : Gt) (e : Nat) (hcnt : ∀ i, i ≤ rb.size → cnt[i / 25]! = blocksAbove sp i) :
+    (rb : ByteArray) (gb : Gt) (e : Nat) (hcnt : ∀ i, i ≤ rb.size → cnt[i / 8]! = blocksAbove sp i) :
     bandEndC T B cnt rb gb e = bandEndP T B sp rb gb e := by
   unfold bandEndC bandEndP
   exact bandRowsC_eq T B cnt sp rb gb e hcnt _ _ _ _ (Nat.le_refl _)
@@ -574,10 +574,10 @@ theorem bandEndC_eq (T : Int) (B : Nat) (cnt : Array Nat) (sp : Nat → Bool) {G
 def prefCnt (A : Array Bool) : Array Nat :=
   (Array.range (A.size + 1)).map fun q => ((List.range q).filter fun j => A[j]?.getD false).length
 
-theorem prefCnt_get (A : Array Bool) (n : Nat) (hA : A.size = n / 25) :
-    ∀ i, i ≤ n → (prefCnt A)[i / 25]! = blocksAbove (fun j => A[j]?.getD false) i := by
+theorem prefCnt_get (A : Array Bool) (n : Nat) (hA : A.size = n / 8) :
+    ∀ i, i ≤ n → (prefCnt A)[i / 8]! = blocksAbove (fun j => A[j]?.getD false) i := by
   intro i hi
-  have hq : i / 25 < A.size + 1 := by rw [hA]; have := Nat.div_le_div_right (c := 25) hi; omega
+  have hq : i / 8 < A.size + 1 := by rw [hA]; have := Nat.div_le_div_right (c := 8) hi; omega
   unfold prefCnt blocksAbove
   rw [getElem!_pos _ _ (by simpa using hq)]
   simp
