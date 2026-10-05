@@ -475,6 +475,32 @@ def fineWL (K : RP) (R : ByteArray) (G : PGen) (l Ls r D sb : Nat) : Nat → Nat
   decide (fJ ≤ sbound Q) && unlookW K R G Ls r D (sbound Q) us fJ &&
     fineWL K R G pl (R.size / (R.size / pl)) r D (sbound Q) 0 0 (R.size / pl)
 
+/-- Word filter cut at level `lv` (profile): 0 count only, 1 + wordWin, 2 + loadG,
+3 + unlookV, 4 full. Returns a checksum. -/
+def kfLv (lv : Nat) (K : RP) (R : ByteArray) (P : PGen) (acc : List (Array Nat)) (us : List Nat)
+    (Ls lim : Nat) (b : Best) (D s : Nat) : Nat :=
+  let Q := min lim b.pen
+  let r := 2 * gapBound sc0 (-(Q : Int))
+  let n := R.size
+  let fJ := acc.length - s
+  let sb := sbound Q
+  if fJ ≤ sb then
+    if lv == 0 then 1 else
+    if wordWin K n r D P then
+      if lv == 1 then 1 else
+      let a := P.o + (D - n - r)
+      let o := a % 32
+      let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
+      if lv == 2 then (gs.get 1).toNat % 2 + 1 else
+      if lv == 5 then
+        let gs2 := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2 + (gs.get 1).toNat % 2)
+        ((gs.get 1) ^^^ (gs2.get 2)).toNat % 2 + 1 else
+      let u := usIn Ls n us && unlookV K gs o Ls r sb us fJ
+      if lv == 3 then (if u then 1 else 0) else
+      if u && fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb then 1 else 0
+    else 0
+  else 0
+
 /-- Prototype (profile only): `chromKBFG` with stage B's diagonals through `kfiltW` at cap `P`. -/
 def chromKBPw (kf : Ker) (K : RP) (R : ByteArray) (gbs : Array PGen) (c P : Nat) (acc : List (Array Nat))
     (J : List Nat) (b1 : Best) (noB : Bool := false) (noF : Bool := false) : Best :=
@@ -573,6 +599,9 @@ structure Prof where
   slowD2Ns : Nat := 0
   blkCur : Nat := 0
   slowSwNs : Nat := 0
+  lvNs : Array Nat := #[0, 0, 0, 0, 0, 0, 0, 0]
+  lvCnt : Array Nat := #[0, 0, 0, 0, 0, 0, 0, 0]
+  lvDiags : Nat := 0
   slowSwDiff : Nat := 0
   blkAlt : Nat := 0
   clsAll : Nat := 0
@@ -783,6 +812,27 @@ def profRead (XA XN : Nat) (XF : Bool) (XK XL : Nat) (ix : PkMz) (offs : Array N
       let e2w ← (← IO.mkRef (dsw x.1 + dsw x.2.1)).get
       let ys1 ← IO.monoNanosNow
       let pf := { pf with slowSwNs := pf.slowSwNs + (ys1 - ys0), slowSwDiff := pf.slowSwDiff + (if e2w == e2 then 0 else 1) }
+      let lvRun := fun (lv : Nat) (Kx : RP) (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun a c =>
+        let acc := s.acc[c]!
+        let ds := diags acc
+        let Q := min (min P 16) b.pen
+        let r := 2 * gapBound sc0 (-(Q : Int))
+        if lv == 10 then a + ds.length else
+        let cnt := suppCntC acc r ds
+        if lv == 11 then a + cnt.size else
+        let us := unseen (Rx.size / 25) s.J
+        let rr := ds.foldl (fun (z : Nat × Nat) D =>
+          (z.1 + kfLv lv Kx Rx gbs2[t + c]! acc us (Rx.size / (Rx.size / 25)) (min P 16) b D (cnt.getD z.2 0), z.2 + 1)) (0, 0)
+        a + rr.1) 0
+      let mut lvNs : Array Nat := #[]
+      let mut lvCnt : Array Nat := #[]
+      for lv in [10, 11, 0, 1, 2, 5, 3, 4] do
+        let l0 ← IO.monoNanosNow
+        let cc ← (← IO.mkRef (lvRun lv K1 R 0 x.1 + lvRun lv K2 Rr n x.2.1)).get
+        let l1 ← IO.monoNanosNow
+        lvNs := lvNs.push (l1 - l0)
+        lvCnt := lvCnt.push cc
+      let pf := { pf with lvNs := (pf.lvNs.zip lvNs).map (fun (u, v) => u + v), lvCnt := (pf.lvCnt.zip lvCnt).map (fun (u, v) => u + v), lvDiags := pf.lvDiags + dd x.1 + dd x.2.1 }
       let du := fun (Rx : ByteArray) (t : Nat) (s : GS) => (List.range n).foldl (fun a c =>
         let acc := s.acc[c]!
         let Q := min (min P 16) b.pen
@@ -838,6 +888,7 @@ def showProf (pf : Prof) : IO Unit := do
   say s!"  reads > 1 ms: diagonals {pf.slowDiags}, passing the filter at the final best {pf.slowPass}, also the 8-letter fine filter {pf.slowFine}; diags + kfilt {secs 0 pf.slowDiagNs} s, diags + filters {secs 0 pf.slowFiltNs} s"
   say s!"  reads > 1 ms: diags + word kfiltV {secs 0 pf.slowVNs} s, passing {pf.slowVPass}, differing from kfilt {pf.slowVDiff}; diags again {secs 0 pf.slowD2Ns} s, {secs 0 pf.slowD3Ns} s"
   say s!"  reads > 1 ms: diags + swept supports (suppCntC) {secs 0 pf.slowSwNs} s, reads differing {pf.slowSwDiff}"
+  say s!"  reads > 1 ms: word filter by level over {pf.lvDiags} diagonals (diags, +suppCntC, +count, +wordWin, +loadG, +loadG twice, +unlookV, full): ns {pf.lvNs}, ns/diag {pf.lvNs.map (· / max 1 pf.lvDiags)}, counts {pf.lvCnt}"
   say s!"  reads > 1 ms: bucket entries of the seeds looked up {pf.blkCur}; with the least 25-letter subwindow per block {pf.blkAlt}"
   say s!"  reads > 1 ms: repeat classes (identical windows of n + 2·{gapBound sc0 (-16)} letters, per read): all diagonals {pf.clsAll} in {pf.clsAllC} classes ({pf.clsAllM} in multi-copy classes); passing kfilt {pf.clsPass} in {pf.clsPassC} classes ({pf.clsPassM} in multi-copy classes)"
   say s!"  reads > 1 ms: phase-1 kernel alone at all {pf.slowKAnc} anchors: cap 12 {secs 0 pf.slowK12Ns} s, cap 16 {secs 0 pf.slowK16Ns} s"
