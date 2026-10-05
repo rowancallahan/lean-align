@@ -177,10 +177,10 @@ def kerG3G (R : ByteArray) (G : Gt) (st len lim : Nat) : Nat :=
 
 def kerGKG (R : ByteArray) (K : RP) (G : Gt) (P : PGen) (st len lim : Nat) : Nat :=
   if len = R.size then
-    if lim / 4 < hamming R G st (lim / 4) 0 (min R.size pre) 0 then lim + 1
-    else if wordOk R K P st len then
+    if wordOk R K P st len then
       let h := hamA K.w P.w (P.o + st) (lim / 4) R.size
       if 4 * h ≤ lim then 4 * h else lim + 1
+    else if lim / 4 < hamming R G st (lim / 4) 0 (min R.size pre) 0 then lim + 1
     else kerG3G R G st len lim
   else if st + len ≤ P.n then gappedLG R G K P st len lim
   else lim + 1

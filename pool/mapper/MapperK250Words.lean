@@ -136,30 +136,29 @@ theorem kerGK_eq (R G : ByteArray) (P : PGen) (hP : Rep P G) (st len lim : Nat) 
   unfold kerGK
   by_cases hlen : len = R.size
   · rw [if_pos hlen]
-    by_cases hpre : lim / 4 < hamming R G st (lim / 4) 0 (min R.size pre) 0
-    · rw [if_pos hpre]
+    split
+    · next hw =>
+      obtain ⟨hok, h0, hl, hs, hn, hf⟩ := wordOk_unpack R P st len hw
+      have hW : WOk R G P st R.size :=
+        ⟨hP, hok, Nat.le_refl _, by omega, fun x hx => by
+          rw [show P.o + st + x = P.o + (st + x) by omega]; exact hf _ (by omega) (by omega)⟩
+      dsimp only
+      rw [hamA_eq R G P st R.size hW]
       unfold kerG3
-      split
-      · try rw [if_pos hlen]
-        dsimp only
-        rw [hamming_spec R G st (lim / 4) _ _ 0 0 rfl (Nat.zero_le _)] at hpre
-        rw [hamming_spec R G st (lim / 4) _ _ 0 0 rfl (Nat.zero_le _)]
-        have := cntP_mono (fun k => R.get! k != G.get! (st + k)) 0 (R.size - 0) 0
-          (min R.size pre - 0) (Nat.le_refl _) (by omega)
-        rw [if_neg (by omega)]
-      · rfl
-    · rw [if_neg hpre]
-      split
-      · next hw =>
-        obtain ⟨hok, h0, hl, hs, hn, hf⟩ := wordOk_unpack R P st len hw
-        have hW : WOk R G P st R.size :=
-          ⟨hP, hok, Nat.le_refl _, by omega, fun x hx => by
-            rw [show P.o + st + x = P.o + (st + x) by omega]; exact hf _ (by omega) (by omega)⟩
-        dsimp only
-        rw [hamA_eq R G P st R.size hW]
+      rw [if_pos (show st + len ≤ G.size by rw [← hP.1]; omega), if_pos hlen]
+    · by_cases hpre : lim / 4 < hamming R G st (lim / 4) 0 (min R.size pre) 0
+      · rw [if_pos hpre]
         unfold kerG3
-        rw [if_pos (show st + len ≤ G.size by rw [← hP.1]; omega), if_pos hlen]
-      · rfl
+        split
+        · try rw [if_pos hlen]
+          dsimp only
+          rw [hamming_spec R G st (lim / 4) _ _ 0 0 rfl (Nat.zero_le _)] at hpre
+          rw [hamming_spec R G st (lim / 4) _ _ 0 0 rfl (Nat.zero_le _)]
+          have := cntP_mono (fun k => R.get! k != G.get! (st + k)) 0 (R.size - 0) 0
+            (min R.size pre - 0) (Nat.le_refl _) (by omega)
+          rw [if_neg (by omega)]
+        · rfl
+      · rw [if_neg hpre]
   · rw [if_neg hlen]
     unfold kerG3
     rw [hP.1]

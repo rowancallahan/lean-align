@@ -234,10 +234,10 @@ flagged (checked only then), else the byte loop. -/
 /-- The word kernel: `kerG3` (so `kerG` for `lim ≤ 15`). -/
 def kerGK (R : ByteArray) (K : RP) (G : ByteArray) (P : PGen) (st len lim : Nat) : Nat :=
   if len = R.size then
-    if lim / 4 < hamming R G st (lim / 4) 0 (min R.size pre) 0 then lim + 1
-    else if wordOk R K P st len then
+    if wordOk R K P st len then
       let h := hamA K.w P.w (P.o + st) (lim / 4) R.size
       if 4 * h ≤ lim then 4 * h else lim + 1
+    else if lim / 4 < hamming R G st (lim / 4) 0 (min R.size pre) 0 then lim + 1
     else kerG3 R G st len lim
   else if st + len ≤ P.n then gappedL R G K P st len lim
   else lim + 1
