@@ -891,7 +891,7 @@ def main (args : List String) : IO UInt32 := do
         else pairFastGBKP P lo hi pk ByteArray.empty offs pgs
       let ms := ((← IO.getEnv "WG_MODES").getD "P,PK").splitOn ","
       -- pairRegionKP_mz_eq: the cheaper mate first, the other near it first
-      let fR : ByteArray → ByteArray → PairOut := pairRegionKP lo hi pk ByteArray.empty offs pgs
+      let fR : ByteArray → ByteArray → PairOut := pairRegionKP lo hi pk (fun a b => ((pk, a, b) : RgMz)) ByteArray.empty offs pgs
       let modes := ms.filterMap fun m => if m == "P" then some ("P", fP) else if m == "PK" then some ("PK", fK)
         else if m == "PR" then some ("PR", fR) else none
       -- WG_PROF=A:X,A:X,…: profile with X extra lookups once a strand holds A anchors (0:0 = as proved)
