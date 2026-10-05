@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperPGen]
+  roots := #[`MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperGenShare, `MapperPGen]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `MzPacked, `PairPacked, `PairConcatPacked]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `MzPacked, `PairPacked, `PairConcatPacked]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
