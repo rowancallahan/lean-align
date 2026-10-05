@@ -52,6 +52,64 @@ def packRP (R : ByteArray) : RP :=
   (w.get! (b + 3)).toUInt64 <<< 24 ||| (w.get! (b + 4)).toUInt64 <<< 32 ||| (w.get! (b + 5)).toUInt64 <<< 40 |||
   (w.get! (b + 6)).toUInt64 <<< 48 ||| (w.get! (b + 7)).toUInt64 <<< 56
 
+theorem usz_toNat (b k : Nat) (h : b + k < USize.size) : (b.toUSize + k.toUSize).toNat = b + k := by
+  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+  rw [hs] at h
+  rw [USize.toNat_add, Nat.toUSize_eq, Nat.toUSize_eq, USize.toNat_ofNat', USize.toNat_ofNat']
+  rw [Nat.mod_eq_of_lt (show b < 2 ^ System.Platform.numBits by omega),
+    Nat.mod_eq_of_lt (show k < 2 ^ System.Platform.numBits by omega), Nat.mod_eq_of_lt h]
+
+/-- A round trip through `USize` that keeps `b + 8` bounds it below `USize.size` (a
+small-number test, unlike comparing with the big constant `USize.size`). -/
+theorem usz_lt (b : Nat) (h : (b.toUSize + (8 : Nat).toUSize).toNat = b + 8) : b + 8 < USize.size :=
+  h ▸ USize.toNat_lt_size _
+
+/-- `gword` with machine-word indices and one bounds check (`gword_eq_gwordF`, used by
+the compiler in place of `gword`). -/
+@[inline] def gwordF (w : ByteArray) (u : Nat) : UInt64 :=
+  let b := 17 * (u / 2) + 1 + 8 * (u % 2)
+  if h : b + 8 ≤ w.size ∧ (b.toUSize + (8 : Nat).toUSize).toNat = b + 8 then
+    let i := b.toUSize
+    (w.uget (i + (0 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 |||
+    (w.uget (i + (1 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 <<< 8 |||
+    (w.uget (i + (2 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 <<< 16 |||
+    (w.uget (i + (3 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 <<< 24 |||
+    (w.uget (i + (4 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 <<< 32 |||
+    (w.uget (i + (5 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 <<< 40 |||
+    (w.uget (i + (6 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 <<< 48 |||
+    (w.uget (i + (7 : Nat).toUSize) (by have := usz_lt b h.2; rw [usz_toNat _ _ (by omega)]; omega)).toUInt64 <<< 56
+  else gwordS w u
+where
+  /-- The same as `gword` (its slow path; not rewritten by `csimp`). -/
+  gwordS (w : ByteArray) (u : Nat) : UInt64 :=
+    let b := 17 * (u / 2) + 1 + 8 * (u % 2)
+    (w.get! b).toUInt64 ||| (w.get! (b + 1)).toUInt64 <<< 8 ||| (w.get! (b + 2)).toUInt64 <<< 16 |||
+    (w.get! (b + 3)).toUInt64 <<< 24 ||| (w.get! (b + 4)).toUInt64 <<< 32 ||| (w.get! (b + 5)).toUInt64 <<< 40 |||
+    (w.get! (b + 6)).toUInt64 <<< 48 ||| (w.get! (b + 7)).toUInt64 <<< 56
+
+theorem uget_get! (w : ByteArray) (i : USize) (h : i.toNat < w.size) : w.uget i h = w.get! i.toNat := by
+  cases w with
+  | mk bs =>
+    simp only [ByteArray.uget, ByteArray.get!]
+    simp only [ByteArray.size] at h
+    rw [getElem!_pos bs i.toNat h]
+    rfl
+
+@[csimp] theorem gword_eq_gwordF : @gword = @gwordF := by
+  funext w u
+  unfold gwordF gwordF.gwordS gword
+  simp only []
+  split
+  · rename_i h
+    have e : ∀ k, k < 9 → ((17 * (u / 2) + 1 + 8 * (u % 2)).toUSize + k.toUSize).toNat =
+        17 * (u / 2) + 1 + 8 * (u % 2) + k := fun k hk =>
+      usz_toNat _ _ (by have := usz_lt _ h.2; omega)
+    rw [uget_get!, uget_get!, uget_get!, uget_get!, uget_get!, uget_get!, uget_get!, uget_get!,
+      e 0 (by omega), e 1 (by omega), e 2 (by omega), e 3 (by omega), e 4 (by omega), e 5 (by omega),
+      e 6 (by omega), e 7 (by omega)]
+    rfl
+  · rfl
+
 /-- Each 2-bit field folded to its low bit. -/
 @[inline] def fold (x : UInt64) : UInt64 := (x ||| x >>> 1) &&& 0x5555555555555555
 
