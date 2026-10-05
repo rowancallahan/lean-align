@@ -109,7 +109,7 @@ section short
 variable (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (hg : GenomeBytes gbs g)
   (Rs : ByteArray) (reads : List Char) (hrs : Encodes Rs reads) (t : Nat) (ht : t = 0 ∨ t = gbs.size)
   (hcwc : ∀ c, c < gbs.size → ∀ st len, cwB P read g ⟨t + c, st, len⟩ = cwT P reads (g ++ g) ⟨t + c, st, len⟩)
-  (hn : sbound P + 1 ≤ Rs.size)
+  (hn : 2 * (sbound P + 1) ≤ Rs.size)
 
 include hg hrs ht hcwc hn
 
@@ -120,7 +120,8 @@ theorem shortChrom_cover (c : Nat) (hc : c < gbs.size) (S : Window → Prop) (b 
       (∀ w, S w → S' w) ∧ ∀ w, w.chr = t + c → cwB P read g w ≤ P → S' w := by
   have hg2 := genomeBytes_app gbs g hg
   have hc2 : t + c < (gbs ++ gbs).size := by simp; omega
-  have hLs : 0 < Rs.size / (sbound P + 1) := Nat.div_pos hn (by omega)
+  have hLs : 0 < Rs.size / (sbound P + 1) := Nat.div_pos (by omega) (by omega)
+  have hL2 : 2 ≤ Rs.size / (sbound P + 1) := (Nat.le_div_iff_mul_le (by omega)).2 (by omega)
   generalize hm : sbound P + 1 = m at *
   generalize hL : Rs.size / m = Ls at *
   unfold shortChrom
@@ -141,7 +142,7 @@ theorem shortChrom_cover (c : Nat) (hc : c < gbs.size) (S : Window → Prop) (b 
       exact this)
     ((List.range m).map arr) S b hi
   obtain ⟨S1, i1, s1, c1⟩ := chromKB_coverL P reads (g ++ g) (gbs ++ gbs) Rs hg2 hrs (t + c) hc2
-    (cwB P read g) (cwB_le P read g) (hcwc c hc) m Ls Ls (by omega) (by omega) hL hLs (Nat.le_refl _) arr
+    (cwB P read g) (cwB_le P read g) (hcwc c hc) m Ls Ls (by omega) (by omega) hL hL2 hLs (Nat.le_refl _) arr
     (fun j _ => by rw [← harr]; exact scanL_ok _ _ _ _ _)
     (List.range m) List.nodup_range (fun j hj => List.mem_range.mp hj) _ _ hf
     (fun j hj e he w hw => Or.inr ⟨arr j, List.mem_map_of_mem hj, e, he, hw⟩)
@@ -182,7 +183,7 @@ theorem shortFold : ∀ (l : List Nat) (S : Window → Prop) (b : Best), (∀ c 
 end short
 
 theorem mapChromsShort_inv (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : ByteArray)
-    (hg : GenomeBytes gbs g) (hr : Encodes R read) (hn : sbound P + 1 ≤ R.size) :
+    (hg : GenomeBytes gbs g) (hr : Encodes R read) (hn : 2 * (sbound P + 1) ≤ R.size) :
     ∃ S, InvP P (cwB P read g) S (mapChromsShort P gbs R) ∧ ∀ w, cwB P read g w ≤ P → S w := by
   have hsz : gbs.size = g.length := hg.1
   have hrr := revCompB_encodes R read hr
@@ -202,7 +203,7 @@ theorem mapChromsShort_inv (P : Nat) (read : List Char) (g : Genome) (gbs : Arra
   obtain ⟨S1, i1, -, c1⟩ := shortFold P read g gbs hg R read hr 0 (Or.inl rfl) hcw1 hn (List.range gbs.size)
     (fun _ => False) (initP P) (fun c hc => List.mem_range.mp hc) (inv_initP P (cwB P read g))
   simp only [Nat.zero_add] at i1 c1
-  have hrn : sbound P + 1 ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
+  have hrn : 2 * (sbound P + 1) ≤ (revCompB R).size := by rw [revCompB_size]; exact hn
   obtain ⟨S2, i2, s2, c2⟩ := shortFold P read g gbs hg (revCompB R) (revComp read) hrr gbs.size (Or.inr rfl) hcw2
     hrn (List.range gbs.size) S1 _ (fun c hc => List.mem_range.mp hc) i1
   rw [revCompB_size] at i2
@@ -219,7 +220,7 @@ specification itself only for reads of at most `sbound P` letters. -/
 def mapFastGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array ByteArray) (R : ByteArray) : Option (Placement × Int) :=
   if fastT P R then decodeP gbs.size P (mapChromsGB P ix G offs gbs R)
-  else if sbound P + 1 ≤ R.size then decodeP gbs.size P (mapChromsShort P gbs R)
+  else if 2 * (sbound P + 1) ≤ R.size then decodeP gbs.size P (mapChromsShort P gbs R)
   else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB gbs) (decodeBytes R)
 
 def pairFastGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)

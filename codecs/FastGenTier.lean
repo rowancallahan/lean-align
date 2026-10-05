@@ -32,8 +32,8 @@ def pairTier1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lo hi : Nat) (ix : L) (
   | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
   | _, _ => none
 
-theorem sbound_16 : sbound 16 = 5 := by rw [sbound_eq]; decide
-theorem sbound_12 : sbound 12 = 3 := by rw [sbound_eq]; decide
+theorem sbound_16 : sbound 16 = 4 := by rw [sbound_eq]
+theorem sbound_12 : sbound 12 = 3 := by rw [sbound_eq]
 
 /-- The cap leaves enough seeds for the indexed path. -/
 theorem capOf_seeds (n P : Nat) (h : capOf n = some P) : 0 < n / 25 ∧ sbound P < n / 25 := by
