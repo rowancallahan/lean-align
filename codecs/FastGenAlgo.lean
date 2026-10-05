@@ -190,8 +190,8 @@ def shiftMax (bs : List Int) : Nat := bs.foldl (fun m bb => max m bb.natAbs) 0
 /-- Banded rows ending at `D + bb` (`D` a diagonal, `bb` an end shift), pruned by the
 spoiled blocks `sp` (`bandEndP_spec`). -/
 @[inline] def bandEndAt {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c D : Nat)
-    (sp : Nat → Bool) (bb : Int) : Option (Array Int) :=
-  bandEndP (-(P : Int)) (bandOf sc0 (-(P : Int))) sp R gbs[c]! ((D : Int) + bb).toNat
+    (cnt : Array Nat) (bb : Int) : Option (Array Int) :=
+  bandEndC (-(P : Int)) (bandOf sc0 (-(P : Int))) cnt R gbs[c]! ((D : Int) + bb).toNat
 
 /-- Add the window of diagonal `D` and shape `sh`, read from the rows `opt`. -/
 @[inline] def addBS {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c D : Nat) (opt : Option (Array Int))
@@ -204,16 +204,16 @@ spoiled blocks `sp` (`bandEndP_spec`). -/
 
 /-- One diagonal and end shift: one banded pass, every shape with that end. -/
 @[inline] def stageBD {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c : Nat) (shs : List (Int × Int))
-    (D : Nat) (sp : Nat → Bool) (b : Best) (bb : Int) : Best :=
-  if 0 ≤ (D : Int) + bb then (shs.filter (·.2 == bb)).foldl (addBS P R gbs c D (bandEndAt P R gbs c D sp bb)) b
+    (D : Nat) (cnt : Array Nat) (b : Best) (bb : Int) : Best :=
+  if 0 ≤ (D : Int) + bb then (shs.filter (·.2 == bb)).foldl (addBS P R gbs c D (bandEndAt P R gbs c D cnt bb)) b
   else b
 
 /-- The band stage over diagonals `ds` and end shifts `bs`; each pass is capped at the current best. -/
 @[specialize] def stageB {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c : Nat) (shs : List (Int × Int))
     (bs : List Int) (ds : List Nat) (b : Best) : Best :=
   ds.foldl (fun b D =>
-    let A := spoiledArr R gbs[c]! D (shiftMax bs) (bandOf sc0 (-(P : Int)))
-    bs.foldl (fun b bb => stageBD (min b.pen P) R gbs c shs D (fun j => A[j]?.getD false) b bb) b) b
+    let cnt := prefCnt (spoiledArr R gbs[c]! D (shiftMax bs) (bandOf sc0 (-(P : Int))))
+    bs.foldl (fun b bb => stageBD (min b.pen P) R gbs c shs D cnt b bb) b) b
 
 /-- Seeds (anchor arrays) with an anchor within `r` diagonals of `D`. -/
 def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=

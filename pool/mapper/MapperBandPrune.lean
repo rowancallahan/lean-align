@@ -524,4 +524,62 @@ theorem bandEndP_spec (T : Int) (B : Nat) (hb : BandOK sc0 T B)
   · rw [getElem!_pos _ 0 (by simp)]; simp
   · rw [getElem!_pos _ (2 * B + 2) (by simp)]; simp
 
+/-! ## Thresholds from a count array -/
+
+/-- `bandRowsP` with the spoiled-block counts read from `cnt` (`cnt[i / 25]` blocks above row `i`). -/
+@[specialize] def bandRowsC (T : Int) (B : Nat) (cnt : Array Nat) {Gt : Type} [GRead Gt] (rb : ByteArray) (gb : Gt)
+    (e : Nat) : Nat → Array Int → Array Int → Array Int → Option (Array Int)
+  | i, N, X, Y =>
+    if rb.size ≤ e + i + B then
+      let h := cnt[i / 25]!
+      let tN := T + 4 * (h : Int)
+      match bandLoop sc0 tN (tN + (if h = 0 then 6 else 4)) rb gb e i (i == rb.size) (min (2 * B) (e + i + B - rb.size))
+          (i + B - rb.size) (e + i + B - rb.size - (i + B - rb.size)) N X Y false with
+      | (N, X, Y, alive) =>
+        if alive then
+          match i with
+          | 0 => some N
+          | i + 1 => bandRowsC T B cnt rb gb e i N X Y
+        else none
+    else none
+
+@[specialize] def bandEndC (T : Int) (B : Nat) (cnt : Array Nat) {Gt : Type} [GRead Gt] (rb : ByteArray) (gb : Gt)
+    (e : Nat) : Option (Array Int) :=
+  bandRowsC T B cnt rb gb e rb.size (Array.replicate (2 * B + 3) (T - 1))
+    (Array.replicate (2 * B + 3) (T - 1)) (Array.replicate (2 * B + 3) (T - 1))
+
+theorem bandRowsC_eq (T : Int) (B : Nat) (cnt : Array Nat) (sp : Nat → Bool) {Gt : Type} [GRead Gt]
+    (rb : ByteArray) (gb : Gt) (e : Nat) (hcnt : ∀ i, i ≤ rb.size → cnt[i / 25]! = blocksAbove sp i) :
+    ∀ i N X Y, i ≤ rb.size → bandRowsC T B cnt rb gb e i N X Y = bandRowsP T B sp rb gb e i N X Y := by
+  intro i
+  induction i with
+  | zero =>
+    intro N X Y hi
+    rw [bandRowsC, bandRowsP]
+    simp only [hcnt 0 hi, tNr, tGr]
+    rfl
+  | succ i ih =>
+    intro N X Y hi
+    rw [bandRowsC, bandRowsP]
+    simp only [hcnt (i + 1) hi, tNr, tGr, ih _ _ _ (by omega)]
+    rfl
+
+theorem bandEndC_eq (T : Int) (B : Nat) (cnt : Array Nat) (sp : Nat → Bool) {Gt : Type} [GRead Gt]
+    (rb : ByteArray) (gb : Gt) (e : Nat) (hcnt : ∀ i, i ≤ rb.size → cnt[i / 25]! = blocksAbove sp i) :
+    bandEndC T B cnt rb gb e = bandEndP T B sp rb gb e := by
+  unfold bandEndC bandEndP
+  exact bandRowsC_eq T B cnt sp rb gb e hcnt _ _ _ _ (Nat.le_refl _)
+
+/-- Spoiled-block counts: slot `q` is the number of spoiled blocks among `0 … q − 1`. -/
+def prefCnt (A : Array Bool) : Array Nat :=
+  (Array.range (A.size + 1)).map fun q => ((List.range q).filter fun j => A[j]?.getD false).length
+
+theorem prefCnt_get (A : Array Bool) (n : Nat) (hA : A.size = n / 25) :
+    ∀ i, i ≤ n → (prefCnt A)[i / 25]! = blocksAbove (fun j => A[j]?.getD false) i := by
+  intro i hi
+  have hq : i / 25 < A.size + 1 := by rw [hA]; have := Nat.div_le_div_right (c := 25) hi; omega
+  unfold prefCnt blocksAbove
+  rw [getElem!_pos _ _ (by simpa using hq)]
+  simp
+
 end MapSpec

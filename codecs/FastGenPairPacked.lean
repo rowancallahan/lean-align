@@ -141,6 +141,17 @@ theorem bandEndP_same (T : Int) (B : Nat) (sp : Nat → Bool) (rb : ByteArray) (
     bandEndP T B sp rb x e = bandEndP T B sp rb y e := by
   simp only [bandEndP, bandRowsP_same h]
 
+theorem bandRowsC_same (T : Int) (B : Nat) (cnt : Array Nat) (rb : ByteArray) (e : Nat) :
+    ∀ i N X Y, bandRowsC T B cnt rb x e i N X Y = bandRowsC T B cnt rb y e i N X Y := by
+  intro i
+  induction i with
+  | zero => intro N X Y; rw [bandRowsC, bandRowsC]; simp only [bandLoop_same' h]
+  | succ i ih => intro N X Y; rw [bandRowsC, bandRowsC]; simp only [bandLoop_same' h, ih]
+
+theorem bandEndC_same (T : Int) (B : Nat) (cnt : Array Nat) (rb : ByteArray) (e : Nat) :
+    bandEndC T B cnt rb x e = bandEndC T B cnt rb y e := by
+  simp only [bandEndC, bandRowsC_same h]
+
 theorem blockEq_same (R : ByteArray) (a p : Nat) : ∀ k, blockEq R x a p k = blockEq R y a p k := by
   intro k
   induction k with
@@ -207,15 +218,15 @@ theorem stageKP_same (R : ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds
     stageKP R xs c lim shs ds b = stageKP R ys c lim shs ds b := by
   simp only [stageKP, addKP_same h, fwdProf_same (h.2 c), bwdProf_same (h.2 c)]
 
-theorem bandEndAt_same (P : Nat) (R : ByteArray) (c D : Nat) (sp : Nat → Bool) (bb : Int) :
-    bandEndAt P R xs c D sp bb = bandEndAt P R ys c D sp bb := by
-  simp only [bandEndAt, bandEndP_same (h.2 c)]
+theorem bandEndAt_same (P : Nat) (R : ByteArray) (c D : Nat) (cnt : Array Nat) (bb : Int) :
+    bandEndAt P R xs c D cnt bb = bandEndAt P R ys c D cnt bb := by
+  simp only [bandEndAt, bandEndC_same (h.2 c)]
 
 theorem stageB_same (P : Nat) (R : ByteArray) (c : Nat) (shs : List (Int × Int)) (bs : List Int) (ds : List Nat)
     (b : Best) : stageB P R xs c shs bs ds b = stageB P R ys c shs bs ds b := by
   have e : ∀ Pc, stageBD Pc R xs c shs = stageBD Pc R ys c shs := by
     intro Pc
-    funext D sp b bb
+    funext D cnt b bb
     have e2 : addBS Pc R xs c D = addBS Pc R ys c D := by
       funext opt b sh; simp only [addBS, (h.2 c).1]
     simp only [stageBD, bandEndAt_same h, e2]
