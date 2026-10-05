@@ -1,3 +1,5 @@
+import MapperGRead
+
 /-!
 # Fast mapper: the executable code (definitions only)
 
@@ -201,9 +203,9 @@ def scanBucket (ent : ByteArray) (key : Nat) (base bit hi : Nat) (t : Nat) (acc 
 termination_by hi - t
 
 /-- `a[i, i+k) = b[j, j+k)`. -/
-def eqRun (a b : ByteArray) (i j : Nat) : (k : Nat) → Bool
+@[specialize] def eqRun {Gt : Type} [GRead Gt] (a : Gt) (b : ByteArray) (i j : Nat) : (k : Nat) → Bool
   | 0 => true
-  | k + 1 => a.get! i == b.get! j && eqRun a b (i + 1) (j + 1) k
+  | k + 1 => GRead.get a i == b.get! j && eqRun a b (i + 1) (j + 1) k
 
 /-- First `i ∈ [i, stop)` with `B[i]` not ACGT (`stop` if none). -/
 def firstOdd (B : ByteArray) (i stop : Nat) : Nat :=
@@ -278,21 +280,21 @@ termination_by stop - k
 /-! ## Window penalties -/
 
 /-- Mismatches of `r[i, stop)` against `g[a + i ..]` added to `m`, stopping once above `lim`. -/
-def hamming (r g : ByteArray) (a lim : Nat) (i stop m : Nat) : Nat :=
+@[specialize] def hamming {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : Nat) (i stop m : Nat) : Nat :=
   if i < stop then
-    if r.get! i != g.get! (a + i) then
+    if r.get! i != GRead.get g (a + i) then
       if lim < m + 1 then m + 1 else hamming r g a lim (i + 1) stop (m + 1)
     else hamming r g a lim (i + 1) stop m
   else m
 termination_by stop - i
 
 /-- Continue the count over `r[i, stop)` unless already above `lim` or the seed is clean. -/
-@[inline] def hamStep (r g : ByteArray) (a lim i stop : Nat) (clean : Bool) (m : Nat) : Nat :=
+@[inline] def hamStep {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim i stop : Nat) (clean : Bool) (m : Nat) : Nat :=
   if m ≤ lim && !clean then hamming r g a lim i stop m else m
 
 /-- Mismatches of the read against `g[a ..]` (capped at `lim + 1`), skipping
 the seeds in `mask` (clean there). -/
-@[inline] def hamSeeds (r g : ByteArray) (a mask lim : Nat) : Nat :=
+@[inline] def hamSeeds {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a mask lim : Nat) : Nat :=
   hamStep r g a lim (3 * q) (4 * q) (mask / 8 % 2 == 1) <|
   hamStep r g a lim (2 * q) (3 * q) (mask / 4 % 2 == 1) <|
   hamStep r g a lim q (2 * q) (mask / 2 % 2 == 1) <|
@@ -300,18 +302,18 @@ the seeds in `mask` (clean there). -/
   hamming r g a lim (4 * q) r.size 0
 
 /-- Position of the `k`-th mismatch (`k ≥ 1`) of `r[i, stop)` against `g[st + i ..]`, or `stop`. -/
-def fwdMis (r g : ByteArray) (st stop : Nat) (i k : Nat) : Nat :=
+@[specialize] def fwdMis {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Nat) (i k : Nat) : Nat :=
   if i < stop then
-    if r.get! i != g.get! (st + i) then (if k ≤ 1 then i else fwdMis r g st stop (i + 1) (k - 1))
+    if r.get! i != GRead.get g (st + i) then (if k ≤ 1 then i else fwdMis r g st stop (i + 1) (k - 1))
     else fwdMis r g st stop (i + 1) k
   else stop
 termination_by stop - i
 
 /-- One past the `k`-th mismatch from the right (`k ≥ 1`) of `r[lo, e)` against the end
 diagonal (read letter `x` ↔ `g[st + len + x - n]`), or `lo` when there are fewer. -/
-def bwdMis (r g : ByteArray) (st len lo : Nat) (e k : Nat) : Nat :=
+@[specialize] def bwdMis {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : Nat) (e k : Nat) : Nat :=
   if lo < e then
-    if r.get! (e - 1) != g.get! (st + len + (e - 1) - r.size) then
+    if r.get! (e - 1) != GRead.get g (st + len + (e - 1) - r.size) then
       (if k ≤ 1 then e else bwdMis r g st len lo (e - 1) (k - 1))
     else bwdMis r g st len lo (e - 1) k
   else lo
@@ -320,7 +322,7 @@ termination_by e - lo
 /-- Penalty of window `(st, len)`, `len ≠ n`, `|len − n| ≤ 3`, if `≤ lim ≤ 12`; else `lim + 1`.
 At most one mismatch fits, so only the first two mismatches of the prefix diagonal
 (`F1`, `F2`) and the last two of the suffix diagonal (`E1`, `E2`) matter. -/
-def gappedPen2 (r g : ByteArray) (st len lim : Nat) : Nat :=
+@[specialize] def gappedPen2 {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lim : Nat) : Nat :=
   let n := r.size
   let L := if len > n then len - n else n - len
   if lim < 6 + 2 * L then lim + 1 else

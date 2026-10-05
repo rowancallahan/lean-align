@@ -283,7 +283,7 @@ open MapSpec AlignmentSpec
 mismatches (same length), at most two mismatches around one gap of length `≤ 5`,
 or an exact two-gap split (prefix ≤ first mismatch, suffix ≥ last mismatch of the
 end diagonal, middle exact one diagonal off). -/
-def filt16 (R G : ByteArray) (st len : Nat) : Bool :=
+@[specialize] def filt16 {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (st len : Nat) : Bool :=
   let n := R.size
   let s := skipOf n len
   let A := fwdMis R G st n 0 1
@@ -307,7 +307,7 @@ theorem filt16_iff (R G : ByteArray) (st len : Nat) : filt16 R G st len = true �
 take a window letter; `A`, `B`: first mismatch of the start diagonal, one past the
 last of the end diagonal): the longest exact prefix and suffix leave a middle that
 is exact one diagonal off. -/
-def twoGapAt (R G : ByteArray) (st len x1 x2 A B : Nat) : Bool :=
+@[specialize] def twoGapAt {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (st len x1 x2 A B : Nat) : Bool :=
   let n := R.size
   let M := n - (1 - x1) - (1 - x2)
   let i := min A M
@@ -318,7 +318,7 @@ def twoGapAt (R G : ByteArray) (st len x1 x2 A B : Nat) : Bool :=
              else (decide (1 ≤ st) && hamming R G (st - 1) 0 (i + 1) (i + 1 + j) 0 == 0))
 
 /-- The two-gap test for the gap kinds the lengths allow. -/
-def twoGapB (R G : ByteArray) (st len : Nat) : Bool :=
+@[specialize] def twoGapB {Gt : Type} [GRead Gt] (R : ByteArray) (G : Gt) (st len : Nat) : Bool :=
   let A := fwdMis R G st R.size 0 1
   let B := bwdMis R G st len 0 R.size 1
   if len = R.size + 2 then twoGapAt R G st len 1 1 A B

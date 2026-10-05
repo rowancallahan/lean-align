@@ -46,15 +46,15 @@ instance : Inhabited GS := ⟨⟨[], [], #[]⟩⟩
   !s.ord.isEmpty && !decide (sbound (min b.pen P) < s.J.length)
 
 /-- Slice of seed lookup `a` (base `bs`) on chromosome `c`, its windows added. -/
-@[inline] def advC (R : ByteArray) (gbs2 : Array ByteArray) (offs : Array Nat) (t P bs : Nat) (a : Array Nat)
+@[inline] def advC {Gt : Type} [GRead Gt] [Inhabited Gt] (R : ByteArray) (gbs2 : Array Gt) (offs : Array Nat) (t P bs : Nat) (a : Array Nat)
     (r : Array (List (Array Nat)) × Best) (c : Nat) : Array (List (Array Nat)) × Best :=
-  let sl := sliceG a bs offs[c]! gbs2[t + c]!.size
+  let sl := sliceG a bs offs[c]! (GRead.size gbs2[t + c]!)
   (r.1.set! c (sl :: r.1[c]!),
     sl.foldl (fun b e => addK R gbs2 (t + c) (min P 16) ((e / 16 : Nat) - (R.size : Int)) R.size b) r.2)
 
 /-- One seed lookup of a strand (read `R`, virtual chromosomes `t + c`). -/
-@[inline] def GS.adv {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R : ByteArray)
-    (gbs2 : Array ByteArray) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) : GS × Best :=
+@[inline] def GS.adv {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) : GS × Best :=
   match s.ord with
   | [] => (s, b)
   | j :: rest =>
@@ -63,8 +63,8 @@ instance : Inhabited GS := ⟨⟨[], [], #[]⟩⟩
     (⟨rest, j :: s.J, r.1⟩, r.2)
 
 /-- Two strands, one lookup at a time: the live strand with fewer lookups. -/
-@[specialize] def ilG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R1 R2 : ByteArray)
-    (gbs2 : Array ByteArray) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+@[specialize] def ilG {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
     Nat → GS → GS → Best → GS × GS × Best
   | 0, s1, s2, b => (s1, s2, b)
   | f + 1, s1, s2, b =>
@@ -77,10 +77,13 @@ instance : Inhabited GS := ⟨⟨[], [], #[]⟩⟩
       ilG ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
     else (s1, s2, b)
 
+/-- `complB` as a table (`complTab_get`): no branches on the letters. -/
+def complTab : ByteArray := ⟨(Array.range 256).map fun i => complB i.toUInt8⟩
+
 /-- Reverse complement, one byte at a time (`revCompB2_eq`: it is `revCompB`). -/
 def rcAux (R : ByteArray) : Nat → ByteArray → ByteArray
   | 0, acc => acc
-  | i + 1, acc => rcAux R i (acc.push (complB (R.get! i)))
+  | i + 1, acc => rcAux R i (acc.push (complTab.get! (R.get! i).toNat))
 
 @[inline] def revCompB2 (R : ByteArray) : ByteArray := rcAux R R.size (ByteArray.emptyWithCapacity R.size)
 
@@ -89,8 +92,8 @@ def rcAux (R : ByteArray) : Nat → ByteArray → ByteArray
   (Array.range m).map fun j => LookG.prep ix (seedHashAt R (j * Ls))
 
 /-- Both strands: virtual chromosomes `c` (read) and `n + c` (reverse complement). -/
-@[specialize] def mapChromsGB {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (gbs : Array ByteArray) (R : ByteArray) : Best :=
+@[specialize] def mapChromsGB {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array Gt) (R : ByteArray) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
   let Rr := revCompB2 R
@@ -128,6 +131,13 @@ def pairFastGB {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L
 
 /-! ## The reverse complement -/
 
+theorem complTab_get (b : UInt8) : complTab.get! b.toNat = complB b := by
+  have h := b.toNat_lt
+  unfold complTab
+  simp only [ByteArray.get!]
+  rw [getElem!_pos _ _ (by simpa using h)]
+  simp
+
 theorem rcAux_toList (R : ByteArray) : ∀ i (acc : ByteArray), i ≤ R.size →
     (rcAux R i acc).data.toList = acc.data.toList ++ ((R.data.toList.take i).map complB).reverse := by
   intro i
@@ -135,7 +145,7 @@ theorem rcAux_toList (R : ByteArray) : ∀ i (acc : ByteArray), i ≤ R.size →
   | zero => intro acc _; simp [rcAux]
   | succ i ih =>
     intro acc hi
-    rw [rcAux, ih _ (by omega), ByteArray.data_push, Array.toList_push]
+    rw [rcAux, complTab_get, ih _ (by omega), ByteArray.data_push, Array.toList_push]
     have hlt : i < R.data.toList.length := by rw [Array.length_toList, ByteArray.size_data]; omega
     have hget : R.get! i = R.data.toList[i] := by
       cases R with
@@ -607,7 +617,7 @@ theorem chromKB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) 
     · exact foldl_pen _ (fun b sh => addBS_pen' P R gbs c D _ b sh) _ b
     · exact Nat.le_refl _
   unfold chromKB
-  simp only [stageKP_fun, ite_self]
+  simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
   have h2 : (if 0 < gapBound sc0 (-((min b.pen P : Nat) : Int)) then
       stageK R gbs c (min P 16) ((shapesAt (min b.pen P)).filter (· != (0, 0)))
         (diagsB acc (acc.length - sbound (min (min P 16) (min b.pen P))) (2 * gapBound sc0 (-((min b.pen P : Nat) : Int)))) b

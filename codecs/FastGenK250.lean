@@ -25,9 +25,6 @@ open MapSpec AlignmentSpec
 
 /-! ## Kernels -/
 
-/-- `complB` as a table (no branches). -/
-@[irreducible] def complTab : ByteArray := ⟨#[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 84, 66, 71, 68, 69, 70, 67, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 65, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]⟩
-
 /-- Reverse complement, one pass. -/
 def revCompLoop (R : ByteArray) : (i : Nat) → ByteArray → ByteArray
   | 0, acc => acc
@@ -72,6 +69,7 @@ abbrev Ker := Nat → Nat → Nat → Nat → Nat
 
 @[inline] def addKF (kf : Ker) (c lim : Nat) (st len : Int) (b : Best) : Best :=
   if 0 ≤ st ∧ 0 ≤ len then
+    if b.pen ≤ lim ∧ b.chr = c ∧ b.st = st.toNat ∧ b.len = len.toNat then b else
     let l := min lim b.pen
     let r := kf c st.toNat len.toNat l
     if r ≤ l then b.add c st.toNat len.toNat r else b
@@ -80,23 +78,15 @@ abbrev Ker := Nat → Nat → Nat → Nat → Nat
 def stageKF (kf : Ker) (n c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
   ds.foldl (fun b D => shs.foldl (fun b sh => addKF kf c lim (dst n D sh) (wlen n sh) b) b) b
 
-/-- `shapesAt Q` and `shapesAt Q` without `(0, 0)`, computed once for `Q ≤ 16`. -/
-def shTab : Array (List (Int × Int)) := (Array.range 17).map shapesAt
-def shTabNZ : Array (List (Int × Int)) := (Array.range 17).map fun Q => (shapesAt Q).filter (· != (0, 0))
-
-@[inline] def shapesM (Q : Nat) : List (Int × Int) := if Q < 17 then shTab[Q]! else shapesAt Q
-@[inline] def shapesNZ (Q : Nat) : List (Int × Int) :=
-  if Q < 17 then shTabNZ[Q]! else (shapesAt Q).filter (· != (0, 0))
-
 def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
   let lim := min P 16
   let Q1 := min b1.pen P
   let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      stageKF kf R.size c lim (shapesNZ Q1)
+      stageKF kf R.size c lim (shapesKT Q1)
         (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
   let Q2 := min b2.pen P
   if lim < Q2 then
-    stageB P R gbs c (shapesM Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
+    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
@@ -177,9 +167,6 @@ def pairFastGBK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : 
 
 /-! ## Proofs: kernels -/
 
-set_option maxRecDepth 100000 in
-theorem complTab_get : ∀ n, n < 256 → complTab.get! n = complB n.toUInt8 := by decide +kernel
-
 theorem revCompLoop_data (R : ByteArray) : ∀ (i : Nat) (acc : ByteArray),
     (revCompLoop R i acc).data.toList = acc.data.toList ++ (List.range i).reverse.map fun k => complB (R.get! k) := by
   intro i
@@ -188,7 +175,7 @@ theorem revCompLoop_data (R : ByteArray) : ∀ (i : Nat) (acc : ByteArray),
   | succ i ih =>
     intro acc
     have e : complTab.get! (R.get! i).toNat = complB (R.get! i) := by
-      rw [complTab_get _ (R.get! i).toNat_lt]; simp
+      exact complTab_get _
     simp only [revCompLoop, ih, ByteArray.data_push, Array.toList_push, e, List.range_succ,
       List.reverse_append, List.map_append, List.append_assoc]
     rfl
@@ -211,7 +198,7 @@ theorem revCompK_eq (R : ByteArray) : revCompK R = revCompB R := by
     simp only [Array.getElem_toList, List.length_map, hs]
 
 /-- The packed chromosomes spell the byte chromosomes. -/
-def RepAll (pvs : Array PGen) (gbs : Array ByteArray) : Prop := ∀ c : Nat, Rep pvs[c]! gbs[c]!
+def RepAllK (pvs : Array PGen) (gbs : Array ByteArray) : Prop := ∀ c : Nat, Rep pvs[c]! gbs[c]!
 
 /-! ### `ker16K_eq`: helpers -/
 
@@ -439,7 +426,7 @@ theorem cwT_penQ (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArra
     · rw [he.1] at h16; omega
 
 /-- **Penalty 16.** -/
-theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAll pvs gbs)
+theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAllK pvs gbs)
     (c st len : Nat) : ker16K R (packRP R) gbs pvs c st len = ker16 R gbs c st len := by
   unfold ker16K
   by_cases hc : gbs.size ≤ c
@@ -491,7 +478,7 @@ theorem ker16K_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hr
       exact hfit (by rw [he.1]; exact hfit')
     omega
 
-theorem kerHK_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAll pvs gbs)
+theorem kerHK_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hrep : RepAllK pvs gbs)
     (c st len l : Nat) : kerHK R (packRP R) gbs pvs c st len l = kerH R gbs c st len l := by
   unfold kerHK kerH
   split
@@ -508,7 +495,7 @@ theorem rep_default : Rep (default : PGen) (default : ByteArray) :=
   ⟨rfl, fun i => by rw [get_out _ i (Nat.zero_le _), get!_out _ i (Nat.zero_le _)]⟩
 
 theorem checkPGs_ok (pvs : Array PGen) (gbs : Array ByteArray) (h : checkPGs pvs gbs = true) :
-    RepAll (pvs ++ pvs) (gbs ++ gbs) := by
+    RepAllK (pvs ++ pvs) (gbs ++ gbs) := by
   unfold checkPGs at h
   simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, List.mem_range] at h
   obtain ⟨hs, hall⟩ := h
@@ -530,19 +517,9 @@ theorem checkPGs_ok (pvs : Array PGen) (gbs : Array ByteArray) (h : checkPGs pvs
 theorem stageKF_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat)
     (b : Best) : stageKF (kerH R gbs) R.size c lim shs ds b = stageK R gbs c lim shs ds b := rfl
 
-theorem shapesM_eq (Q : Nat) : shapesM Q = shapesAt Q := by
-  unfold shapesM shTab; split
-  · rw [getElem!_pos _ Q (by simpa using ‹Q < 17›)]; simp
-  · rfl
-
-theorem shapesNZ_eq (Q : Nat) : shapesNZ Q = (shapesAt Q).filter (· != (0, 0)) := by
-  unfold shapesNZ shTabNZ; split
-  · rw [getElem!_pos _ Q (by simpa using ‹Q < 17›)]; simp
-  · rfl
-
 theorem chromKBF_eq (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b : Best) :
     chromKBF (kerH R gbs) R gbs c P acc b = chromKB R gbs c P acc b := by
-  simp only [chromKBF, chromKB, shapesM_eq, shapesNZ_eq]
+  simp only [chromKBF, chromKB]
   rw [show (if 16 ≤ min (min P 16) (min b.pen P) then stageKP else stageK) = stageK by split <;> first | rfl | (funext R gbs c lim shs ds b; exact stageKP_eq R gbs c lim shs ds b)]
   rfl
 

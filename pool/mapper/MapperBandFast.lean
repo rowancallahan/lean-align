@@ -13,7 +13,7 @@ namespace MapSpec
 open AlignmentSpec
 
 /-- Cells `k, k+1, …, hi` of row `i`; `p` is the genome position of cell `k`. -/
-def bandLoop (sc : Scoring) (T To : Int) (rb gb : ByteArray) (e i : Nat) (lastRow : Bool) (hi : Nat) :
+@[specialize] def bandLoop (sc : Scoring) (T To : Int) {Gt : Type} [GRead Gt] (rb : ByteArray) (gb : Gt) (e i : Nat) (lastRow : Bool) (hi : Nat) :
     Nat → Nat → Array Int → Array Int → Array Int → Bool → Array Int × Array Int × Array Int × Bool
   | k, p, N, X, Y, alive =>
     if k ≤ hi then
@@ -25,7 +25,7 @@ def bandLoop (sc : Scoring) (T To : Int) (rb gb : ByteArray) (e i : Nat) (lastRo
   termination_by k => hi + 1 - k
 
 /-- Rows `i, i-1, …, 0`; `none` as soon as a row is dead. -/
-def bandRows2 (sc : Scoring) (T : Int) (B : Nat) (rb gb : ByteArray) (e : Nat) :
+@[specialize] def bandRows2 (sc : Scoring) (T : Int) (B : Nat) {Gt : Type} [GRead Gt] (rb : ByteArray) (gb : Gt) (e : Nat) :
     Nat → Array Int → Array Int → Array Int → Option (Array Int)
   | i, N, X, Y =>
     if rb.size ≤ e + i + B then
@@ -41,7 +41,7 @@ def bandRows2 (sc : Scoring) (T : Int) (B : Nat) (rb gb : ByteArray) (e : Nat) :
 
 /-- All windows ending at `e`: slot `k + 1` is the capped score of the window
 of length `n + k - B`; `none` = every one of them scores below `T`. -/
-def bandEnd2 (sc : Scoring) (T : Int) (B : Nat) (rb gb : ByteArray) (e : Nat) : Option (Array Int) :=
+@[specialize] def bandEnd2 (sc : Scoring) (T : Int) (B : Nat) {Gt : Type} [GRead Gt] (rb : ByteArray) (gb : Gt) (e : Nat) : Option (Array Int) :=
   bandRows2 sc T B rb gb e rb.size (Array.replicate (2 * B + 3) (T - 1))
     (Array.replicate (2 * B + 3) (T - 1)) (Array.replicate (2 * B + 3) (T - 1))
 

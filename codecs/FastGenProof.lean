@@ -117,7 +117,7 @@ theorem cwT_ker16 (P : Nat) (hP : 16 ≤ P) (read : List Char) (g : Genome) (gbs
     (hg : GenomeBytes gbs g) (hr : Encodes R read) (c st len : Nat) (hc : c < gbs.size) :
     min (cwT P read g ⟨c, st, len⟩) 17 = ker16 R gbs c st len := by
   have hk := cwT_ker P read g gbs R hg hr c st len 15 hc (by omega) (by omega)
-  unfold ker16
+  unfold ker16; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   dsimp only
   generalize kerG R gbs[c]! st len 15 = k at hk
   by_cases h15 : k ≤ 15
@@ -186,8 +186,13 @@ theorem cwT_kerH (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArra
 
 /-! ## Monotonicity of the bounds -/
 
+theorem sbound_def (x : Nat) : sbound x = seedBound sc0 (-(x : Int)) := by
+  unfold sbound sbTbl; split
+  · next h => simp [getElem!_pos, h]
+  · rfl
+
 theorem sbound_eq (x : Nat) : sbound x = max ((x : Int) / 4).toNat (((x : Int) - 6) / 2).toNat := by
-  unfold sbound seedBound sc0
+  rw [sbound_def]; unfold seedBound sc0
   simp only [Int.neg_neg, show min (4 : Int) (-(-6 + -2)) = 4 by decide, show min (4 : Int) 2 = 2 by decide,
     show (-(-2 : Int)) = 2 by decide, show (-(-4 : Int)) = 4 by decide]
   congr 2
@@ -213,6 +218,16 @@ theorem gapBound2_mono (x y : Nat) (h : x ≤ y) : gapBound2 sc0 (-(x : Int)) �
 theorem shapeOk_mono (d d2 d' d2' : Nat) (a b : Int) (h1 : d ≤ d') (h2 : d2 ≤ d2') (h : shapeOk d d2 a b) :
     shapeOk d' d2' a b := by
   unfold shapeOk at *; omega
+
+theorem shapesT_eq (x : Nat) : shapesT x = shapesAt x := by
+  unfold shapesT shapesTbl; split
+  · next h => simp [getElem!_pos, h]
+  · rfl
+
+theorem shapesKT_eq (x : Nat) : shapesKT x = (shapesAt x).filter (· != (0, 0)) := by
+  unfold shapesKT shapesTbl; split
+  · next h => simp [getElem!_pos, h]
+  · rfl
 
 theorem shapesAt_mem (x y : Nat) (h : x ≤ y) (a b : Int)
     (hs : shapeOk (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int))) a b) : (a, b) ∈ shapesAt y := by
@@ -249,6 +264,14 @@ theorem addK_inv (c lim : Nat) (hc : c < gbs.size)
   unfold addK
   by_cases hp : 0 ≤ st ∧ 0 ≤ len
   · rw [if_pos hp]
+    split
+    · next hw =>
+      apply inv_skipP P cw hcw1 S _ b h
+      rintro w ⟨-, -, rfl, -⟩
+      right; right
+      have e : (⟨c, st.toNat, len.toNat⟩ : Window) = b.win := by
+        unfold Best.win; rw [hw.2.1, hw.2.2.1, hw.2.2.2]
+      rw [e]; exact ⟨h.hit (by omega), Or.inr rfl⟩
     dsimp only
     have hm := cwT_kerH P read g gbs R hg hr c st.toNat len.toNat (min lim b.pen) hc (by omega) (by omega)
     by_cases hk : kerH R gbs c st.toNat len.toNat (min lim b.pen) ≤ min lim b.pen
@@ -288,7 +311,9 @@ end adds
 theorem addK_pen (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (b : Best) :
     (addK R gbs c lim st len b).pen ≤ b.pen := by
   unfold addK; split
-  · dsimp only; split
+  · split
+    · exact Nat.le_refl _
+    dsimp only; split
     · exact add_pen_le _ _ _ _ _
     · exact Nat.le_refl _
   · exact Nat.le_refl _
@@ -303,12 +328,12 @@ theorem addB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (st
 
 theorem kerGP_eq (R G : ByteArray) (st len lim : Nat) :
     kerGP R G st len lim (fwdProf R G st) (bwdProf R G (st + len)) = kerG R G st len lim := by
-  unfold kerGP kerG
+  unfold kerGP kerG; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only [gappedPen2P_eq]
 
 theorem kerHP_eq (R : ByteArray) (gbs : Array ByteArray) (c st len l : Nat) :
     kerHP R gbs c st len l (fwdProf R gbs[c]! st) (bwdProf R gbs[c]! (st + len)) = kerH R gbs c st len l := by
-  unfold kerHP kerH ker16P ker16
+  unfold kerHP kerH ker16P ker16; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only [kerGP_eq, twoGapBP_eq, filt16P_eq]
 
 theorem addKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len : Int) (pf pb : Nat × Nat × Nat)
@@ -317,7 +342,9 @@ theorem addKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (st len :
     addKP R gbs c lim st len pf pb b = addK R gbs c lim st len b := by
   unfold addKP addK
   split
-  · next h => rw [hf h.1, hb h.1 h.2]; simp only [kerHP_eq]
+  · next h => split
+              · rfl
+              · rw [hf h.1, hb h.1 h.2]; simp only [kerHP_eq]
   · rfl
 
 theorem shapeR_ge (shs : List (Int × Int)) :
@@ -371,7 +398,7 @@ theorem stageKP_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : 
     unfold dst wlen at *
     congr 1; omega
 
-theorem stageKP_fun : stageKP = stageK := by
+theorem stageKP_fun : stageKP (Gt := ByteArray) = stageK := by
   funext R gbs c lim shs ds b; exact stageKP_eq R gbs c lim shs ds b
 
 /-! ## Phase 1 and the stages -/
@@ -462,7 +489,7 @@ theorem stageK_spec (hc : c < gbs.size) (shs : List (Int × Int)) (ds : List Nat
 theorem bandPenE_eq (c st len : Nat) (hc : c < gbs.size) :
     bandPenE P R.size len (decide (st + len ≤ gbs[c]!.size))
       (bandEnd2 sc0 (-(P : Int)) (bandOf sc0 (-(P : Int))) R gbs[c]! (st + len)) = bandPen P R gbs ⟨c, st, len⟩ := by
-  unfold bandPenE bandPen bandScore
+  unfold bandPenE bandPen bandScore; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only []
   rw [dif_pos hc, getElem!_pos gbs c hc]
   by_cases hf : st + len ≤ gbs[c].size ∧ R.size ≤ len + bandOf sc0 (-(P : Int)) ∧ len ≤ R.size + bandOf sc0 (-(P : Int))
@@ -478,7 +505,7 @@ def BW (c : Nat) (shs : List (Int × Int)) (bs : List Int) (ds : List Nat) (w : 
 
 theorem addBS_pen (c D : Nat) (opt : Option (Array Int)) (b : Best) (sh : Int × Int) :
     (addBS P R gbs c D opt b sh).pen ≤ b.pen := by
-  unfold addBS; simp only []; split
+  unfold addBS; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]; simp only []; split
   · exact add_pen_le _ _ _ _ _
   · exact Nat.le_refl _
 
@@ -499,7 +526,7 @@ theorem addBS_spec (hc : c < gbs.size) (D : Nat) (bb : Int) (sh : Int × Int) (h
     InvP P cw (fun w => S w ∨ (0 ≤ (D : Int) - R.size - sh.1 ∧ 0 ≤ (R.size : Int) + sh.1 + sh.2 ∧
         w = ⟨c, ((D : Int) - R.size - sh.1).toNat, ((R.size : Int) + sh.1 + sh.2).toNat⟩))
       (addBS P R gbs c D (bandEndAt P R gbs c D bb) b sh) := by
-  unfold addBS
+  unfold addBS; try simp -zeta only [GRead.get_bytes, GRead.size_bytes]
   simp only []
   split
   · next hp =>
@@ -611,7 +638,7 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
   have hacc : acc = (pre.map arr).reverse := hacc0.symm
   obtain ⟨J, hJ⟩ : ∃ J, J = pre.reverse := ⟨_, rfl⟩
   unfold chromKB
-  simp only [stageKP_fun, ite_self]
+  simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
   -- stage K
   generalize hQ1 : min b1.pen P = Q1
   generalize hshK : (shapesAt Q1).filter (· != (0, 0)) = shK
@@ -665,7 +692,7 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
       have := sbound_mono Q1 P (by omega); omega
   obtain ⟨j, hj, p, a, bb, hcg, hmatch, hshape, ha1, ha2, hst, hwl⟩ :=
     coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
-      J hJn (fun j hj => by have := hJm j hj; omega) (by unfold sbound at hJl; omega) w (-(x : Int)) hws (Int.le_refl _)
+      J hJn (fun j hj => by have := hJm j hj; omega) (by rw [sbound_def] at hJl; omega) w (-(x : Int)) hws (Int.le_refl _)
   rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch ha1 hst
   rw [← hn] at hwl
   rw [hwc] at hmatch
@@ -708,7 +735,7 @@ theorem chromKB_coverL (m Ls l : Nat) (hm0 : 0 < m) (hsbm : sbound P < m) (hLs :
         coverL g read gbs R hg hr (-(x : Int)) l hl0 (m - 1) (by rw [← hn, show m - 1 + 1 = m by omega, hLs]; omega)
           _ (hsub.nodup hpnd)
           (fun j hj => by have := hpm j (hsub.subset hj); omega)
-          (by unfold sbound at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
+          (by rw [sbound_def] at hlt'; omega) w (-(x : Int)) hws (Int.le_refl _)
       rw [← hn, show m - 1 + 1 = m by omega, hLs] at hmatch' ha1' hst'
       rw [hwc] at hmatch'
       have hj'pre := hsub.subset hj'

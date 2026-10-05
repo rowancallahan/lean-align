@@ -192,7 +192,7 @@ theorem chunk_dig (R G : ByteArray) (P : PGen) (hP : Rep P G) (hok : (packRP R).
     · rw [code_dig _ _ _ (by omega)]; congr 2; omega
     · rw [code_dig _ _ _ (by omega)]; congr 2; omega
   have hG : G.get! (st + 32 * j + t) = letter (P.code (P.o + st + 32 * j + t)) := by
-    rw [← hP.2, PGen.get, if_pos hin, PGen.raw, Nat.shiftRight_eq_div_pow,
+    rw [← hP.2, PGen.get, if_pos hin, raw_eq, Nat.shiftRight_eq_div_pow,
       show P.o + (st + 32 * j + t) = P.o + st + 32 * j + t by omega, hfl]
     rfl
   have hc : (P.code (P.o + st + 32 * j + t)).toNat < 4 := by
