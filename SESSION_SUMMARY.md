@@ -309,6 +309,26 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
 - **Plan for later (Rowan, not now): multi-pass router.** Several passes, each a kernel optimized for an error band (x ≤ pen ≤ y); each runs only on the previous pass's noHit residual, may pass information forward (e.g. the band already ruled out), and a final mop-up pass ends the chain. The router proof composes them (`routeG_ok` generalizes to a list of `KerOk` kernels). Watch each pass's startup cost against how fast the pool shrinks.
 - Note: a few whole runs spent ~80 s of wall outside the timed phases (box load / exit); the 20k measurement avoids the 150 s guard.
 
+### Pair-level uniqueness: modes U, H, HN (branch `speed/tiers`, 2026-10-05)
+- **Mode U — PROVED** (`pairUKPF_mz_eq`, `pairUKPRF_tie`, codecs/PairLadder.lean, PairLadderF.lean): `pairSpecUT` (best proper pair over all hits, sl = 0, dcost0) by a cap ladder; `ladderUF` builds the proper pairs once per rung, grouped by (chromosome, strand) (`properPairsF_eq`), and replaces the quadratic `bestPairD` with `bestOfPairs` (`bestOfPairs_pp`). On NovaSeq 2k this cut pairing from 27.4 s to 0.39 s. The Lean ladder now takes 0.42–0.65× the C model's time on both-repeat pairs.
+- **Mode H — PROVED** (`pairUKH_mz_eq`, `pairUKH_tie`, codecs/PairHybrid.lean): mode PR first. PR's pair is kept when it is proper under `properPairU` and its distance cost is 0 (`fastU_ok`); otherwise the pair goes to the ladder. H = U, also checked on all 57,538 20k pairs.
+- **Mode HN — PROVED** (`pairUKHN_eq` = mode H, `pairUKHN_mz_eq`, `pairUKHN_tie`, codecs/PairNear.lean). At each rung the ladder searches the second mate only on diagonals near the first mate's hits (`keepN`, `hitsAtKPN`: hitsC with a diagonal predicate). The generic lemma is `ladderUB_eq`: B's list may be any sublist of its hits that holds every hit with a proper partner in A's list (`NearOk`, `hitsKPFN_near`). B's seed lookups are still genome-wide; only kfiltV and the kernels are restricted.
+- 20k pairs, 4 tasks, one run per set (noisy box). HN = H on every pair.
+  | set | PR wall / CPU | H wall / CPU | HN wall / CPU | kept PR / H | H pairTie |
+  |---|---|---|---|---|---|
+  | NovaSeq | 2.07 / 3.4 s | 9.22 / 24.2 s | 7.97 / 20.0 s | 16,451 / 16,958 | 634 |
+  | mason | 2.50 / 5.0 s | 7.67 / 19.9 s | 5.72 / 16.9 s | 17,413 / 17,859 | 495 |
+  | HiSeq | 1.33 / 3.8 s | 5.32 / 15.6 s | 4.68 / 13.6 s | 16,814 / 17,120 | 567 |
+- NovaSeq, 1 thread, time by class:
+
+  | class | H | HN |
+  |---|---|---|
+  | 0 (no repeat mate) | 1.0 s | 1.0 s |
+  | 1 (one repeat mate) | 6.4 s | 3.2 s |
+  | 2 (both repeat) | 16.1 s | 14.4 s |
+
+  Both-repeat pairs are now 77% of the time; next: shared lookups across rungs.
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
