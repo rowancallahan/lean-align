@@ -9,9 +9,13 @@ looked up (`unlook`) and the 8-letter pieces (`fineOk`) at each of the `2r + 1` 
 starts `s ∈ [D − n − r, D − n + r]`, letter by letter.  When the genome is a packed
 `PGen` (`GPk`), the read is ACGT and packed (`packRP`), and the whole window lies in
 all-ACGT blocks away from the chromosome start, `kfiltV` does the same tests on
-2-bit words: the genome words of the window are loaded once (`loadW`); a seed is 25
-fields compared at once (`eq25`); the pieces of a read word are four 16-bit lanes
-of its folded mismatch word, all tested at once (`laneZ`).  Elsewhere it is `kfilt`.
+2-bit words: the genome words of the window are loaded once into one unboxed object
+that keeps no reference to the genome (`loadG`); a seed is 25 fields compared at once
+(`eq25`); the pieces of a read word are four 16-bit lanes of its folded mismatch word,
+all tested at once (`laneZ`), and the piece count stops once its outcome is known
+(`fineE_eq`).  Elsewhere it is `kfilt`.  A stage looks up the packed genome once
+(`kfiltVP`), and the word path does not pass the genome on, so the genome shared by
+the mapping tasks has its reference count touched per stage, not per diagonal.
 
     kfiltV (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D      (kfiltV_eq)
 -/
@@ -34,35 +38,75 @@ def loadW (w : ByteArray) (u0 : Nat) : Nat → Array UInt64 → Array UInt64
   | 0, a => a
   | k + 1, a => loadW w (u0 + 1) k (a.push (gword w u0))
 
+/-- The genome words of a window, unboxed: words `i < 16` in fields (0 past the `k`
+loaded), later ones in `rest` (empty unless `k > 16`).  No reference to the genome is
+kept, so the shared genome's count is not touched per window. -/
+structure GW where
+  rest : Array UInt64
+  (w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15 : UInt64)
+
+/-- Word `u0 + i` if `i < k`. -/
+@[inline] def ldw (w : ByteArray) (u0 k i : Nat) : UInt64 := if i < k then gword w (u0 + i) else 0
+
+/-- Words `u0, u0 + 1, …` (`k` of them) of the blocks. -/
+@[inline] def loadG (w : ByteArray) (u0 k : Nat) : GW :=
+  ⟨loadW w (u0 + 16) (k - 16) #[], ldw w u0 k 0, ldw w u0 k 1, ldw w u0 k 2, ldw w u0 k 3, ldw w u0 k 4, ldw w u0 k 5, ldw w u0 k 6, ldw w u0 k 7, ldw w u0 k 8, ldw w u0 k 9, ldw w u0 k 10, ldw w u0 k 11, ldw w u0 k 12, ldw w u0 k 13, ldw w u0 k 14, ldw w u0 k 15⟩
+
+/-- Word `i` of the window. -/
+@[inline] def GW.get (g : GW) (i : Nat) : UInt64 :=
+  if i < 8 then
+    if i < 4 then (if i < 2 then (if i = 0 then g.w0 else g.w1) else (if i = 2 then g.w2 else g.w3))
+    else (if i < 6 then (if i = 4 then g.w4 else g.w5) else (if i = 6 then g.w6 else g.w7))
+  else if i < 16 then
+    if i < 12 then (if i < 10 then (if i = 8 then g.w8 else g.w9) else (if i = 10 then g.w10 else g.w11))
+    else (if i < 14 then (if i = 12 then g.w12 else g.w13) else (if i = 14 then g.w14 else g.w15))
+  else g.rest.getD (i - 16) 0
+
 /-- The 32 fields starting at field `t` of the words `gs`. -/
 @[inline] def gAt (gs : Array UInt64) (t : Nat) : UInt64 :=
   let s := t % 32
   comb (gs.getD (t / 32) 0) (gs.getD (t / 32 + 1) 0) s (2 * s).toUInt64 (64 - 2 * s).toUInt64
 
+/-- `gAt` on window words. -/
+@[inline] def gAtW (gs : GW) (t : Nat) : UInt64 :=
+  let s := t % 32
+  comb (gs.get (t / 32)) (gs.get (t / 32 + 1)) s (2 * s).toUInt64 (64 - 2 * s).toUInt64
+
 /-- The low 25 fields agree. -/
 @[inline] def eq25 (x y : UInt64) : Bool := lowF (x ^^^ y) 25 == 0
 
 /-- The seed `sv` is at some field offset `t, t + 1, …` (`k` of them) of `gs`. -/
-def svAny (gs : Array UInt64) (sv : UInt64) (t : Nat) : Nat → Bool
+def svAny (gs : GW) (sv : UInt64) (t : Nat) : Nat → Bool
   | 0 => false
-  | k + 1 => eq25 (gAt gs t) sv || svAny gs sv (t + 1) k
+  | k + 1 => eq25 (gAtW gs t) sv || svAny gs sv (t + 1) k
 
-/-- `unlook` by words: read start `s` ↦ field `o + (s − s0)` of `gs` (`s0 = D − n − r`). -/
-def unlookV (K : RP) (gs : Array UInt64) (R : ByteArray) {Gt : Type} [GRead Gt] (G : Gt)
-    (o Ls r D sb : Nat) : List Nat → Nat → Bool
+/-- `unlook` by words, for seeds inside the read: read start `s` ↦ field `o + (s − s0)`
+of `gs` (`s0 = D − n − r`).  The genome is not passed (its count is not touched). -/
+def unlookV (K : RP) (gs : GW) (o Ls r sb : Nat) : List Nat → Nat → Bool
   | [], _ => true
   | j :: us, f =>
     let A := j * Ls
-    let ok := if A + q ≤ R.size then
-        let sv := gAt K.w A
-        eq25 (gAt gs (o + A + r)) sv || svAny gs sv (o + A) (2 * r + 1)
-      else seedNear R G Ls r D j
-    if ok then unlookV K gs R G o Ls r D sb us f
-    else if sb < f + 1 then false else unlookV K gs R G o Ls r D sb us (f + 1)
+    let sv := gAt K.w A
+    let ok := eq25 (gAtW gs (o + A + r)) sv || svAny gs sv (o + A) (2 * r + 1)
+    if ok then unlookV K gs o Ls r sb us f
+    else if sb < f + 1 then false else unlookV K gs o Ls r sb us (f + 1)
+
+/-- The seeds `us` lie inside the read (`j·Ls + q ≤ n`). -/
+def usIn (Ls n : Nat) : List Nat → Bool
+  | [] => true
+  | j :: us => decide (j * Ls + q ≤ n) && usIn Ls n us
+
+theorem usIn_mem (Ls n : Nat) : ∀ us, usIn Ls n us = true → ∀ j, j ∈ us → j * Ls + q ≤ n
+  | [], _, j, hj => by cases hj
+  | i :: us, h, j, hj => by
+    simp only [usIn, Bool.and_eq_true, decide_eq_true_eq] at h
+    rcases List.mem_cons.mp hj with e | e
+    · subst e; exact h.1
+    · exact usIn_mem Ls n us h.2 j e
 
 /-- Folded mismatches of read word `j` against the genome at field offset `t`. -/
-@[inline] def mAt (K : RP) (gs : Array UInt64) (t j : Nat) : UInt64 :=
-  fold (K.w.getD j 0 ^^^ gAt gs (t + 32 * j))
+@[inline] def mAt (K : RP) (gs : GW) (t j : Nat) : UInt64 :=
+  fold (K.w.getD j 0 ^^^ gAtW gs (t + 32 * j))
 
 /-- Bit `16i` set iff the 16-bit lane `i` of `m` is zero (nothing else set). -/
 @[inline] def laneZ (m : UInt64) : UInt64 :=
@@ -78,7 +122,7 @@ def unlookV (K : RP) (gs : Array UInt64) (R : ByteArray) {Gt : Type} [GRead Gt] 
 
 /-- Lanes of read word `j` found zero at field offsets `t, t + 1, …` (`k`), or-ed into `F`;
 stops once all of `full` are found. -/
-def lanesAny (K : RP) (gs : Array UInt64) (n j : Nat) (full F : UInt64) (t : Nat) : Nat → UInt64
+def lanesAny (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t : Nat) : Nat → UInt64
   | 0 => F
   | k + 1 =>
     let F := F ||| laneZ (lowF (mAt K gs t j) (n - 32 * j))
@@ -89,7 +133,7 @@ def lanesAny (K : RP) (gs : Array UInt64) (n j : Nat) (full F : UInt64) (t : Nat
   (F &&& 1).toNat + (F >>> 16 &&& 1).toNat + (F >>> 32 &&& 1).toNat + (F >>> 48 &&& 1).toNat
 
 /-- Pieces found (of `m`), read words `j, j + 1, …` (`k` of them), added to `acc`. -/
-def fineV (K : RP) (gs : Array UInt64) (o n r m : Nat) : Nat → Nat → Nat → Nat
+def fineV (K : RP) (gs : GW) (o n r m : Nat) : Nat → Nat → Nat → Nat
   | _, 0, acc => acc
   | j, k + 1, acc =>
     let full := fullL (min 4 (m - 4 * j))
@@ -97,36 +141,57 @@ def fineV (K : RP) (gs : Array UInt64) (o n r m : Nat) : Nat → Nat → Nat →
     let F := if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full
     fineV K gs o n r m (j + 1) k (acc + lc F)
 
+/-- `need ≤ fineV … j k acc`, stopping as soon as it is reached or out of reach
+(word `j` and later hold at most `m − 4j` pieces): `fineE_eq`. -/
+def fineE (K : RP) (gs : GW) (o n r m need : Nat) : Nat → Nat → Nat → Bool
+  | _, 0, acc => decide (need ≤ acc)
+  | j, k + 1, acc =>
+    if need ≤ acc then true
+    else if acc + (m - 4 * j) < need then false
+    else
+      let full := fullL (min 4 (m - 4 * j))
+      let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
+      let F := if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full
+      fineE K gs o n r m need (j + 1) k (acc + lc F)
+
 /-- The word path applies: packed read, the window `[D − n − r, D + r)` inside the
 chromosome and in all-ACGT blocks, pieces of 8 letters 8 apart. -/
 @[inline] def wordWin (K : RP) (n r D : Nat) (P : PGen) : Bool :=
   K.ok && decide (n + r ≤ D) && n / (n / pl) == 8 && winOk P (D - n - r) (n + 2 * r)
 
-/-- `kfilt` with the word path where it applies. -/
-@[inline] def kfiltV {Gt : Type} [GRead Gt] [GPk Gt] (K : RP) (R : ByteArray) (G : Gt) (acc : List (Array Nat))
-    (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
+/-- `kfiltV` with the packed genome `pk = GPk.pk G` given: a stage computes it once,
+so the shared genome is not passed through the instance (and its count touched) per
+diagonal. -/
+@[inline] def kfiltVP {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
   let Q := min lim b.pen
   let r := 2 * gapBound sc0 (-(Q : Int))
   let n := R.size
   let fJ := acc.length - suppA acc D r
   let sb := sbound Q
   if fJ ≤ sb then
-    match GPk.pk G with
+    match pk with
     | some P =>
-      if wordWin K n r D P then
+      if wordWin K n r D P && usIn Ls n us then
         let a := P.o + (D - n - r)
         let o := a % 32
-        let gs := loadW P.w (a / 32) ((o + 2 * r + n) / 32 + 2) (Array.emptyWithCapacity 12)
-        unlookV K gs R G o Ls r D sb us fJ &&
-          decide (n / pl ≤ sb + fineV K gs o n r (n / pl) 0 ((n + 31) / 32) 0)
+        let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
+        unlookV K gs o Ls r sb us fJ &&
+          fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
       else kfilt R G acc us Ls lim b D
     | none => kfilt R G acc us Ls lim b D
   else false
 
+/-- `kfilt` with the word path where it applies. -/
+@[inline] def kfiltV {Gt : Type} [GRead Gt] [GPk Gt] (K : RP) (R : ByteArray) (G : Gt) (acc : List (Array Nat))
+    (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
+  kfiltVP (GPk.pk G) K R G acc us Ls lim b D
+
 /-- `stageKS` with `kfiltV`. -/
 @[specialize] def stageKSV {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
     (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) : Best :=
-  ds.foldl (fun b D => if kfiltV K R G acc us Ls lim b D then body D b else b) b
+  let pk := GPk.pk G
+  ds.foldl (fun b D => if kfiltVP pk K R G acc us Ls lim b D then body D b else b) b
 
 /-! ## Proofs -/
 
@@ -246,16 +311,25 @@ theorem loadW_getD (w : ByteArray) : ∀ (k u0 : Nat) (a : Array UInt64) (i : Na
       · rw [if_pos (by omega), if_pos h3, show u0 + 1 + (i - (a.size + 1)) = u0 + (i - a.size) by omega]
       · rw [if_neg (by omega), if_neg h3]
 
-theorem loadW_get (w : ByteArray) (u0 k i : Nat) (hi : i < k) :
-    (loadW w u0 k (Array.emptyWithCapacity 12)).getD i 0 = gword w (u0 + i) := by
-  rw [loadW_getD]; simp [hi]
+theorem loadG_get (w : ByteArray) (u0 k i : Nat) (hi : i < k) :
+    (loadG w u0 k).get i = gword w (u0 + i) := by
+  unfold GW.get
+  by_cases h16 : i < 16
+  · unfold loadG ldw
+    obtain _|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|i := i <;> first | omega | simp [hi]
+  · rw [if_neg (show ¬ i < 8 by omega), if_neg h16]
+    unfold loadG
+    rw [loadW_getD]
+    simp only [List.size_toArray, List.length_nil, Nat.not_lt_zero, if_false, Nat.zero_add, Nat.sub_zero]
+    rw [if_pos (by omega)]
+    congr 1; omega
 
 /-- Genome fields of the loaded words. -/
 theorem gAt_dig (P : PGen) (u0 k t i : Nat) (hk : t / 32 + 1 < k) (hi : i < 32) :
-    dig (gAt (loadW P.w u0 k (Array.emptyWithCapacity 12)) t).toNat i = (P.code (32 * u0 + t + i)).toNat := by
-  unfold gAt
+    dig (gAtW (loadG P.w u0 k) t).toNat i = (P.code (32 * u0 + t + i)).toNat := by
+  unfold gAtW
   simp only []
-  rw [comb_dig _ _ _ _ (Nat.mod_lt _ (by omega)) hi, loadW_get _ _ _ _ (by omega), loadW_get _ _ _ _ hk]
+  rw [comb_dig _ _ _ _ (Nat.mod_lt _ (by omega)) hi, loadG_get _ _ _ _ (by omega), loadG_get _ _ _ _ hk]
   split
   · rw [code_dig _ _ _ (by omega)]; congr 2; omega
   · rw [code_dig _ _ _ (by omega)]; congr 2; omega
@@ -305,7 +379,7 @@ structure WS (R : ByteArray) (P : PGen) (Gb : ByteArray) (s0 L : Nat) : Prop whe
 theorem fieldW {R : ByteArray} {P : PGen} {Gb : ByteArray} {s0 L : Nat} (h : WS R P Gb s0 L) (k t x : Nat)
     (hk : t / 32 + 1 < k) (ht : (P.o + s0) % 32 ≤ t) (i : Nat) (hi : i < 32) (hx : x < R.size)
     (hy : t + i - (P.o + s0) % 32 < L) :
-    dig (gAt (loadW P.w ((P.o + s0) / 32) k (Array.emptyWithCapacity 12)) t).toNat i = c2N (R.get! x) ↔
+    dig (gAtW (loadG P.w ((P.o + s0) / 32) k) t).toNat i = c2N (R.get! x) ↔
       Gb.get! (s0 + (t + i - (P.o + s0) % 32)) = R.get! x := by
   rw [gAt_dig P _ k t i hk hi]
   have hw := h.win (s0 + (t + i - (P.o + s0) % 32)) (by omega) (by omega)
@@ -370,8 +444,8 @@ theorem seedNear_iff (R G : ByteArray) (Ls r D j : Nat) (hD : R.size + r ≤ D) 
     refine Or.inr ⟨D - R.size - r + e + j * Ls, by omega, by omega, by omega, fun i hi => ?_⟩
     exact h i hi
 
-theorem svAny_iff (gs : Array UInt64) (sv : UInt64) : ∀ k t,
-    svAny gs sv t k = true ↔ ∃ e, e < k ∧ eq25 (gAt gs (t + e)) sv = true := by
+theorem svAny_iff (gs : GW) (sv : UInt64) : ∀ k t,
+    svAny gs sv t k = true ↔ ∃ e, e < k ∧ eq25 (gAtW gs (t + e)) sv = true := by
   intro k
   induction k with
   | zero => intro t; simp [svAny]
@@ -406,8 +480,7 @@ theorem eq25_iff (x y : UInt64) : eq25 x y = true ↔ ∀ t, t < 25 → dig x.to
 theorem seedW_iff {R : ByteArray} {P : PGen} {Gb : ByteArray} {r D : Nat}
     (h : WS R P Gb (D - R.size - r) (R.size + 2 * r)) (A e : Nat) (hA : A + q ≤ R.size)
     (he : e ≤ 2 * r) :
-    eq25 (gAt (loadW P.w ((P.o + (D - R.size - r)) / 32) (((P.o + (D - R.size - r)) % 32 + 2 * r + R.size) / 32 + 2)
-      (Array.emptyWithCapacity 12)) ((P.o + (D - R.size - r)) % 32 + A + e)) (gAt (packRP R).w A) = true ↔
+    eq25 (gAtW (loadG P.w ((P.o + (D - R.size - r)) / 32) (((P.o + (D - R.size - r)) % 32 + 2 * r + R.size) / 32 + 2)) ((P.o + (D - R.size - r)) % 32 + A + e)) (gAt (packRP R).w A) = true ↔
       ∀ i, i < q → Gb.get! (D - R.size - r + e + A + i) = R.get! (A + i) := by
   have hq : q = 25 := rfl
   rw [eq25_iff]
@@ -423,32 +496,27 @@ theorem seedW_iff {R : ByteArray} {P : PGen} {Gb : ByteArray} {r D : Nat}
     rw [fieldW h (((P.o + (D - R.size - r)) % 32 + 2 * r + R.size) / 32 + 2) ((P.o + (D - R.size - r)) % 32 + A + e) (A + i) (by omega) (by omega) i (by omega) (by omega) (by omega)]
     rw [← hh (by omega)]; congr 1; omega
 
-theorem unlookV_eq (K : RP) (gs : Array UInt64) (R : ByteArray) {Gt : Type} [GRead Gt] (G : Gt)
+theorem unlookV_eq (K : RP) (gs : GW) (R : ByteArray) {Gt : Type} [GRead Gt] (G : Gt)
     (o Ls r D sb : Nat)
-    (h : ∀ j, j * Ls + q ≤ R.size → (eq25 (gAt gs (o + j * Ls + r)) (gAt K.w (j * Ls)) ||
+    (h : ∀ j, j * Ls + q ≤ R.size → (eq25 (gAtW gs (o + j * Ls + r)) (gAt K.w (j * Ls)) ||
       svAny gs (gAt K.w (j * Ls)) (o + j * Ls) (2 * r + 1)) = seedNear R G Ls r D j) :
-    ∀ us f, unlookV K gs R G o Ls r D sb us f = unlook R G Ls r D sb us f := by
+    ∀ us f, (∀ j, j ∈ us → j * Ls + q ≤ R.size) →
+      unlookV K gs o Ls r sb us f = unlook R G Ls r D sb us f := by
   intro us
   induction us with
-  | nil => intro f; rfl
+  | nil => intro f _; rfl
   | cons j us ih =>
-    intro f
+    intro f hus
     simp only [unlookV, unlook]
-    have e : (if j * Ls + q ≤ R.size then
-        (eq25 (gAt gs (o + j * Ls + r)) (gAt K.w (j * Ls)) || svAny gs (gAt K.w (j * Ls)) (o + j * Ls) (2 * r + 1))
-        else seedNear R G Ls r D j) = seedNear R G Ls r D j := by
-      split
-      · exact h j ‹_›
-      · rfl
-    rw [e, ih, ih]
+    have hj := hus j (List.mem_cons_self ..)
+    have hus' : ∀ i, i ∈ us → i * Ls + q ≤ R.size := fun i hi => hus i (List.mem_cons_of_mem _ hi)
+    rw [h j hj, ih _ hus', ih _ hus']
 
 /-- Per seed, inside the window: words = letters. -/
 theorem seedV_eq {R : ByteArray} {P : PGen} {Gb : ByteArray} {r D : Nat}
     (h : WS R P Gb (D - R.size - r) (R.size + 2 * r)) (hD : R.size + r ≤ D) (Ls j : Nat) (hA : j * Ls + q ≤ R.size) :
-    (eq25 (gAt (loadW P.w ((P.o + (D - R.size - r)) / 32) (((P.o + (D - R.size - r)) % 32 + 2 * r + R.size) / 32 + 2)
-      (Array.emptyWithCapacity 12)) ((P.o + (D - R.size - r)) % 32 + j * Ls + r)) (gAt (packRP R).w (j * Ls)) ||
-      svAny (loadW P.w ((P.o + (D - R.size - r)) / 32) (((P.o + (D - R.size - r)) % 32 + 2 * r + R.size) / 32 + 2)
-        (Array.emptyWithCapacity 12)) (gAt (packRP R).w (j * Ls)) ((P.o + (D - R.size - r)) % 32 + j * Ls) (2 * r + 1))
+    (eq25 (gAtW (loadG P.w ((P.o + (D - R.size - r)) / 32) (((P.o + (D - R.size - r)) % 32 + 2 * r + R.size) / 32 + 2)) ((P.o + (D - R.size - r)) % 32 + j * Ls + r)) (gAt (packRP R).w (j * Ls)) ||
+      svAny (loadG P.w ((P.o + (D - R.size - r)) / 32) (((P.o + (D - R.size - r)) % 32 + 2 * r + R.size) / 32 + 2)) (gAt (packRP R).w (j * Ls)) ((P.o + (D - R.size - r)) % 32 + j * Ls) (2 * r + 1))
       = seedNear R Gb Ls r D j := by
   have hG : D + r ≤ Gb.size := by
     have hq : q = 25 := rfl
@@ -581,7 +649,7 @@ theorem laneW {R : ByteArray} {P : PGen} {Gb : ByteArray} {s0 r k o u0 : Nat}
     (h : WS R P Gb s0 (R.size + 2 * r)) (ho : o = (P.o + s0) % 32) (hu : u0 = (P.o + s0) / 32)
     (hk : (o + 2 * r + R.size) / 32 + 2 ≤ k)
     (e w i : Nat) (he : e ≤ 2 * r) (hi : i < 4) (hn : 32 * w + 8 * i + 8 ≤ R.size) :
-    (laneZ (lowF (mAt (packRP R) (loadW P.w u0 k (Array.emptyWithCapacity 12)) (o + e) w)
+    (laneZ (lowF (mAt (packRP R) (loadG P.w u0 k) (o + e) w)
       (R.size - 32 * w))).toNat.testBit (16 * i) = true ↔
       ∀ b, b < 8 → Gb.get! (s0 + e + (32 * w + 8 * i) + b) = R.get! (32 * w + 8 * i + b) := by
   subst ho hu
@@ -599,7 +667,7 @@ theorem laneW {R : ByteArray} {P : PGen} {Gb : ByteArray} {s0 r k o u0 : Nat}
   · intro hh; exact hf.mp hh.symm
   · intro hh; exact (hf.mpr hh).symm
 
-theorem lanesAny_bit (K : RP) (gs : Array UInt64) (n w : Nat) (full : UInt64) (i : Nat) :
+theorem lanesAny_bit (K : RP) (gs : GW) (n w : Nat) (full : UInt64) (i : Nat) :
     ∀ k t F, (lanesAny K gs n w full F t k &&& full).toNat.testBit (16 * i) = true ↔
       full.toNat.testBit (16 * i) = true ∧ (F.toNat.testBit (16 * i) = true ∨
         ∃ e, e < k ∧ (laneZ (lowF (mAt K gs (t + e) w) (n - 32 * w))).toNat.testBit (16 * i) = true) := by
@@ -645,7 +713,7 @@ theorem lanesAny_bit (K : RP) (gs : Array UInt64) (n w : Nat) (full : UInt64) (i
             exact ⟨h1, Or.inr ⟨e, by omega, by rw [show t + 1 + e = t + (e + 1) by omega]; exact h3⟩⟩
 
 /-- The lanes word of `fineV`: lane `i` set iff `i < np` and the lane is clear at some offset. -/
-theorem wordF_bit (K : RP) (gs : Array UInt64) (n w o r np : Nat) (hnp : np ≤ 4) (i : Nat) (hi : i < 4) :
+theorem wordF_bit (K : RP) (gs : GW) (n w o r np : Nat) (hnp : np ≤ 4) (i : Nat) (hi : i < 4) :
     (let full := fullL np
      let F := laneZ (lowF (mAt K gs (o + r) w) (n - 32 * w)) &&& full
      if F == full then F else lanesAny K gs n w full F o (2 * r + 1) &&& full).toNat.testBit (16 * i) = true ↔
@@ -710,7 +778,7 @@ theorem pieceW {R : ByteArray} {P : PGen} {Gb : ByteArray} {r k o u0 D : Nat}
     (hu : u0 = (P.o + (D - R.size - r)) / 32) (hk : (o + 2 * r + R.size) / 32 + 2 ≤ k)
     (hD : R.size + r ≤ D) (hG : D + r ≤ Gb.size) (w i : Nat) (hi : i < 4) (hn : 32 * w + 8 * i + 8 ≤ R.size) :
     pieceNear R Gb 8 8 r D (4 * w + i) = true ↔ ∃ e, e < 2 * r + 1 ∧
-      (laneZ (lowF (mAt (packRP R) (loadW P.w u0 k (Array.emptyWithCapacity 12)) (o + e) w)
+      (laneZ (lowF (mAt (packRP R) (loadG P.w u0 k) (o + e) w)
         (R.size - 32 * w))).toNat.testBit (16 * i) = true := by
   rw [pieceNear_iff R Gb 8 8 r D (4 * w + i) hD (by omega) hG,
     show (4 * w + i) * 8 = 32 * w + 8 * i by omega]
@@ -724,7 +792,7 @@ theorem fineV_cnt {R : ByteArray} {P : PGen} {Gb : ByteArray} {r k o u0 D : Nat}
     (h : WS R P Gb (D - R.size - r) (R.size + 2 * r)) (ho : o = (P.o + (D - R.size - r)) % 32)
     (hu : u0 = (P.o + (D - R.size - r)) / 32) (hk : (o + 2 * r + R.size) / 32 + 2 ≤ k)
     (hD : R.size + r ≤ D) (hG : D + r ≤ Gb.size) (m : Nat) (hm : 8 * m ≤ R.size) :
-    ∀ c j acc, fineV (packRP R) (loadW P.w u0 k (Array.emptyWithCapacity 12)) o R.size r m j c acc =
+    ∀ c j acc, fineV (packRP R) (loadG P.w u0 k) o R.size r m j c acc =
       acc + cntP (fun j => pieceNear R Gb 8 8 r D j) (4 * j) (min (4 * c) (m - 4 * j)) := by
   intro c
   induction c with
@@ -749,7 +817,7 @@ theorem fineW_eq {R : ByteArray} {P : PGen} {Gb : ByteArray} {r k o u0 D : Nat}
     (h : WS R P Gb (D - R.size - r) (R.size + 2 * r)) (ho : o = (P.o + (D - R.size - r)) % 32)
     (hu : u0 = (P.o + (D - R.size - r)) / 32) (hk : (o + 2 * r + R.size) / 32 + 2 ≤ k)
     (hD : R.size + r ≤ D) (hG : D + r ≤ Gb.size) (h8 : R.size / (R.size / pl) = 8) (sb : Nat) :
-    decide (R.size / pl ≤ sb + fineV (packRP R) (loadW P.w u0 k (Array.emptyWithCapacity 12)) o R.size r
+    decide (R.size / pl ≤ sb + fineV (packRP R) (loadG P.w u0 k) o R.size r
       (R.size / pl) 0 ((R.size + 31) / 32) 0) = fineOk R Gb pl (R.size / (R.size / pl)) r D sb 0 0 (R.size / pl) := by
   have hpl : pl = 8 := rfl
   rw [h8, fineOk_cnt _ _ _ _ _ _ _ _ _ _ (Nat.zero_le _), hpl,
@@ -758,10 +826,79 @@ theorem fineW_eq {R : ByteArray} {P : PGen} {Gb : ByteArray} {r k o u0 D : Nat}
   have hc := cntP_compl (fun j => pieceNear R Gb 8 8 r D j) (R.size / 8) 0
   exact decide_eq_decide.mpr (by omega)
 
+/-! ### The early-stopping piece count -/
+
+theorem lc_full (X : UInt64) (np : Nat) (hnp : np ≤ 4) : lc (X &&& fullL np) ≤ np := by
+  have h0 := fullL_bit np 0 hnp (by omega)
+  have h1 := fullL_bit np 1 hnp (by omega)
+  have h2 := fullL_bit np 2 hnp (by omega)
+  have h3 := fullL_bit np 3 hnp (by omega)
+  simp only [Nat.mul_zero, Nat.mul_one, show 16 * 2 = 32 from rfl, show 16 * 3 = 48 from rfl] at h0 h1 h2 h3
+  rw [lc_eq]
+  simp only [UInt64.toNat_and, Nat.testBit_and, h0, h1, h2, h3]
+  cases X.toNat.testBit 0 <;> cases X.toNat.testBit 16 <;> cases X.toNat.testBit 32 <;>
+    cases X.toNat.testBit 48 <;> simp <;> repeat' (first | omega | split)
+
+theorem fineV_add (K : RP) (gs : GW) (o n r m : Nat) :
+    ∀ k j a acc, fineV K gs o n r m j k (a + acc) = a + fineV K gs o n r m j k acc := by
+  intro k
+  induction k with
+  | zero => intro j a acc; rfl
+  | succ k ih => intro j a acc; simp only [fineV]; rw [Nat.add_assoc, ih]
+
+theorem fineV_ge (K : RP) (gs : GW) (o n r m : Nat) :
+    ∀ k j acc, acc ≤ fineV K gs o n r m j k acc := by
+  intro k
+  induction k with
+  | zero => intro j acc; exact Nat.le_refl _
+  | succ k ih => intro j acc; simp only [fineV]; exact Nat.le_trans (Nat.le_add_right _ _) (ih _ _)
+
+theorem fineV_le (K : RP) (gs : GW) (o n r m : Nat) :
+    ∀ k j acc, fineV K gs o n r m j k acc ≤ acc + (m - 4 * j) := by
+  intro k
+  induction k with
+  | zero => intro j acc; simp [fineV]
+  | succ k ih =>
+    intro j acc
+    simp only [fineV]
+    refine Nat.le_trans (ih _ _) ?_
+    have hl : ∀ F : UInt64, lc ((if F == fullL (min 4 (m - 4 * j)) then F
+        else lanesAny K gs n j (fullL (min 4 (m - 4 * j))) F o (2 * r + 1) &&& fullL (min 4 (m - 4 * j))))
+        ≤ min 4 (m - 4 * j) := by
+      intro F
+      split
+      · rename_i he
+        rw [beq_iff_eq.mp he]
+        have := lc_full (fullL (min 4 (m - 4 * j))) (min 4 (m - 4 * j)) (by omega)
+        rwa [UInt64.and_self] at this
+      · exact lc_full _ _ (by omega)
+    have := hl (laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& fullL (min 4 (m - 4 * j)))
+    omega
+
+theorem fineE_eq (K : RP) (gs : GW) (o n r m need : Nat) :
+    ∀ k j acc, fineE K gs o n r m need j k acc = decide (need ≤ fineV K gs o n r m j k acc) := by
+  intro k
+  induction k with
+  | zero => intro j acc; rfl
+  | succ k ih =>
+    intro j acc
+    have hge := fineV_ge K gs o n r m (k + 1) j acc
+    have hle := fineV_le K gs o n r m (k + 1) j acc
+    simp only [fineE]
+    split
+    · exact (decide_eq_true (by omega)).symm
+    split
+    · exact (decide_eq_false (by omega)).symm
+    rw [ih]; rfl
+
+theorem fineE_sb (K : RP) (gs : GW) (o n r m need k sb : Nat) :
+    fineE K gs o n r m need 0 k sb = decide (need ≤ sb + fineV K gs o n r m 0 k 0) := by
+  rw [fineE_eq, ← fineV_add, Nat.add_zero]
+
 theorem kfiltV_eq {Gt : Type} [GRead Gt] [GPk Gt] (R : ByteArray) (G : Gt) (acc : List (Array Nat))
     (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
     kfiltV (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D := by
-  unfold kfiltV
+  unfold kfiltV kfiltVP
   simp only []
   split
   · rename_i hf
@@ -770,7 +907,8 @@ theorem kfiltV_eq {Gt : Type} [GRead Gt] [GPk Gt] (R : ByteArray) (G : Gt) (acc 
       split
       · rename_i hw
         simp only [wordWin, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hw
-        obtain ⟨⟨⟨hok, hD⟩, h8⟩, hwin⟩ := hw
+        obtain ⟨⟨⟨⟨hok, hD⟩, h8⟩, hwin⟩, hall⟩ := hw
+        have hall := usIn_mem _ _ _ hall
         have hS := GPk.pk_same G P hP
         have hR := Mz.rep_unpack P
         have hGb : SameG G (Mz.unpack P) :=
@@ -783,9 +921,9 @@ theorem kfiltV_eq {Gt : Type} [GRead Gt] [GPk Gt] (R : ByteArray) (G : Gt) (acc 
           rw [← hW.rep.1]; omega
         unfold kfilt
         simp only []
-        rw [decide_eq_true hf, Bool.true_and, fineOk_same hGb, ← fineW_eq hW rfl rfl (Nat.le_refl _) hD hG h8]
+        rw [fineE_sb, decide_eq_true hf, Bool.true_and, fineOk_same hGb, ← fineW_eq hW rfl rfl (Nat.le_refl _) hD hG h8]
         congr 1
-        apply unlookV_eq
+        refine unlookV_eq _ _ R G _ Ls _ D _ ?_ us _ hall
         intro j hA
         rw [seedNear_same hGb]
         exact seedV_eq hW hD Ls j hA
@@ -799,6 +937,8 @@ theorem kfiltV_eq {Gt : Type} [GRead Gt] [GPk Gt] (R : ByteArray) (G : Gt) (acc 
 theorem stageKSV_eq {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) :
     stageKSV body (packRP R) R G acc us Ls lim ds b = stageKS body R G acc us Ls lim ds b := by
-  simp only [stageKSV, stageKS, kfiltV_eq]
+  have e : ∀ b D, kfiltVP (GPk.pk G) (packRP R) R G acc us Ls lim b D = kfilt R G acc us Ls lim b D :=
+    fun b D => kfiltV_eq R G acc us Ls lim b D
+  simp only [stageKSV, stageKS, e]
 
 end MapSpec.Fast

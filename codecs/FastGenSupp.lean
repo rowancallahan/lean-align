@@ -51,44 +51,50 @@ def suppCntC (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
   if sortedL ds && acc.all (fun a => incA a a.size 0) then suppCnt acc r ds
   else (ds.map fun D => suppA acc D r).toArray
 
-/-- `kfiltV` with the support `s` of `D` given. -/
-@[inline] def kfiltVF {Gt : Type} [GRead Gt] [GPk Gt] (K : RP) (R : ByteArray) (G : Gt) (acc : List (Array Nat))
-    (us : List Nat) (Ls lim : Nat) (b : Best) (D s : Nat) : Bool :=
+/-- `kfiltVP` with the support `s` of `D` given. -/
+@[inline] def kfiltVF {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D s : Nat) : Bool :=
   let Q := min lim b.pen
   let r := 2 * gapBound sc0 (-(Q : Int))
   let n := R.size
   let fJ := acc.length - s
   let sb := sbound Q
   if fJ ≤ sb then
-    match GPk.pk G with
+    match pk with
     | some P =>
-      if wordWin K n r D P then
+      if wordWin K n r D P && usIn Ls n us then
         let a := P.o + (D - n - r)
         let o := a % 32
-        let gs := loadW P.w (a / 32) ((o + 2 * r + n) / 32 + 2) (Array.emptyWithCapacity 12)
-        unlookV K gs R G o Ls r D sb us fJ &&
-          decide (n / pl ≤ sb + fineV K gs o n r (n / pl) 0 ((n + 31) / 32) 0)
+        let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
+        unlookV K gs o Ls r sb us fJ &&
+          fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
       else kfilt R G acc us Ls lim b D
     | none => kfilt R G acc us Ls lim b D
   else false
 
-/-- `stageKSV` over `ds` (from index `k` of the counts `cnt`, supports at radius `r0`). -/
-@[specialize] def stageKSS {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
-    (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
+/-- `stageKSS` with `pk = GPk.pk G` given. -/
+@[specialize] def stageKSP {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
+    (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
     List Nat → Nat → Best → Best
   | [], _, b => b
   | D :: ds, k, b =>
     let r := 2 * gapBound sc0 (-((min lim b.pen : Nat) : Int))
     let s := if r = r0 then cnt.getD k 0 else suppA acc D r
-    let b := if kfiltVF K R G acc us Ls lim b D s then body D b else b
-    stageKSS body K R G acc us Ls lim r0 cnt ds (k + 1) b
+    let b := if kfiltVF pk K R G acc us Ls lim b D s then body D b else b
+    stageKSP pk body K R G acc us Ls lim r0 cnt ds (k + 1) b
+
+/-- `stageKSV` over `ds` (from index `k` of the counts `cnt`, supports at radius `r0`). -/
+@[inline] def stageKSS {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
+    (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
+    (ds : List Nat) (k : Nat) (b : Best) : Best :=
+  stageKSP (GPk.pk G) body K R G acc us Ls lim r0 cnt ds k b
 
 /-! ## Proofs -/
 
-theorem kfiltVF_supp {Gt : Type} [GRead Gt] [GPk Gt] (K : RP) (R : ByteArray) (G : Gt) (acc : List (Array Nat))
-    (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
-    kfiltVF K R G acc us Ls lim b D (suppA acc D (2 * gapBound sc0 (-((min lim b.pen : Nat) : Int)))) =
-      kfiltV K R G acc us Ls lim b D := rfl
+theorem kfiltVF_supp {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
+    kfiltVF pk K R G acc us Ls lim b D (suppA acc D (2 * gapBound sc0 (-((min lim b.pen : Nat) : Int)))) =
+      kfiltVP pk K R G acc us Ls lim b D := rfl
 
 section
 variable (a : Array Nat) (hs : a.toList.Pairwise (· < ·))
@@ -266,17 +272,18 @@ theorem suppCntC_get (acc : List (Array Nat)) (r : Nat) (ds : List Nat) (t : Nat
   · simp only [Array.getD_eq_getD_getElem?, List.getElem?_toArray, List.getElem?_map,
       List.getElem?_eq_getElem ht, Option.map_some, Option.getD_some, List.getD_eq_getElem?_getD]
 
-theorem stageKSS_eq {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
-    (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
+theorem stageKSP_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
+    (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
     ∀ (ds : List Nat) (k : Nat) (b : Best),
       (∀ t, t < ds.length → cnt.getD (k + t) 0 = suppA acc (ds.getD t 0) r0) →
-      stageKSS body (packRP R) R G acc us Ls lim r0 cnt ds k b = stageKSV body (packRP R) R G acc us Ls lim ds b := by
+      stageKSP pk body K R G acc us Ls lim r0 cnt ds k b =
+        ds.foldl (fun b D => if kfiltVP pk K R G acc us Ls lim b D then body D b else b) b := by
   intro ds
   induction ds with
   | nil => intro k b _; rfl
   | cons D ds ih =>
     intro k b h
-    simp only [stageKSS, stageKSV, List.foldl_cons]
+    simp only [stageKSP, List.foldl_cons]
     have hs : (if 2 * gapBound sc0 (-((min lim b.pen : Nat) : Int)) = r0 then cnt.getD k 0
         else suppA acc D (2 * gapBound sc0 (-((min lim b.pen : Nat) : Int)))) =
         suppA acc D (2 * gapBound sc0 (-((min lim b.pen : Nat) : Int))) := by
@@ -288,7 +295,13 @@ theorem stageKSS_eq {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Bes
       have := h (t + 1) (by simp; omega)
       rw [show k + (t + 1) = k + 1 + t by omega, List.getD_cons_succ] at this
       exact this)]
-    rfl
+
+theorem stageKSS_eq {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
+    (ds : List Nat) (k : Nat) (b : Best)
+    (h : ∀ t, t < ds.length → cnt.getD (k + t) 0 = suppA acc (ds.getD t 0) r0) :
+    stageKSS body (packRP R) R G acc us Ls lim r0 cnt ds k b = stageKSV body (packRP R) R G acc us Ls lim ds b :=
+  stageKSP_eq _ body _ R G acc us Ls lim r0 cnt ds k b h
 
 /-- **`stageKSV` with the swept supports.** -/
 theorem stageKSS_cnt {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
