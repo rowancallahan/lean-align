@@ -107,6 +107,74 @@ def main (args : List String) : IO UInt32 := do
           Fast.mapFastGB P ix G offs gbs R then n else n + 1) 0
         IO.println s!"short-path check on {rs.size} reads: {bad} differ ({secs t0 (← IO.monoNanosNow)} s)"
         assert! bad == 0
+      if (← IO.getEnv "GP_PROF").isSome then
+        -- timing only: mapChromsGB's interleaved lookups (ilG) vs stages K/B (chromKB)
+        let n := gbs.size
+        let gbs2 := gbs ++ gbs
+        let t0 ← IO.monoNanosNow
+        let xs ← (← IO.mkRef (r1.map fun R =>
+          let Rr := Fast.revCompB2 R
+          let m := R.size / 25
+          let Ls := R.size / m
+          let ps := Fast.prepG ix R m Ls
+          let pr := Fast.prepG ix Rr m Ls
+          (R, Rr, Fast.ilG ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+            ⟨Fast.ordG (ps.map (Fast.LookG.size ix)) m, [], Array.replicate n []⟩
+            ⟨Fast.ordG (pr.map (Fast.LookG.size ix)) m, [], Array.replicate n []⟩ (Fast.initP P)))).get
+        let t1 ← IO.monoNanosNow
+        let bs ← (← IO.mkRef (xs.map fun (R, Rr, x) =>
+          let b := (List.range n).foldl (fun b c => Fast.chromKB R gbs2 c P x.1.acc[c]! b) x.2.2
+          (List.range n).foldl (fun b c => Fast.chromKB Rr gbs2 (n + c) P x.2.1.acc[c]! b) b)).get
+        let t2 ← IO.monoNanosNow
+        let looks := xs.foldl (fun a (_, _, x) => a + x.1.J.length + x.2.1.J.length) 0
+        let anc := xs.foldl (fun a (_, _, x) => a + x.1.acc.foldl (fun a l => a + l.foldl (· + ·.size) 0) 0
+          + x.2.1.acc.foldl (fun a l => a + l.foldl (· + ·.size) 0) 0) 0
+        let dK := xs.foldl (fun a (R, _, x) =>
+          let Q1 := min x.2.2.pen P
+          a + x.1.acc.foldl (fun a acc => a + (Fast.diagsB acc (acc.length - Fast.sbound (min (min P 16) Q1))
+            (2 * gapBound sc0 (-(Q1 : Int)))).length) 0 + x.2.1.acc.foldl (fun a acc => a + (Fast.diagsB acc
+            (acc.length - Fast.sbound (min (min P 16) Q1)) (2 * gapBound sc0 (-(Q1 : Int)))).length) 0) 0
+        let t3 ← IO.monoNanosNow
+        let lk ← (← IO.mkRef (xs.foldl (fun a (R, Rr, x) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          let ps := Fast.prepG ix R m Ls
+          let pr := Fast.prepG ix Rr m Ls
+          let a := x.1.J.foldl (fun a j => a + (Fast.LookG.look ix G R (j * Ls) (R.size - j * Ls) ps[j]!).size) a
+          x.2.1.J.foldl (fun a j => a + (Fast.LookG.look ix G Rr (j * Ls) (Rr.size - j * Ls) pr[j]!).size) a) 0)).get
+        let t4 ← IO.monoNanosNow
+        let hsh ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          a + (Fast.prepG ix R m Ls).size + (Fast.prepG ix Rr m Ls).size + (Fast.revCompB2 R).size) 0)).get
+        let t5 ← IO.monoNanosNow
+        let hist := xs.foldl (fun (h : Array (Nat × Nat)) (R, _, x) =>
+          let Q1 := min x.2.2.pen P
+          let shs := ((Fast.shapesAt Q1).filter (· != (0, 0))).length
+          let nd := x.1.acc.foldl (fun a acc => a + (Fast.diagsB acc (acc.length - Fast.sbound (min (min P 16) Q1))
+            (2 * gapBound sc0 (-(Q1 : Int)))).length) 0 + x.2.1.acc.foldl (fun a acc => a + (Fast.diagsB acc
+            (acc.length - Fast.sbound (min (min P 16) Q1)) (2 * gapBound sc0 (-(Q1 : Int)))).length) 0
+          let k := if 0 < gapBound sc0 (-(Q1 : Int)) then nd * shs else 0
+          h.modify Q1 fun (c, w) => (c + 1, w + k)) (Array.replicate (P + 2) (0, 0))
+        IO.println s!"prof: by phase-1 best Q1: (reads, stage-K kernel calls) {(Array.range (P + 2)).toList.filterMap fun q => if hist[q]!.1 > 0 then some (q, hist[q]!) else none}"
+        let fin := (xs.zip bs).foldl (fun (h : Array Nat) ((_, _, x), b) =>
+          if min x.2.2.pen P == P then h.modify (min b.pen (P + 1)) (· + 1) else h) (Array.replicate (P + 2) 0)
+        IO.println s!"prof: final best of the reads with phase-1 best {P}: {(Array.range (P + 2)).toList.filterMap fun q => if fin[q]! > 0 then some (q, fin[q]!) else none}"
+        let t6 ← IO.monoNanosNow
+        let ords ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          let ps := Fast.prepG ix R m Ls
+          let pr := Fast.prepG ix Rr m Ls
+          a + (Fast.ordG (ps.map (Fast.LookG.size ix)) m).length + (Fast.ordG (pr.map (Fast.LookG.size ix)) m).length) 0)).get
+        let t7 ← IO.monoNanosNow
+        let hashes ← (← IO.mkRef (xs.foldl (fun a (R, Rr, _) =>
+          let m := R.size / 25
+          let Ls := R.size / m
+          (List.range m).foldl (fun a j => a + ((Fast.seedHashAt R (j * Ls)).getD 0).toNat % 2 + ((Fast.seedHashAt Rr (j * Ls)).getD 0).toNat % 2) a) 0)).get
+        let t8 ← IO.monoNanosNow
+        IO.println s!"prof: lookups alone {secs t3 t4} s ({lk}); prep+revcomp {secs t4 t5} s ({hsh}); prep+ordG {secs t6 t7} s ({ords}); hashes only {secs t7 t8} s ({hashes})"
+        IO.println s!"prof: ilG {secs t0 t1} s, chromKB {secs t1 t2} s ({bs.size}); lookups {looks}, anchors {anc}, stage-K diagonals (at phase-1 best) {dK}"
       if (← IO.getEnv "GP_TWO").isSome then
         -- estimate only (not the proved path): -12 first, -P for reads without a hit <= 12
         pure (fun R => if Fast.fastT 12 R then

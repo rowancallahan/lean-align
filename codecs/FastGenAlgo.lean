@@ -195,9 +195,11 @@ def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=
 /-- End shifts `−d … d`. -/
 def shifts (d : Nat) : List Int := (List.range (2 * d + 1)).map fun (i : Nat) => (i : Int) - d
 
-/-- Shapes allowed within penalty `x`. -/
+/-- Shapes allowed within penalty `x`, fewest gap letters first (an indel hit found
+early lowers the best and makes the remaining kernel calls cheap). -/
 @[inline] def shapesAt (x : Nat) : List (Int × Int) :=
-  shapes (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int)))
+  (shapes (gapBound sc0 (-(x : Int))) (gapBound2 sc0 (-(x : Int)))).mergeSort
+    fun u v => decide (u.1.natAbs + u.2.natAbs ≤ v.1.natAbs + v.2.natAbs)
 
 /-- Stages K and B of chromosome `c`, from phase 1's anchor arrays `acc` and best `b1`. -/
 def chromKB (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
