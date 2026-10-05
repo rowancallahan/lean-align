@@ -50,7 +50,13 @@ def PGen.slow (P : PGen) (i : Nat) : UInt8 :=
 
 /-- Byte at place `i` of the blocks. -/
 @[inline] def PGen.raw (P : PGen) (i : Nat) : UInt8 :=
-  if P.w.get! (17 * (i >>> 6)) == 1 then letter (P.code i) else P.slow i
+  -- machine-word arithmetic (places < 2^64); the block offset is computed once
+  let u : USize := i.toUSize
+  let b : USize := (u >>> (6 : USize)) * (17 : USize)
+  let k : USize := b + (1 : USize) + ((u >>> (2 : USize)) &&& (15 : USize))
+  if P.w.get! b.toNat == 1 then
+    letter ((P.w.get! k.toNat >>> ((u.toUInt8 &&& 3) <<< 1)) &&& 3)
+  else P.slow i
 
 @[inline] def PGen.get (P : PGen) (i : Nat) : UInt8 := if i < P.n then P.raw (P.o + i) else 0
 
