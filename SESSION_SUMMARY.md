@@ -283,6 +283,7 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
 - Lower bounds from seeds: a candidate window with k spoiled seeds costs ≥ 4k (same event argument); skip windows whose bound > T or > current best (unique mode: > second best).
 - Word kernels past 16: extend ker16 / stage K (one gap, shared mismatch profiles) to gap length ≤ (T−6)/2 (16 shifts at −39), then two-gap kernels; only reads that fail these reach the banded step.
 - Bit-parallel banded DP (Myers / Hyyrö-style bit vectors, affine variant): band ≤ 64 fits one word per column.
+- WFA (gap-affine wavefront, Rowan 2026-10-05): cost O(n·s), bounded by the score; with cap ≤ 39 only a few narrow wavefronts per survivor, match runs extended by packed XOR + ctz. Good for survivors with a few indels off the main diagonal. Proof: cap-bounded WFA minimum = banded DP minimum within min(P, best).
 - Iterative deepening per read: −16, then −24, then −39, only on reads not settled; ambiguity early exit (two hits ≤ T tie → unmapped in default unique mode).
 - Batch the slow reads (stragglers) so their genome windows are fetched together.
 - 125–149 bp mates at T=−16 instead of −12: Rowan approved (2026-10-05) if still fast; A/B in progress on speed/wg-speed.
