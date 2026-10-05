@@ -12,8 +12,9 @@ proved search on that region alone (a one-chromosome genome: `region_absent`)
 and finding no hit proves the pair is `none` without searching mate `B`
 over the whole genome.  Otherwise `B` is mapped as usual.
 
-The mate searched first is the one with the cheaper lookups (`seedCost`, any
-choice is exact).  The region search looks up only the index entries inside the
+The mate searched first is the one with the cheaper lookups (`costP`, any
+choice is exact); each mate's seeds are prepared once (`prepMate`) for both the
+choice and the search (`mapFastGBKPp_prep`).  The region search looks up only the index entries inside the
 region (`mzLookRP`: binary search in the bucket, scan stops past the region), and
 the region bytes alone are its genome.
 
@@ -122,15 +123,41 @@ def regionNoHitKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (rl 
     else false
   else false
 
-/-- Lookup cost proxy of a read: its `sbound P + 1` smallest buckets, worse strand
-(only picks which mate goes first). -/
-def seedCost {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (P : Nat) (R : ByteArray) : Nat :=
+/-- A read prepared once: reverse complement, packed words of both strands, and the
+prepared seeds of both strands (used for the mate-order choice and the search). -/
+structure PrepM (Pp : Type) where
+  Rr : ByteArray
+  K1 : RP
+  K2 : RP
+  ps : Array Pp
+  pr : Array Pp
+
+@[inline] def prepMate {L Pp : Type} [LookG L Pp] (ix : L) (R : ByteArray) : PrepM Pp :=
+  let Rr := revCompK R
+  let K1 := packRP R
+  let K2 := packRP Rr
   let m := R.size / 25
-  if m = 0 then 0 else
   let Ls := R.size / m
-  let one := fun (X : ByteArray) =>
-    ((((prepG ix X m Ls).toList.map (LookG.size ix)).mergeSort (· ≤ ·)).take (sbound P + 1)).foldl (· + ·) 0
-  max (one R) (one (revCompB2 R))
+  ⟨Rr, K1, K2, prepGK ix R K1 m Ls, prepGK ix Rr K2 m Ls⟩
+
+/-- Lookup cost proxy of a prepared read: its `sbound P + 1` smallest buckets, worse
+strand (only picks which mate goes first). -/
+def costP {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
+  let one := fun (a : Array Pp) =>
+    (((a.toList.map (LookG.size ix)).mergeSort (· ≤ ·)).take (sbound P + 1)).foldl (· + ·) 0
+  max (one s.ps) (one s.pr)
+
+/-- `mapFastGBKP` from a prepared read. -/
+def mapFastGBKPp {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : Option (Placement × Int) :=
+  if fastT P R then
+    decodeP pgs.size P (mapChromsGBFG (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+      (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) P ix G offs pgs R s.Rr s.ps s.pr)
+  else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB (pgs.map Mz.unpack)) (decodeBytes R)
+
+theorem mapFastGBKPp_prep {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
+    mapFastGBKPp P ix G offs pgs R (prepMate ix R) = mapFastGBKP P ix G offs pgs R := rfl
 
 /-- Mate `A` over the genome; mate `B` near it first, over the genome only when
 the region has a hit. -/
@@ -151,12 +178,14 @@ def pairRegionKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2]
     (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option ((Placement × Int) × (Placement × Int)) :=
   let P1 := penOf R1
   let P2 := penOf R2
-  if seedCost ix P2 R2 < seedCost ix P1 R1 then
-    (pairRegionStep lo hi (mapFastGBKP P2 ix G offs pgs R2) (regionNoHitKP P1 lo hi rl G offs pgs R1)
-      (fun _ => mapFastGBKP P1 ix G offs pgs R1)).map fun x => (x.2, x.1)
+  let s1 := prepMate ix R1
+  let s2 := prepMate ix R2
+  if costP ix P2 s2 < costP ix P1 s1 then
+    (pairRegionStep lo hi (mapFastGBKPp P2 ix G offs pgs R2 s2) (regionNoHitKP P1 lo hi rl G offs pgs R1)
+      (fun _ => mapFastGBKPp P1 ix G offs pgs R1 s1)).map fun x => (x.2, x.1)
   else
-    pairRegionStep lo hi (mapFastGBKP P1 ix G offs pgs R1) (regionNoHitKP P2 lo hi rl G offs pgs R2)
-      (fun _ => mapFastGBKP P2 ix G offs pgs R2)
+    pairRegionStep lo hi (mapFastGBKPp P1 ix G offs pgs R1 s1) (regionNoHitKP P2 lo hi rl G offs pgs R2)
+      (fun _ => mapFastGBKPp P2 ix G offs pgs R2 s2)
 
 /-! ## Proofs: pairs -/
 
@@ -657,7 +686,7 @@ theorem pairRegionKP_mz_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix : 
     exact regionNoHitKP_sound P lo hi m g _ R hg hr _ ByteArray.empty (Mz.unpack G) offs
       (fun _ _ _ _ _ _ _ => rfl) hcat (fun a b B hb hB hBi => lookOk_rg ix G hchk a b B hb hB hBi) a h b.1 b.2 hs hT
   unfold pairRegionKP pairSpecT
-  simp only [hm _ R1 m1 h1, hm _ R2 m2 h2]
+  simp only [mapFastGBKPp_prep, hm _ R1 m1 h1, hm _ R2 m2 h2]
   split
   · rw [pairRegionStep_eq lo hi _ _ _ (fun a b h hb => hn _ R1 m1 h1 a b h hb), pairLazy_match]
     cases mapSpecBoth sc0 (-(penOf R1 : Int)) g m1 <;> cases mapSpecBoth sc0 (-(penOf R2 : Int)) g m2 <;>
