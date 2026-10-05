@@ -110,27 +110,6 @@ def readFastaPackedCat (path : String) : IO (Fast.PGen × Array Nat × Array Nat
   let G := s.finish
   return (G, offs, (Array.range offs.size).map fun c => (offs[c + 1]?.getD G.n) - offs[c]!)
 
-/-- Prototype (unproved): stage B with the cap lowered to the current best, end shifts nearest first. -/
-def stageBDyn (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (shs : List (Int × Int))
-    (bs : List Int) (ds : List Nat) (b : Fast.Best) : Fast.Best :=
-  ds.foldl (fun b D => bs.foldl (fun b bb =>
-    let Pc := min b.pen P
-    Fast.stageBD Pc R gbs c shs D b bb) b) b
-
-def chromKBDyn (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Fast.Best) : Fast.Best :=
-  let lim := min P 16
-  let Q1 := min b1.pen P
-  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      (if 16 ≤ min lim Q1 then Fast.stageKP else Fast.stageK) R gbs c lim (Fast.shapesKT Q1)
-        (Fast.diagsB acc (acc.length - Fast.sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
-  let Q2 := min b2.pen P
-  if lim < Q2 then
-    let d := gapBound sc0 (-(Q2 : Int))
-    stageBDyn P R gbs c (Fast.shapesT Q2)
-      ((Fast.shifts d).mergeSort fun u v => decide (u.natAbs ≤ v.natAbs))
-      (Fast.diagsB acc (acc.length - Fast.sbound P) (2 * d)) b2
-  else b2
-
 /-- Prototype (unproved): banded rows with a per-row death threshold `T + h i`. -/
 def bandRowsH (T : Int) (B : Nat) (rb : ByteArray) (gb : ByteArray) (e : Nat) (h : Nat → Int) :
     Nat → Array Int → Array Int → Array Int → Option (Array Int)
@@ -481,25 +460,6 @@ def main (args : List String) : IO UInt32 := do
         IO.println s!"prof: pruned passes at the final cap: {st.1}, rows {st.2.1}, full passes {st.2.2}"
         let difH := (bs.zip bsH).foldl (fun a (u, v) => if Fast.resultP P u == Fast.resultP P v then a else a + 1) 0
         IO.println s!"prof: chromKB with seed lower bound {secs th0 th1} s, results differ on {difH}"
-        let tq ← IO.monoNanosNow
-        let bsD ← (← IO.mkRef (xs.map fun (R, Rr, x) =>
-          let b := (List.range n).foldl (fun b c => chromKBDyn R gbs2 c P x.1.acc[c]! b) x.2.2
-          (List.range n).foldl (fun b c => chromKBDyn Rr gbs2 (n + c) P x.2.1.acc[c]! b) b)).get
-        let tr ← IO.monoNanosNow
-        let difD := (bs.zip bsD).foldl (fun a (u, v) => if Fast.resultP P u == Fast.resultP P v then a else a + 1) 0
-        IO.println s!"prof: chromKB with dynamic stage-B cap {secs tq tr} s, results differ on {difD}"
-        let hitIdx := (Array.range xs.size).filter fun i => bs[i]!.pen ≤ P && bs[i]!.pen > min P 16
-        let noIdx := (Array.range xs.size).filter fun i => bs[i]!.pen > P
-        let runKB (ix : Array Nat) : Nat := ix.foldl (fun a i =>
-          let (R, Rr, x) := xs[i]!
-          let b := (List.range n).foldl (fun b c => Fast.chromKB R gbs2 c P x.1.acc[c]! b) x.2.2
-          a + ((List.range n).foldl (fun b c => Fast.chromKB Rr gbs2 (n + c) P x.2.1.acc[c]! b) b).pen) 0
-        let u0 ← IO.monoNanosNow
-        let v1 ← (← IO.mkRef (runKB hitIdx)).get
-        let u1 ← IO.monoNanosNow
-        let v2 ← (← IO.mkRef (runKB noIdx)).get
-        let u2 ← IO.monoNanosNow
-        IO.println s!"prof: chromKB on {hitIdx.size} reads with best in (16, P]: {secs u0 u1} s; on {noIdx.size} reads without hit: {secs u1 u2} s ({v1 + v2})"
         -- stage B: reads whose final best stays above 16, their diagonals and banded passes
         let sB := (xs.zip bs).foldl (fun (a : Nat × Nat × Nat) ((_, _, x), b) =>
           if b.pen ≤ min P 16 then a else
