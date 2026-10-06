@@ -308,7 +308,9 @@ Compiled-code rewrites only, each `@[csimp]` with an equality proof; theorems un
 - `costP_eqI` (PairRegion): insertion sort for the few lookup sizes (`isortN_eq` = mergeSort).
 - `sliceG_eqE` (FastGenPair): no array built for an empty slice.
 - Instructions per 1000 nova pairs 1314M → ~1100M. Mapping wall s, 4 threads, median of 3 interleaved vs 67bbb1a: hiseq 9.35 → 8.77, nova 8.27 → 7.79, mason 8.60 → 8.32 (−3 to −6%; the box is noisy, ±10% per run).
-- Not done: sharing the gate's preps with passG (gate is an opaque `TierCfg` field), candidate diagonals (speed/150-stage).
+- Follow-up (5c6ec14..949a444): `TierCfg.gate` now takes the precomputed preps and costs, and `tierPairB_eqS` (TierRouter) shares `prepMate`/`costP` between the gate, passG and RT's mate order; passG reuses the packed reads (`mapChromsGBFG_eqP`, `mateKP_eqP`, `regionPenKP_eqP`); `diags_eqI` (WgPacked) insertion-sorts up to 16 diagonals; `packRP_eqU` (MapperK250) packs reads on USize indices with `uget`. Dumps byte-identical to f33e86b on all three sets; median of 3 vs f33e86b: hiseq 8.46 → 7.89, nova 8.00 → 6.95, mason 8.80 → 7.63 s (−7 / −13 / −13%). Ir per 1000 mason pairs 1025M → ~860M.
+- Overlap: speed/150-stage f502abd also shares preps/costs (different gate type, `tierRTS`); merging the two branches conflicts in TierRouter.lean and WholeGenome.lean. Keep stage's `tierPairB` and re-add this branch's packed-read closures on top.
+- Not done: candidate diagonals (speed/150-stage).
 
 ## Tier-1 / short-read workhorse (branch `speed/fast-proved`, 2026-10-05)
 Done (all proved, check.sh green on 58b0faf):
