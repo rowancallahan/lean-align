@@ -719,6 +719,508 @@ def MateX.show (m : MateX) : String :=
     | none => "-\t-\t-\t-\t-"
   s!"{m.st}\t{m.cap}\t{m.cd}\t{m.pen}\t{pl}\t{m.pU}\t{m.pC}\t{m.pH}\t{m.pD}\t{m.pR}\t{if m.rs then 1 else 0}"
 
+/-! ### Tier 2 heuristic (bench only, unproved search; mode RTX, WG_XH=1)
+
+Ceilings for the pairs left in T2/T3: a gapped (banded affine) re-alignment of gapless ceilings,
+pair-consistent diagonals of the mates' rarest seeds, and a search of each mate near its partner's
+placement (the proper-pair window).  Every alignment it reports is re-scored by the proved checker
+`AlignmentSpec.checkRuns` (`rescoreRuns`) and kept only when the score agrees; floors are untouched. -/
+
+/-- Letters `i …` of `G` pushed onto `out` (`fuel` letters). -/
+def winLg (G : PGen) : (fuel i : Nat) → ByteArray → ByteArray
+  | 0, _, out => out
+  | f + 1, i, out => winLg G f (i + 1) (out.push (G.get i))
+
+/-- Letters `[a, b)` of `G` (cut to `G.n`). -/
+def winL (G : PGen) (a b : Nat) : ByteArray :=
+  let b := min b G.n
+  winLg G (b - a) a (ByteArray.emptyWithCapacity (b - a))
+
+/-- Steps as runs. -/
+def runsOf (steps : List AlignmentSpec.Step) : List (AlignmentSpec.Step × Nat) :=
+  steps.foldr (fun s acc => match acc with
+    | (t, c) :: rest => if s == t then (t, c + 1) :: rest else (s, 1) :: acc
+    | [] => [(s, 1)]) []
+
+/-- The cells of `bandDP`, row by row (cell `(i, k)` at `i * K + k` of `H`, `F`, `tb`, all preset to
+`INF` / `0`; window column of cell `(i, k)` = `i + k + c0s − SH`, shifted by `SH = 2^20`).  Only cells
+that can get under `lim` are written; the previous row's cells under `lim` lie in `[pa, pb)`, this row's
+so far in `[nlo, nhi)`.  `false` when a whole row is `≥ lim`.  One loop with its state in (unboxed)
+arguments; the arrays stay unshared and are updated in place. -/
+def bandCells (X W : @& ByteArray) (K c0s m lim : UInt32) :
+    (fuel : Nat) → (i k hl e pa pb nlo nhi : UInt32) → (H F : Array UInt32) → (tb : ByteArray) →
+    Array UInt32 × ByteArray × Bool
+  | 0, _, _, _, _, _, _, _, _, H, _, tb => (H, tb, true)
+  | f + 1, i, k, hl, e, pa, pb, nlo, nhi, H, F, tb =>
+    let INF : UInt32 := 16777216
+    let SH : UInt32 := 1048576
+    if k == K then
+      if nlo == K then (H, tb, false)
+      else bandCells X W K c0s m lim f (i + 1) 0 INF INF nlo nhi K 0 H F tb
+    else
+      let col := i + k + c0s
+      if col < SH || col > SH + m || k + 1 < pa || (k ≥ pb && hl + 8 ≥ lim && e + 2 ≥ lim) then
+        bandCells X W K c0s m lim f i (k + 1) INF INF pa pb nlo nhi H F tb
+      else
+        let j := (i - 1) * K + k
+        let fa := if k + 1 < pb then H[(j + 1).toNat]! + 8 else INF
+        let fb := if k + 1 < pb then F[(j + 1).toNat]! + 2 else INF
+        let fx := fb < fa
+        let fv := if fx then fb else fa
+        let ea := hl + 8
+        let eb := e + 2
+        let ex := eb < ea
+        let ev := if ex then eb else ea
+        let d := if col > SH && k < pb then
+          H[j.toNat]! + (if X.get! (i - 1).toNat == W.get! (col - SH - 1).toNat then 0 else 4) else INF
+        let src : UInt8 := if d ≤ ev && d ≤ fv then 0 else if ev ≤ fv then 1 else 2
+        let h := if src == 0 then d else if src == 1 then ev else fv
+        let byte := src ||| (if ex then 4 else 0) ||| (if fx then 8 else 0)
+        let jc := (j + K).toNat
+        if h < lim then
+          bandCells X W K c0s m lim f i (k + 1) h ev pa pb (if nlo == K then k else nlo) (k + 1)
+            (H.set! jc h) (F.set! jc fv) (tb.set! jc byte)
+        else
+          bandCells X W K c0s m lim f i (k + 1) INF (if ev < lim then ev else INF) pa pb nlo nhi
+            H F (tb.set! jc byte)
+
+/-- Banded semi-global affine DP (sc0 penalties: mismatch 4, gap 6 + 2L) of the whole read `X` in the
+window letters `W` (free window ends), on the diagonals `s0 − w … s0 + w` (`s0` = read start in `W`):
+(start in `W`, length, penalty, runs) when the penalty is `< lim`; stops once a whole row is `≥ lim`. -/
+def bandDP (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
+  let n := X.size
+  let m := W.size
+  let K := 2 * w + 1
+  let INF : Nat := 1 <<< 24
+  let SH : Int := 1048576
+  let c0 : Int := s0 - (w : Int)
+  if c0 + SH < 0 || c0 > SH || m ≥ 1048576 || n ≥ 1048576 then return none
+  let lim := min lim (1 <<< 23)
+  -- row 0
+  let mut H0 : Array UInt32 := Array.replicate ((n + 1) * K) INF.toUInt32
+  let mut pa := K
+  let mut pb := 0
+  for k in [0:K] do
+    let c := c0 + (k : Int)
+    if 0 ≤ c && c ≤ (m : Int) then
+      H0 := H0.set! k 0
+      if pa == K then pa := k
+      pb := k + 1
+  if pa == K then return none
+  -- (`INF − 1`: an array distinct from `H0`, not shared)
+  let F0 : Array UInt32 := Array.replicate ((n + 1) * K) (INF.toUInt32 - 1)
+  let tb0 : ByteArray := ByteArray.mk (Array.replicate ((n + 1) * K) 0)
+  let (H, tb, ok) := bandCells X W K.toUInt32 (c0 + SH).toNat.toUInt32 m.toUInt32 lim.toUInt32 (n * (K + 1))
+    1 0 INF.toUInt32 INF.toUInt32 pa.toUInt32 pb.toUInt32 K.toUInt32 0 H0 F0 tb0
+  if !ok || H.size != (n + 1) * K then return none
+  let cl : Int := c0 + (n : Int)
+  let mut bk := K
+  let mut bv := INF
+  for k in [0:K] do
+    let c := cl + (k : Int)
+    let hv := H[n * K + k]!.toNat
+    if 0 ≤ c && c ≤ (m : Int) && hv < bv then
+      bv := hv
+      bk := k
+  if bk == K || bv ≥ lim then return none
+  let mut i := n
+  let mut k := bk
+  let mut st : Nat := 0
+  let mut steps : List AlignmentSpec.Step := []
+  let mut fuel := 4 * (n + K) + 8
+  while i > 0 && fuel > 0 do
+    fuel := fuel - 1
+    let byte := tb.get! (i * K + k)
+    if st == 0 then
+      let src := byte &&& 3
+      if src == 0 then
+        steps := .diag :: steps
+        i := i - 1
+      else if src == 1 then st := 1
+      else st := 2
+    else if st == 1 then
+      steps := .gapX :: steps
+      if byte &&& 4 == 0 then st := 0
+      if k == 0 then return none
+      k := k - 1
+    else
+      steps := .gapY :: steps
+      if byte &&& 8 == 0 then st := 0
+      i := i - 1
+      k := k + 1
+  if i > 0 then return none
+  let cs := c0 + (k : Int)
+  let ce := cl + (bk : Int)
+  if cs < 0 || ce < cs then return none
+  return some (cs.toNat, (ce - cs).toNat, bv, runsOf steps)
+
+/-- First free slot of the open-addressing table `keys` from slot `s` (`fuel` probes). -/
+def vFree (keys : @& Array UInt32) (TM : UInt32) : (fuel : Nat) → (s : UInt32) → UInt32
+  | 0, s => s
+  | f + 1, s => if keys[s.toNat]! == 0 then s else vFree keys TM f ((s + 1) &&& TM)
+
+/-- The read's `k`-mers (code + 1 → read offset) into the table (`fuel` letters from `i`, `v` letters
+since the last non-ACGT; table size `TM + 1`, a power of two). -/
+def vIns (X : @& ByteArray) (k : UInt32) (sh : UInt32) (msk : UInt32) (TM : UInt32) :
+    (fuel : Nat) → (i v h : UInt32) → (keys offs : Array UInt32) → Array UInt32 × Array UInt32
+  | 0, _, _, _, keys, offs => (keys, offs)
+  | f + 1, i, v, h, keys, offs =>
+    let c := baseCode (X.get! i.toNat)
+    if c == 4 then vIns X k sh msk TM f (i + 1) 0 0 keys offs else
+    let h := ((h <<< 2) ||| c.toUInt32) &&& msk
+    if v + 1 ≥ k then
+      let s := vFree keys TM (TM.toNat + 1) ((h * 0x9E3779B1) >>> sh)
+      vIns X k sh msk TM f (i + 1) (v + 1) h (keys.set! s.toNat (h + 1)) (offs.set! s.toNat (i + 1 - k))
+    else vIns X k sh msk TM f (i + 1) (v + 1) h keys offs
+
+/-- Votes (saturating bytes, index `ps + n − read offset`) of one window `k`-mer `key` (start `ps`) along
+its probe chain. -/
+def vProbe (keys offs : @& Array UInt32) (TM key ps n : UInt32) :
+    (fuel : Nat) → (s : UInt32) → (votes : ByteArray) → ByteArray
+  | 0, _, votes => votes
+  | f + 1, s, votes =>
+    let ks := keys[s.toNat]!
+    if ks == 0 then votes else
+    if ks == key then
+      let t := (ps + n - offs[s.toNat]!).toNat
+      let c := votes.get! t
+      vProbe keys offs TM key ps n f ((s + 1) &&& TM) (if c < 255 then votes.set! t (c + 1) else votes)
+    else vProbe keys offs TM key ps n f ((s + 1) &&& TM) votes
+
+/-- The window scan of `voteD` (`fuel` letters from `p`): the votes of all shared `k`-mers. -/
+def vScan (W : @& ByteArray) (keys offs : @& Array UInt32) (n k sh msk TM : UInt32) :
+    (fuel : Nat) → (p v h : UInt32) → (votes : ByteArray) → ByteArray
+  | 0, _, _, _, votes => votes
+  | f + 1, p, v, h, votes =>
+    let c := baseCode (W.get! p.toNat)
+    if c == 4 then vScan W keys offs n k sh msk TM f (p + 1) 0 0 votes else
+    let h := ((h <<< 2) ||| c.toUInt32) &&& msk
+    if v + 1 ≥ k then
+      vScan W keys offs n k sh msk TM f (p + 1) (v + 1) h
+        (vProbe keys offs TM (h + 1) (p + 1 - k) n (TM.toNat + 1) ((h * 0x9E3779B1) >>> sh) votes)
+    else vScan W keys offs n k sh msk TM f (p + 1) (v + 1) h votes
+
+/-- The first index of a maximal byte (`fuel` from `i`; best so far `bt` with `bv`). -/
+def argMaxB (a : @& ByteArray) : (fuel : Nat) → (i bt : UInt32) → (bv : UInt8) → UInt32 × UInt8
+  | 0, _, bt, bv => (bt, bv)
+  | f + 1, i, bt, bv =>
+    let x := a.get! i.toNat
+    if x > bv then argMaxB a f (i + 1) i x else argMaxB a f (i + 1) bt bv
+
+/-- The read start in `W` (shifted by `n`: index `t`, start `t − n`) with the most shared `k`-mers
+(`k ≤ 15`) between the read `X` and the window `W`, and its votes. -/
+def voteD (X W : ByteArray) (k : Nat) : Option (Nat × Nat) :=
+  let n := X.size
+  let m := W.size
+  if n < k || m < k || k > 15 || n + m ≥ 1 <<< 30 then none else
+  let lg := (2 * n).log2 + 2
+  let TM : UInt32 := ((1 <<< lg) - 1).toUInt32
+  let sh : UInt32 := (32 - lg).toUInt32
+  let msk : UInt32 := ((1 : UInt32) <<< (2 * k).toUInt32) - 1
+  let (keys, offs) := vIns X k.toUInt32 sh msk TM n 0 0 0 (Array.replicate (1 <<< lg) 0) (Array.replicate (1 <<< lg) 1)
+  let votes := vScan W keys offs n.toUInt32 k.toUInt32 sh msk TM m 0 0 0 (ByteArray.mk (Array.replicate (m + n + 1) 0))
+  let (bt, bv) := argMaxB votes votes.size 0 0 0
+  if bv == 0 then none else some (bt.toNat, bv.toNat)
+
+/-- Gapless mismatches of `X` at start `st` of `W` from letter `i` (`fuel` letters left), stopping at `lim`. -/
+def hamWg (X W : ByteArray) (st lim : Nat) : (fuel i mm : Nat) → Nat
+  | 0, _, mm => mm
+  | f + 1, i, mm =>
+    let mm := if X.get! i != W.get! (st + i) then mm + 1 else mm
+    if mm ≥ lim then mm else hamWg X W st lim f (i + 1) mm
+
+/-- Gapless mismatches of `X` at start `st` of `W`, stopping at `lim`. -/
+@[inline] def hamW (X W : ByteArray) (st lim : Nat) : Nat := hamWg X W st lim X.size 0 0
+
+/-- Mismatches of `X[xi …]` against `W[wi …]` over `fuel` letters. -/
+def mmSeg (X W : @& ByteArray) : (fuel xi wi mm : Nat) → Nat
+  | 0, _, _, mm => mm
+  | f + 1, xi, wi, mm => mmSeg X W f (xi + 1) (wi + 1) (if X.get! xi != W.get! wi then mm + 1 else mm)
+
+/-- Whether the gapless placement of `X` at start `s` of `W` looks like it hides an indel (heuristic
+gate of the banded DP): 3 or more mismatches among the first or the last `e` letters, or an end of `e`
+letters that matches at least 2 mismatches better on another diagonal within `± w`. -/
+def gapHint (X W : ByteArray) (s : Int) (w e : Nat) : Bool := Id.run do
+  let n := X.size
+  let m := W.size
+  if n < 2 * e || s < 0 || s + (n : Int) > (m : Int) then return true
+  let st := s.toNat
+  let p0 := mmSeg X W e 0 st 0
+  let q0 := mmSeg X W e (n - e) (st + n - e) 0
+  if p0 ≥ 3 || q0 ≥ 3 then return true
+  if p0 == 0 && q0 == 0 then return false
+  for d in [1:w + 1] do
+    for sg in [0:2] do
+      let o : Int := if sg == 0 then s + (d : Int) else s - (d : Int)
+      if p0 ≥ 2 && 0 ≤ o && o + (e : Int) ≤ (m : Int) && mmSeg X W e 0 o.toNat 0 + 2 ≤ p0 then return true
+      let oq : Int := o + (n : Int) - (e : Int)
+      if q0 ≥ 2 && 0 ≤ oq && oq + (e : Int) ≤ (m : Int) && mmSeg X W e (n - e) oq.toNat 0 + 2 ≤ q0 then return true
+  return false
+
+/-- A gapped alignment of the oriented read `X` inside letters `[ws, we)` of `G` with penalty `< lim`
+(heuristic): reads under 32 letters, the best gapless start (scan); else the diagonal with the most
+shared 11-mers (or `sv`, the read start in the window that the
+read's seeds give), gapless there, then the banded DP (± `w`) when the gapless penalty is over 8.
+(start, length, penalty, runs). -/
+def nearY (X : ByteArray) (G : PGen) (ws we w lim bl ge : Nat) (sv : Option Int) (vf : Bool := true) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
+  let n := X.size
+  let we := min we G.n
+  if n == 0 || we < ws + n then return none
+  let mut best : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := none
+  let mut lim := lim
+  if n < 32 then
+    let W := winL G ws we
+    for st in [0:W.size + 1 - n] do
+      let mm := hamW X W st ((lim + 3) / 4)
+      if 4 * mm < lim then
+        best := some (ws + st, n, 4 * mm, [(AlignmentSpec.Step.diag, n)])
+        lim := 4 * mm
+        if mm == 0 then break
+    return best
+  let s0 : Int ← match sv with
+    | some s => pure s
+    | none => if !vf then return none else match voteD X (winL G ws we) 11 with
+      | some (t, _) => pure ((t : Int) - (n : Int))
+      | none => return none
+  -- the letters around the diagonal only: [a, b) of G
+  let aI : Int := max (ws : Int) ((ws : Int) + s0 - (w : Int))
+  let bI : Int := min (we : Int) ((ws : Int) + s0 + (n : Int) + (w : Int))
+  if bI ≤ aI then return none
+  let a := aI.toNat
+  let W := winL G a bI.toNat
+  let m := W.size
+  let s1 : Int := s0 + (ws : Int) - aI
+  if 0 ≤ s1 && s1 + (n : Int) ≤ (m : Int) then
+    let mm := hamW X W s1.toNat ((lim + 3) / 4)
+    if 4 * mm < lim then
+      best := some (a + s1.toNat, n, 4 * mm, [(AlignmentSpec.Step.diag, n)])
+      lim := 4 * mm
+  if lim > 8 && (ge == 0 || gapHint X W s1 w ge) then
+    if let some (cs, len, p, runs) := bandDP X W s1 w (min lim bl) then
+      best := some (a + cs, len, p, runs)
+  return best
+
+/-- The read start (relative to `ws`) most supported by the read's seeds (strand `pp` of `X`) looked up in
+letters `[ws, we)` of chromosome `c` (lookups cut to the region, `mzLookRP`), if any seed lies there. -/
+def seedVote (pk : PkMz) (offs : Array Nat) (c ws we : Nat) (X : ByteArray) (pp : Array MzP) : Option Int := Id.run do
+  let n := X.size
+  let m := n / 25
+  if m == 0 then return none
+  let Ls := n / m
+  let rg : RgMz := (pk, offs[c]! + ws, offs[c]! + we)
+  let mut ds : Array Nat := #[]
+  for j in [0:m] do
+    if pp[j]!.ok then
+      for e in LookG.look rg ByteArray.empty X (j * Ls) (n - j * Ls) pp[j]! do
+        ds := ds.push (e / 16)
+  if ds.isEmpty then return none
+  ds := ds.qsort (· < ·)
+  let mut bd := ds[0]!
+  let mut bc := 0
+  let mut i := 0
+  while i < ds.size do
+    let mut j := i
+    while j < ds.size && ds[j]! == ds[i]! do j := j + 1
+    if j - i > bc then
+      bc := j - i
+      bd := ds[i]!
+    i := j
+  return some ((bd : Int) - (n : Int))
+
+/-- Global place `D` (read end, concatenated genome) → chromosome and start of the gapless window of
+`n` letters ending there, when it lies inside one chromosome. -/
+def locD (offs : Array Nat) (pgs : Array PGen) (D n : Nat) : Option (Nat × Nat) := Id.run do
+  if D < n then return none
+  let st0 := D - n
+  let nc := pgs.size
+  let mut lo := 0
+  let mut hi := nc
+  while lo + 1 < hi do
+    let mid := (lo + hi) / 2
+    if offs[mid]! ≤ st0 then lo := mid else hi := mid
+  if st0 < offs[lo]! then return none
+  let st := st0 - offs[lo]!
+  if st + n > pgs[lo]!.n then return none
+  return some (lo, st)
+
+/-- Places (read ends `D`, increasing, no repeats) of the `r` rarest seeds of one strand of a read
+whose buckets hold 1 … `CK` places (bucket supersets, `rawLook`; checked later by alignment). -/
+def seedDs (pk : PkMz) (n : Nat) (pp : Array MzP) (r CK : Nat) : Array Nat := Id.run do
+  let m := n / 25
+  if m == 0 then return #[]
+  let Ls := n / m
+  let sel := (((List.range m).filterMap fun j =>
+      let z := LookG.size pk pp[j]!
+      if pp[j]!.ok && 0 < z && z ≤ CK then some (z, j) else none).mergeSort (fun x y => x.1 ≤ y.1)).take r
+  let mut out : Array Nat := #[]
+  for (_, j) in sel do
+    out := unionS out ((rawLook pk.1 pp[j]! (n - j * Ls)).map (· / 16))
+  return out
+
+/-- Pair-consistent seed diagonals: per orientation (mate 1 forward / mate 2 reverse, and the
+converse), the places `D` of the `r` rarest seeds of each mate, merge-joined so that the forward
+mate's start and the reverse mate's end lie `lo − 16 … hi + 16` apart.  At most `P` pairs
+`((vc1, start1), (vc2, start2))` (gapless windows inside a chromosome). -/
+def pairSeedX (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (lo hi : Nat) (a b : ByteArray)
+    (s1 s2 : PrepM MzP) (r CK P : Nat) : Array ((Nat × Nat) × (Nat × Nat)) := Id.run do
+  let nc := pgs.size
+  let mut out : Array ((Nat × Nat) × (Nat × Nat)) := #[]
+  for o in [0:2] do
+    -- o = 0: mate 1 forward (ps), mate 2 reverse (pr); o = 1: mate 2 forward, mate 1 reverse
+    let (nF, ppF, nR, ppR) := if o == 0 then (a.size, s1.ps, b.size, s2.pr) else (b.size, s2.ps, a.size, s1.pr)
+    let AF := seedDs pk nF ppF r CK
+    if AF.isEmpty then continue
+    let AR := seedDs pk nR ppR r CK
+    let mut j0 := 0
+    for dF in AF do
+      if out.size ≥ P then break
+      if dF < nF then continue
+      let sF := dF - nF
+      -- reverse mate's end dR with sF + lo − 16 ≤ dR ≤ sF + hi + 16
+      while j0 < AR.size && AR[j0]! + 16 < sF + lo do j0 := j0 + 1
+      let mut j := j0
+      while j < AR.size && AR[j]! ≤ sF + hi + 16 && out.size < P do
+        match locD offs pgs dF nF, locD offs pgs AR[j]! nR with
+        | some (cF, stF), some (cR, stR) =>
+          if cF == cR then
+            let f := (cF, stF)
+            let rv := (nc + cR, stR)
+            out := out.push (if o == 0 then (f, rv) else (rv, f))
+        | _, _ => pure ()
+        j := j + 1
+  return out
+
+/-- Knobs of the tier 2 heuristic. -/
+structure HCfg where
+  w : Nat := 8        -- band half-width
+  r : Nat := 2        -- rarest seeds per mate and strand (pair-consistent diagonals)
+  ck : Nat := 2000    -- their bucket limit
+  np : Nat := 8       -- pairs of diagonals evaluated
+  dl : Nat := 16      -- a proper pair is preferred when its sum is within `dl` of the best sum
+  seeds : Bool := true
+  near : Bool := true
+  band : Bool := true
+  sv : Bool := true       -- near the partner: the diagonal from region seed lookups first (else 11-mer votes)
+  seedAll : Bool := true  -- pair-consistent seeds when either mate lacks a placement (false: both)
+  bl : Nat := 1000000     -- the banded DP looks for penalties under `bl` only
+  vf : Bool := true       -- near the partner without a seed in the window: 11-mer votes (else give up)
+  kx : Bool := true       -- keep an exact mate (RT's unique best) in place
+  ge : Nat := 12          -- the banded DP only where `gapHint` (ends of `ge` letters) flags an indel (0: always)
+
+/-- Re-score `(vc, start, len, pen, runs)` of a read (`R` forward, `Rr` reverse) with `checkRuns`:
+the placement when the score is `pen`. -/
+def chkAln (pgs : Array PGen) (R Rr : ByteArray) (v st len pen : Nat) (runs : List (AlignmentSpec.Step × Nat)) :
+    Option (Placement × Int) :=
+  let nc := pgs.size
+  let Rx := if v < nc then R else Rr
+  if rescoreRuns Rx pgs[v % nc]! st len runs == some (-(pen : Int)) then some (decB nc ⟨v, st, len⟩, -(pen : Int))
+  else none
+
+/-- A mate's ceiling replaced by a re-scored alignment (source `src`). -/
+def MateX.withC (m : MateX) (h : Placement × Int) (src : Nat) : MateX :=
+  -- a mate with RT's unique best (U) placed elsewhere: its floor stands, the placement is a ceiling (B)
+  { m with st := if m.st == "U" then "B" else m.st, pl := some h, pH := (-h.2).toNat, pR := src, rs := true }
+
+/-- The tier 2 heuristic on one pair (`m1`, `m2` from `mateB`): returns the mates with their ceilings
+replaced where it found better ones (sources: 5 banded re-alignment of a gapless ceiling, 6 near the
+partner, 7 pair-consistent seed diagonals).  The pair kept is the one with the smallest summed ceiling,
+a proper pair (`properPairU sl`) preferred within `dl`. -/
+def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo hi : Nat) (a b : ByteArray)
+    (s1 s2 : PrepM MzP) (m1 m2 : MateX) : MateX × MateX := Id.run do
+  let nc := pgs.size
+  let INF := 1000000
+  let ok := fun (m : MateX) => m.pH < INF && m.rs
+  let exact := fun (m : MateX) => m.st == "U"
+  let keep := fun (m : MateX) => cfg.kx && exact m
+  -- 1. gapless ceilings over 8: banded re-alignment around their diagonal
+  let refine := fun (R Rr : ByteArray) (m : MateX) => Id.run do
+    if !cfg.band || exact m || !ok m || m.pH ≤ 8 then return m
+    let some (p, _) := m.pl | return m
+    let v := if p.2 == Strand.rev then nc + p.1.chr else p.1.chr
+    let G := pgs[p.1.chr]!
+    let Rx := if v < nc then R else Rr
+    let ws := p.1.start - min p.1.start cfg.w
+    let W := winL G ws (p.1.start + p.1.len + cfg.w)
+    if cfg.ge != 0 && !gapHint Rx W ((p.1.start - ws : Nat) : Int) cfg.w cfg.ge then return m
+    match bandDP Rx W ((p.1.start - ws : Nat) : Int) cfg.w (min m.pH cfg.bl) with
+    | some (cs, len, pen, runs) =>
+      match chkAln pgs R Rr v (ws + cs) len pen runs with
+      | some h => return m.withC h 5
+      | none => return m
+    | none => return m
+  let m1 := refine a s1.Rr m1
+  let m2 := refine b s2.Rr m2
+  let prop := fun (o : MateX × MateX) => match o.1.pl, o.2.pl with
+    | some x, some y => properPairU sl lo hi x.1 y.1
+    | _, _ => false
+  let mut opts : Array (MateX × MateX) := #[(m1, m2)]
+  -- 2. pair-consistent seed diagonals (a mate without a placement)
+  if cfg.seeds && (if cfg.seedAll then m1.pl.isNone || m2.pl.isNone else m1.pl.isNone && m2.pl.isNone) then
+    let ps := pairSeedX pk offs pgs lo hi a b s1 s2 cfg.r cfg.ck cfg.np
+    let mut bestG : Option ((Nat × Nat × Nat) × (Nat × Nat × Nat)) := none
+    let mut bsum := INF
+    for ((v1, st1), (v2, st2)) in ps do
+      let h1 := 4 * hamD a s1.Rr pgs v1 (st1 + a.size) (bsum / 4 + 1)
+      if h1 ≥ bsum then continue
+      let h2 := 4 * hamD b s2.Rr pgs v2 (st2 + b.size) ((bsum - h1) / 4 + 1)
+      if h1 + h2 < bsum then
+        bsum := h1 + h2
+        bestG := some ((v1, st1, h1), (v2, st2, h2))
+    if let some ((v1, st1, h1), (v2, st2, h2)) := bestG then
+      let one := fun (R Rr : ByteArray) (v st h : Nat) => Id.run do
+        let n := R.size
+        let mut r : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := some (st, n, h, [(AlignmentSpec.Step.diag, n)])
+        if cfg.band && h > 8 then
+          let G := pgs[v % nc]!
+          let ws := st - min st cfg.w
+          let W := winL G ws (st + n + cfg.w)
+          let Rx := if v < nc then R else Rr
+          if cfg.ge != 0 && !gapHint Rx W ((st - ws : Nat) : Int) cfg.w cfg.ge then return r.bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+          if let some (cs, len, pen, runs) := bandDP Rx W ((st - ws : Nat) : Int) cfg.w (min h cfg.bl) then
+            r := some (ws + cs, len, pen, runs)
+        return r.bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+      -- an exact mate (RT's unique best) is kept when `kx`
+      let x1 := if keep m1 then some m1 else (one a s1.Rr v1 st1 h1).map (m1.withC · 7)
+      let x2 := if keep m2 then some m2 else (one b s2.Rr v2 st2 h2).map (m2.withC · 7)
+      match x1, x2 with
+      | some x, some y => opts := opts.push (x, y)
+      | _, _ => pure ()
+  -- 3. each mate near its partner's placement (from every option so far)
+  if cfg.near then
+    let near := fun (R Rr : ByteArray) (s : PrepM MzP) (x : Placement) (lim : Nat) =>
+      let n := R.size
+      let G := pgs[x.1.chr]!
+      -- x forward: the mate reverse, inside [x.start, x.start + hi); x reverse: forward, inside [x.end − hi, x.end)
+      let (v, ws, we) := if x.2 == Strand.rev then (x.1.chr, x.1.start + x.1.len - min (x.1.start + x.1.len) hi, x.1.start + x.1.len)
+        else (nc + x.1.chr, x.1.start, x.1.start + hi)
+      let X := if v < nc then R else Rr
+      let sv := if cfg.sv then seedVote pk offs x.1.chr ws we X (if v < nc then s.ps else s.pr) else none
+      (nearY X G ws we cfg.w lim cfg.bl cfg.ge sv cfg.vf).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+    for (x1, x2) in opts do
+      if prop (x1, x2) then continue
+      if let some (p, _) := x1.pl then
+        if !keep x2 then
+          if let some y := near b s2.Rr s2 p (if ok x2 then x2.pH + cfg.dl + 1 else INF) then
+            opts := opts.push (x1, x2.withC y 6)
+      if let some (p, _) := x2.pl then
+        if !keep x1 then
+          if let some y := near a s1.Rr s1 p (if ok x1 then x1.pH + cfg.dl + 1 else INF) then
+            opts := opts.push (x1.withC y 6, x2)
+  -- the smallest summed ceiling; a proper pair within `dl` of it preferred
+  let sum := fun (o : MateX × MateX) => if ok o.1 && ok o.2 then o.1.pH + o.2.pH else INF
+  let bs := opts.foldl (fun b o => min b (sum o)) INF
+  let mut pick := opts[0]!
+  let mut pv := sum pick
+  let mut pp := prop pick && pv ≤ bs + cfg.dl
+  for o in opts do
+    let s := sum o
+    let p := prop o && s ≤ bs + cfg.dl
+    if (p && !pp) || (p == pp && s < pv) then
+      pick := o
+      pv := s
+      pp := p
+  return pick
+
 def showHit (h : Placement × Int) : String :=
   s!"{h.1.1.chr}\t{h.1.1.start}\t{h.1.1.len}\t{h.2}\t{if h.1.2 == Strand.rev then "-" else "+"}"
 
@@ -2221,6 +2723,7 @@ def loadPackedPar (files : List String) (k : Nat) : IO (PGen × Array Nat × Arr
   return (G, offs, ns)
 
 set_option maxHeartbeats 800000 in
+set_option maxRecDepth 4000 in
 def main (args : List String) : IO UInt32 := do
   let k ← envN "WG_K" 22
   let B ← envN "WG_B" 26
@@ -2259,6 +2762,39 @@ def main (args : List String) : IO UInt32 := do
       let f : ByteArray → ByteArray → PairOut := if P == 0 then pairDispatch lo hi (ix, V) ByteArray.empty offs gbs
         else pairFastGB P lo hi (ix, V) ByteArray.empty offs gbs
       runSets [("B", f)] okLen []
+      return 0
+    else if mode == "bandbench" then
+      -- micro-benchmark of bandDP / hamW / voteD on random letters (bench only)
+      let n := pre.toNat!
+      let reps := 2000
+      let bbl := ((← IO.getEnv "WG_BBL").bind String.toNat?).getD 1000000
+      let bbw := ((← IO.getEnv "WG_BBW").bind String.toNat?).getD 8
+      let mut seed : UInt64 := 12345
+      let mut X := ByteArray.empty
+      let mut W := ByteArray.empty
+      for _ in [0:n + 1000] do
+        seed := seed * 6364136223846793005 + 1442695040888963407
+        let c := (seed >>> 33).toNat % 4
+        W := W.push (if c == 0 then 65 else if c == 1 then 67 else if c == 2 then 71 else 84)
+      for i in [0:n] do
+        seed := seed * 6364136223846793005 + 1442695040888963407
+        let mutate := (seed >>> 33).toNat % 30 == 0
+        X := X.push (if mutate then 65 else W.get! (500 + i))
+      let t0 ← IO.monoNanosNow
+      let mut acc := 0
+      for r in [0:reps] do
+        let o ← (← IO.mkRef (bandDP X W ((500 + r % 3 : Nat) : Int) bbw bbl)).get
+        acc := acc + (match o with | some x => x.2.2.1 | none => 0)
+      let t1 ← IO.monoNanosNow
+      for r in [0:reps] do
+        let o ← (← IO.mkRef (voteD X W 11)).get
+        acc := acc + (match o with | some x => x.2 + r % 2 | none => 0)
+      let t2 ← IO.monoNanosNow
+      for r in [0:reps] do
+        let o ← (← IO.mkRef (hamW X W (500 + r % 2) 1000)).get
+        acc := acc + o
+      let t3 ← IO.monoNanosNow
+      say s!"bandbench n {n}: bandDP {(t1 - t0) / reps} ns, voteD {(t2 - t1) / reps} ns, hamW {(t3 - t2) / reps} ns ({acc})"
       return 0
     else if mode == "pmap" then
       let t0 ← IO.monoNanosNow
@@ -2592,6 +3128,30 @@ def main (args : List String) : IO UInt32 := do
       let xGK := (← IO.getEnv "WG_PGK").getD "0" == "1"
       -- WG_XZ=0: no fallback to the guarantee at 0 when G does not apply
       let xZ := (← IO.getEnv "WG_XZ").getD "1" == "1"
+      -- WG_XH=1 (default): the tier 2 heuristic `heurP` on T2/T3 pairs (WG_XH=0: the bare `mateB` ceilings);
+      -- WG_XHW band half-width, WG_XHR / WG_XHCK / WG_XHP seeds per mate and strand / their bucket limit /
+      -- diagonal pairs, WG_XHD proper-pair preference, WG_XHS / WG_XHN / WG_XHB = 0 turn off seeds / near / band,
+      -- WG_XHV=0 near the partner by 11-mer votes only, WG_XHA=0 pair-consistent seeds only when both mates lack a placement
+      let xH := (← IO.getEnv "WG_XH").getD "1" == "1"
+      let xhW ← envN "WG_XHW" 8
+      let xhR ← envN "WG_XHR" 2
+      let xhCK ← envN "WG_XHCK" 2000
+      let xhP ← envN "WG_XHP" 8
+      let xhD ← envN "WG_XHD" 16
+      let xhS := (← IO.getEnv "WG_XHS").getD "1" == "1"
+      let xhN := (← IO.getEnv "WG_XHN").getD "1" == "1"
+      let xhB := (← IO.getEnv "WG_XHB").getD "1" == "1"
+      let xhV := (← IO.getEnv "WG_XHV").getD "1" == "1"
+      let xhA := (← IO.getEnv "WG_XHA").getD "1" == "1"
+      -- WG_XHL: the banded DP looks for penalties under this only
+      let xhL ← envN "WG_XHL" 1000000
+      -- WG_XHG: end length of the indel gate of the banded DP (0: no gate)
+      let xhG ← envN "WG_XHG" 12
+      -- WG_XHK=0: the pair-consistent seeds and the near search may move an exact mate (RT's unique best)
+      let xhK := (← IO.getEnv "WG_XHK").getD "1" == "1"
+      -- WG_XHVF=0: no 11-mer vote fallback near the partner
+      let xhVF := (← IO.getEnv "WG_XHVF").getD "1" == "1"
+      let hcfg : HCfg := { w := xhW, r := xhR, ck := xhCK, np := xhP, dl := xhD, seeds := xhS, near := xhN, band := xhB, sv := xhV, seedAll := xhA, bl := xhL, ge := xhG, kx := xhK, vf := xhVF }
       let alnX (R Rr : ByteArray) (v st mm : Nat) : Option (Placement × Int) × Bool :=
         let n := R.size
         let Rx := if v < nc then R else Rr
@@ -2628,6 +3188,7 @@ def main (args : List String) : IO UInt32 := do
         let k2 := match rk with | some (.noPartner .one, k) => k | _ => none
         let m1 := mateB a s1 nh1 c1 k1 g1
         let m2 := mateB b s2 nh2 c2 k2 g2
+        let (m1, m2) := if xH then heurP hcfg pk offs pgs usl lo hi a b s1 s2 m1 m2 else (m1, m2)
         let ok := fun (m : MateX) => m.pH < 1000000 && m.rs
         (if ok m1 && ok m2 then "T2" else "T3", m1, m2)
       let rtxP (a b : ByteArray) : String × MateX × MateX :=
@@ -3028,7 +3589,16 @@ def main (args : List String) : IO UInt32 := do
       let xpN ← envN "WG_XPROF" 0
       let pprof := if xpN == 0 then pprof else pprof ++ [("tier split", fun (r1 r2 : Array ByteArray) => do
         -- columns (ns): gate + RT, pair guarantee, mates' perfect hits, ladder, free bounds
-        let mut t : Array Nat := Array.replicate 5 0
+        let mut t : Array Nat := Array.replicate 6 0
+        let mut nH := 0
+        let mut nH2 := 0
+        let mut hMax := 0
+        let mut nB := 0
+        let mut tB := 0
+        let mut nC := 0
+        let mut tC := 0
+        -- near-partner parts on the pairs' first option: seedVote, voteD (no seed), nearY; pairSeedX
+        let mut pq : Array Nat := Array.replicate 8 0
         let mut cnt := 0
         let mut nG := 0
         let mut nX := 0
@@ -3080,6 +3650,7 @@ def main (args : List String) : IO UInt32 := do
                 gWorst := s!"mates {a.size}/{b.size} bp, candidates {ca}/{cb}, checked {ns}, {match res with
                   | some (some (_, _, true)) => "multimapped" | some (some _) => "pair found" | some none => "none ≤ G" | none => "n/a"}"
               if let some (some _) := res then continue
+            let mut mb : Array MateX := #[]
             for (R, s, nh, kn, gx) in [(a, s1, (match rk with | some (.noHit .one, _) => true | _ => false), (match rk with | some (.noPartner .two, k) => k | _ => none), g1),
                 (b, s2, (match rk with | some (.noHit .two, _) => true | _ => false), (match rk with | some (.noPartner .one, k) => k | _ => none), g2)] do
               let w0 ← IO.monoNanosNow
@@ -3093,14 +3664,77 @@ def main (args : List String) : IO UInt32 := do
                 let w3 ← IO.monoNanosNow
                 t := tick 4 w2 w3 t
                 if x.pl.isSome && w3 == 0 then IO.println ""
+                mb := mb.push x
               if xFree && (m.st == "O" || m.st == "N") then
                 nO := nO + 1
                 let x ← (← IO.mkRef (upX R s none m)).get
                 let w3 ← IO.monoNanosNow
                 t := tick 4 w2 w3 t
                 if x.pl.isSome && w3 == 0 then IO.println ""
+            if xH && mb.size == 2 then
+              let h0 ← IO.monoNanosNow
+              let hx ← (← IO.mkRef (heurP hcfg pk offs pgs usl lo hi a b s1 s2 mb[0]! mb[1]!)).get
+              let h1 ← IO.monoNanosNow
+              t := tick 5 h0 h1 t
+              nH := nH + 1
+              if hx.1.pH < 1000000 && hx.1.rs && hx.2.pH < 1000000 && hx.2.rs then nH2 := nH2 + 1
+              if h1 - h0 > hMax then hMax := h1 - h0
+              let m1 := mb[0]!
+              let m2 := mb[1]!
+              let prop := match m1.pl, m2.pl with
+                | some x, some y => properPairU usl lo hi x.1 y.1
+                | _, _ => false
+              if !prop then
+                for (x1, x2, R, s) in [(m1, m2, b, s2), (m2, m1, a, s1)] do
+                  if let some (x, _) := x1.pl then
+                    if x2.st != "U" then
+                      let G := pgs[x.1.chr]!
+                      let (v, ws, we) := if x.2 == Strand.rev then (x.1.chr, x.1.start + x.1.len - min (x.1.start + x.1.len) hi, x.1.start + x.1.len)
+                        else (nc + x.1.chr, x.1.start, x.1.start + hi)
+                      let X := if v < nc then R else s.Rr
+                      let q0 ← IO.monoNanosNow
+                      let sv ← (← IO.mkRef (seedVote pk offs x.1.chr ws we X (if v < nc then s.ps else s.pr))).get
+                      let q1 ← IO.monoNanosNow
+                      pq := (pq.modify 0 (· + 1)).modify 1 (· + (q1 - q0))
+                      if sv.isNone && hcfg.vf then
+                        let vd ← (← IO.mkRef (voteD X (winL G ws we) 11)).get
+                        let q2 ← IO.monoNanosNow
+                        pq := (pq.modify 2 (· + 1)).modify 3 (· + (q2 - q1))
+                        if vd.isSome && q2 == 0 then IO.println ""
+                      let q3 ← IO.monoNanosNow
+                      let ny ← (← IO.mkRef (nearY X G ws we hcfg.w (if x2.pH < 1000000 && x2.rs then x2.pH + hcfg.dl + 1 else 1000000) hcfg.bl hcfg.ge sv hcfg.vf)).get
+                      let q4 ← IO.monoNanosNow
+                      pq := (pq.modify 4 (· + 1)).modify 5 (· + (q4 - q3))
+                      if ny.isSome && q4 == 0 then IO.println ""
+              if hcfg.seeds && m1.pl.isNone && m2.pl.isNone then
+                let q0 ← IO.monoNanosNow
+                let ps ← (← IO.mkRef (pairSeedX pk offs pgs lo hi a b s1 s2 hcfg.r hcfg.ck hcfg.np)).get
+                let q1 ← IO.monoNanosNow
+                pq := (pq.modify 6 (· + 1)).modify 7 (· + (q1 - q0))
+                if ps.size == 7777777 then IO.println ""
+              -- the banded DP and the checker alone, on the mates' gapless ceilings over 8
+              for (x, R, Rr) in [(mb[0]!, a, s1.Rr), (mb[1]!, b, s2.Rr)] do
+                if let some (p, _) := x.pl then
+                  if x.st != "U" && x.pH > 8 then
+                    let v := if p.2 == Strand.rev then nc + p.1.chr else p.1.chr
+                    let ws := p.1.start - min p.1.start hcfg.w
+                    let W := winL pgs[p.1.chr]! ws (p.1.start + p.1.len + hcfg.w)
+                    let Rx := if v < nc then R else Rr
+                    if hcfg.ge != 0 && !gapHint Rx W ((p.1.start - ws : Nat) : Int) hcfg.w hcfg.ge then continue
+                    let b0 ← IO.monoNanosNow
+                    let r ← (← IO.mkRef (bandDP Rx W ((p.1.start - ws : Nat) : Int) hcfg.w (min x.pH hcfg.bl))).get
+                    let b1 ← IO.monoNanosNow
+                    nB := nB + 1
+                    tB := tB + (b1 - b0)
+                    if let some (cs, len, pen, runs) := r then
+                      let c ← (← IO.mkRef (chkAln pgs R Rr v (ws + cs) len pen runs)).get
+                      let b2 ← IO.monoNanosNow
+                      tC := tC + (b2 - b1)
+                      nC := nC + 1
+                      if c.isSome && b2 == 0 then IO.println ""
         let srt := scans.qsort (· < ·)
         let pct (q : Nat) : Nat := if srt.isEmpty then 0 else srt[min (srt.size - 1) (srt.size * q / 100)]!
+        say s!"TIERHEUR pairs {nH}, both ceilings {nH2}, heuristic µs {t[5]! / 1000} (max {hMax / 1000}); bandDP {nB} calls {tB / 1000} µs, checkRuns {nC} calls {tC / 1000} µs; seedVote {pq[0]!} calls {pq[1]! / 1000} µs, voteD {pq[2]!} calls {pq[3]! / 1000} µs, nearY {pq[4]!} calls {pq[5]! / 1000} µs, pairSeedX {pq[6]!} calls {pq[7]! / 1000} µs"
         say s!"TIERPROF pairs {min xpN r1.size}, RT-unmapped or gated {cnt} (gated {nG}); µs: gate+RT {t[0]! / 1000}, pair guarantee G={pgG} {t[1]! / 1000} (worst {gMax / 1000}: {gWorst}; over 5 ms {gBig} pairs, {gBigT / 1000} µs; not applicable {nX}), candidates checked p50 {pct 50} p99 {pct 99} max {pct 100}; mates' perfect hits {t[2]! / 1000}, ladder {t[3]! / 1000}, {if xBnd && !xOld then "floor/ceiling (mateB)" else "free bounds"} {t[4]! / 1000} ({nO} over mates)"
         let tl := (List.range scans.size).foldl (fun (h : Std.HashMap Nat Nat) i =>
           let v := scans[i]!

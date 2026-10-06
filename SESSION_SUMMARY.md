@@ -154,6 +154,15 @@ Where the remaining drop comes from (`PAIR_PROF`, mate 1, S2):
 - Repeat reads (> 64 anchors, 2–3% of reads): 43–46% of time at 2–4 chromosomes; those ending at penalty ≥ 12 cost ≈ 2 ms each (≈ 680 ns/anchor vs 145 ns at penalty < 4: the gap stage walks all anchors after lookup 3 and again after lookup 4). This term is the same with a concatenated index (its bucket is the union), so the early exits (X) carry over.
 - Tried and dropped (unproved bench experiment `advF`, mode F, identical output): skip the gap stage after lookup 3 when the best is still ≥ 12 and do lookup 4 at once — slower (10.2k vs 12.5k pairs/s, 4 chromosomes): lookup 4 is the largest bucket and the lookup-3 gap pass often settles the slot.
 
+## Tier 2 heuristic in RTX (branch `speed/t2-heur`, 2026-10-06)
+`heurP` (bench/WholeGenome.lean, unproved search, WG_XH=1 default) adds ceilings for T2/T3 pairs. Every alignment it reports is re-scored by `checkRuns` (`rescoreRuns`, `checkRuns_sound`) and kept only when the score agrees. Floors and T1/T1g are untouched. Steps:
+1. Banded affine DP (±8, sc0, end to end, `bandDP`/`bandCells`), gated by `gapHint` (an indel-looking read end), on gapless ceilings over 8.
+2. Pair-consistent diagonals of the 2 rarest seeds per mate and strand (buckets ≤ 2000, 8 pairs), when either mate lacks a placement.
+3. Each mate near its partner (1 kb proper-pair window): the diagonal from region seed lookups (else 11-mer votes), then gapless, then band.
+4. The smallest summed ceiling wins; a proper pair is preferred within 16.
+Results at 200k, 4 tasks, median of 3, vs WG_XH=0: wall hiseq +11.8%, nova +4.1%, mason ±0%. Class (a) within 0 of minibwa: hiseq 6.0→66.9%, nova 7.2→70.6%, mason 9.2→86.3%. T3 share of class (a): 81–83% → 10–21%. Mason T2 correct: 83.1% ours vs 89.1% minibwa. Floor/T1 violations 0. Knobs: WG_XHW/R/CK/P/D/S/N/B/V/A/L/G/K/VF. WG_XPROF prints `TIERHEUR` with per-part times.
+Lean speed notes: hot loops written as structurally recursive functions over UInt32 arguments. Beware `Array.replicate n 0` written twice (CSE shares it, so the first `set!` copies). `Array UInt64` boxes each element; use `UInt32`.
+
 ## Tier-1 / short-read workhorse (branch `speed/fast-proved`, 2026-10-05)
 Done (all proved, check.sh green on 58b0faf):
 - Main-path speed (body changes, equality lemmas): shapes table (`shapesT_eq`/`shapesKT_eq`; the mergeSort was 1/3 of stage K), reverse complement by table (`complTab_get`), `sbound` table (`sbound_def`), best window not re-scored (`addK`, `inv_skipP`). chr21 1 task, 250 bp both strands: T=−16 35k → ~51k reads/s, T=−12 60k → ~90k.
