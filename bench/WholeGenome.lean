@@ -3363,10 +3363,10 @@ def main (args : List String) : IO UInt32 := do
       -- the heuristic's proposals: a mate whose ceiling it replaced (sources 5, 6, 7)
       let candOf (m : MateX) : Option Cand :=
         if m.pR ≥ 5 && m.pR < 1000000 then m.pl.map fun h => { pl := h, runs := m.runs, src := m.pR } else none
-      -- WG_XEBUD=N (0 = off): the exact pair search `pairGXE` (`tierUp`, codecs/TierOpt.lean) on a T2 pair with
+      -- WG_XEBUD=N (default 1500, the largest budget within ~5% of off at 200k; 0 = off): the exact pair search `pairGXE` (`tierUp`, codecs/TierOpt.lean) on a T2 pair with
       -- c = pH₁ + pH₂ ≤ WG_XEMAX (≤ 16 in any case), enumerating the mate with the smaller sum of its
       -- `sbound c + 1` rarest buckets per strand, when that sum is ≤ N
-      let xeBud ← envN "WG_XEBUD" 0
+      let xeBud ← envN "WG_XEBUD" 1500
       let xeMax ← envN "WG_XEMAX" 16
       -- WG_XESUM=1 (default): the budget bounds both mates' sums (the near search looks up the other mate too)
       let xeSum := (← IO.getEnv "WG_XESUM").getD "1" == "1"

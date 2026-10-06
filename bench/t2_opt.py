@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Benchmark only.  Mode RTX tier 2 pairs: why they are T2, and which ones `t2Opt` (codecs/TierOpt.lean,
-`t2Opt_sound`) certifies as a best proper pair from what the router already reports.
+"""Benchmark only.  Mode RTX tier 2 pairs: why they are T2, and which ones `tierUp` (codecs/TierOpt.lean)
+promotes: `t2Opt` (T2b, a best proper pair from what the router already reports) and the exact pair search
+`pairGXE` (T1u unique best / T1um tie, WG_XEBUD).
 
 Input: WG_TIEROUT=1 dumps (tiers_<set>.tsv: name, tag, 15 columns per mate as MateX.show, then RT's
 reason ("gated" = skipped by the budget gate), g0, pf).
 
   python3 bench/t2_opt.py cause tiers_*.tsv        T2 cause breakdown and certified share per cause
-  python3 bench/t2_opt.py lines tiers.tsv          the certified T2 lines (for bench/tier_vs_mb.py join)
+  python3 bench/t2_opt.py lines tiers.tsv [TAGS]   the certified T2 lines, or the lines tagged TAGS (e.g. T1u,T2b),
+                                                   for bench/tier_vs_mb.py join
+  python3 bench/t2_opt.py tags base.tsv new.tsv     per set: % of pairs and % of base T2 per new tag
   python3 bench/t2_opt.py mb join_*.tsv            certified pairs vs minibwa's re-scored pair penalty
 Proper pair = properPairU with usl 0, lo 100, hi 1000 (the bench defaults WG_USL, WG_MIN, WG_MAX).
 """
@@ -50,9 +53,21 @@ def cause(a):
 def main():
     cmd, files = sys.argv[1], sys.argv[2:]
     if cmd == "lines":
+        tags = set(files[1].split(",")) if len(files) > 1 else None
         for L in open(files[0]):
-            if certified(L.rstrip("\n").split("\t")):
+            a = L.rstrip("\n").split("\t")
+            if (a[1] in tags) if tags else certified(a):
                 sys.stdout.write(L)
+    elif cmd == "tags":
+        base, new = files
+        n = sum(1 for _ in open(new))
+        t2 = sum(1 for L in open(base) if L.split("\t")[1] in ("T2", "T2b"))
+        C = collections.Counter(L.split("\t")[1] for L in open(new))
+        print(f"{new}: pairs {n}, base T2 {t2} ({100 * t2 / n:.1f}%)")
+        for k in ["T1u", "T1um", "T2b", "T2"]:
+            print(f"  {k:5s} {C[k]:6d} {100 * C[k] / n:6.2f}% of pairs {100 * C[k] / t2:6.1f}% of T2")
+        p = C["T1u"] + C["T1um"] + C["T2b"]
+        print(f"  promoted {p:6d} {100 * p / n:6.2f}% of pairs {100 * p / t2:6.1f}% of T2")
     elif cmd == "cause":
         for f in files:
             n, t2, C, K, S = 0, 0, collections.Counter(), collections.Counter(), collections.Counter()

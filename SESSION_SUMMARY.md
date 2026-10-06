@@ -178,7 +178,46 @@ Proofs only; no runtime change (the mapper, RT, `pairGQC`, `heurP`, the gate and
   - The proof needs one strengthening of `TierOk`: `CeilEv` now also states that every reported ceiling placement has score −pH and spec score ≥ −pH. This covers RT's unique best (cg = false) as well as re-checked CIGARs (`cigar_mem`).
 - **Certified share** (`t2Opt`, offline on the dumps): 200k HiSeq 2,623 = 15.0% of T2 (1.31% of pairs), NovaSeq 2,792 = 14.2% (1.40%), mason 5,815 = 26.2% (2.91%). At 20k: 16.5% / 13.5% / 24.7%. By cause (200k, HiSeq / NovaSeq / mason): gated 1200 / 1748 / 3937, tie 787 / 677 / 1421, short 545 / 287 / 335, noHit 53 / 35 / 118, notProper 38 / 45 / 4, noPartner 0.
 - **vs minibwa** (`bench/tier_vs_mb.py join` on the certified lines, then `t2_opt.py mb`): 0 certified pairs beaten by a minibwa pair that is proper under our rule. minibwa is better on 17 HiSeq and 27 NovaSeq pairs, all of them non-proper under our rule. minibwa is equal on 2520 / 2651 / 5779 pairs, of which 434 / 406 / 684 are at a different place (ties, as the theorem allows).
-- **Not done (needs approval, runtime change):** (1) report `t2Opt` pairs in RTX as "best, may tie". This is O(1) per pair. (2) Pair uniqueness for T2 pairs with c = pH1 + pH2 ≤ 16: one enumeration at G = c (`hitsKPF` for one mate, `hitsKPFN` near it for the other, then `bestOfPairs`; proof from `hitsKPF_mem`, `hitsKPFN_near`, `pp_near_*` and `bestOfPairs_restrict`, since `pairGQC` itself is limited to G ≤ 7 by its gapless partner scan). It would run under a bucket budget.
+- **Then approved and done (runtime change):** two promotions of T2 pairs, both in `tierPair_sound`.
+  - T2b reports the `t2Opt` pairs as "best, may tie".
+  - T1u / T1um come from a pair-uniqueness search at c = pH1 + pH2 ≤ 16.
+
+### T1u / T1um / T2b in the tier router (same branch, 2026-10-06)
+- **Code.**
+  - `codecs/PairExact.lean`: `pairGXE` runs `hitsKPF` at c on one mate and `hitsKPFN` near those hits on the other, then takes `bestOfPairs` over the proper pairs at score ≥ −c. It runs only when both mates are `fastT c`. `pairGXE_sound` (c ≤ 16, any caps ≥ c): if a pair is seen, the answer is `pairSpecUT`, and `none` is a `PairTieOk`.
+  - `TierRouter`: new tags T1u, T1um and T2b, with their `TierOk` cases, and the untrusted `TierCfg.xe`. The old router is renamed `tierPairB` / `tierPairB_sound`.
+  - `TierOpt`: `tierUp` acts on T2 pairs only. If the search sees a pair, the result is T1u (unique) or T1um (tie). Otherwise, if `t2Opt` holds, the result is T2b. `tierPair` and `tierPair_sound` are the full router; standard axioms only.
+  - Bench: WG_XEBUD (default 1500, 0 = off) bounds the sum, over both mates, of the `sbound c + 1` smallest buckets per strand. The cheaper mate is the one enumerated. Further knobs: WG_XESUM=0 bounds the min instead; WG_XEMAX caps c.
+  - Mode RTX now reports T1u, as well as T1 and T1g.
+  - The budget has to bound the sum. With the min, the near search's lookups of the other mate are unbounded: a min-budget of 1000 cost +80% at 20k.
+- **Shares at WG_XEBUD=1500** (200k; % of pairs / % of T2, where T2 = T2 + T2b at budget 0):
+
+  | set | T1u | T1um | T2b | promoted | T2 left |
+  |---|---|---|---|---|---|
+  | HiSeq | 0.47 / 5.4 | 0.49 / 5.6 | 0.76 / 8.7 | 1.72 / 19.6 | 7.05 / 80.4 |
+  | NovaSeq | 0.89 / 9.0 | 0.43 / 4.4 | 0.70 / 7.1 | 2.02 / 20.6 | 7.80 / 79.4 |
+  | mason | 1.97 / 17.7 | 0.97 / 8.7 | 1.30 / 11.7 | 4.23 / 38.2 | 6.85 / 61.8 |
+
+- **Budget vs coverage and time.**
+  - Setup: 200k, 4 tasks, under BIG.lock, interleaved with minibwa. Times are wall-time medians vs budget 0; 3 rounds, or 6 for 0 and 2000.
+  - "+pairs reported" is the extra T1u pairs that mode RTX reports, per set: HiSeq / NovaSeq / mason.
+
+  | budget | +pairs reported | HiSeq | NovaSeq | mason |
+  |---|---|---|---|---|
+  | 500 | 655 / 1298 / 2838 | −3.7% | −0.7% | +1.2% |
+  | 1000 | 831 / 1620 / 3495 | −0.7% | −0.7% | −0.2% |
+  | **1500** | 940 / 1776 / 3931 | −0.6% | +3.7% | +4.7% |
+  | 2000 | 1012 / 1903 / 4258 | +0.9% (rounds: +6.3 / −1.3) | −0.1% | +4.9% (rounds: +4.9 / +5.3) |
+  | 3000 | 1149 / 2082 / 4735 | +5.0% | +1.5% | +12.1% |
+  | 5000 | 1344 / 2348 / 5488 | +10.1% | +10.0% | +15.0% |
+  | 10000 | 1637 / 2753 / 6618 | +26% | +37% | +52% |
+
+  - Budget 0 takes 9.06 / 8.46 / 8.65 s. minibwa takes 37.2 / 26.4 / 22.2 s.
+  - At 1500, RTX is 3.9× / 3.0× / 2.6× faster than minibwa. 2000 is at the 5% edge, so the default is 1500.
+- **vs minibwa** (budget 1500, `tier_vs_mb.py join` on the T1u / T2b lines):
+  - 0 promoted pairs are beaten by a proper minibwa pair.
+  - For T1u, 0 proper minibwa pairs are equal at another place, so uniqueness holds against minibwa.
+  - For T2b, 153 / 134 / 198 proper minibwa pairs are equal elsewhere. These are ties, which T2b allows.
 
 ## Give-up budget and heuristic effort sweep (branch `speed/budget-sweep`, bench only, 2026-10-06)
 Question: if the heuristic skips more of the repeats (lower WG_XBUD = N), can we match minibwa's quality and speed for more pairs? Mode RTX, WG_PG=4, 4 tasks. "Match" = we place both mates and our pair score (proved pen for T1/T1g, re-scored ceiling for T2) is ≤ minibwa's re-scored pair, or minibwa does not map both. Scripts: `bench/budget_sweep.py` (quality / speed / table / losses); `bench/tier_vs_mb.py` and `tier_vs_mb_report.py` come from speed/tier-vs-mb. New knob: WG_XHNK, near-partner seed diagonals (default 1, unchanged). Floor and T1/T1g violations: 0 in every run.
