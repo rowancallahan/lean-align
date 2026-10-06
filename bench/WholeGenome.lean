@@ -7,6 +7,7 @@ import PairRouter
 import PairNear
 import PairGuarantee
 import PairGuarFast
+import PairGuarQ
 import AlignmentCigarCheck
 
 /-!
@@ -554,11 +555,62 @@ def localX (R Rr : ByteArray) (pgs : Array PGen) (sl lo hi : Nat) (pp : Placemen
       if properPairU sl lo hi pp pl then out := out.push (pl, 4 * mm)
   return out
 
+/-- `localX` with a rolling 32-letter code word: a start whose first `min 32 n` letters already differ in
+more than `mmax` 2-bit codes is skipped before the letter check (bench). -/
+def localXR (R Rr : ByteArray) (K Kr : RP) (pgs : Array PGen) (sl lo hi : Nat) (pp : Placement) (mmax : Nat) :
+    Array (Placement × Nat) := Id.run do
+  let n := R.size
+  let rev := pp.2 != Strand.rev
+  let Kx := if rev then Kr else K
+  if !Kx.ok || n < 32 then return localX R Rr pgs sl lo hi pp mmax
+  let w := regionB (4 * mmax) lo hi n pp
+  let Rx := if rev then Rr else R
+  let G := pgs[pp.1.chr]!
+  let x1 := min w.2 G.n
+  let mut out : Array (Placement × Nat) := #[]
+  if x1 < w.1 + n then return out
+  let yw := Kx.w[0]!
+  let mut gw : UInt64 := 0
+  for i in [0:32] do
+    gw := gw ||| ((G.code (G.o + w.1 + i)).toUInt64 <<< (2 * i).toUInt64)
+  for st in [w.1:x1 + 1 - n] do
+    if st > w.1 then
+      gw := (gw >>> 2) ||| ((G.code (G.o + st + 31)).toUInt64 <<< 62)
+    if Packed.cnt64 (gw ^^^ yw) ≤ mmax then
+      let mut mm := 0
+      for i in [0:n] do
+        if Rx.get! i != G.get (st + i) then
+          mm := mm + 1
+          if mm > mmax then break
+      if mm ≤ mmax then
+        let pl : Placement := (⟨pp.1.chr, st, n⟩, if rev then Strand.rev else Strand.fwd)
+        if properPairU sl lo hi pp pl then out := out.push (pl, 4 * mm)
+  return out
+
+/-- `localX` through the word kernel `kerHKG` (bench). -/
+def localXK (R Rr : ByteArray) (K Kr : RP) (pgs : Array PGen) (sl lo hi : Nat) (pp : Placement) (mmax : Nat) :
+    Array (Placement × Nat) := Id.run do
+  let n := R.size
+  let w := regionB (4 * mmax) lo hi n pp
+  let rev := pp.2 != Strand.rev
+  let Rx := if rev then Rr else R
+  let Kx := if rev then Kr else K
+  let G := pgs[pp.1.chr]!
+  let x1 := min w.2 G.n
+  let mut out : Array (Placement × Nat) := #[]
+  if x1 < w.1 + n then return out
+  for st in [w.1:x1 + 1 - n] do
+    let k := kerHKG Rx Kx pgs pgs pp.1.chr st n (4 * mmax)
+    if k ≤ 4 * mmax then
+      let pl : Placement := (⟨pp.1.chr, st, n⟩, if rev then Strand.rev else Strand.fwd)
+      if properPairU sl lo hi pp pl then out := out.push (pl, k)
+  return out
+
 /-- Candidates `(strand, anchor)` for the hits of a read with ≤ `mmax` ∈ {0, 1} mismatches (bench only;
 pigeonhole on disjoint seeds, bucket supersets `rawLook`): cap 0, the two rarest seeds' common diagonals;
 1 mismatch, the union of the pairwise intersections of the three rarest (two seeds: their union).
 `none` when the pigeonhole does not apply (no seed; one seed at 1 mismatch). -/
-def candX (pk : PkMz) (R : ByteArray) (s : PrepM MzP) (mmax : Nat) : Option (Array (Nat × Nat)) := Id.run do
+def candX (pk : PkMz) (R : ByteArray) (s : PrepM MzP) (mmax : Nat) (useL : Bool := false) : Option (Array (Nat × Nat)) := Id.run do
   let n := R.size
   let m := n / 25
   if m == 0 || (mmax == 1 && m < 2) then return none
@@ -569,7 +621,7 @@ def candX (pk : PkMz) (R : ByteArray) (s : PrepM MzP) (mmax : Nat) : Option (Arr
     let pp := if b == 0 then s.ps else s.pr
     let k := if mmax == 0 then min 2 m else min 3 m
     let sel := (((List.range m).map fun j => (LookG.size pk pp[j]!, j)).mergeSort (fun x y => x.1 ≤ y.1)).take k
-    let look := fun (j : Nat) => if pp[j]!.ok then rawLook pk.1 pp[j]! (n - j * Ls)
+    let look := fun (j : Nat) => if pp[j]!.ok && !useL then rawLook pk.1 pp[j]! (n - j * Ls)
       else LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
     let A := sel.toArray.map fun x => look x.2
     let cs := if mmax == 0 then (if k == 1 then A[0]! else interS A[0]! A[1]!)
@@ -648,6 +700,171 @@ def pairGX (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo hi : Nat) (a
     return ((ca, cb), nscan, some res, (swap, !two, bx))
   | none => return ((0, 0), 0, none, (swap, false, none))
 
+/-- `pairGX` with the minimal fix for the spec (bench, unproved): every qualifying pair is collected and
+the answer is the best one, a tie when two pairs share the best score; the only early stop is at the
+second pair of score 0 (the best possible score, so a tie at the best). -/
+def pairGXF (useK useR : Bool) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo hi : Nat) (a b : ByteArray)
+    (sa sb : PrepM MzP) (G : Nat) :
+    (Nat × Nat) × Nat × Option (Option ((Placement × Nat) × (Placement × Nat) × Bool)) ×
+      (Bool × Bool × Option (Nat × Nat × Nat)) := Id.run do
+  let nc := pgs.size
+  let mmax := G / 4
+  let kk := if mmax == 0 then 2 else 3
+  let scanC := fun (R : ByteArray) (s : PrepM MzP) =>
+    let m := R.size / 25
+    let one := fun (pp : Array MzP) =>
+      (((List.range m).map fun j => LookG.size pk pp[j]!).mergeSort (· ≤ ·)).take kk |>.foldl (· + ·) 0
+    one s.ps + one s.pr
+  -- only the enumerated mate needs the pigeonhole (fastT G)
+  let need := if mmax == 0 then 1 else 2
+  let fa := decide (a.size / 25 ≥ need)
+  let fb := decide (b.size / 25 ≥ need)
+  let swap := if fa && fb then decide (scanC b sb < scanC a sa) else !fa
+  let (X, sX, Y, sY) := if swap then (b, sb, a, sa) else (a, sa, b, sb)
+  match (if fa || fb then candX pk X sX mmax useK else none) with
+  | some cs =>
+    let ca := if swap then 0 else cs.size
+    let cb := if swap then cs.size else 0
+    -- best pair so far (total mismatches), whether the best is tied, pairs at 0
+    -- all X hits first (verX), then the perfect ones' partners, then (only if no pair yet) the others'
+    let KY := if useR then packRP Y else ⟨#[], false⟩
+    let KYr := if useR then packRP sY.Rr else ⟨#[], false⟩
+    let mut hx : Array (Placement × Nat) := #[]
+    let mut bx : Option (Nat × Nat × Nat) := none
+    for (st, e) in cs do
+      if let some (vc, s0, mm) := verX offs pgs X sX.Rr st e mmax then
+        if bx.all (fun h => mm < h.2.2) then bx := some (vc, s0, mm)
+        hx := hx.push (decB nc ⟨vc, s0, X.size⟩, mm)
+    let mut best : Option ((Placement × Nat) × (Placement × Nat)) := none
+    let mut bestM := 1000
+    let mut tie := false
+    let mut zero := 0
+    let mut stopped := false
+    for ph in [0:2] do
+      -- phase 1 (X hits with a mismatch: pairs at −4 only) matters unless the best is 0 or already a tie at −4
+      if stopped || (ph == 1 && (bestM == 0 || tie)) then break
+      for (x, mm) in hx do
+        if stopped then break
+        if (ph == 0) != (mm == 0) then continue
+        for y in (if useR then localXR Y sY.Rr KY KYr pgs sl lo hi x (mmax - mm) else localX Y sY.Rr pgs sl lo hi x (mmax - mm)) do
+          let t := mm + y.2 / 4
+          if t < bestM then
+            best := some ((x, 4 * mm), y)
+            bestM := t
+            tie := false
+          else if t == bestM then tie := true
+          if t == 0 then zero := zero + 1
+          -- a second pair at the best score still possible: a tie at the best
+          if zero ≥ 2 || (ph == 1 && tie) then
+            stopped := true
+            break
+    let res := best.map fun (x, y) => if swap then (y, x, tie) else (x, y, tie)
+    return ((ca, cb), cs.size, some res, (swap, true, bx))
+  | none => return ((0, 0), 0, none, (swap, false, none))
+
+/-- Partner scan (bench prototype of the proved one): starts `[a, b)` of chromosome `c`, a word reject on the
+first 32 letters where their blocks are flagged, survivors through the kernel `kerHKG` at `lim`. -/
+def pscanB (R : ByteArray) (K : RP) (pgs : Array PGen) (c a b lim : Nat) : Array (Nat × Nat) := Id.run do
+  let P := pgs[c]!
+  let n := R.size
+  let mut out : Array (Nat × Nat) := #[]
+  let wOk := K.ok && decide (32 ≤ n)
+  let y0 := K.w[0]!
+  let mut u := (P.o + a) / 32
+  let mut cur := gword P.w u
+  let mut nxt := gword P.w (u + 1)
+  for st in [a:b] do
+    let A := P.o + st
+    if A / 32 != u then
+      u := A / 32
+      cur := nxt
+      nxt := gword P.w (u + 1)
+    let rej := wOk && decide (st + 32 ≤ P.n) && P.w.get! (17 * (A / 64)) == 1 && P.w.get! (17 * ((A + 31) / 64)) == 1 &&
+      decide (lim / 4 < Packed.cnt64 (fold (y0 ^^^ comb cur nxt (A % 32) (2 * (A % 32)).toUInt64 (64 - 2 * (A % 32)).toUInt64)))
+    if !rej then
+      let k := kerHKG R K pgs pgs c st n lim
+      if k ≤ lim then out := out.push (st, k)
+  return out
+
+/-- `pairGXF` as it will be proved (bench prototype): X candidates `candX`, each through the kernel; partners
+by `pscanB` over the proper-pair start range; the same phases and stops. -/
+def pairGQB (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo hi : Nat) (a b : ByteArray)
+    (sa sb : PrepM MzP) (G : Nat) :
+    (Nat × Nat) × Nat × Option (Option ((Placement × Nat) × (Placement × Nat) × Bool)) ×
+      (Bool × Bool × Option (Nat × Nat × Nat)) := Id.run do
+  let nc := pgs.size
+  let mmax := G / 4
+  let kk := if mmax == 0 then 2 else 3
+  let scanC := fun (R : ByteArray) (s : PrepM MzP) =>
+    let m := R.size / 25
+    let one := fun (pp : Array MzP) =>
+      (((List.range m).map fun j => LookG.size pk pp[j]!).mergeSort (· ≤ ·)).take kk |>.foldl (· + ·) 0
+    one s.ps + one s.pr
+  let need := if mmax == 0 then 1 else 2
+  let fa := decide (a.size / 25 ≥ need)
+  let fb := decide (b.size / 25 ≥ need)
+  let swap := if fa && fb then decide (scanC b sb < scanC a sa) else !fa
+  let (X, sX, Y, sY) := if swap then (b, sb, a, sa) else (a, sa, b, sb)
+  match (if fa || fb then candX pk X sX mmax else none) with
+  | some cs =>
+    let ca := if swap then 0 else cs.size
+    let cb := if swap then cs.size else 0
+    let KX := packRP X
+    let KXr := packRP sX.Rr
+    let KY := packRP Y
+    let KYr := packRP sY.Rr
+    let ny := Y.size
+    let n := X.size
+    let mut hx : Array (Placement × Nat) := #[]
+    let mut bx : Option (Nat × Nat × Nat) := none
+    for (sd, e) in cs do
+      let D := e / 16
+      if D < n then continue
+      let st0 := D - n
+      let mut l := 0
+      let mut h := nc
+      while l + 1 < h do
+        let mid := (l + h) / 2
+        if offs[mid]! ≤ st0 then l := mid else h := mid
+      if st0 < offs[l]! then continue
+      let st := st0 - offs[l]!
+      let k := if sd == 0 then kerHKG X KX pgs pgs l st n G else kerHKG sX.Rr KXr pgs pgs l st n G
+      if k ≤ G then
+        let mm := k / 4
+        if bx.all (fun (q : Nat × Nat × Nat) => mm < q.2.2) then bx := some (sd * nc + l, st, mm)
+        hx := hx.push ((⟨l, st, n⟩, if sd == 0 then Strand.fwd else Strand.rev), mm)
+    let mut best : Option ((Placement × Nat) × (Placement × Nat)) := none
+    let mut bestM := 1000
+    let mut tie := false
+    let mut zero := 0
+    let mut stopped := false
+    for ph in [0:2] do
+      if stopped || (ph == 1 && (bestM == 0 || tie)) then break
+      for (x, mm) in hx do
+        if stopped then break
+        if (ph == 0) != (mm == 0) then continue
+        let lim := 4 * (mmax - mm)
+        let fw := x.2 == Strand.fwd
+        let lo' := if fw then x.1.start + lo - ny else x.1.start + x.1.len - hi
+        let hi' := if fw then x.1.start + hi - ny else x.1.start + x.1.len - lo
+        let ys := if fw then pscanB sY.Rr KYr pgs x.1.chr lo' (hi' + 1) lim else pscanB Y KY pgs x.1.chr lo' (hi' + 1) lim
+        for (s0, k) in ys do
+          let y : Placement := (⟨x.1.chr, s0, ny⟩, if fw then Strand.rev else Strand.fwd)
+          if !properPairU sl lo hi x y then continue
+          let t := mm + k / 4
+          if t < bestM then
+            best := some ((x, 4 * mm), (y, k))
+            bestM := t
+            tie := false
+          else if t == bestM then tie := true
+          if t == 0 then zero := zero + 1
+          if zero ≥ 2 || (ph == 1 && tie) then
+            stopped := true
+            break
+    let res := best.map fun (x, y) => if swap then (y, x, tie) else (x, y, tie)
+    return ((ca, cb), cs.size, some res, (swap, true, bx))
+  | none => return ((0, 0), 0, none, (swap, false, none))
+
 /-- Prototype (bench): `pairGF` with the perfect hits of the enumerated mate first and a stop at two pairs
 at score 0 (different placements): a tie. -/
 def twoTopB (dc : Nat → Nat) (ps : List PairHit) : Bool :=
@@ -679,6 +896,47 @@ def pairGFSB (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMz) (o
     match pairsStopB one dc lX' [] with
     | none => some (none, true, lX)
     | some ps => some (Fast.bestOfPairs dc ps, !ps.isEmpty, lX)
+
+/-- Prototype (bench): one strand's hits within `lim < 8` from the diagonals in at least two of the
+`sbound lim + 2` rarest seeds' lookups (whole-genome anchors), each through the word kernel. -/
+def hitsFS (lim : Nat) (pk : PkMz) (offs : Array Nat) (pgs2 : Array PGen) (n t : Nat) (Rs : ByteArray) :
+    Array (Window × Nat) := Id.run do
+  let m := Rs.size / 25
+  let Ls := Rs.size / m
+  let K := packRP Rs
+  let ps := prepG pk Rs m Ls
+  let J := (ordG (ps.map (LookG.size pk)) m).take (sbound lim + 2)
+  let A := (J.map fun j => (LookG.look pk ByteArray.empty Rs (j * Ls) (Rs.size - j * Ls) ps[j]!).map (· / 16)).toArray
+  let cs := if A.size == 1 then A[0]! else if A.size == 2 then interS A[0]! A[1]!
+    else unionS (unionS (interS A[0]! A[1]!) (interS A[0]! A[2]!)) (interS A[1]! A[2]!)
+  let ny := Rs.size
+  let mut out : Array (Window × Nat) := #[]
+  for D in cs do
+    if D < ny then continue
+    let st0 := D - ny
+    let mut lo := 0
+    let mut hi := n
+    while lo + 1 < hi do
+      let mid := (lo + hi) / 2
+      if offs[mid]! ≤ st0 then lo := mid else hi := mid
+    if st0 < offs[lo]! then continue
+    let st := st0 - offs[lo]!
+    let k := kerHKG Rs K pgs2 pgs2 (t + lo) st ny lim
+    if k ≤ lim then out := out.push (⟨t + lo, st, ny⟩, k)
+  return out
+
+def hitsFB (lim : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) : Option (List (Placement × Int)) :=
+  if fastT lim R then
+    let n := pgs.size
+    let pgs2 := pgs ++ pgs
+    some ((hitsFS lim pk offs pgs2 n 0 R ++ hitsFS lim pk offs pgs2 n n (revCompK R)).toList.map
+      fun x => (decB n x.1, -(x.2 : Int)))
+  else none
+
+/-- Prototype join: both mates' hit lists, the pairs with score ≥ −Gc (nested filter). -/
+def pairsJB (dc : Nat → Nat) (sl lo hi Gc : Nat) (l1 l2 : List (Placement × Int)) : List PairHit :=
+  l1.flatMap fun x => l2.filterMap fun y =>
+    if properPairU sl lo hi x.1 y.1 && decide (-(Gc : Int) ≤ pairScoreD dc (x, y)) then some (x, y) else none
 
 /-- Floor and ceiling inputs of one mate (bench): per strand, the blocks whose (ACGT) seed lookup is
 empty — `floor_look` (codecs/MateFloor.lean) gives penalty ≥ 4 per empty block on that strand; and the
@@ -2756,7 +3014,7 @@ def loadPackedPar (files : List String) (k : Nat) : IO (PGen × Array Nat × Arr
   return (G, offs, ns)
 
 set_option maxHeartbeats 800000 in
-set_option maxRecDepth 4000 in
+set_option maxRecDepth 4096 in
 def main (args : List String) : IO UInt32 := do
   let k ← envN "WG_K" 22
   let B ← envN "WG_B" 26
@@ -3060,7 +3318,7 @@ def main (args : List String) : IO UInt32 := do
       let xReg := (← IO.getEnv "WG_XREG").getD "1" == "1"
       let xCap ← envN "WG_XCAP" 60
       let nc := pgs.size
-      -- WG_PG=G (0 or 4; unset: off): the pair-level guarantee (`pairGX`) on RT's unmapped and gated
+      -- WG_PG=G (0 or 4; unset: off): the pair-level guarantee (proved `pairGQC`; WG_PGF) on RT's unmapped and gated
       -- pairs; WG_XLAD=1 (default off): budgeted exact rungs (cap, 12, 8, 4) per mate
       -- (else, and when no rung is affordable, the mate's perfect hits: best 0, or best > 0)
       let pgE := (← IO.getEnv "WG_PG").getD ""
@@ -3159,9 +3417,16 @@ def main (args : List String) : IO UInt32 := do
       -- `pl` its alignment when concrete, re-scored by `checkRuns` (`rs`).  st: U (exact), B, S.
       let xCeil := (← IO.getEnv "WG_XCEIL").getD "1" == "1"
       let xGK := (← IO.getEnv "WG_PGK").getD "0" == "1"
-      -- WG_PGF=1: the proved fast kernel `pairGF` (codecs/PairGuarFast.lean) in place of `pairGX`
-      let xGF := (← IO.getEnv "WG_PGF").getD "0" == "1" || (← IO.getEnv "WG_PGF").getD "0" == "S"
-      let xGFS := (← IO.getEnv "WG_PGF").getD "0" == "S"
+      -- the pair guarantee (WG_PGF): default C, the proved `pairGQC` (codecs/PairGuarQ.lean, `pairGQC_sound` in
+      -- PairGuarQE.lean); Q its reference `pairGQ`; 1 `pairGF`; S an unproved early-stop prototype; 0 the unproved `pairGX`
+      let pgfE := (← IO.getEnv "WG_PGF").getD "C"
+      let xGF := pgfE == "1" || pgfE == "S" || pgfE == "Q" || pgfE == "C"
+      let xGFS := pgfE == "S"
+      let xGFQ := pgfE == "Q"
+      let xGFC := pgfE == "C"
+      -- WG_PGXF=1: pairGX with the spec fixes (pairGXF) in place of pairGX
+      let pgxE := (← IO.getEnv "WG_PGXF").getD "0"
+      let pgx := if pgxE == "1" then pairGXF false false else if pgxE == "K" then pairGXF true false else if pgxE == "R" then pairGXF false true else if pgxE == "Q" then pairGQB else pairGX
       -- the mate to enumerate (`fastT G0` needed): the smaller rarest-seed buckets (sizes are free)
       let gfSwap := fun (G0 : Nat) (a b : ByteArray) (s1 s2 : PrepM MzP) =>
         let k := sbound G0 + 2
@@ -3177,6 +3442,8 @@ def main (args : List String) : IO UInt32 := do
         match gfSwap G0 a b s1 s2 with
         | none => none
         | some swap => (if xGFS then pairGFSB dcost0 usl lo hi G0 swap pk offs pgs a b
+            else if xGFC then pairGQC dcost0 usl lo hi G0 swap (pk : PkMzR) offs pgs a b
+            else if xGFQ then pairGQ dcost0 usl lo hi G0 swap (pk : PkMzR) offs pgs a b
             else pairGF dcost0 usl lo hi G0 swap pk offs pgs a b).map fun v => (swap, v)
       -- the enumerated mate's floor and best hit from its exact hits within G0 (none: Hamming ≥ G0/4 + 1)
       let gxOf : Nat → List (Placement × Int) → Option (Nat × Option (Nat × Nat × Nat)) := fun G0 lX =>
@@ -3298,7 +3565,7 @@ def main (args : List String) : IO UInt32 := do
                 (t ++ sfx, m1, m2)
           else
           if pgOn then
-            let (_, _, res, (swap, done, bx)) := pairGX pk offs pgs usl lo hi a b s1 s2 pgG
+            let (_, _, res, (swap, done, bx)) := pgx pk offs pgs usl lo hi a b s1 s2 pgG
             -- the enumerated mate's floor and best hit (`floor_enum`), when its enumeration completed
             let gx : Option (Nat × Option (Nat × Nat × Nat)) :=
               if done then some ((match bx with | some h => 4 * h.2.2 | none => if pgG / 4 == 0 then 4 else 8), bx) else none
@@ -3311,7 +3578,7 @@ def main (args : List String) : IO UInt32 := do
             | none =>
               -- G not applicable (a mate under 50 bp): the guarantee at 0 (mates ≥ 25 bp), suffix z
               if pgG > 0 && xZ then
-                let (_, _, res0, (swap0, done0, bx0)) := pairGX pk offs pgs usl lo hi a b s1 s2 0
+                let (_, _, res0, (swap0, done0, bx0)) := pgx pk offs pgs usl lo hi a b s1 s2 0
                 let gx0 : Option (Nat × Option (Nat × Nat × Nat)) :=
                   if done0 then some ((match bx0 with | some h => 4 * h.2.2 | none => 4), bx0) else none
                 let (h1, h2) := if swap0 then (none, gx0) else (gx0, none)
@@ -3686,7 +3953,9 @@ def main (args : List String) : IO UInt32 := do
         let mut gBig := 0
         let mut gBigT := 0
         let mut nO := 0
-        let mut gfT : Array Nat := #[0, 0]
+        let mut gfT : Array Nat := #[0, 0, 0, 0, 0, 0, 0]
+        let mut gfBad := 0
+        let mut gfPB := 0
         let mut gfH : Array Nat := #[]
         let mut gfMax := 0
         let mut gfWorst := ""
@@ -3724,12 +3993,31 @@ def main (args : List String) : IO UInt32 := do
                   (packRP (revCompK RY)) swap (lX.getD [])).length)).get
                 let z2 ← IO.monoNanosNow
                 gfT := (gfT.set! 0 (gfT[0]! + (z1 - z0))).set! 1 (gfT[1]! + (z2 - z1))
+                let z3 ← IO.monoNanosNow
+                let q ← (← IO.mkRef (pairGQ dcost0 usl lo hi pgG swap (pk : PkMzR) offs pgs a b)).get
+                let z4 ← IO.monoNanosNow
+                let lXr ← (← IO.mkRef (pairGQC dcost0 usl lo hi pgG swap (pk : PkMzR) offs pgs a b)).get
+                let z5 ← IO.monoNanosNow
+                let gf ← (← IO.mkRef (pairGF dcost0 usl lo hi pgG swap pk offs pgs a b)).get
+                let z6 ← IO.monoNanosNow
+                let xq ← (← IO.mkRef (hitsAtQ pgG (pk : PkMzR) offs pgs RX)).get
+                let z7 ← IO.monoNanosNow
+                let gb ← (← IO.mkRef (pairGQB pk offs pgs usl lo hi a b s1 s2 pgG)).get
+                let z8 ← IO.monoNanosNow
+                gfT := (gfT.set! 5 (gfT[5]! + (z7 - z6) + (if xq.isSome then 0 else 1))).set! 6 (gfT[6]! + (z8 - z7) + (if gb.2.1 == 0 then 0 else 0))
+                gfT := ((gfT.set! 2 (gfT[2]! + (z4 - z3))).set! 3 (gfT[3]! + (z5 - z4))).set! 4 (gfT[4]! + (z6 - z5))
+                let key := fun (x : Placement × Int) => s!"{x.1.1.chr} {x.1.1.start} {x.1.1.len} {decide (x.1.2 = Strand.fwd)} {x.2}"
+                let srt := fun (l : List (Placement × Int)) => (l.map key).toArray.qsort (fun u v => decide (u < v))
+                if (lXr.map fun (_, _, l) => srt l) != (q.map fun (_, _, l) => srt l) then gfBad := gfBad + 1
+                let ans := fun (v : Option (Option PairHit × Bool × List (Placement × Int))) =>
+                  v.map fun (r, sn, _) => (r.map fun (p : PairHit) => (key p.1, key p.2), sn)
+                if ans q != ans gf || ans lXr != ans gf then gfPB := gfPB + 1
                 gfH := gfH.push nh
                 if z2 - z0 > gfMax then
                   gfMax := z2 - z0
                   gfWorst := s!"mates {a.size}/{b.size}, X hits {nh}, pairs {np}, enum {(z1 - z0) / 1000} µs, partners {(z2 - z1) / 1000} µs"
             let v0 ← IO.monoNanosNow
-            let g ← (← IO.mkRef (if pgOn then some (pairGX pk offs pgs usl lo hi a b s1 s2 pgG) else none)).get
+            let g ← (← IO.mkRef (if pgOn then some (pgx pk offs pgs usl lo hi a b s1 s2 pgG) else none)).get
             let v1 ← IO.monoNanosNow
             t := tick 1 v0 v1 t
             let (g1, g2) : Option (Nat × Option (Nat × Nat × Nat)) × Option (Nat × Option (Nat × Nat × Nat)) :=
@@ -3836,7 +4124,7 @@ def main (args : List String) : IO UInt32 := do
         if xGF then
           let sh := gfH.qsort (· < ·)
           let hp (q : Nat) : Nat := if sh.isEmpty then 0 else sh[min (sh.size - 1) (sh.size * q / 100)]!
-          say s!"GFPROF pairs {gfH.size}; µs: X hits (hitsAtKP3) {gfT[0]! / 1000}, partners (pairsGF) {gfT[1]! / 1000}; X hits p50 {hp 50} p90 {hp 90} p99 {hp 99} max {hp 100}; worst {gfMax / 1000} µs: {gfWorst}"
+          say s!"GFPROF pairs {gfH.size}; µs: X hits (hitsAtKP3) {gfT[0]! / 1000}, partners (pairsGF) {gfT[1]! / 1000}; X hits p50 {hp 50} p90 {hp 90} p99 {hp 99} max {hp 100}; worst {gfMax / 1000} µs: {gfWorst}; pairGQ {gfT[2]! / 1000}, pairGQC {gfT[3]! / 1000}, pairGF {gfT[4]! / 1000}, hitsAtQ {gfT[5]! / 1000}, pairGQB {gfT[6]! / 1000}; X lists differ (Q vs C) {gfBad}, answers differ {gfPB}"
         say s!"TIERHEUR pairs {nH}, both ceilings {nH2}, heuristic µs {t[5]! / 1000} (max {hMax / 1000}); bandDP {nB} calls {tB / 1000} µs, checkRuns {nC} calls {tC / 1000} µs; seedVote {pq[0]!} calls {pq[1]! / 1000} µs, voteD {pq[2]!} calls {pq[3]! / 1000} µs, nearY {pq[4]!} calls {pq[5]! / 1000} µs, pairSeedX {pq[6]!} calls {pq[7]! / 1000} µs"
         say s!"TIERPROF pairs {min xpN r1.size}, RT-unmapped or gated {cnt} (gated {nG}); µs: gate+RT {t[0]! / 1000}, pair guarantee G={pgG} {t[1]! / 1000} (worst {gMax / 1000}: {gWorst}; over 5 ms {gBig} pairs, {gBigT / 1000} µs; not applicable {nX}), candidates checked p50 {pct 50} p99 {pct 99} max {pct 100}; mates' perfect hits {t[2]! / 1000}, ladder {t[3]! / 1000}, {if xBnd && !xOld then "floor/ceiling (mateB)" else "free bounds"} {t[4]! / 1000} ({nO} over mates)"
         let tl := (List.range scans.size).foldl (fun (h : Std.HashMap Nat Nat) i =>
