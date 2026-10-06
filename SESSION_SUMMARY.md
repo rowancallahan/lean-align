@@ -744,6 +744,7 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
   3. Rowan rewrites the spec and reorganizes the code.
   4. Re-time everything.
   5. Manuscript.
+- **Later (Rowan, 2026-10-06): full-recall mode.** A slower mode, up to about 10× slower, that checks every candidate and reports every exact best location (all multimapper copies, no budget skips). Planned alongside the long-read work below.
 - Later roadmap: simulated long reads (ONT) and HiFi (paper: Badread), with new long-read kernels and possibly a new spec.
 - Long-term roadmap (with long reads): a full-recall mode that maps (almost) every pair minibwa maps, at about minibwa's speed (need not be faster). Needs MAPQ (own spec), tie/non-proper handling, end clipping or deeper caps.
 - Per-mate margin (paused, needs its own spec): define the second best over placements at a non-overlapping locus; under "any different placement" the margin is always ≤ 8, because extending the window by one letter costs at most one 1-letter gap. Bench prototype `WG_MARGIN=k` in bench/WholeGenome.lean writes `<mode>_<set>.margin_k<k>.tsv`. It is unproved and untested, and exact only while stage B does not run (P ≤ 16).
