@@ -3393,7 +3393,8 @@ def main (args : List String) : IO UInt32 := do
         usl := usl
         pg := if pgOn then some pgG else none
         xZ := xZ
-        gate := fun a b => xBud != 0 && gaveUpR xBud a b
+        -- = `xBud != 0 && gaveUpR xBud a b`: k1, k2 are `costP` at `cap1F` of the prepared mates
+        gate := fun _ _ k1 k2 => xBud != 0 && (xBud < k1 || xBud < k2)
         pref := gPref
         ceil := fun R s => if xCeil then ceilX pk offs pgs R s xCK xCT else none
         heur := fun a b s1 s2 m1 m2 =>
@@ -3763,7 +3764,7 @@ def main (args : List String) : IO UInt32 := do
           let a := r1[k]!
           let b := r2[k]!
           let u0 ← IO.monoNanosNow
-          let o ← (← IO.mkRef (if tcfg.gate a b then none else some (tierRT tcfg pk offs pgs a b))).get
+          let o ← (← IO.mkRef (if xBud != 0 && gaveUpR xBud a b then none else some (tierRT tcfg pk offs pgs a b))).get
           let u1 ← IO.monoNanosNow
           let t ← (← IO.mkRef (tierP a b)).get
           let u2 ← IO.monoNanosNow
@@ -3771,7 +3772,45 @@ def main (args : List String) : IO UInt32 := do
           tT := tT + (u2 - u1)
           cnt := cnt.insert t.tagStr (cnt.getD t.tagStr 0 + 1)
           if o.isSome && u2 == 0 then IO.println ""
-        say s!"TIERPROF pairs {min xpN r1.size}; µs: gate + RT {tR / 1000}, tierPair (all) {tT / 1000}; tags {cnt.toList}")]
+        say s!"TIERPROF pairs {min xpN r1.size}; µs: gate + RT {tR / 1000}, tierPair (all) {tT / 1000}; tags {cnt.toList}"
+        -- finer split: gate alone, RT alone, tierRest (guarantee pick / floors+ceil+heur) by RT outcome, tierUp
+        let mut tm : Std.HashMap String Nat := {}
+        let add := fun (m : Std.HashMap String Nat) (k : String) (v : Nat) => m.insert k (m.getD k 0 + v)
+        for k in [0:min xpN r1.size] do
+          let a := r1[k]!
+          let b := r2[k]!
+          let u0 ← IO.monoNanosNow
+          let g ← (← IO.mkRef (xBud != 0 && gaveUpR xBud a b)).get
+          let u1 ← IO.monoNanosNow
+          tm := add tm "gate" (u1 - u0)
+          let (rk, c1, c2) ← if g then pure (none, 0, 0) else do
+            let r ← (← IO.mkRef (tierRT tcfg pk offs pgs a b)).get
+            let u2 ← IO.monoNanosNow
+            tm := add tm "RT" (u2 - u1)
+            match r.out with
+            | .mapped _ => pure (none, 1000, 1000)
+            | .unmapped rs kk => pure (some (rs, kk), r.c1, r.c2)
+          if c1 == 1000 then continue
+          let w := if g then "gated" else "unm"
+          let u3 ← IO.monoNanosNow
+          let s1 ← (← IO.mkRef (prepMate pk a : PrepM MzP)).get
+          let s2 ← (← IO.mkRef (prepMate pk b : PrepM MzP)).get
+          let u4 ← IO.monoNanosNow
+          tm := add tm s!"{w} prep" (u4 - u3)
+          let pick ← (← IO.mkRef (tierPick tcfg pk offs pgs 4 a b s1 s2)).get
+          let u5 ← IO.monoNanosNow
+          tm := add tm s!"{w} pick" (u5 - u4)
+          let u6 ← IO.monoNanosNow
+          let t0 ← (← IO.mkRef (tierRest tcfg pk offs pgs a b rk c1 c2)).get
+          let u7 ← IO.monoNanosNow
+          tm := add tm s!"{w} rest(all)" (u7 - u6)
+          let t1 ← (← IO.mkRef (tierUp tcfg pk offs pgs a b t0)).get
+          let u8 ← IO.monoNanosNow
+          tm := add tm s!"{w} up" (u8 - u7)
+          tm := add tm s!"{w} n" 1
+          tm := add tm s!"tag {t1.tagStr}" 1
+          if pick.1 == 77 && u8 == 0 then IO.println ""
+        say s!"TIERSPLIT µs/1000: {(tm.toList.map fun (k, v) => (k, if k.endsWith " n" || k.startsWith "tag" then v else v / 1000)).toArray.qsort (fun x y => x.1 < y.1)}")]
       runSets modes okLen prof (some margF) tally (rprofL ++ pprof) xdump
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")

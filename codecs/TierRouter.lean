@@ -211,7 +211,9 @@ structure TierCfg where
   usl : Nat := 0
   pg : Option Nat := some 4
   xZ : Bool := true
-  gate : ByteArray → ByteArray → Bool := fun _ _ => false
+  /-- The budget gate, given both mates' lookup costs at their pass-1 caps (`costP`, shared with RT's
+  mate order): `true` = skip RT. -/
+  gate : ByteArray → ByteArray → Nat → Nat → Bool := fun _ _ _ _ => false
   pref : Nat → ByteArray → ByteArray → PrepM MzP → PrepM MzP → Bool := fun _ _ _ _ _ => false
   ceil : ByteArray → PrepM MzP → Option (Nat × Nat × Nat) := fun _ _ => none
   heur : ByteArray → ByteArray → PrepM MzP → PrepM MzP → MateX → MateX → Option Cand × Option Cand :=
@@ -230,6 +232,41 @@ def tierKer (j : Bool) : PassKer :=
 /-- RT (mode RT of the bench). -/
 def tierRT (a b : ByteArray) : Routed :=
   routeG cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi (some a) (some b)
+
+/-- RT with the mates' preparations `s1`, `s2` and pass-1 lookup costs `k1`, `k2` given (computed once
+per pair and shared with the gate and the rest of the router; `tierRTS_eq`). -/
+def tierRTS (a b : ByteArray) (s1 s2 : PrepM MzP) (k1 k2 : Nat) : Routed :=
+  let K1 := tierKer cfg pk offs pgs cfg.j1
+  let A1 := cfg.rcfg.cap1 a.size
+  let A2 := cfg.rcfg.cap1 b.size
+  let o : Out :=
+    if !fastT A1 a then .unmapped (.tooShort .one) none
+    else if !fastT A2 b then .unmapped (.tooShort .two) none
+    else if K1.noPair A1 A2 a b then .unmapped .noPair none
+    else
+      let sw := match cfg.rcfg.ord1 a b with
+        | some o => o
+        | none => decide (k2 < k1)
+      if sw then
+        (stepR .two .one cfg.lo cfg.hi (K1.mate A2 b s2) (K1.region A1 a) (fun r => decide (A1 < r))
+          (mateH K1 A1 a s1)).swap
+      else
+        stepR .one .two cfg.lo cfg.hi (K1.mate A1 a s1) (K1.region A2 b) (fun r => decide (A2 < r))
+          (mateH K1 A2 b s2)
+  match o with
+  | .mapped _ => ⟨o, 1, A1, A2⟩
+  | .unmapped r k =>
+    let B1 := cap2Of cfg.rcfg a
+    let B2 := cap2Of cfg.rcfg b
+    if cfg.rcfg.pass2 && cfg.rcfg.goOn r && cfg.rcfg.gate2 a b && !(B1 == A1 && B2 == A2) then
+      ⟨pass2G (tierKer cfg pk offs pgs cfg.j2) cfg.rcfg.swap2 A1 A2 B1 B2 r cfg.lo cfg.hi a b k, 2, B1, B2⟩
+    else ⟨o, 1, A1, A2⟩
+
+/-- `tierRTS` with the preparations and costs RT computes itself is RT. -/
+theorem tierRTS_eq (a b : ByteArray) :
+    tierRTS cfg pk offs pgs a b (prepMate pk a) (prepMate pk b)
+      (costP pk (cfg.rcfg.cap1 a.size) (prepMate pk a)) (costP pk (cfg.rcfg.cap1 b.size) (prepMate pk b)) =
+    tierRT cfg pk offs pgs a b := rfl
 
 /-- The guarantee at `G0` with the enumerated mate (none: neither mate on the fast path at `G0`). -/
 def tierG (G0 : Nat) (a b : ByteArray) (s1 s2 : PrepM MzP) :
@@ -260,9 +297,8 @@ def tierPick (G : Nat) (a b : ByteArray) (s1 s2 : PrepM MzP) :
   | none => if 0 < G && cfg.xZ then (0, "z", tierG cfg pk offs pgs 0 a b s1 s2) else (G, "x", none)
 
 /-- Pairs RT did not map (or skipped): the guarantee, then floors and ceilings. -/
-def tierRest (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) : TierOut :=
-  let s1 : PrepM MzP := prepMate pk a
-  let s2 : PrepM MzP := prepMate pk b
+def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Option (Placement × Int)))
+    (c1 c2 : Nat) : TierOut :=
   let why := rk.map (·.1)
   let plain := fun (sfx : String) =>
     let t := tierB cfg pk pgs a b s1 s2 rk c1 c2 none none
@@ -290,6 +326,10 @@ def tierRest (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int)
           { tag := t.1, sfx := sfx, m1 := t.2.1, m2 := t.2.2, why := why, c1 := c1, c2 := c2, g0 := G0,
             sw := swap, pf := some G0 }
 
+/-- `tierRestS` with the mates prepared here. -/
+def tierRest (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) : TierOut :=
+  tierRestS cfg pk offs pgs a b (prepMate pk a) (prepMate pk b) rk c1 c2
+
 /-- **The tier router** before `TierOpt`'s last step: trimmed-away mates (T0); the gate; RT (T1); the
 guarantee (T1g, T1gm); floors, ceilings and the heuristic (T2, T3). -/
 def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
@@ -297,14 +337,19 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
   | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
   | _, none => { tag := .t0, why := some (.trimmedAway .two) }
   | some a, some b =>
-    if cfg.gate a b then tierRest cfg pk offs pgs a b none 0 0 else
-    let r := tierRT cfg pk offs pgs a b
+    -- each mate prepared once, its pass-1 lookup cost computed once: shared by the gate, RT and the rest
+    let s1 : PrepM MzP := prepMate pk a
+    let s2 : PrepM MzP := prepMate pk b
+    let k1 := costP pk (cfg.rcfg.cap1 a.size) s1
+    let k2 := costP pk (cfg.rcfg.cap1 b.size) s2
+    if cfg.gate a b k1 k2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
+    let r := tierRTS cfg pk offs pgs a b s1 s2 k1 k2
     match r.out with
     | .mapped (x, y) =>
       { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
         m1 := { st := "U", cap := cfg.rcfg.cap1 a.size, cd := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
         m2 := { st := "U", cap := cfg.rcfg.cap1 b.size, cd := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
-    | .unmapped rs k => tierRest cfg pk offs pgs a b (some (rs, k)) r.c1 r.c2
+    | .unmapped rs k => tierRestS cfg pk offs pgs a b s1 s2 (some (rs, k)) r.c1 r.c2
 
 end router
 
@@ -980,7 +1025,8 @@ include hcut hg hchk in
 theorem tierRest_ok {a b : ByteArray} (ha : Encodes a m1) (hb : Encodes b m2)
     {rk : Option (Reason × Option (Placement × Int))} {c1 c2 : Nat} (H : RkOk cfg.lo cfg.hi g m1 m2 c1 c2 rk) :
     TierOk cfg.usl cfg.lo cfg.hi g m1 m2 (some a) (some b)
-      (tierRest cfg ((ix, G) : PkMz) offs (cutAll G offs ns) a b rk c1 c2) := by
+      (tierRestS cfg ((ix, G) : PkMz) offs (cutAll G offs ns) a b (prepMate ((ix, G) : PkMz) a)
+        (prepMate ((ix, G) : PkMz) b) rk c1 c2) := by
   have hB := fun g1 g2 hg1 hg2 => tierB_ok cfg g m1 m2 ix G offs ns hcut hg hchk ha hb H (g1 := g1) (g2 := g2) hg1 hg2
   have hP : ∀ sfx, TierOk cfg.usl cfg.lo cfg.hi g m1 m2 (some a) (some b)
       (let t := tierB cfg ((ix, G) : PkMz) (cutAll G offs ns) a b (prepMate ((ix, G) : PkMz) a)
@@ -989,7 +1035,7 @@ theorem tierRest_ok {a b : ByteArray} (ha : Encodes a m1) (hb : Encodes b m2)
     intro sfx
     obtain ⟨B1, B2, B3⟩ := hB none none (fun _ _ h => by cases h) (fun _ _ h => by cases h)
     exact tierOk_B B3 B1 B2 (fun _ h => by cases h)
-  unfold tierRest
+  unfold tierRestS
   dsimp only
   cases hpg : cfg.pg with
   | none => exact hP ""
@@ -1055,10 +1101,11 @@ theorem tierPairB_sound (O1 O2 : Option ByteArray) (h1 : ∀ R, O1 = some R → 
       have hb := h2 b rfl
       unfold tierPairB
       dsimp only
-      by_cases hgate : cfg.gate a b = true
+      by_cases hgate : cfg.gate a b (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 a.size) (prepMate ((ix, G) : PkMz) a))
+          (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 b.size) (prepMate ((ix, G) : PkMz) b)) = true
       · rw [if_pos hgate]
         exact tierRest_ok cfg g m1 m2 ix G offs ns hcut hg hchk ha hb (fun _ _ h => by cases h)
-      rw [if_neg hgate]
+      rw [if_neg hgate, tierRTS_eq]
       have HS : Settled cfg.lo cfg.hi g m1 m2 a b (tierRT cfg ((ix, G) : PkMz) offs (cutAll G offs ns) a b) :=
         routeKPB_ok cfg.lo cfg.hi g m1 m2 ix G offs ns a b hcut hg ha hb hchk cfg.rcfg cfg.j1 cfg.j2 cfg.hint
       generalize tierRT cfg _ offs _ a b = r at HS ⊢
