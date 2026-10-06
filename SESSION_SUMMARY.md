@@ -891,6 +891,15 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
       - Pairs: pair cost = sum of mate costs ≥ 0, so pairs with mate 1 away from X cost ≥ F. Pairs with mate 1 at X need only a local search for mate 2 near X.
       - Trust: build the table with a proved function, so every entry carries a valid floor. Pass it as an argument with that invariant. No new trusted code.
       - Shorter windows have more repeats, so lower margins (F − b). Pass 1 should pick W as long as the typical overlap allows.
+  - **Expected gain (rough, unmeasured):**
+    - **Large indels gain the most.** A germline indel is in every covering read (all if homozygous, half if heterozygous), so one certificate serves dozens of reads at 30×. These reads move from T2/T3 or the deep search to cheap and proved.
+      - Limit: the read must contain the whole window W. Reads ending inside the indel and insertions longer than the read do not qualify. The qualifying share is ~(read length − |W|) / read length, so 2×250 gains more than 2×150.
+    - **Errors at unique placements gain little.** Sequencing errors are not shared, and these reads are already cheap (T1). Shared SNPs do hit, but are also cheap today.
+    - **Speed:** about one indel per 6 kb in HG002, so ~5–8% of pairs touch one. Most are small indels that trigger the band search. At 3–5× a clean pair they take ~15–30% of time; bringing them to ~1× saves ~10–25% of wall time. Repeats, where most time goes, gain little (small margins).
+    - **Proved share:** pairs now in T2/T3 because of indels become proved. This may matter more than the speed.
+    - **Scaling:** pass-1 cost scales with the number of variants (~5M), not reads, so it is fixed and spreads over the run. The hit rate rises with coverage and saturates around ≥ 10×. With variant seeds in the index the lookup is part of seeding, so it is near free per read.
+    - **Test:** the 200k genome-wide sets (~0.003×) show almost nothing. Use one chromosome at full depth, e.g. all HG002 chr20 reads at 30×.
+  - **When:** round 2 of optimization, after Rowan cleans up the code and rewrites the spec.
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
   - **Measure first:**
     - The exact duplicate-pair rate on 1M NovaSeq pairs.
