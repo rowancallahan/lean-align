@@ -19,8 +19,8 @@ Per set (HiSeq HG002 2x250, NovaSeq HG002 2x151, mason 2.0.9 2x150; 200k pairs e
      and the whole process (wait4 rusage).
 Every heavy step (mapper runs, minibwa, joins) holds flock /home/user/data/BIG.lock.
 
-Default config: WG_MODES=RTX WG_PG=4 WG_XBUD=5000 WG_TASKS=4 (add e.g. --env WG_XEBUD=5000 for the
-exact pair search of speed/t2-exact).  minibwa SAMs (for the join) are cached in DIR/mb_<set>.sam or
+Default config: WG_MODES=RTX WG_PG=4 WG_XBUD=5000 WG_TASKS=4, other knobs at the code defaults (e.g. the
+exact pair search budget WG_XEBUD, 1500 since speed/t2-exact; --env WG_XEBUD=0 turns it off).  minibwa SAMs (for the join) are cached in DIR/mb_<set>.sam or
 taken from MB_SAM_<set> / the earlier runs' copies; else minibwa writes one (not timed).
 Output in DIR (default <scratchpad>/final): report.txt (text, TSV tables), tiers.tsv, vs_mb.tsv,
 t1gm.tsv, t2gap.tsv, timing.tsv, logs/.  Dumps, joins and trimmed mates are deleted unless --keep.
@@ -49,15 +49,15 @@ INF = 1000000
 TIER_ORDER = ["T0", "T1", "T1g", "T1u", "T1gm", "T1um", "T2b", "T2", "T3"]
 
 # What each tag proves (TierOk / tierPair_sound, codecs/TierRouter.lean; t2Opt_sound and the T1u / T1um /
-# T2b cases, codecs/TierOpt.lean).  Penalties: mismatch 4, gap 6 + 2L, end to end on the trimmed mates.
+# T2b cases of TierOk, tierPair = tierPairB then tierUp, codecs/TierOpt.lean).  Penalties: mismatch 4, gap 6 + 2L, end to end on the trimmed mates.
 PROVED = {
     "T0": "a mate was trimmed away (q25 trimmer); nothing else is claimed",
     "T1": "RT mapped it: each mate's placement is its unique best within its cap (pairSpecT at RT's caps), and the two form a proper pair",
     "T1g": "the pair guarantee (pairGQC at G0 <= 4) found the unique best proper pair, score >= -G0; it stays the unique best at any larger caps (pairSpecUT)",
-    "T1u": "the exact pair search (pairGXE at G0 = pH1 + pH2 <= 16) found the unique best proper pair; unique best at any caps >= G0 (pairSpecUT)",
+    "T1u": "the exact pair search (pairGXE at G0 = pH1 + pH2 <= 16, under the WG_XEBUD bucket budget) found the unique best proper pair; it stays the unique best at any caps >= G0 (pairSpecUT); reported",
     "T1gm": "the pair guarantee proved a tie: at any caps >= G0 there are proper pairs, and the best score is shared by two pairs at different placements (PairTieOk); no placement reported",
-    "T1um": "the exact pair search proved a tie of the best proper pairs at caps >= G0 = pH1 + pH2 (PairTieOk); ceilings kept",
-    "T2b": "the two ceiling placements form a proper pair that no proper pair at any caps outscores: a best pair, possibly tied (t2Opt_sound)",
+    "T1um": "the exact pair search proved a tie: at any caps >= G0 = pH1 + pH2 the best proper pair is shared by two pairs at different placements (PairTieOk); not reported (the T2 ceilings stay in the dump)",
+    "T2b": "the two ceiling placements form a proper pair that no proper pair at any caps outscores: a best pair, but it may tie (t2Opt_sound); not reported as unique",
     "T2": "proved per-mate floors (every placement has penalty >= fl) and ceilings (a placement within pH exists, its CIGAR re-checked by checkRuns); if the guarantee ran and saw no pair, every proper pair has penalty > G0",
     "T3": "proved floors only (per mate; pair > G0 when the guarantee saw no pair); no placement",
 }
