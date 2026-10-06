@@ -539,6 +539,50 @@ Floors use only values lean already computes; perfect hits, the ladder and the f
   - `pairGK_guarantee`: if a proper pair (properPairU sl) at any caps ≥ G has pair score ≥ −G, the kernel returns `(r, true)` with `r = pairSpecUT` at those caps, and `r = none` only with `PairTieOk`.
   - Length condition in the hypotheses: `fastT G` on both mates. `pairGK_guarantee4`: G = 4, both mates ≥ 50 bp, `dcost0`. `pairGK_guarantee0`: G = 0, ≥ 25 bp. Outside the condition the kernel returns `none`.
 
+### Fast pair guarantee, PROVED, still too slow (`codecs/PairGuarFast.lean`, 646 lines, standard axioms; 2026-10-06)
+- **Kernel `pairGF`**:
+  - Enumerates one mate X with `hitsAtKP3`: the hits within G from the sbound G + 2 rarest seeds.
+  - For each hit x, `partnerK` scans the 1 kb proper-pair window of the other mate with `kerHKG` at cap G − |x score|. `swap` chooses which mate is X.
+  - Then `bestOfPairs` over the pairs with score ≥ −G.
+- **Theorems**:
+  - `mem_hitsAtKP3_mz`: the X list is exactly `hitsBoth (−G)`.
+  - `mem_partnerK`: the window scan is complete for the partner against `properPairU`.
+  - `mem_pairsGF`: the pairs are exactly the proper pairs with score ≥ −G.
+  - `pairGF_sound`: `seen` ↔ there is a proper pair within G at any caps P1, P2 ≥ G; `seen` → `r = pairSpecUT`; `r = none` → `PairTieOk`.
+  - `pairGF_some`: `fastT G` on the enumerated mate alone ⇒ result.
+- **Bench**: `WG_PGF=1` (T1g / T1gm from pairGF, with `gfSwap` picking the mate with the smaller rarest buckets) and `WG_PGF=S` (an unproved prototype that stops early).
+- **20k, 4 threads, wall s** (mason / NovaSeq / HG002 medians):
+
+  | Variant | mason | NovaSeq | HG002 |
+  |---|---|---|---|
+  | pairGX (unproved) | 0.75 | 0.67 | 0.72 |
+  | pairGF | 1.36 | 2.69 | 2.44 |
+  | pairGF + stop prototype | 1.68 | 2.18 | 1.30 |
+
+  - Profile (NovaSeq, 1 thread, 4743 pairs): pairGX 0.85 s in total; hitsAtKP3 1.53 s; partner scans 5.9 s.
+  - The cost is in repeats: X has up to 2500 hits, and each one gets a 1 kb scan.
+- **Tier %, pairGX → pairGF** (T1 and T2 unchanged; HG002 T1gm is not listed because it was not recorded for this run):
+  - mason: T1g 2.94 → 2.99; T1gm 0.76 → 0.70.
+  - NovaSeq:
+    - T1g 6.66 → 7.38; T1gm 2.54 → 2.10; T3 12.07 → 11.80;
+    - x 0.68 → 0.01; z 0.96 → 0.07.
+  - HG002:
+    - T1g 2.75 → 3.58; T3 10.65 → 9.93;
+    - x 1.00 → 0.01; z 0.77 → 0.04.
+- **200k RTX vs minibwa**, mapping time medians (s; HiSeq / NovaSeq / mason):
+  - minibwa: 23.12 / 11.80 / 11.78.
+  - RT: 9.59 / 10.74 / 13.83.
+  - RTX: 6.85 / 6.61 / 7.53.
+  - Tier % HiSeq: T1 82.04; T1g 2.84; T1gm 1.83; T2 2.42; T3 10.86; x 0.95; z 0.89.
+- **Unrouted pairs**: in the 200k run, 35 HiSeq and 11 NovaSeq pairs have a mate that ReadTrim cuts away completely. The bench drops these pairs before routing (`routeG` reason `trimmedAway`, pass 0). `tierPair` will tag them T0.
+- **Next**:
+  - Get speed back within 5% of pairGX while keeping `pairGF_sound`:
+    - settle score 0 first;
+    - stop at the second pair;
+    - sorted-merge join of both mates' hits;
+    - cheaper anchored enumeration.
+  - Then `tierPair` and the RT noHit floor.
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
