@@ -875,6 +875,14 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
     - Limit: an indel whose penalty exceeds the cap is outside the proved tiers. The memo can then only give a ceiling: reuse the stored path as the first candidate and prune with its cost. There is no floor, so the result stays heuristic (T2).
     - Reads that span an SV breakpoint score badly under end-to-end scoring with no clipping. A ceiling helps them only for speed.
   - **Memory:** budget up to ~12 GB, double today's 5.8 GB. 10M entries at ~32 bytes is ~0.3 GB, so RAM is not the limit. Lookup cost and determinism are.
+  - **Two-pass build (Rowan):** with many reads and cores, first map a random sample with the slow, deep search aimed at indels. Learn the recurring indels and paths, freeze the table, then map everything. Freezing keeps output deterministic. It needs algorithm changes, so not now.
+  - **Variant seeds + lift (Rowan):**
+    - For each learned indel or SNP, add extra seeds to the index: k-mers of the alt sequence across the variant. Each points to an alt-coordinate record that lifts back to the reference locus in O(1).
+    - A read carrying the indel then hits the right locus with one seed lookup instead of a band search.
+    - **Soundness:** easy. Extra seeds only add candidates, and every candidate is still scored exactly against the reference. The pigeonhole seed coverage is unchanged, so the floor proofs still hold.
+    - **Speed:** finding the true locus early gives a tight ceiling early, which prunes the other candidates. The exhaustive floor part still runs at the read's reference penalty, so the gain is mostly in candidate finding and pruning.
+    - **Cost:** very little: a few extra index entries, plus one lift per hit.
+    - **Limit:** an indel above the cap stays outside the proved tiers under the reference spec, so the speedup lands in T2. Proving those reads needs the "reference + known variants" spec (graph or personal genome).
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
   - **Measure first:**
     - The exact duplicate-pair rate on 1M NovaSeq pairs.
