@@ -23,7 +23,7 @@ package lean_align where
 @[default_target]
 lean_lib AlignmentSpecLib where
   srcDir := "spec"
-  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec]
+  roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec, `PairSpecTier, `PairSpecU]
 
 -- ──────────────────────────── codecs ────────────────────────────
 
@@ -72,12 +72,12 @@ lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the 
 @[default_target]
 lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
   srcDir := "pool/mapper"
-  roots := #[`MapperDefs, `MapperWalk, `MapperLists]
+  roots := #[`MapperGRead, `MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperEvents, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBandPrune, `MapperBandBytes, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperGenShare, `MapperPGen, `MapperK250, `MapperK250Bits, `MapperK250Sel, `MapperK250Spec, `MapperK250Chunk, `MapperK250Loops, `MapperK250Words, `MapperK250Seed]
 
 @[default_target]
 lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
   srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper]
+  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `FastGenCoverE, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenTierK, `MzPacked, `PairPacked, `MzWord, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked, `FastGenK250, `PairDispatch, `ReadTrim, `PairUnique, `PairSched, `MzView, `FastGenWordFilt, `WgPacked, `PairRegion, `PairReason, `PairJoin, `PairRouter, `PairBnB, `PairBox, `PairRegionU, `PairHits, `PairHitsKP, `PairLadder, `FastGenSupp, `FastGenBlock, `PairLadderF, `PairHybrid, `PairNear, `MateFloor, `PairGuarantee, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairExact, `TierRouter, `TierOpt]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
@@ -101,3 +101,99 @@ lean_exe «lean-align» where
 lean_exe map_bench where              -- benchmark only; prints to stdout
   srcDir := "bench"
   root := `MapBench
+
+lean_exe proto where                  -- speed prototype only (unproved)
+  srcDir := "bench"
+  root := `Proto
+
+lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
+  srcDir := "bench"
+  root := `MapBench2
+
+lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark only)
+  srcDir := "bench"
+  root := `BandBench
+
+lean_exe csr_bench where              -- CSR index build/save/load/check timing (unproved IO)
+  srcDir := "bench"
+  root := `CsrBench
+
+lean_exe par_bench where              -- parMap threads / shared-memory check only
+  srcDir := "bench"
+  root := `ParBench
+
+lean_exe stream_bench where           -- writer overlapped with mapping, benchmark only
+  srcDir := "bench"
+  root := `StreamBench
+
+lean_exe lowerr_bench where           -- benchmark only: low-error fast path vs mapWith
+  srcDir := "bench"
+  root := `LowErrBench
+
+lean_exe group_bench where            -- dedup / sort / binned pipelines vs plain streaming, benchmark only
+  srcDir := "bench"
+  root := `GroupBench
+
+lean_exe gen_try where                 -- experiments on the general fast path (unproved IO)
+  srcDir := "bench"
+  root := `GenTry
+
+lean_exe fast_bench where             -- proved fast mapper on a real genome (unproved IO)
+  srcDir := "bench"
+  root := `FastBench
+
+lean_exe layout where                 -- index layout bench (unproved)
+  srcDir := "bench"
+  root := `Layout
+
+lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer / mod-minimizer index
+  srcDir := "bench"
+  root := `ProtoSketch
+
+lean_exe mz_test where                -- randomized test: proved MzIndex lookup vs naive scan
+  srcDir := "bench"
+  root := `MzTest
+
+lean_exe proto2 where                 -- speed prototype 2: closed-form scoring (unproved)
+  srcDir := "bench"
+  root := `Proto2
+
+lean_exe micro where                  -- micro-benchmarks of Lean code patterns
+  srcDir := "bench"
+  root := `Micro
+
+lean_exe map_dump where               -- benchmark only; per-read results of the proved mapper
+  srcDir := "bench"
+  root := `MapDump
+
+lean_exe proto0 where                 -- first speed prototype, kept for comparisons (unproved)
+  srcDir := "bench"
+  root := `Proto0
+
+lean_exe k250_bench where             -- word kernels vs byte kernels on candidate windows (unproved IO)
+  srcDir := "bench"
+  root := `K250Bench
+
+lean_exe gen_pair_bench where         -- proved general-path pair mapper (pairFastGB) over a concatenated index (unproved IO)
+  srcDir := "bench"
+  root := `GenPairBench
+
+lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
+  srcDir := "bench"
+  root := `PairBench
+
+lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
+  srcDir := "bench"
+  root := `PackedBench
+
+lean_exe trim_map where               -- trimmed FASTQ pairs → proved trimmer → proved pair mapper (unproved IO)
+  srcDir := "bench"
+  root := `TrimMap
+
+lean_exe whole_genome where           -- whole genome held once: index over a view of the chromosomes (unproved IO)
+  srcDir := "bench"
+  root := `WholeGenome
+
+lean_exe seed_lab where               -- seed lookup cost on the whole genome (benchmark only, unproved IO)
+  srcDir := "bench"
+  root := `SeedLab
