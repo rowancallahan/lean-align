@@ -1318,6 +1318,36 @@ def seedVote (pk : PkMz) (offs : Array Nat) (c ws we : Nat) (X : ByteArray) (pp 
     i := j
   return some ((bd : Int) - (n : Int))
 
+/-- `seedVote` with up to `k` read starts (relative to `ws`): the most supported first, then the next
+most supported ones more than `sep` letters from those taken (bench knob WG_XHNK). -/
+def seedVoteK (pk : PkMz) (offs : Array Nat) (c ws we : Nat) (X : ByteArray) (pp : Array MzP) (k sep : Nat) : Array Int := Id.run do
+  let n := X.size
+  let m := n / 25
+  if m == 0 || k == 0 then return #[]
+  let Ls := n / m
+  let rg : RgMz := (pk, offs[c]! + ws, offs[c]! + we)
+  let mut ds : Array Nat := #[]
+  for j in [0:m] do
+    if pp[j]!.ok then
+      for e in LookG.look rg ByteArray.empty X (j * Ls) (n - j * Ls) pp[j]! do
+        ds := ds.push (e / 16)
+  if ds.isEmpty then return #[]
+  ds := ds.qsort (· < ·)
+  -- groups (count, diagonal), the larger count first (the smaller diagonal on ties, as `seedVote`)
+  let mut gs : Array (Nat × Nat) := #[]
+  let mut i := 0
+  while i < ds.size do
+    let mut j := i
+    while j < ds.size && ds[j]! == ds[i]! do j := j + 1
+    gs := gs.push (j - i, ds[i]!)
+    i := j
+  gs := gs.qsort (fun x y => x.1 > y.1 || (x.1 == y.1 && x.2 < y.2))
+  let mut out : Array Nat := #[]
+  for (_, d) in gs do
+    if out.size ≥ k then break
+    if out.all (fun e => e + sep < d || d + sep < e) then out := out.push d
+  return out.map fun (d : Nat) => ((d : Int) - (n : Int) : Int)
+
 /-- Global place `D` (read end, concatenated genome) → chromosome and start of the gapless window of
 `n` letters ending there, when it lies inside one chromosome. -/
 def locD (offs : Array Nat) (pgs : Array PGen) (D n : Nat) : Option (Nat × Nat) := Id.run do
@@ -1397,6 +1427,7 @@ structure HCfg where
   vf : Bool := true       -- near the partner without a seed in the window: 11-mer votes (else give up)
   kx : Bool := true       -- keep an exact mate (RT's unique best) in place
   ge : Nat := 12          -- the banded DP only where `gapHint` (ends of `ge` letters) flags an indel (0: always)
+  nk : Nat := 1           -- near the partner: up to `nk` seed diagonals (`seedVoteK`), the best alignment kept
 
 /-- Re-score `(vc, start, len, pen, runs)` of a read (`R` forward, `Rr` reverse) with `checkRuns`:
 the placement when the score is `pen`. -/
@@ -1485,8 +1516,22 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
       let (v, ws, we) := if x.2 == Strand.rev then (x.1.chr, x.1.start + x.1.len - min (x.1.start + x.1.len) hi, x.1.start + x.1.len)
         else (nc + x.1.chr, x.1.start, x.1.start + hi)
       let X := if v < nc then R else Rr
-      let sv := if cfg.sv then seedVote pk offs x.1.chr ws we X (if v < nc then s.ps else s.pr) else none
-      (nearY X G ws we cfg.w lim cfg.bl cfg.ge sv cfg.vf).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+      if cfg.nk ≤ 1 then
+        let sv := if cfg.sv then seedVote pk offs x.1.chr ws we X (if v < nc then s.ps else s.pr) else none
+        (nearY X G ws we cfg.w lim cfg.bl cfg.ge sv cfg.vf).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+      else Id.run do
+        let svs := if cfg.sv then seedVoteK pk offs x.1.chr ws we X (if v < nc then s.ps else s.pr) cfg.nk (2 * cfg.w) else #[]
+        if svs.isEmpty then
+          return (nearY X G ws we cfg.w lim cfg.bl cfg.ge none cfg.vf).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+        let mut best : Option (Placement × Int) := none
+        let mut lim := lim
+        for sv in svs do
+          if let some (st, len, pen, runs) := nearY X G ws we cfg.w lim cfg.bl cfg.ge (some sv) cfg.vf then
+            if let some h := chkAln pgs R Rr v st len pen runs then
+              best := some h
+              lim := pen
+              if pen == 0 then break
+        return best
     for (x1, x2) in opts do
       if prop (x1, x2) then continue
       if let some (p, _) := x1.pl then
@@ -3478,7 +3523,9 @@ def main (args : List String) : IO UInt32 := do
       let xhK := (← IO.getEnv "WG_XHK").getD "1" == "1"
       -- WG_XHVF=0: no 11-mer vote fallback near the partner
       let xhVF := (← IO.getEnv "WG_XHVF").getD "1" == "1"
-      let hcfg : HCfg := { w := xhW, r := xhR, ck := xhCK, np := xhP, dl := xhD, seeds := xhS, near := xhN, band := xhB, sv := xhV, seedAll := xhA, bl := xhL, ge := xhG, kx := xhK, vf := xhVF }
+      -- WG_XHNK: near the partner, up to this many seed diagonals (default 1: the most supported only)
+      let xhNK ← envN "WG_XHNK" 1
+      let hcfg : HCfg := { w := xhW, r := xhR, ck := xhCK, np := xhP, dl := xhD, seeds := xhS, near := xhN, band := xhB, sv := xhV, seedAll := xhA, bl := xhL, ge := xhG, kx := xhK, vf := xhVF, nk := xhNK }
       let alnX (R Rr : ByteArray) (v st mm : Nat) : Option (Placement × Int) × Bool :=
         let n := R.size
         let Rx := if v < nc then R else Rr

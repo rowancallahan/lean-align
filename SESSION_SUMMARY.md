@@ -163,6 +163,44 @@ Where the remaining drop comes from (`PAIR_PROF`, mate 1, S2):
 Results at 200k, 4 tasks, median of 3, vs WG_XH=0: wall hiseq +11.8%, nova +4.1%, mason ±0%. Class (a) within 0 of minibwa: hiseq 6.0→66.9%, nova 7.2→70.6%, mason 9.2→86.3%. T3 share of class (a): 81–83% → 10–21%. Mason T2 correct: 83.1% ours vs 89.1% minibwa. Floor/T1 violations 0. Knobs: WG_XHW/R/CK/P/D/S/N/B/V/A/L/G/K/VF. WG_XPROF prints `TIERHEUR` with per-part times.
 Lean speed notes: hot loops written as structurally recursive functions over UInt32 arguments. Beware `Array.replicate n 0` written twice (CSE shares it, so the first `set!` copies). `Array UInt64` boxes each element; use `UInt32`.
 
+## Give-up budget and heuristic effort sweep (branch `speed/budget-sweep`, bench only, 2026-10-06)
+Question: if the heuristic skips more of the repeats (lower WG_XBUD = N), can we match minibwa's quality and speed for more pairs? Mode RTX, WG_PG=4, 4 tasks. "Match" = we place both mates and our pair score (proved pen for T1/T1g, re-scored ceiling for T2) is ≤ minibwa's re-scored pair, or minibwa does not map both. Scripts: `bench/budget_sweep.py` (quality / speed / table / losses); `bench/tier_vs_mb.py` and `tier_vs_mb_report.py` come from speed/tier-vs-mb. New knob: WG_XHNK, near-partner seed diagonals (default 1, unchanged). Floor and T1/T1g violations: 0 in every run.
+- **N alone does not raise the match share.** Lowering N moves pairs from T1 to T1g/T2, and the heuristic matches about as many of them as T1 did. 20k, hiseq / nova / mason (CPU s; minibwa 9.6 / 4.8 / 4.8):
+
+  | N | 500 | 1000 | 2000 | 5000 (default) | 20000 |
+  |---|---|---|---|---|---|
+  | match all % | 91.7 / 90.7 / 96.4 | 91.7 / 90.7 / 96.5 | 91.7 / 90.8 / 96.7 | 91.8 / 90.8 / 97.0 | 91.9 / 90.8 / 97.5 |
+  | proved T1+T1g+T1gm % | 86.1 / 84.5 / 82.4 | 86.6 / 84.9 / 83.9 | 87.0 / 85.2 / 85.1 | 87.6 / 85.7 / 87.4 | 88.2 / 86.4 / 90.6 |
+  | CPU | 2.7 / 2.9 / 2.6 | 2.8 / 2.6 / 2.5 | 3.0 / 2.8 / 2.9 | 3.1 / 3.0 / 3.1 | 4.1 / 3.6 / 4.4 |
+- **Heuristic effort is what helps**, mostly through more rare seeds per mate (WG_XHR 2 → 4). Match all at 20k, N = 1000:
+  - XHR=4 alone: 92.3 / 91.6 / 97.8.
+  - Plus band 16 (`r4w`): 92.7 / 91.8 / 97.8, at the default CPU.
+  - Plus XHCK=10000 XHP=32 (`e12`): 93.0 / 92.1 / 98.0, at +10% CPU.
+  - About ±0: the bucket limit alone, XHP=32 alone, and WG_XHNK=4. Band 16 alone: +0.3 on real data.
+  - Maximum effort (XHCK=50000 XHP=64 XHR=6): 1.7–4× slower, and mason gets worse (96.7; T2 correct 78%).
+- **200k (3 interleaved rounds, medians)**: other Lean builds were running on the box, so minibwa wall times are inflated. Compare CPU.
+
+  | set | setting | wall s (×mb) | CPU s (×mb) | T1 / T1g / T1gm / T2 / T3 % | match: proved + T2 = all | (a) ≤0 / (a) T3 | mason correct (mb 98.0) |
+  |---|---|---|---|---|---|---|---|
+  | hiseq | N=5000 default | 8.76 (3.17) | 33.9 (3.04) | 82.1 / 3.6 / 1.8 / 8.8 / 3.7 | 85.7 + 6.1 = 91.8 | 98.0 / 0.9 | |
+  | hiseq | N=1000 r4w | 9.44 (2.94) | 33.1 (3.11) | 79.1 / 5.6 / 1.8 / 11.4 / 2.2 | 84.6 + 8.0 = 92.6 | 98.5 / 0.6 | |
+  | hiseq | N=1000 e12 | 9.75 (2.85) | 37.1 (2.77) | 79.1 / 5.6 / 1.8 / 11.4 / 2.1 | 84.6 + 8.4 = 93.0 | 98.6 / 0.6 | |
+  | nova | default | 8.39 (1.63) | 32.5 (1.56) | 76.0 / 7.2 / 2.3 / 9.8 / 4.6 | 83.2 + 7.5 = 90.7 | 97.6 / 1.7 | |
+  | nova | N=1000 r4w | 8.09 (1.70) | 31.3 (1.63) | 71.5 / 10.8 / 2.3 / 12.5 / 2.9 | 82.3 + 9.5 = 91.9 | 98.4 / 1.0 | |
+  | nova | N=1000 e12 | 9.50 (1.44) | 35.1 (1.45) | 71.5 / 10.8 / 2.3 / 12.6 / 2.8 | 82.3 + 9.8 = 92.1 | 98.4 / 1.0 | |
+  | mason | default | 11.09 (1.72) | 29.8 (1.64) | 84.0 / 2.9 / 0.7 / 11.1 / 1.4 | 86.9 + 10.1 = 97.0 | 98.8 / 0.9 | 96.0 (T2 83.1) |
+  | mason | N=1000 r4w | 10.66 (1.79) | 28.9 (1.69) | 79.1 / 4.2 / 0.7 / 15.9 / 0.2 | 83.2 + 14.5 = 97.7 | 99.4 / 0.1 | 96.7 (T2 84.9) |
+  | mason | N=1000 e12 | 12.99 (1.47) | 35.0 (1.39) | 79.1 / 4.2 / 0.7 / 16.0 / 0.1 | 83.2 + 14.7 = 97.9 | 99.5 / 0.1 | 96.8 (T2 84.9) |
+
+  - Best trade-off: **N = 1000, WG_XHR=4, WG_XHW=16**. Same or lower CPU than the default; match +0.7 to +1.2 points; T3 about halved; ≥ 1.5× minibwa on all three sets.
+  - Cost: the proved share (T1+T1g+T1gm) drops 1.0 / 1.0 / 3.7 points; T1 alone drops 3.0 / 4.5 / 4.9.
+  - The code defaults are not changed.
+- **What limits further gains.** With r4w at 200k, 7.4 / 8.1 / 2.3% of pairs are not matched:
+  - T1gm, 1.8 / 2.3 / 0.7%: proved within G but multimapped, so no placement is reported. Reporting the pair found as a heuristic placement would recover most of these.
+  - T2 worse than minibwa, 3.4 / 2.9 / 1.4%: 85–99% are at another place. On real data, 60% / 47% are soft-clipped by minibwa and 40% / 32% have an indel.
+  - T3, 2.2 / 2.9 / 0.2%: on real data, 77% / 54% are soft-clipped by minibwa, 15% / 17% have a mate under 50 bp after trimming, and 15% / 26% are not paired by minibwa either.
+  - Root cause: the end-to-end spec has no clipping, so adapter and chimeric ends that minibwa clips cost us penalty, and more seed effort does not fix that. End clipping in the spec (TODO (d)) is the next lever.
+
 ## Tier-1 / short-read workhorse (branch `speed/fast-proved`, 2026-10-05)
 Done (all proved, check.sh green on 58b0faf):
 - Main-path speed (body changes, equality lemmas): shapes table (`shapesT_eq`/`shapesKT_eq`; the mergeSort was 1/3 of stage K), reverse complement by table (`complTab_get`), `sbound` table (`sbound_def`), best window not re-scored (`addK`, `inv_skipP`). chr21 1 task, 250 bp both strands: T=−16 35k → ~51k reads/s, T=−12 60k → ~90k.
