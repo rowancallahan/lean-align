@@ -882,7 +882,15 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
     - **Soundness:** easy. Extra seeds only add candidates, and every candidate is still scored exactly against the reference. The pigeonhole seed coverage is unchanged, so the floor proofs still hold.
     - **Speed:** finding the true locus early gives a tight ceiling early, which prunes the other candidates. The exhaustive floor part still runs at the read's reference penalty, so the gain is mostly in candidate finding and pruning.
     - **Cost:** very little: a few extra index entries, plus one lift per hit.
-    - **Limit:** an indel above the cap stays outside the proved tiers under the reference spec, so the speedup lands in T2. Proving those reads needs the "reference + known variants" spec (graph or personal genome).
+    - **Above-cap indels can be proved (Rowan), via pass-1 certificates, under the reference spec:**
+      1. Pass 1 runs the slow exhaustive search on window W, the stretch around the indel, and stores (W, locus X, best b, floor F). Here F is a proved lower bound on W's cost at every placement other than X, with b < F.
+         - The floor must be for W itself. A floor for the whole read A does not carry over to a substring of A, because a shorter window can fit elsewhere better.
+      2. Restriction lemma: B contains W, so any placement of B whose W part is not at X costs ≥ F.
+      3. Score B at X directly: cost c ≤ b + the cost of B's other bases at X. If they match exactly, c = b.
+      4. If c < F, then X is B's unique best. This holds at caps ≥ c, using the same "unique at any caps ≥ G0" form as T1u.
+      - Pairs: pair cost = sum of mate costs ≥ 0, so pairs with mate 1 away from X cost ≥ F. Pairs with mate 1 at X need only a local search for mate 2 near X.
+      - Trust: build the table with a proved function, so every entry carries a valid floor. Pass it as an argument with that invariant. No new trusted code.
+      - Shorter windows have more repeats, so lower margins (F − b). Pass 1 should pick W as long as the typical overlap allows.
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
   - **Measure first:**
     - The exact duplicate-pair rate on 1M NovaSeq pairs.
