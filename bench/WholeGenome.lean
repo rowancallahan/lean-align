@@ -1702,13 +1702,33 @@ def main (args : List String) : IO UInt32 := do
       let gaveUpR (N : Nat) (a b : ByteArray) : Bool :=
         N < costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) || N < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)
       let fRTB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUpR N a b then none else fRT a b
+      -- RTL (bench only, exactness by `mapSpecBoth_mono` as in `mateH`): mode RT with each whole-genome
+      -- mate search run as a cap ladder WG_LADDER (default 0,4,8,12): the first rung with any hit
+      -- (unique or tie) gives the answer at the full cap; no hit at any rung: the full cap.
+      -- WG_LORD=hi: mate A = the one with the larger lookup cost (default: as RT, the cheaper).
+      let rungs := ((← IO.getEnv "WG_LADDER").getD "0,4,8,12").splitOn "," |>.filter (· ≠ "") |>.map String.toNat!
+      let lord := (← IO.getEnv "WG_LORD").getD "lo"
+      let ladM (P : Nat) (R : ByteArray) (s : kK.Prep) : MateR :=
+        (rungs.foldr (fun c (k : Unit → MateR) => fun _ =>
+          if c < P && fastT c R then
+            let x := kK.mate c R s
+            if x.1.isSome || x.2 then x else k ()
+          else k ()) (fun _ => kK.mate P R s)) ()
+      let kL : PassKer := { kK with mate := ladM }
+      let ordL : ByteArray → ByteArray → Option Bool := fun a b =>
+        if lord == "hi" then
+          some (decide (costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)))
+        else none
+      let routeL (a b : ByteArray) : Routed := routeG { rcfg with ord1 := ordL } kL kL lo hi (some a) (some b)
+      let fRTL : ByteArray → ByteArray → PairOut := fun a b => (routeL a b).out.toOpt
       let modes := modes ++ ms.filterMap fun m =>
+        if m == "RTL" then some (m, fRTL) else
         if m.startsWith "RTB" then some (m, fRTB (m.drop 3).toString.toNat!)
         else if m.startsWith "PRB" then some (m, fRB (m.drop 3).toString.toNat!)
         else if m.startsWith "HB" then some (m, fHB (m.drop 2).toString.toNat!) else none
       -- WG_BUDT=N1,N2,…: per pair, given up at N (RTB gate) or not, and what mode RT gave (mapped / tie / other)
       let budT := ((← IO.getEnv "WG_BUDT").getD "").splitOn "," |>.filter (· ≠ "") |>.map String.toNat!
-      let okLen : ByteArray → Bool := if ms.all (fun m => m == "RT" || m.startsWith "RTB") then (fun _ => true) else okLen
+      let okLen : ByteArray → Bool := if ms.all (fun m => m == "RT" || m == "RTL" || m.startsWith "RTB") then (fun _ => true) else okLen
       let tally := if (← IO.getEnv "WG_REASONS").getD "0" == "1" then [("router", fun a b => showR (route a b))] else []
       -- WG_UKIND=1: answer kinds of mode U (mapped / pairTie / none)
       let tally := if (← IO.getEnv "WG_UKIND").getD "0" == "1" then tally ++ [("ukind", fun a b =>
@@ -1880,6 +1900,60 @@ def main (args : List String) : IO UInt32 := do
             let c := Float.ofNat (max v[0]! 1)
             let us := fun (x : Nat) => Float.ofNat x / c / 1000
             say s!"  MPROF {key}: pairs {v[0]!}, total {secs 0 v[1]!} s | RT {us v[1]!} | prep {us v[2]!}, order {us v[3]!}, lookups {us v[4]!}, phase1 {us (v[5]! - v[4]!)}, stageK {us v[6]!}, region {us v[7]!} | sum {us (v[2]! + v[3]! + v[5]! + v[6]! + v[7]!)} | seeds {Float.ofNat v[8]! / c}")]
+      -- WG_SLOW=N: the first N pairs, one thread; pairs whose RT time exceeds WG_SLOWUS (1000) us are
+      -- classified by each mate's whole-genome answer at its pass-1 cap (unique / tie at the best
+      -- penalty, none), which mate RT searched first, and RT's answer; times of RT and of RTL
+      let slN ← envN "WG_SLOW" 0
+      let slUs ← envN "WG_SLOWUS" 1000
+      let rprofL : List (String × (Array ByteArray → Array ByteArray → IO Unit)) := if slN == 0 then rprofL else rprofL ++
+        [("slow pairs", fun (r1 r2 : Array ByteArray) => do
+          let gb := pgs ++ pgs
+          let info (P : Nat) (R : ByteArray) (s : PrepM MzP) : String :=
+            let b := mapChromsGBFG (kerHKG R s.K1 gb gb) (kerHKG s.Rr s.K2 gb gb) P pk ByteArray.empty offs pgs R s.Rr s.ps s.pr
+            if b.pen > P then "none" else
+            match decodeP pgs.size P b with
+            | some _ => s!"u{b.pen}"
+            | none => s!"t{b.pen}"
+          let mut tab : Std.HashMap String (Array Nat) := {}
+          let mut all : Array Nat := #[0, 0, 0, 0]
+          for k in [0:min slN r1.size] do
+            let R1 := r1[k]!
+            let R2 := r2[k]!
+            let t0 ← IO.monoNanosNow
+            let o ← (← IO.mkRef (route R1 R2)).get
+            let t1 ← IO.monoNanosNow
+            let oL ← (← IO.mkRef (routeL R1 R2)).get
+            let t2 ← IO.monoNanosNow
+            if !(o.out == oL.out) then say s!"  RTL MISMATCH pair {k}"
+            all := #[all[0]! + 1, all[1]! + (t1 - t0), all[2]! + (t2 - t1), all[3]!]
+            if t1 - t0 ≤ slUs * 1000 then continue
+            all := all.set! 3 (all[3]! + 1)
+            let P1 := rcfg.cap1 R1.size
+            let P2 := rcfg.cap1 R2.size
+            let mut ex : Array Nat := #[0, 0, 0, 0, 0, 0]
+            let key ← if !fastT P1 R1 || !fastT P2 R2 then pure s!"short | {showR o}" else do
+              let s1 : PrepM MzP := prepMate pk R1
+              let s2 : PrepM MzP := prepMate pk R2
+              let sw := decide (costP pk P2 s2 < costP pk P1 s1)
+              let (iA, iB) := if sw then (info P2 R2 s2, info P1 R1 s1) else (info P1 R1 s1, info P2 R2 s2)
+              let (RA, sA, PA, RB, sB, PB) := if sw then (R2, s2, P2, R1, s1, P1) else (R1, s1, P1, R2, s2, P2)
+              -- times: A at its cap, A at cap 0, B at its cap, B at cap 0 (genome-wide); lookup costs
+              let u0 ← IO.monoNanosNow
+              let _ ← (← IO.mkRef (kK.mate PA RA sA)).get
+              let u1 ← IO.monoNanosNow
+              let _ ← (← IO.mkRef (kK.mate 0 RA sA)).get
+              let u2 ← IO.monoNanosNow
+              let _ ← (← IO.mkRef (kK.mate PB RB sB)).get
+              let u3 ← IO.monoNanosNow
+              let _ ← (← IO.mkRef (kK.mate 0 RB sB)).get
+              let u4 ← IO.monoNanosNow
+              ex := #[u1 - u0, u2 - u1, u3 - u2, u4 - u3, costP pk PA sA, costP pk PB sB]
+              pure s!"A {iA} B {iB} | {showR o}"
+            tab := tab.insert key (((tab.getD key #[0, 0, 0, 0, 0, 0, 0, 0, 0]).zip (#[1, t1 - t0, t2 - t1] ++ ex)).map fun (a, b) => a + b)
+          say s!"  SLOW all pairs {all[0]!}: RT {secs 0 all[1]!} s, RTL {secs 0 all[2]!} s; slow (> {slUs} us in RT) {all[3]!}"
+          let rows := tab.toArray.qsort (fun a b => a.2[1]! > b.2[1]!)
+          for (key, v) in rows do
+            say s!"  SLOW {key}: pairs {v[0]!}, RT {secs 0 v[1]!} s, RTL {secs 0 v[2]!} s; A {secs 0 v[3]!} A0 {secs 0 v[4]!} B {secs 0 v[5]!} B0 {secs 0 v[6]!} costA {v[7]!} costB {v[8]!}")]
       -- WG_PPROF=N: pass-2 cost of the first N pairs, one thread, by pass-1 reason: whole pass 2,
       -- and its parts (genome mate at the pass-2 cap and at the pass-1 cap, region, hinted mate B)
       let ppN ← envN "WG_PPROF" 0
