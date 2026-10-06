@@ -320,7 +320,8 @@ def CigarOk (g : Genome) (m : List Char) (x : Placement × Int) (runs : List (St
 /-- What a claimed ceiling means: a placement within it exists; a reported alignment is a real one. -/
 def CeilEv (g : Genome) (m : List Char) (t : MateX) : Prop :=
   t.ok = true → hitsBoth sc0 (-(t.pH : Int)) g m ≠ [] ∧
-    (t.cg = true → ∃ x, t.pl = some x ∧ x.2 = -(t.pH : Int) ∧ CigarOk g m x t.runs)
+    (t.cg = true → ∃ x, t.pl = some x ∧ x.2 = -(t.pH : Int) ∧ CigarOk g m x t.runs) ∧
+    ∀ x, t.pl = some x → x.2 = -(t.pH : Int) ∧ ∃ s, x.2 ≤ s ∧ (x.1, s) ∈ hitsBoth sc0 x.2 g m
 
 /-- A ceiling (tier 2). -/
 def CeilOk (g : Genome) (m : List Char) (t : MateX) : Prop := t.ok = true ∧ CeilEv g m t
@@ -657,6 +658,20 @@ theorem chkCand_sound (pgs : Array PGen) (g : Genome) (hg : GenomeBytes (pgs.map
   exact ⟨hw, hs⟩
 
 /-- A real alignment with score `s` ⇒ the placement scores at least `s`. -/
+theorem cigar_mem {g : Genome} {m : List Char} {x : Placement × Int} {runs : List (Step × Nat)}
+    (h : CigarOk g m x runs) : ∃ s, x.2 ≤ s ∧ (x.1, s) ∈ hitsBoth sc0 x.2 g m := by
+  obtain ⟨ys, hws, hw, hs⟩ := h
+  obtain ⟨⟨path, bs⟩, hb⟩ := getBestAlignment_returns_some sc0 (strandRead m x.1.2) ys
+  have hle := getBestAlignment_returns_a_maximum_score sc0 _ ys path bs _ hb hw
+  have hsc : strandScore g m x.1.2 x.1.1 = some bs := by
+    have : windowScore sc0 (strandRead m x.1.2) g x.1.1 = some bs := by
+      unfold windowScore; rw [hws]; simp only; rw [hb]
+    cases hst : x.1.2 <;> rw [hst] at this <;> exact this
+  refine ⟨bs, by omega, ?_⟩
+  rw [mem_hitsBoth_T]
+  refine ⟨?_, hsc, by omega⟩
+  cases hst : x.1.2 <;> rw [hst] at hsc <;> exact mem_allWindows_of_score _ _ _ _ _ hsc
+
 theorem cigar_hit {g : Genome} {m : List Char} {x : Placement × Int} {runs : List (Step × Nat)}
     (h : CigarOk g m x runs) : hitsBoth sc0 x.2 g m ≠ [] := by
   obtain ⟨ys, hws, hw, hs⟩ := h
@@ -695,7 +710,7 @@ theorem upA_inv {R : ByteArray} {m : List Char} (hr : Encodes R m) {x : MateX} (
   · refine ⟨hx.1, fun hok => ?_⟩
     simp only [MateX.ok, Bool.and_eq_true, decide_eq_true_eq] at hok
     obtain ⟨hc, -⟩ := chkCand_sound _ g hg R m hr _ _ hok.2
-    exact ⟨cigar_hit hc, fun _ => ⟨_, rfl, rfl, hc⟩⟩
+    exact ⟨cigar_hit hc, fun _ => ⟨_, rfl, rfl, hc⟩, fun y hy => by cases hy; exact ⟨rfl, cigar_mem hc⟩⟩
   · exact hx
 
 include hg in
@@ -711,9 +726,11 @@ theorem applyC_inv {R : ByteArray} {m : List Char} (hr : Encodes R m) {x : MateX
       have e : -(((-c.pl.2).toNat : Nat) : Int) = c.pl.2 := by omega
       refine ⟨hx.1, fun _ => ?_⟩
       show hitsBoth sc0 (-(((-c.pl.2).toNat : Nat) : Int)) g m ≠ [] ∧
-        (true = true → ∃ y, some c.pl = some y ∧ y.2 = -(((-c.pl.2).toNat : Nat) : Int) ∧ CigarOk g m y c.runs)
+        (true = true → ∃ y, some c.pl = some y ∧ y.2 = -(((-c.pl.2).toNat : Nat) : Int) ∧ CigarOk g m y c.runs) ∧
+        (∀ y, some c.pl = some y → y.2 = -(((-c.pl.2).toNat : Nat) : Int) ∧
+          ∃ s, y.2 ≤ s ∧ (y.1, s) ∈ hitsBoth sc0 y.2 g m)
       rw [e]
-      exact ⟨cigar_hit hcg, fun _ => ⟨_, rfl, rfl, hcg⟩⟩
+      exact ⟨cigar_hit hcg, fun _ => ⟨_, rfl, rfl, hcg⟩, fun y hy => by cases hy; exact ⟨rfl, cigar_mem hcg⟩⟩
     · rw [if_neg hc]; exact hx
 
 include hg in
@@ -731,10 +748,14 @@ theorem mateT_inv (hcut : cutOk G offs ns = true) (hchk : Mz.check2P ix G = true
     obtain ⟨T, hT⟩ := hkn a rfl
     have ha := mapSpecBoth_mem hT
     have h0 := hitsBoth_nonpos _ _ _ _ ha
-    refine ⟨mateFloor_best hT, fun _ => ⟨?_, fun h => by simp at h⟩⟩
     have e : -(((-a.2).toNat : Nat) : Int) = a.2 := by omega
-    show hitsBoth sc0 (-(((-a.2).toNat : Nat) : Int)) g m ≠ []
-    rw [e]; exact hits_self ha
+    refine ⟨mateFloor_best hT, fun _ => ⟨?_, fun h => by simp at h, fun y hy => ?_⟩⟩
+    · show hitsBoth sc0 (-(((-a.2).toNat : Nat) : Int)) g m ≠ []
+      rw [e]; exact hits_self ha
+    · cases hy
+      refine ⟨e.symm, a.2, Int.le_refl _, ?_⟩
+      have ha' := (mem_hitsBoth_T _ _ _ _ _).mp ha
+      exact (mem_hitsBoth_T _ _ _ _ _).mpr ⟨ha'.1, ha'.2.1, Int.le_refl _⟩
   | none =>
     have hE := mateFloor_look g ix G offs ns hcut hg hchk R m hr
     have I0 : MInv g m (mateB0 ((ix, G) : PkMz) R (prepMate ((ix, G) : PkMz) R) cap c nh gx) := by
@@ -756,7 +777,7 @@ theorem mateT_inv (hcut : cutOk G offs ns = true) (hchk : Mz.check2P ix G = true
       cases capC
       · exact I0
       · rw [if_pos rfl]
-        exact ⟨I0.1, fun _ => ⟨hcc rfl, fun h => by simp [mateB0] at h⟩⟩
+        exact ⟨I0.1, fun _ => ⟨hcc rfl, fun h => by simp [mateB0] at h, fun y h => by simp [mateB0] at h⟩⟩
     generalize capStep _ c capC = x1 at I1
     have I2 : MInv g m (gxStep (cutAll G offs ns) R (revCompK R) x1 gx) := by
       unfold gxStep

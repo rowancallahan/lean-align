@@ -3344,7 +3344,18 @@ def main (args : List String) : IO UInt32 := do
         | _, _ => none
       let xdump : List (String × (ByteArray → ByteArray → String)) :=
         if (← IO.getEnv "WG_TIEROUT").getD "0" == "1" then
-          [("tiers", fun a b => let t := tierP a b; s!"{t.tagStr}\t{t.m1.show}\t{t.m2.show}")] else []
+          [("tiers", fun a b => let t := tierP a b
+            let m (x : Mate) := match x with | .one => "1" | .two => "2"
+            let w := match t.why with
+              | none => "gated"
+              | some (.trimmedAway x) => s!"trimmed{m x}"
+              | some (.tooShort x) => s!"short{m x}"
+              | some (.noHit x) => s!"noHit{m x}"
+              | some (.tie x) => s!"tie{m x}"
+              | some (.noPartner x) => s!"noPartner{m x}"
+              | some .notProper => "notProper"
+              | some .noPair => "noPair"
+            s!"{t.tagStr}\t{t.m1.show}\t{t.m2.show}\t{w}\t{t.g0}\t{(t.pf.map toString).getD "-"}")] else []
       let modes := modes ++ ms.filterMap fun m =>
         if m == "RTL" then some (m, fRTL) else
         if m == "RTX" then some ("RTX", fRTX) else

@@ -163,6 +163,23 @@ Where the remaining drop comes from (`PAIR_PROF`, mate 1, S2):
 Results at 200k, 4 tasks, median of 3, vs WG_XH=0: wall hiseq +11.8%, nova +4.1%, mason ±0%. Class (a) within 0 of minibwa: hiseq 6.0→66.9%, nova 7.2→70.6%, mason 9.2→86.3%. T3 share of class (a): 81–83% → 10–21%. Mason T2 correct: 83.1% ours vs 89.1% minibwa. Floor/T1 violations 0. Knobs: WG_XHW/R/CK/P/D/S/N/B/V/A/L/G/K/VF. WG_XPROF prints `TIERHEUR` with per-part times.
 Lean speed notes: hot loops written as structurally recursive functions over UInt32 arguments. Beware `Array.replicate n 0` written twice (CSE shares it, so the first `set!` copies). `Array UInt64` boxes each element; use `UInt32`.
 
+## T2 pairs: why, and a best proper pair proved from the existing output (branch `speed/t2-exact`, 2026-10-06)
+Proofs only; no runtime change (the mapper, RT, `pairGQC`, `heurP`, the gate and `fRTX` are untouched). The WG_TIEROUT=1 dump also prints RT's reason (`gated` = budget gate), `g0` and `pf`.
+- **Why T2** (`bench/t2_opt.py cause`; 200k; share of T2):
+
+  | set | T2 % of pairs | gated | noHit | noPartner | tie | short | notProper |
+  |---|---|---|---|---|---|---|---|
+  | HiSeq | 8.8 | 26.7 | 27.4 | 19.7 | 16.7 | 8.7 | 0.9 |
+  | NovaSeq | 9.8 | 31.7 | 26.0 | 21.8 | 11.9 | 7.5 | 1.0 |
+  | mason | 11.1 | 49.7 | 15.3 | 12.2 | 19.7 | 3.0 | 0.1 |
+
+  `noHit` / `noPartner` pairs have a mate past its cap (pH1 + pH2 ≤ 16 for only 2–15% of them); `tie` and `gated` pairs mostly have pH1 + pH2 ≤ 16 (61–82%). The existing output proves nothing about pair-level uniqueness: RT's `tie` says only "≥ 2 best placements of that mate" (`ReasonOk`), and RT keeps no hit list. Uniqueness needs a new enumeration, which is a runtime change.
+- **Proved (`codecs/TierOpt.lean`, `t2Opt_sound`, standard axioms):** take a T2 pair whose two ceiling placements form a proper pair with pH1 + pH2 ≤ `pairFloor` = max(cd1 + cd2, `pfFloor` G0). Then that pair is a proper pair of the specification at its exact scores, and no proper pair at any caps scores higher. This makes it a best proper pair, though it may tie with another. `pfFloor` turns the guarantee's "every proper pair < −G0" into ≤ −4 (G0 < 4) or ≤ −8 (G0 < 8): scores above −8 are multiples of 4 (`strandScore_mul4`).
+  - The proof needs one strengthening of `TierOk`: `CeilEv` now also states that every reported ceiling placement has score −pH and spec score ≥ −pH. This covers RT's unique best (cg = false) as well as re-checked CIGARs (`cigar_mem`).
+- **Certified share** (`t2Opt`, offline on the dumps): 200k HiSeq 2,623 = 15.0% of T2 (1.31% of pairs), NovaSeq 2,792 = 14.2% (1.40%), mason 5,815 = 26.2% (2.91%). At 20k: 16.5% / 13.5% / 24.7%. By cause (200k, HiSeq / NovaSeq / mason): gated 1200 / 1748 / 3937, tie 787 / 677 / 1421, short 545 / 287 / 335, noHit 53 / 35 / 118, notProper 38 / 45 / 4, noPartner 0.
+- **vs minibwa** (`bench/tier_vs_mb.py join` on the certified lines, then `t2_opt.py mb`): 0 certified pairs beaten by a minibwa pair that is proper under our rule. minibwa is better on 17 HiSeq and 27 NovaSeq pairs, all of them non-proper under our rule. minibwa is equal on 2520 / 2651 / 5779 pairs, of which 434 / 406 / 684 are at a different place (ties, as the theorem allows).
+- **Not done (needs approval, runtime change):** (1) report `t2Opt` pairs in RTX as "best, may tie". This is O(1) per pair. (2) Pair uniqueness for T2 pairs with c = pH1 + pH2 ≤ 16: one enumeration at G = c (`hitsKPF` for one mate, `hitsKPFN` near it for the other, then `bestOfPairs`; proof from `hitsKPF_mem`, `hitsKPFN_near`, `pp_near_*` and `bestOfPairs_restrict`, since `pairGQC` itself is limited to G ≤ 7 by its gapless partner scan). It would run under a bucket budget.
+
 ## Tier-1 / short-read workhorse (branch `speed/fast-proved`, 2026-10-05)
 Done (all proved, check.sh green on 58b0faf):
 - Main-path speed (body changes, equality lemmas): shapes table (`shapesT_eq`/`shapesKT_eq`; the mergeSort was 1/3 of stage K), reverse complement by table (`complTab_get`), `sbound` table (`sbound_def`), best window not re-scored (`addK`, `inv_skipP`). chr21 1 task, 250 bp both strands: T=−16 35k → ~51k reads/s, T=−12 60k → ~90k.
