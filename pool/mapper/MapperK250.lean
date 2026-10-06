@@ -95,6 +95,67 @@ theorem uget_get! (w : ByteArray) (i : USize) (h : i.toNat < w.size) : w.uget i 
     rw [getElem!_pos bs i.toNat h]
     rfl
 
+theorem usz_succ (i n : USize) (h : i.toNat < n.toNat) : (i + 1).toNat = i.toNat + 1 := by
+  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+  have := USize.toNat_lt_size n
+  rw [USize.toNat_add, USize.toNat_one, ← hs, Nat.mod_eq_of_lt (by omega)]
+
+theorem usz_small (m : Nat) (h : m ≤ 256) : m.toUSize.toNat = m := by
+  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+  have : 2 ^ 32 ≤ USize.size := by
+    rw [hs]; exact Nat.pow_le_pow_right (by omega) (by cases System.Platform.numBits_eq <;> omega)
+  rw [Nat.toUSize_eq, USize.toNat_ofNat', ← hs, Nat.mod_eq_of_lt (by omega)]
+
+/-- `packLoop` on a machine-word index `i` below `n` (`n` the read length; `packLoopU_eq`). -/
+def packLoopU (R : ByteArray) (n : USize) (hn : n.toNat = R.size) (i : USize) (sh w : UInt64)
+    (acc : Array UInt64) (ok : Bool) : RP :=
+  if h : i < n then
+    let t := codeTab.get! (R.uget i (by rw [← hn]; exact h)).toNat
+    let w := w ||| (t &&& 3).toUInt64 <<< sh
+    if sh == 62 then packLoopU R n hn (i + 1) 0 0 (acc.push w) (ok && decide (t < 4))
+    else packLoopU R n hn (i + 1) (sh + 2) w acc (ok && decide (t < 4))
+  else ⟨acc.push w, ok⟩
+termination_by n.toNat - i.toNat
+decreasing_by
+  all_goals
+    have h1 : i.toNat < n.toNat := h
+    rw [usz_succ i n h1]; omega
+
+theorem packLoopU_eq (R : ByteArray) (n : USize) (hn : n.toNat = R.size) :
+    ∀ k (i : USize) sh w acc ok, R.size - i.toNat = k →
+      packLoopU R n hn i sh w acc ok = packLoop R i.toNat sh w acc ok := by
+  intro k
+  induction k with
+  | zero =>
+    intro i sh w acc ok hk
+    have h' : ¬ i < n := by
+      intro h; have : i.toNat < n.toNat := h; omega
+    have h'' : ¬ i.toNat < R.size := by omega
+    rw [packLoopU, packLoop, dif_neg h', if_neg h'']
+  | succ k ih =>
+    intro i sh w acc ok hk
+    have hlt : i.toNat < R.size := by omega
+    have h' : i < n := by show i.toNat < n.toNat; omega
+    have h2 : (i + 1).toNat = i.toNat + 1 := usz_succ i n (by omega)
+    rw [packLoopU, packLoop, dif_pos h', if_pos hlt, uget_get!]
+    simp only []
+    split
+    · rw [ih (i + 1) _ _ _ _ (by omega), h2]
+    · rw [ih (i + 1) _ _ _ _ (by omega), h2]
+
+/-- `packRP` on machine-word indices (`packRP_eqU`). -/
+def packRPU (R : ByteArray) : RP :=
+  if h : R.size ≤ 256 then packLoopU R R.size.toUSize (usz_small _ h) 0 0 0 (Array.emptyWithCapacity 9) true
+  else ⟨#[], false⟩
+
+/-- Compiled code runs `packRPU`. -/
+@[csimp] theorem packRP_eqU : @packRP = @packRPU := by
+  funext R
+  unfold packRP packRPU
+  split
+  · next h => rw [packLoopU_eq R _ _ _ 0 _ _ _ _ rfl]; rfl
+  · rfl
+
 @[csimp] theorem gword_eq_gwordF : @gword = @gwordF := by
   funext w u
   unfold gwordF gwordF.gwordS gword
