@@ -408,6 +408,85 @@ Done and proved: 1 closed-form scoring; 2 rarest-seed exact shortcut (smallest b
     - On mason that is ≤ 0.1 s of 4.4 s (1 thread); the near-exact path is not where the gap is.
 - Mode H with the same gate (mason 20k): HB1000 kept 15,428, HB2000 15,793, vs PRB1000 15,224 and PRB2000 15,572; PR 17,413 and H 17,859 at ∞. Mode H places 8 of its 17,859 mason pairs wrongly; PR and RT place 0 wrongly.
 
+### Tiered certificate check (mode RTX; bench only, no new proofs; branch `speed/tiers`, 2026-10-06)
+Every pair gets a tier with what was proved about it (`bench/WholeGenome.lean`, `WG_MODES=RTX`; dump `WG_TIEROUT=1`, profile `WG_XPROF=N`).
+- Tiers:
+  - T1: RT mapped (unique proper pair, proved).
+  - T1g: pair-level guarantee found the unique proper pair with combined penalty ≤ G.
+  - T1gm: a second qualifying pair within G was found (a proved multimapping tie; skipped, not reported).
+  - T1t / T1d: tie / discordant (ladder only).
+  - T2: over the cap, with an upper bound p from a re-scored CIGAR (`checkRuns`).
+  - T3: given up. Suffix x = the pigeonhole does not apply (a mate under 25 bp, tooShort).
+- Gate: RTB (`gaveUpR` N on `costP(cap1F)`) skips RT for expensive pairs; those go straight to the guarantee.
+- **Pair-level guarantee G ∈ {0, 4}** (`pairGX`; proper pairs as in pairSpecUT, dcost 0):
+  - Total ≤ 4 means one mate is perfect, and a gap costs ≥ 8, so all hits are gapless.
+  - Candidates by pigeonhole on the 25-letter seeds:
+    - 0 mismatches: intersection of the 2 rarest buckets;
+    - 1 mismatch: union of the pairwise intersections of the 3 rarest.
+  - Buckets are read with `rawLook` (no genome reads; a sound superset), then each candidate is verified on the genome.
+  - The mate with fewer candidates (summed sizes of its smallest buckets, free) is enumerated. The partner is checked by a letter scan of its `regionB` window (≤ 1 kb) with the remaining mismatches.
+  - Stops at the second qualifying pair. There is no limit L.
+- **Grid4** (20k pairs per set, 4 tasks, wall / CPU in s; cap 16, the expensive T2 DP / region search off). "lean" = guarantee only (`WG_XPERF=0 WG_XFREE=0`). Others add mate-level perfect hits and free bounds.
+
+  | config | mason | NovaSeq | HG002 |
+  |---|---|---|---|
+  | RT | 1.367 / 5.19 | 0.881 / 3.45 | 1.059 / 4.12 |
+  | RTB60000 | 1.244 / 4.83 | 0.786 / 3.11 | 0.858 / 3.35 |
+  | G0, N 5k | 0.886 / 3.47 | 1.148 / 4.33 | 1.226 / 4.76 |
+  | G0, N 20k | 1.271 / 4.97 | 1.351 / 5.16 | 1.412 / 5.48 |
+  | G4, N 5k | 0.973 / 3.80 | 1.367 / 5.21 | 1.366 / 5.23 |
+  | G4, N 20k | 1.273 / 5.00 | 1.488 / 5.75 | 1.516 / 5.89 |
+  | **G4, N 5k lean** | **0.744 / 2.89** | **0.620 / 2.38** | **0.722 / 2.81** |
+  | G4, N 20k lean | 1.244 / 4.83 | 0.887 / 3.43 | 0.909 / 3.55 |
+  | G0, N 20k lean | 1.021 / 3.98 | 0.702 / 2.69 | 0.853 / 3.30 |
+  | G4, N 20k + ladder | 1.78 | 2.25 | 2.15 |
+  | minibwa (mapping only) | ~1.18 | ~1.24 | ~2.32 |
+
+- **Speed target (wall within 5% of RT on every set).**
+  - Met by the lean configs, which are faster than RT on all three sets.
+  - Missed by the full configs on NovaSeq and HG002.
+  - Where the time goes (NovaSeq G4 N 5k, 1 thread): gate + RT 1.17 s, guarantee 0.86 s, mate-level perfect hits 1.60 s, free bounds 0.83 s. The guarantee itself is not the problem.
+- **Guarantee cost** (1 thread):
+  - CPU: G0 mason 0.08–0.10 s, NovaSeq 0.27–0.33, HG002 0.16–0.18; G4 0.53–0.59 / 0.79–0.89 / 0.52–0.61.
+  - Candidates checked per pair: p50 0–1; p99 9–176 (G0), ~770–1056 (G4); max 775–62,975 (G0), 4198–10,094 (G4).
+  - Worst pair, G4 NovaSeq: 63–79 ms, mates 150 / 93 bp, 3790 candidates checked, none ≤ G.
+  - Worst pair, G0 NovaSeq: 19–22 ms, mates 49 / 54 bp (two seeds each, large buckets), 62,963 candidates.
+  - Blow-ups, G4 NovaSeq: 26–30 pairs over 5 ms take 0.36–0.43 s, about 45% of the guarantee time.
+- **Checks**:
+  - Lost-at-≤G against the RT dump: **0 lost in every config**. RT pairs with total ≤ G: G0 mason 1303, NovaSeq 10,683, HG002 9132; G4 4717 / 13,981 / 12,756.
+  - Every such pair is T1 / T1g at RT's placement, or T1gm.
+  - mason wrong placements: **T1 0 in every config**; T1g 2 at G4, 0 at G0. T1gm (skipped) pairs that are off the truth: 18 at G0, 95 at G4.
+  - Pairs where the guarantee does not apply (x; short mates): G0 NovaSeq 135, HG002 201, mason 0; G4 328 / 354 / 0.
+- **Tier %**:
+
+  | config | set | T1 | T1g | T1gm | T1t | T1d | T2 | T3 |
+  |---|---|---|---|---|---|---|---|---|
+  | G4 N 5k lean | mason | 83.73 | 2.94 | 0.76 | – | – | – | 12.58 |
+  | G4 N 5k lean | NovaSeq | 76.20 | 6.48 | 2.52 | – | – | – | 14.80 |
+  | G4 N 5k lean | HG002 | 82.22 | 2.61 | 1.82 | – | – | – | 13.35 |
+  | G4 N 20k + ladder | mason | 89.64 | 1.68 | 0.76 | 3.57 | 0.07 | 4.12 | 0.18 |
+  | G4 N 20k + ladder | NovaSeq | 80.71 | 3.26 | 2.52 | 2.40 | 0.70 | 6.99 | 3.43 |
+  | G4 N 20k + ladder | HG002 | 84.56 | 1.42 | 1.82 | 2.52 | 0.28 | 6.90 | 2.51 |
+
+  - Lean T3 mates carry only the pair-level bound (> G). There are 4264 mason, 4242 NovaSeq and 3778 HG002 such mates at N 5k.
+  - Mates under 25 bp after trimming are tooShort with no bound possible: NovaSeq 137, HG002 204.
+- **minibwa** (first 20k pairs, both mates aligned):
+
+  | set | MAPQ ≥ 20 | MAPQ ≥ 1 | all |
+  |---|---|---|---|
+  | mason | 96.64% (wrong 1) | 97.44% (wrong 19) | 100% (wrong 369) |
+  | NovaSeq | 91.78% | 94.77% | 98.95% |
+  | HG002 | 92.84% | 95.72% | 99.50% |
+
+- **Earlier designs, dropped for speed**:
+  - Per-mate cap ladder (0, 4, 8, 12, 16 under a `costP` budget) plus T2 DP / region DP: 1.5–7× RT. Over the cap grid {8, 12, 16} × N {20k, 60k, ∞} it was 1.5–6.7× RT; cap 8 was slower on mason (15 s CPU against 5.4).
+  - The guaranteed cap-0 rung read the genome for each bucket slot (`okAt`, ~200 ns per slot): 158 ms on satellite reads. This led to `rawLook` and the pair-level design.
+- **Free upper bounds** (BK 500, top 16 diagonals):
+  - hamW (gapless) = p for ~76% of over mates.
+  - 4·(n − U) and the chain bound (4·uncovered + Σ(6 + 2|Δ|)) are loose: median excess ~330.
+  - 0 re-score failures.
+  - Cost: 2.1% of RT on mason, ~15% on NovaSeq (over the 3% target).
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.

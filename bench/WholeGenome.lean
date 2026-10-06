@@ -5,6 +5,7 @@ import PairRegion
 import ReadTrim
 import PairRouter
 import PairNear
+import AlignmentCigarCheck
 
 /-!
 Benchmark only (unproved IO).  Whole genome with the genome held once
@@ -158,6 +159,514 @@ def loadGenome (files : List String) : IO (Array ByteArray × Array Nat × GV) :
   assert! ok
   return (gbs, offs, V)
 
+
+/-! ## Tiered certificate check (bench only, unproved heuristic search; each reported over-cap
+alignment is re-scored by the proved checker `AlignmentSpec.checkRuns`) -/
+
+/-- Semi-global affine DP of the whole read `R` in the window `[ws, we)` of `G` (free ends in the
+genome), sc0 penalties (mismatch 4, gap 6 + 2L): start, length, penalty and the runs, or `none`. -/
+def semiDP (R : ByteArray) (G : PGen) (ws we : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
+  let n := R.size
+  let we := min we G.n
+  if we ≤ ws || n == 0 then return none
+  let cols := we - ws + 1
+  let INF : Nat := 1000000
+  let mut H : Array Nat := Array.replicate ((n + 1) * cols) 0
+  let mut E : Array Nat := Array.replicate ((n + 1) * cols) INF
+  let mut F : Array Nat := Array.replicate ((n + 1) * cols) INF
+  for i in [1:n + 1] do
+    let ri := R.get! (i - 1)
+    let k0 := i * cols
+    let f0 := min (H[k0 - cols]! + 8) (F[k0 - cols]! + 2)
+    F := F.set! k0 f0
+    H := H.set! k0 f0
+    for j in [1:cols] do
+      let k := k0 + j
+      let e := min (H[k - 1]! + 8) (E[k - 1]! + 2)
+      let f := min (H[k - cols]! + 8) (F[k - cols]! + 2)
+      let d := H[k - cols - 1]! + (if ri == G.get (ws + j - 1) then 0 else 4)
+      E := E.set! k e
+      F := F.set! k f
+      H := H.set! k (min d (min e f))
+  -- best end
+  let mut bj := 0
+  let mut bv := INF
+  for j in [0:cols] do
+    let v := H[n * cols + j]!
+    if v < bv then
+      bv := v
+      bj := j
+  -- traceback (0 = H, 1 = E, 2 = F)
+  let mut i := n
+  let mut j := bj
+  let mut st : Nat := 0
+  let mut steps : List AlignmentSpec.Step := []
+  let mut fuel := 4 * (n + cols) + 8
+  while i > 0 && fuel > 0 do
+    fuel := fuel - 1
+    let k := i * cols + j
+    if st == 0 then
+      if j > 0 && H[k]! == H[k - cols - 1]! + (if R.get! (i - 1) == G.get (ws + j - 1) then 0 else 4) then
+        steps := .diag :: steps
+        i := i - 1
+        j := j - 1
+      else if j > 0 && H[k]! == E[k]! then st := 1
+      else st := 2
+    else if st == 1 then
+      steps := .gapX :: steps
+      let ext := j > 1 && E[k]! == E[k - 1]! + 2
+      j := j - 1
+      if !ext then st := 0
+    else
+      steps := .gapY :: steps
+      let ext := i > 1 && F[k]! == F[k - cols]! + 2
+      i := i - 1
+      if !ext then st := 0
+  if i > 0 then return none
+  let runs := steps.foldr (fun s acc => match acc with
+    | (t, c) :: rest => if s == t then (t, c + 1) :: rest else (s, 1) :: acc
+    | [] => [(s, 1)]) []
+  return some (ws + j, bj - j, bv, runs)
+
+/-- The proved checker on the runs: the read against the genome window. -/
+def rescoreRuns (R : ByteArray) (G : PGen) (st len : Nat) (runs : List (AlignmentSpec.Step × Nat)) : Option Int :=
+  let xa : Array Char := (List.range R.size).toArray.map fun i => Char.ofNat (R.get! i).toNat
+  let ya : Array Char := (List.range len).toArray.map fun i => Char.ofNat (G.get (st + i)).toNat
+  AlignmentSpec.checkRuns sc0 xa ya runs ⟨0, 0, none, 0⟩
+
+@[inline] def baseCode (b : UInt8) : Nat :=
+  if b == 65 then 0 else if b == 67 then 1 else if b == 71 then 2 else if b == 84 then 3 else 4
+
+/-- k-mers (code, offset) of `len` letters from `get`, skipping non-ACGT. -/
+def kmersOf (get : Nat → UInt8) (len k : Nat) : Array (Nat × Nat) := Id.run do
+  let mut out : Array (Nat × Nat) := #[]
+  let mut h := 0
+  let mut v := 0
+  let msk := 4 ^ k
+  for i in [0:len] do
+    let c := baseCode (get i)
+    if c == 4 then
+      v := 0
+      h := 0
+    else
+      h := (h * 4 + c) % msk
+      v := v + 1
+      if v ≥ k then out := out.push (h, i + 1 - k)
+  return out
+
+/-- Clusters of sorted diagonals (gap ≤ g): (support, lowest, highest), most support first. -/
+def clusterD (ds : Array Nat) (g top : Nat) : List (Nat × Nat × Nat) := Id.run do
+  let ds := ds.qsort (· < ·)
+  let mut cl : Array (Nat × Nat × Nat) := #[]
+  for d in ds do
+    match cl.back? with
+    | some (c, lo, hi) => if d ≤ hi + g then cl := cl.pop.push (c + 1, lo, d) else cl := cl.push (1, d, d)
+    | none => cl := cl.push (1, d, d)
+  return ((cl.qsort fun a b => a.1 > b.1).toList.take top)
+
+/-- Best semi-global hit of `R` in `[x0, x1)` of `G`, diagonals chosen by shared k-mers
+(top `top` clusters), each searched in a window `g` wider. -/
+def regionX (R : ByteArray) (G : PGen) (x0 x1 k g top : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) :=
+  let x1 := min x1 G.n
+  if x1 ≤ x0 then none else
+  let n := R.size
+  let rk := (kmersOf (fun i => R.get! i) n k).qsort (fun a b => a.1 < b.1)
+  let gk := (kmersOf (fun i => G.get (x0 + i)) (x1 - x0) k).qsort (fun a b => a.1 < b.1)
+  -- merge join on the code: diagonal = read end on the genome
+  let ds := Id.run do
+    let mut out : Array Nat := #[]
+    let mut a := 0
+    let mut b := 0
+    while a < rk.size && b < gk.size && out.size < 20000 do
+      let (ca, qa) := rk[a]!
+      let (cb, _) := gk[b]!
+      if ca < cb then a := a + 1
+      else if cb < ca then b := b + 1
+      else
+        let mut b2 := b
+        while b2 < gk.size && gk[b2]!.1 == ca do
+          out := out.push (x0 + gk[b2]!.2 + n - qa)
+          b2 := b2 + 1
+        a := a + 1
+    return out
+  (clusterD ds g top).foldl (fun best (_, lo, hi) =>
+    match semiDP R G (max x0 (lo - n - g)) (min x1 (hi + g)) with
+    | some r => match best with
+      | some b => if r.2.2.1 < b.2.2.1 then some r else best
+      | none => some r
+    | none => best) none
+
+/-- Anchors `(vc, D, q)` of the seeds whose bucket holds ≤ `BK` places, both strands: `vc` = chromosome
+(+ #chromosomes on the reverse strand), `D` = read end on the chromosome on that diagonal, `q` = seed
+start in the read (each anchor is an exact 25-letter match, `mzLookS_ok`). -/
+def anchorsX (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM MzP) (BK : Nat) :
+    Array (Nat × Nat × Nat) := Id.run do
+  let n := R.size
+  let m := n / 25
+  if m == 0 then return #[]
+  let Ls := n / m
+  let nc := pgs.size
+  let mut out : Array (Nat × Nat × Nat) := #[]
+  for b in [0:2] do
+    let Rx := if b == 0 then R else s.Rr
+    let pp := if b == 0 then s.ps else s.pr
+    for j in [0:m] do
+      if LookG.size pk pp[j]! ≤ BK then
+        let a := LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
+        for e in a do
+          -- chromosome of the seed (offs increasing), seed inside it
+          let p := e / 16 + j * Ls - n
+          let mut lo := 0
+          let mut hi := nc
+          while lo + 1 < hi do
+            let mid := (lo + hi) / 2
+            if offs[mid]! ≤ p then lo := mid else hi := mid
+          if offs[lo]! ≤ p && p + 25 ≤ offs[lo]! + pgs[lo]!.n then
+            out := out.push (b * nc + lo, e / 16 - offs[lo]!, j * Ls)
+  return out
+
+@[inline] def keyLt (a b : Nat × Nat × Nat) : Bool :=
+  a.1 < b.1 || (a.1 == b.1 && (a.2.1 < b.2.1 || (a.2.1 == b.2.1 && a.2.2 < b.2.2)))
+
+/-- First index of sorted `A` with `(vc, D) ≥ (v, d)`. -/
+def lbX (A : Array (Nat × Nat × Nat)) (v d : Nat) : Nat := Id.run do
+  let mut lo := 0
+  let mut hi := A.size
+  while lo < hi do
+    let mid := (lo + hi) / 2
+    let x := A[mid]!
+    if x.1 < v || (x.1 == v && x.2.1 < d) then lo := mid + 1 else hi := mid
+  return lo
+
+/-- Seed bounds of one read of `n` letters over its sorted anchors `A`: (U bound = best single
+diagonal, 4·(n − covered); chain bound = 4·(read letters outside seeds and gaps) + Σ (6 + 2|Δ|) over
+chains increasing in read and genome, diagonal steps ≤ `Gm`; the best chain's (vc, Dlo, Dhi)).
+Only alignments lying inside the chromosome count.  `INF` = none. -/
+def chainX (n : Nat) (pgs : Array PGen) (A : Array (Nat × Nat × Nat)) (Gm : Nat) : Nat × Nat × (Nat × Nat × Nat) := Id.run do
+  let INF := 1000000
+  let nc := pgs.size
+  let ord := (Array.range A.size).qsort (fun i j => A[i]!.2.2 < A[j]!.2.2)
+  let mut f : Array Int := Array.replicate A.size (-1)
+  let mut f0 : Array Int := Array.replicate A.size (-1)
+  let mut d0 : Array Nat := Array.replicate A.size 0   -- first anchor's D
+  let mut dl : Array Nat := Array.replicate A.size 0
+  let mut dh : Array Nat := Array.replicate A.size 0
+  let mut bU := INF
+  let mut bC := INF
+  let mut sp : Nat × Nat × Nat := (0, 0, 0)
+  for j in ord do
+    let (v, D, q) := A[j]!
+    let mut bf : Int := 100
+    let mut bf0 : Int := 100
+    let mut bd0 := D
+    let mut bl := D
+    let mut bh := D
+    let mut i := lbX A v (D - Gm)
+    while i < A.size && A[i]!.1 == v && A[i]!.2.1 ≤ D + Gm do
+      let (_, Di, qi) := A[i]!
+      if qi + 25 ≤ q && f[i]! ≥ 0 then
+        let cand : Option Int :=
+          if Di == D then some (f[i]! + 100)
+          else if Di < D then some (f[i]! + 100 - (6 + 2 * ((D - Di : Nat) : Int)))
+          else if q - qi - 25 ≥ Di - D then some (f[i]! + 100 + 4 * ((Di - D : Nat) : Int) - (6 + 2 * ((Di - D : Nat) : Int)))
+          else none
+        if let some c := cand then
+          if c > bf then
+            bf := c
+            bd0 := d0[i]!
+            bl := min dl[i]! D
+            bh := max dh[i]! D
+        if Di == D && f0[i]! + 100 > bf0 then bf0 := f0[i]! + 100
+      i := i + 1
+    f := f.set! j bf
+    f0 := f0.set! j bf0
+    d0 := d0.set! j bd0
+    dl := dl.set! j bl
+    dh := dh.set! j bh
+    let cl := pgs[v % nc]!.n
+    if n ≤ D && D ≤ cl && 4 * n - bf0.toNat < bU then bU := 4 * n - bf0.toNat
+    if n ≤ bd0 && D ≤ cl && (4 * (n : Int) - bf).toNat < bC then
+      bC := (4 * (n : Int) - bf).toNat
+      sp := (v, bl, bh)
+  return (bU, bC, sp)
+
+/-- Gapless mismatch count of the read on the diagonal `(vc, D)` (stops above `lim`). -/
+def hamD (R Rr : ByteArray) (pgs : Array PGen) (v D lim : Nat) : Nat := Id.run do
+  let nc := pgs.size
+  let n := R.size
+  let Rx := if v < nc then R else Rr
+  let G := pgs[v % nc]!
+  let st := D - n
+  let mut mm := 0
+  for i in [0:n] do
+    if Rx.get! i != G.get (st + i) then
+      mm := mm + 1
+      if mm > lim then return mm
+  return mm
+
+/-- Best gapless diagonal among the `top` best-supported distinct diagonals of sorted `A` that lie
+inside the chromosome: (vc, D, mismatches). -/
+def hamX (R Rr : ByteArray) (pgs : Array PGen) (A : Array (Nat × Nat × Nat)) (top : Nat) : Option (Nat × Nat × Nat) := Id.run do
+  let n := R.size
+  let nc := pgs.size
+  let mut ds : Array (Nat × Nat × Nat) := #[]   -- (support, vc, D)
+  let mut i := 0
+  while i < A.size do
+    let (v, D, _) := A[i]!
+    let mut j := i
+    while j < A.size && A[j]!.1 == v && A[j]!.2.1 == D do j := j + 1
+    if n ≤ D && D ≤ pgs[v % nc]!.n then ds := ds.push (j - i, v, D)
+    i := j
+  let sel := (ds.qsort fun a b => a.1 > b.1).extract 0 top
+  let mut best : Option (Nat × Nat × Nat) := none
+  for (_, v, D) in sel do
+    let lim := match best with | some b => b.2.2 | none => n
+    let mm := hamD R Rr pgs v D lim
+    if mm < lim || best.isNone then best := some (v, D, mm)
+  return best
+
+/-- Common values of two increasing arrays. -/
+def interS (a b : Array Nat) : Array Nat := Id.run do
+  let mut out : Array Nat := #[]
+  let mut i := 0
+  let mut j := 0
+  while i < a.size && j < b.size do
+    let x := a[i]!
+    let y := b[j]!
+    if x < y then i := i + 1
+    else if y < x then j := j + 1
+    else
+      out := out.push x
+      i := i + 1
+      j := j + 1
+  return out
+
+/-- Union of two increasing arrays (increasing, no repeats). -/
+def unionS (a b : Array Nat) : Array Nat := Id.run do
+  let mut out : Array Nat := #[]
+  let mut i := 0
+  let mut j := 0
+  while i < a.size || j < b.size do
+    let x := if i < a.size then a[i]! else 0
+    let y := if j < b.size then b[j]! else 0
+    let v := if j ≥ b.size || (i < a.size && x ≤ y) then x else y
+    if i < a.size && x == v then i := i + 1
+    if j < b.size && y == v then j := j + 1
+    if out.back? != some v then out := out.push v
+  return out
+
+/-- A superset of the seed's places (bench only): the bucket's slots whose key and stored context
+match (`Mz.okAt` without the genome letters it reads), as anchors `(pos − o + base)·16`, increasing.
+The candidates are checked against the genome afterwards. -/
+def rawLook (ix : Mz.MzIdx) (p : MzP) (base : Nat) : Array Nat := Id.run do
+  let o := p.o
+  let v := p.v
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  let key := p.h &&& ix.kbM
+  let bw := (v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!
+  let aw := (v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!
+  let pmo := ix.pm[m1]!
+  let o2 := 2 * (ix.c - m2)
+  let mut out : Array Nat := #[]
+  let mut sorted := true
+  for t in [ix.loB p.b:ix.hiB p.b] do
+    let e := ix.slot t
+    if (e &&& ix.kbM) == key then
+      let pos := ix.posOf e
+      let tg := ix.tagOf e
+      if o ≤ pos && (ix.flagF tg != 0 || ((ix.befF tg &&& pmo) == bw && (ix.aftF tg >>> o2) == aw)) then
+        let a := (pos - o + base) * 16
+        if let some l := out.back? then
+          if a < l then sorted := false
+        out := out.push a
+  return if sorted then out else out.qsort (· < ·)
+
+/-- Perfect hits `(vc, start)` of a read over the genome, up to `L + 1` (bench only, unproved): a
+perfect hit holds every seed, so the candidates are the two rarest seeds' common diagonals (bucket
+supersets, `rawLook`), each checked letter by letter; plus the candidates checked and the smallest
+bucket sizes per strand. -/
+def perfX (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM MzP) (L : Nat) :
+    Array (Nat × Nat) × Nat × List Nat := Id.run do
+  let n := R.size
+  let m := n / 25
+  if m == 0 then return (#[], 0, [])
+  let Ls := n / m
+  let nc := pgs.size
+  let mut hits : Array (Nat × Nat) := #[]
+  let mut ncand := 0
+  let mut szs : List Nat := []
+  for b in [0:2] do
+    if hits.size > L then break
+    let Rx := if b == 0 then R else s.Rr
+    let pp := if b == 0 then s.ps else s.pr
+    let sel := (((List.range m).map fun j => (LookG.size pk pp[j]!, j)).mergeSort (fun x y => x.1 ≤ y.1)).take 2
+    szs := szs ++ sel.map (·.1)
+    let look := fun (j : Nat) => if pp[j]!.ok then rawLook pk.1 pp[j]! (n - j * Ls)
+      else LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
+    let A := sel.toArray.map fun x => look x.2
+    let cands := if A.size == 1 then A[0]! else interS A[0]! A[1]!
+    for e in cands do
+      if hits.size > L then break
+      ncand := ncand + 1
+      let D := e / 16
+      if D < n then continue
+      let st0 := D - n
+      let mut lo := 0
+      let mut hi := nc
+      while lo + 1 < hi do
+        let mid := (lo + hi) / 2
+        if offs[mid]! ≤ st0 then lo := mid else hi := mid
+      if st0 < offs[lo]! then continue
+      let st := st0 - offs[lo]!
+      let G := pgs[lo]!
+      if st + n > G.n then continue
+      let mut ok := true
+      for i in [0:n] do
+        if Rx.get! i != G.get (st + i) then
+          ok := false
+          break
+      if ok then hits := hits.push (b * nc + lo, st)
+  return (hits, ncand, szs)
+
+/-- Hits of a mate with ≤ `mmax` mismatches (gapless) forming a proper pair (`properPairU sl`) with
+the partner's placement `pp`, by a letter scan of the region `regionB` (bench only). -/
+def localX (R Rr : ByteArray) (pgs : Array PGen) (sl lo hi : Nat) (pp : Placement) (mmax : Nat) :
+    Array (Placement × Nat) := Id.run do
+  let n := R.size
+  let w := regionB (4 * mmax) lo hi n pp
+  let rev := pp.2 != Strand.rev
+  let Rx := if rev then Rr else R
+  let G := pgs[pp.1.chr]!
+  let x1 := min w.2 G.n
+  let mut out : Array (Placement × Nat) := #[]
+  if x1 < w.1 + n then return out
+  for st in [w.1:x1 + 1 - n] do
+    let mut mm := 0
+    for i in [0:n] do
+      if Rx.get! i != G.get (st + i) then
+        mm := mm + 1
+        if mm > mmax then break
+    if mm ≤ mmax then
+      let pl : Placement := (⟨pp.1.chr, st, n⟩, if rev then Strand.rev else Strand.fwd)
+      if properPairU sl lo hi pp pl then out := out.push (pl, 4 * mm)
+  return out
+
+/-- Candidates `(strand, anchor)` for the hits of a read with ≤ `mmax` ∈ {0, 1} mismatches (bench only;
+pigeonhole on disjoint seeds, bucket supersets `rawLook`): cap 0, the two rarest seeds' common diagonals;
+1 mismatch, the union of the pairwise intersections of the three rarest (two seeds: their union).
+`none` when the pigeonhole does not apply (no seed; one seed at 1 mismatch). -/
+def candX (pk : PkMz) (R : ByteArray) (s : PrepM MzP) (mmax : Nat) : Option (Array (Nat × Nat)) := Id.run do
+  let n := R.size
+  let m := n / 25
+  if m == 0 || (mmax == 1 && m < 2) then return none
+  let Ls := n / m
+  let mut out : Array (Nat × Nat) := #[]
+  for b in [0:2] do
+    let Rx := if b == 0 then R else s.Rr
+    let pp := if b == 0 then s.ps else s.pr
+    let k := if mmax == 0 then min 2 m else min 3 m
+    let sel := (((List.range m).map fun j => (LookG.size pk pp[j]!, j)).mergeSort (fun x y => x.1 ≤ y.1)).take k
+    let look := fun (j : Nat) => if pp[j]!.ok then rawLook pk.1 pp[j]! (n - j * Ls)
+      else LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
+    let A := sel.toArray.map fun x => look x.2
+    let cs := if mmax == 0 then (if k == 1 then A[0]! else interS A[0]! A[1]!)
+      else if k == 2 then unionS A[0]! A[1]!
+      else unionS (unionS (interS A[0]! A[1]!) (interS A[0]! A[2]!)) (interS A[1]! A[2]!)
+    out := out ++ cs.map fun e => (b, e)
+  return some out
+
+/-- A candidate checked: `(vc, start, mismatches)` when the window lies in a chromosome and has
+≤ `mmax` mismatches. -/
+def verX (offs : Array Nat) (pgs : Array PGen) (R Rr : ByteArray) (b e mmax : Nat) : Option (Nat × Nat × Nat) := Id.run do
+  let n := R.size
+  let nc := pgs.size
+  let D := e / 16
+  if D < n then return none
+  let st0 := D - n
+  let mut lo := 0
+  let mut hi := nc
+  while lo + 1 < hi do
+    let mid := (lo + hi) / 2
+    if offs[mid]! ≤ st0 then lo := mid else hi := mid
+  if st0 < offs[lo]! then return none
+  let st := st0 - offs[lo]!
+  let G := pgs[lo]!
+  if st + n > G.n then return none
+  let Rx := if b == 0 then R else Rr
+  let mut mm := 0
+  for i in [0:n] do
+    if Rx.get! i != G.get (st + i) then
+      mm := mm + 1
+      if mm > mmax then return none
+  return some (b * nc + lo, st, mm)
+
+/-- Pair-level guarantee at `G` ∈ {0, 4} (bench only, unproved): the proper pairs (`properPairU sl`)
+with summed penalty ≤ G.  Such a pair has both mates within `G / 4` mismatches and one mate perfect,
+so the mate with fewer candidates (`candX`) is enumerated and its partner checked letter by letter
+in the region near each of its hits (0 / 1 mismatch so that the total stays ≤ G).  Stops at the
+second qualifying pair (multimapping within G).  Answer: candidate counts, candidates checked, and
+`none` (pigeonhole not applicable), else the first qualifying pair with a second-pair flag, or none. -/
+def pairGX (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo hi : Nat) (a b : ByteArray)
+    (sa sb : PrepM MzP) (G : Nat) :
+    (Nat × Nat) × Nat × Option (Option ((Placement × Nat) × (Placement × Nat) × Bool)) := Id.run do
+  let nc := pgs.size
+  let mmax := G / 4
+  -- the mate to enumerate: the smaller bucket scan (sizes are free; candidates of the other mate are
+  -- never computed)
+  let kk := if mmax == 0 then 2 else 3
+  let scanC := fun (R : ByteArray) (s : PrepM MzP) =>
+    let m := R.size / 25
+    let one := fun (pp : Array MzP) =>
+      (((List.range m).map fun j => LookG.size pk pp[j]!).mergeSort (· ≤ ·)).take kk |>.foldl (· + ·) 0
+    one s.ps + one s.pr
+  let swap := scanC b sb < scanC a sa
+  let (X, sX, Y, sY) := if swap then (b, sb, a, sa) else (a, sa, b, sb)
+  let okY : Bool := decide (Y.size / 25 ≥ (if mmax == 0 then 1 else 2))
+  match (if okY then candX pk X sX mmax else none) with
+  | some cs =>
+    let ca := if swap then 0 else cs.size
+    let cb := if swap then cs.size else 0
+    let mut first : Option ((Placement × Nat) × (Placement × Nat)) := none
+    let mut two := false
+    let mut nscan := 0
+    for (st, e) in cs do
+      if two then break
+      nscan := nscan + 1
+      if let some (vc, s0, mm) := verX offs pgs X sX.Rr st e mmax then
+        let x : Placement := decB nc ⟨vc, s0, X.size⟩
+        for y in localX Y sY.Rr pgs sl lo hi x (mmax - mm) do
+          if first.isNone then first := some ((x, 4 * mm), y)
+          else two := true
+          if two then break
+    let res := first.map fun (x, y) => if swap then (y, x, two) else (x, y, two)
+    return ((ca, cb), nscan, some res)
+  | none => return ((0, 0), 0, none)
+
+/-- One mate of the tiered check: `st` = U (unique best, `pen`), T (tied best, `pen`), O (over:
+best > `cd`, proved by the exact search at rung `cd`), S (no seed: no bound); `pl` = the best
+placement (U/T) or the upper-bound alignment (O); bounds pU (one diagonal), pC (seed chain), pH (best
+gapless diagonal), pD (DP on the best chain), pR (DP near the partner); `rs` = re-scored by
+`checkRuns`. -/
+structure MateX where
+  st : String := "S"
+  cap : Nat := 0
+  cd : Nat := 0
+  pen : Nat := 0
+  pl : Option (Placement × Int) := none
+  pU : Nat := 1000000
+  pC : Nat := 1000000
+  pH : Nat := 1000000
+  pD : Nat := 1000000
+  pR : Nat := 1000000
+  rs : Bool := true
+deriving Inhabited
+
+def MateX.show (m : MateX) : String :=
+  let pl := match m.pl with
+    | some h => s!"{h.1.1.chr}\t{h.1.1.start}\t{h.1.1.len}\t{if h.1.2 == Strand.rev then "-" else "+"}\t{(-h.2).toNat}"
+    | none => "-\t-\t-\t-\t-"
+  s!"{m.st}\t{m.cap}\t{m.cd}\t{m.pen}\t{pl}\t{m.pU}\t{m.pC}\t{m.pH}\t{m.pD}\t{m.pR}\t{if m.rs then 1 else 0}"
 
 def showHit (h : Placement × Int) : String :=
   s!"{h.1.1.chr}\t{h.1.1.start}\t{h.1.1.len}\t{h.2}\t{if h.1.2 == Strand.rev then "-" else "+"}"
@@ -1184,7 +1693,8 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
     (prof : List (String × (ByteArray → Prof → IO Prof)))
     (margF : Option (ByteArray → (Placement × Int) → Nat → Nat × Nat) := none)
     (tally : List (String × (ByteArray → ByteArray → String)) := [])
-    (pprof : List (String × (Array ByteArray → Array ByteArray → IO Unit)) := []) : IO Unit := do
+    (pprof : List (String × (Array ByteArray → Array ByteArray → IO Unit)) := [])
+    (xdump : List (String × (ByteArray → ByteArray → String)) := []) : IO Unit := do
   -- WG_TASKS: comma list of `tasks` or `tasks/chunk` (chunk 0 = strided)
   let taskL := ((← IO.getEnv "WG_TASKS").getD "1").splitOn "," |>.map fun s => match s.splitOn "/" with
     | [a, c] => (a.toNat!, some c.toNat!)
@@ -1244,6 +1754,16 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
             | none => "none"
           say s!"  pair {idx[k]! + 1}: {secs 0 t} s, mates {r1[k]!.size}/{r2[k]!.size}, {os}"
     let chunk ← envN "WG_CHUNK" 16
+    -- per-pair text dumps (4 tasks): <WG_OUT>/<label>_<set>.tsv
+    for (lab, xf) in xdump do
+      let t0 ← IO.monoNanosNow
+      let out ← parChunk 4 chunk (fun k => xf r1[k]! r2[k]!) rk
+      let t1 ← IO.monoNanosNow
+      say s!"dump {lab} {name}: {secs t0 t1} s (4 tasks)"
+      if outDir != "" then
+        let mut res : Array String := Array.replicate n "none\n"
+        for (i, x) in idx.zip out do res := res.set! i (x ++ "\n")
+        IO.FS.writeFile s!"{outDir}/{lab}_{name}.tsv" (String.join ((Array.range n).toList.map fun i => s!"p{i + 1}\t{res[i]!}"))
     for (mode, f) in modes do
       let g (k : Nat) : PairOut := f r1[k]! r2[k]!
       let mut first : Option (Array PairOut) := none
@@ -1702,13 +2222,147 @@ def main (args : List String) : IO UInt32 := do
       let gaveUpR (N : Nat) (a b : ByteArray) : Bool :=
         N < costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) || N < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)
       let fRTB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUpR N a b then none else fRT a b
+      -- Tiered certificate check (bench only, mode RTX; dump WG_TIEROUT=1 → <WG_OUT>/tiers_<set>.tsv).
+      -- Pairs over the RTB gate (`gaveUpR` WG_XBUD; 0 = no gate) skip RT; else RT first (T1).  On the
+      -- rest: WG_PG=G, the pair-level guarantee (T1g / T1gm multimapped within G; suffix x = not
+      -- applicable); then per mate an exact search at the highest rung of (cap, 12, 8, 4) whose lookup
+      -- cost (`costP`) is ≤ WG_XBUD (WG_XLAD=1), else its perfect hits (WG_XPERF=1): a hit is the
+      -- mate's best (U / T); else best > rung (O); then (WG_XFREE=1) the upper bounds from the seeds'
+      -- anchors (buckets ≤ WG_XBK; diagonal steps ≤ WG_XG; WG_XTOP gapless diagonals), WG_XDP=1 DP on
+      -- the best chain, WG_XREG=1 DP near a placed partner (cap WG_XCAP).  A mate RT proved without a
+      -- hit (noHit) keeps RT's cap as its rung.
+      let xBud ← envN "WG_XBUD" 60000
+      let xBK ← envN "WG_XBK" 500
+      let xG ← envN "WG_XG" 30
+      let xTop ← envN "WG_XTOP" 16
+      let xDP := (← IO.getEnv "WG_XDP").getD "1" == "1"
+      let xReg := (← IO.getEnv "WG_XREG").getD "1" == "1"
+      let xCap ← envN "WG_XCAP" 60
+      let nc := pgs.size
+      -- WG_PG=G (0 or 4; unset: off): the pair-level guarantee (`pairGX`) on RT's unmapped and gated
+      -- pairs; WG_XLAD=1: budgeted exact rungs (cap, 12, 8, 4) per mate
+      -- (else, and when no rung is affordable, the mate's perfect hits: best 0, or best > 0)
+      let pgE := (← IO.getEnv "WG_PG").getD ""
+      let pgOn := pgE != ""
+      let pgG := pgE.toNat?.getD 0
+      let xLad := (← IO.getEnv "WG_XLAD").getD "1" == "1"
+      -- WG_XPERF=0: no mate-level perfect-hit search (a mate without another bound gets st N: only the
+      -- pair-level bound)
+      let xPerf := (← IO.getEnv "WG_XPERF").getD "1" == "1"
+      -- WG_XFREE=0: no free upper bounds
+      let xFree := (← IO.getEnv "WG_XFREE").getD "1" == "1"
+      let ladR (R : ByteArray) (s : PrepM MzP) (cap : Nat) : Option Nat :=
+        if !xLad then none else
+        ([cap, 12, 8, 4].filter (· ≤ cap)).find? fun c => fastT c R && (xBud == 0 || costP pk c s ≤ xBud)
+      let upX (R : ByteArray) (s : PrepM MzP) (part : Option Placement) (x : MateX) : MateX := Id.run do
+        let n := R.size
+        let A := (anchorsX pk offs pgs R s xBK).qsort keyLt
+        let (bU, bC, sp) := chainX n pgs A xG
+        let mut x := { x with pU := bU, pC := bC }
+        let mut best : Option (Nat × Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := none
+        if let some (v, D, mm) := hamX R s.Rr pgs A xTop then
+          x := { x with pH := 4 * mm }
+          best := some (v, D - n, n, 4 * mm, [(AlignmentSpec.Step.diag, n)])
+        if xDP && bC < 1000000 && sp.2.1 != sp.2.2 then
+          let (v, d0, d1) := sp
+          let Rx := if v < nc then R else s.Rr
+          if let some (st, len, p, runs) := semiDP Rx pgs[v % nc]! (d0 - n - 8) (d1 + 8) then
+            x := { x with pD := p }
+            if best.all (fun b => p < b.2.2.2.1) then best := some (v, st, len, p, runs)
+        if xReg then
+          if let some pp := part then
+            let w := regionB xCap lo hi n pp
+            let v := if pp.2 == Strand.rev then pp.1.chr else nc + pp.1.chr
+            let Rx := if v < nc then R else s.Rr
+            if let some (st, len, p, runs) := regionX Rx pgs[pp.1.chr]! w.1 w.2 11 ((xCap - 6) / 2) 2 then
+              x := { x with pR := p }
+              if best.all (fun b => p < b.2.2.2.1) then best := some (v, st, len, p, runs)
+        match best with
+        | some (v, st, len, p, runs) =>
+          let Rx := if v < nc then R else s.Rr
+          let ok := rescoreRuns Rx pgs[v % nc]! st len runs == some (-(p : Int))
+          return { x with pl := some (decB nc ⟨v, st, len⟩, -(p : Int)), rs := ok }
+        | none => return x
+      let ladM (R : ByteArray) (s : PrepM MzP) (known : Bool) (kn : Option (Placement × Int))
+          (perf : Option (Array (Nat × Nat))) : MateX :=
+        let cap := cap1F R.size
+        if known then { st := "O", cap := cap, cd := cap } else
+        if let some a := kn then { st := "U", cap := cap, cd := cap, pen := (-a.2).toNat, pl := some a } else
+        if !fastT 0 R then { st := "S", cap := cap } else
+        match ladR R s cap with
+        | some rg =>
+          let b := mapChromsGBFG (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs)) (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs))
+            rg pk ByteArray.empty offs pgs R s.Rr s.ps s.pr
+          if b.pen ≤ rg then { st := (if b.amb then "T" else "U"), cap := cap, cd := rg, pen := b.pen, pl := some (decB nc ⟨b.chr, b.st, b.len⟩, -(b.pen : Int)) }
+          else { st := "O", cap := cap, cd := rg }
+        | none =>
+          match perf with
+          | none => { st := "N", cap := cap }
+          | some perf =>
+          if perf.isEmpty then { st := "O", cap := cap, cd := 0 }
+          else { st := (if perf.size ≥ 2 then "T" else "U"), cap := cap, cd := 0, pen := 0, pl := some (decB nc ⟨perf[0]!.1, perf[0]!.2, R.size⟩, 0) }
+      -- the rest of the tiered check, from RT's reason (none: RT given up by the budget gate)
+      let rtxU (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Option (Placement × Int)))
+          (p1 p2 : Option (Array (Nat × Nat))) : String × MateX × MateX :=
+        let nh1 := match rk with | some (.noHit .one, _) => true | _ => false
+        let nh2 := match rk with | some (.noHit .two, _) => true | _ => false
+        -- noPartner: RT's unique best of the other mate (at its cap) is kept
+        let k1 := match rk with | some (.noPartner .two, k) => k | _ => none
+        let k2 := match rk with | some (.noPartner .one, k) => k | _ => none
+        let m1 := ladM a s1 nh1 k1 p1
+        let m2 := ladM b s2 nh2 k2 p2
+        let part (m : MateX) : Option Placement := if m.st == "U" || m.st == "T" then m.pl.map (·.1) else none
+        let m1' := if xFree && (m1.st == "O" || m1.st == "N") then upX a s1 (part m2) m1 else m1
+        let m2' := if xFree && (m2.st == "O" || m2.st == "N") then upX b s2 (part m1) m2 else m2
+        let ov := [m1', m2'].filter (·.st == "O")
+        let tier :=
+          if m1'.st == "S" || m2'.st == "S" || m1'.st == "N" || m2'.st == "N" then "T3"
+          else if ov.isEmpty then
+            (if m1'.st == "T" || m2'.st == "T" then "T1t"
+             else match m1'.pl, m2'.pl with
+               | some x, some y => if properPair lo hi x.1 y.1 then "T1" else "T1d"
+               | _, _ => "T1d")
+          else if ov.all (fun m => m.cd == m.cap && m.pl.isSome && m.rs) then "T2" else "T3"
+        (tier, m1', m2')
+      let rtxP (a b : ByteArray) : String × MateX × MateX :=
+        let gated := xBud != 0 && gaveUpR xBud a b
+        let o := if gated then none else some (route a b)
+        match (o.map (·.out) : Option Out) with
+        | some (.mapped (x, y)) => ("T1", { st := "U", cap := cap1F a.size, cd := cap1F a.size, pen := (-x.2).toNat, pl := some x },
+            { st := "U", cap := cap1F b.size, cd := cap1F b.size, pen := (-y.2).toNat, pl := some y })
+        | o' =>
+          let rk := match o' with
+            | some (.unmapped rs k) => some (rs, k)
+            | _ => none
+          let s1 : PrepM MzP := prepMate pk a
+          let s2 : PrepM MzP := prepMate pk b
+          let rest := fun (_ : Unit) => rtxU a b s1 s2 rk (if xPerf then some (perfX pk offs pgs a s1 1).1 else none)
+            (if xPerf then some (perfX pk offs pgs b s2 1).1 else none)
+          if pgOn then
+            match (pairGX pk offs pgs usl lo hi a b s1 s2 pgG).2.2 with
+            | some (some (x, y, tie)) =>
+              (if tie then "T1gm" else "T1g", { st := "P", cap := cap1F a.size, pen := x.2, pl := some (x.1, -(x.2 : Int)) },
+                { st := "P", cap := cap1F b.size, pen := y.2, pl := some (y.1, -(y.2 : Int)) })
+            | some none => rest ()
+            | none => let (t, m1, m2) := rest (); (t ++ "x", m1, m2)
+          else rest ()
+      let fRTX : ByteArray → ByteArray → PairOut := fun a b =>
+        let (t, m1, m2) := rtxP a b
+        if t == "T1gm" then none else
+        match m1.pl, m2.pl with
+        | some x, some y => some (x, y)
+        | _, _ => none
+      let xdump : List (String × (ByteArray → ByteArray → String)) :=
+        if (← IO.getEnv "WG_TIEROUT").getD "0" == "1" then
+          [("tiers", fun a b => let (t, m1, m2) := rtxP a b; s!"{t}\t{m1.show}\t{m2.show}")] else []
       let modes := modes ++ ms.filterMap fun m =>
+        if m == "RTX" then some ("RTX", fRTX) else
         if m.startsWith "RTB" then some (m, fRTB (m.drop 3).toString.toNat!)
         else if m.startsWith "PRB" then some (m, fRB (m.drop 3).toString.toNat!)
         else if m.startsWith "HB" then some (m, fHB (m.drop 2).toString.toNat!) else none
       -- WG_BUDT=N1,N2,…: per pair, given up at N (RTB gate) or not, and what mode RT gave (mapped / tie / other)
       let budT := ((← IO.getEnv "WG_BUDT").getD "").splitOn "," |>.filter (· ≠ "") |>.map String.toNat!
-      let okLen : ByteArray → Bool := if ms.all (fun m => m == "RT" || m.startsWith "RTB") then (fun _ => true) else okLen
+      let okLen : ByteArray → Bool := if ms.all (fun m => m == "RT" || m.startsWith "RTB" || m == "RTX") then (fun _ => true) else okLen
       let tally := if (← IO.getEnv "WG_REASONS").getD "0" == "1" then [("router", fun a b => showR (route a b))] else []
       -- WG_UKIND=1: answer kinds of mode U (mapped / pairTie / none)
       let tally := if (← IO.getEnv "WG_UKIND").getD "0" == "1" then tally ++ [("ukind", fun a b =>
@@ -1969,7 +2623,80 @@ def main (args : List String) : IO UInt32 := do
       let a1f : ByteArray → ByteArray → Bool := fun a b =>
         !decide (costP pk (penOf b) (prepMate pk b : PrepM MzP) < costP pk (penOf a) (prepMate pk a : PrepM MzP))
       let pprof := if udN == 0 then pprof else pprof ++ [("ukdet", ukDet pk offs pgs udc usl lo hi penOf a1f uAnch udN)]
-      runSets modes okLen prof (some margF) tally (rprofL ++ pprof)
+      -- WG_XPROF=N: the tiered check's cost on the first N pairs, one thread: RT on all pairs; on RT's
+      -- unmapped pairs prep, ladder search, anchors, chain/U bounds, gapless diagonals, chain DP, region DP
+      let xpN ← envN "WG_XPROF" 0
+      let pprof := if xpN == 0 then pprof else pprof ++ [("tier split", fun (r1 r2 : Array ByteArray) => do
+        -- columns (ns): gate + RT, pair guarantee, mates' perfect hits, ladder, free bounds
+        let mut t : Array Nat := Array.replicate 5 0
+        let mut cnt := 0
+        let mut nG := 0
+        let mut nX := 0
+        let mut scans : Array Nat := #[]
+        let mut gMax := 0
+        let mut gWorst := ""
+        let mut gBig := 0
+        let mut gBigT := 0
+        let mut nO := 0
+        let tick (i : Nat) (u0 u1 : Nat) (t : Array Nat) : Array Nat := t.set! i (t[i]! + (u1 - u0))
+        for k in [0:min xpN r1.size] do
+          let a := r1[k]!
+          let b := r2[k]!
+          let u0 ← IO.monoNanosNow
+          let gated ← (← IO.mkRef (xBud != 0 && gaveUpR xBud a b)).get
+          let o ← (← IO.mkRef (if gated then none else some (route a b))).get
+          let u1 ← IO.monoNanosNow
+          t := tick 0 u0 u1 t
+          let rk : Option (Option (Reason × Option (Placement × Int))) := match o with
+            | none => some none
+            | some r => match r.out with
+              | .mapped _ => none
+              | .unmapped rs k => some (some (rs, k))
+          match rk with
+          | none => pure ()
+          | some rk =>
+            cnt := cnt + 1
+            if gated then nG := nG + 1
+            let s1 : PrepM MzP := prepMate pk a
+            let s2 : PrepM MzP := prepMate pk b
+            let v0 ← IO.monoNanosNow
+            let g ← (← IO.mkRef (if pgOn then some (pairGX pk offs pgs usl lo hi a b s1 s2 pgG) else none)).get
+            let v1 ← IO.monoNanosNow
+            t := tick 1 v0 v1 t
+            if let some ((ca, cb), ns, res) := g then
+              scans := scans.push ns
+              if res.isNone then nX := nX + 1
+              if v1 - v0 > 5000000 then
+                gBig := gBig + 1
+                gBigT := gBigT + (v1 - v0)
+              if v1 - v0 > gMax then
+                gMax := v1 - v0
+                gWorst := s!"mates {a.size}/{b.size} bp, candidates {ca}/{cb}, checked {ns}, {match res with
+                  | some (some (_, _, true)) => "multimapped" | some (some _) => "pair found" | some none => "none ≤ G" | none => "n/a"}"
+              if let some (some _) := res then continue
+            for (R, s, nh, kn) in [(a, s1, (match rk with | some (.noHit .one, _) => true | _ => false), (match rk with | some (.noPartner .two, k) => k | _ => none)),
+                (b, s2, (match rk with | some (.noHit .two, _) => true | _ => false), (match rk with | some (.noPartner .one, k) => k | _ => none))] do
+              let w0 ← IO.monoNanosNow
+              let pf ← (← IO.mkRef (if xPerf then some (perfX pk offs pgs R s 1).1 else none)).get
+              let w1 ← IO.monoNanosNow
+              let m ← (← IO.mkRef (ladM R s nh kn pf)).get
+              let w2 ← IO.monoNanosNow
+              t := tick 2 w0 w1 (tick 3 w1 w2 t)
+              if xFree && (m.st == "O" || m.st == "N") then
+                nO := nO + 1
+                let x ← (← IO.mkRef (upX R s none m)).get
+                let w3 ← IO.monoNanosNow
+                t := tick 4 w2 w3 t
+                if x.pl.isSome && w3 == 0 then IO.println ""
+        let srt := scans.qsort (· < ·)
+        let pct (q : Nat) : Nat := if srt.isEmpty then 0 else srt[min (srt.size - 1) (srt.size * q / 100)]!
+        say s!"TIERPROF pairs {min xpN r1.size}, RT-unmapped or gated {cnt} (gated {nG}); µs: gate+RT {t[0]! / 1000}, pair guarantee G={pgG} {t[1]! / 1000} (worst {gMax / 1000}: {gWorst}; over 5 ms {gBig} pairs, {gBigT / 1000} µs; not applicable {nX}), candidates checked p50 {pct 50} p99 {pct 99} max {pct 100}; mates' perfect hits {t[2]! / 1000}, ladder {t[3]! / 1000}, free bounds {t[4]! / 1000} ({nO} over mates)"
+        let tl := (List.range scans.size).foldl (fun (h : Std.HashMap Nat Nat) i =>
+          let v := scans[i]!
+          let key := if v ≤ 2 then v else if v ≤ 10 then 10 else if v ≤ 100 then 100 else if v ≤ 1000 then 1000 else 10000
+          h.insert key (h.getD key 0 + 1)) {}
+        say s!"TIERSCAN candidates checked per pair (bins ≤0,1,2,10,100,1000,more): {[0, 1, 2, 10, 100, 1000, 10000].map fun k => tl.getD k 0}")]
+      runSets modes okLen prof (some margF) tally (rprofL ++ pprof) xdump
       return 0
     else throw (IO.userError "mode: build | bytes | map | pmap")
   | _ => throw (IO.userError "usage: whole_genome build|bytes|map|pmap <index_prefix> ...")
