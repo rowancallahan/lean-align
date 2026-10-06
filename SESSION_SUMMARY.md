@@ -487,6 +487,58 @@ Every pair gets a tier with what was proved about it (`bench/WholeGenome.lean`, 
   - 0 re-score failures.
   - Cost: 2.1% of RT on mason, ~15% on NovaSeq (over the 3% target).
 
+### Proved floors and ceilings per mate (mode RTX default `WG_XBND=1`; `codecs/MateFloor.lean`; 2026-10-06)
+Floors use only values lean already computes; perfect hits, the ladder and the free bounds are now off by default.
+- **Theorems** (`codecs/MateFloor.lean`, standard axioms):
+  - `floor_absent` / `floor_look`: J blocks whose 25-letter seed lookup is empty (on the window's strand) → penalty ≥ 4·|J| (event pigeonhole, `coverLE`).
+  - `floor_enum`: above −8 every window is gapless on a seed's diagonal. If every window of the read's length with all but `seedBoundE S` blocks of J exact has Hamming score < S, all windows score < S. This is what the guarantee's completed enumeration checks: G = 4 (3 rarest blocks, pairwise intersections) with no hit of ≤ 1 mismatch → floor 8; best 1 mismatch → 4. G = 0 with no perfect hit → 4.
+  - `pair_floor`: pair ≥ fA + fB. RT noHit at cap c → c + 1 (RT's proof). Guarantee completed with no pair ≤ G → pair floor G + 1.
+- **Ceilings**:
+  1. RT's unique best (noPartner);
+  2. RT's cap (tie / notProper);
+  3. the guarantee's best verified hit;
+  4. `WG_XCEIL=1` (now the default): the best gapless diagonal among ≤ 16 places of the rarest seed (bucket ≤ 500).
+
+  Every ceiling is re-scored with `checkRuns`, with 0 failures. "none" = no ceiling (counted as 4·len).
+- **G n/a**: the pigeonhole at G = 4 needs both mates ≥ 50 bp (`candX` m ≥ 2, `okY`). Such pairs now fall back to the guarantee at 0 (mates ≥ 25 bp; suffix z, `WG_XZ=1`). Shorter-mate lengths: z pairs NovaSeq 33 at 25–29 bp + 160 at 30–49 bp; HG002 31 + 122. x pairs (no guarantee) all < 25 bp: NovaSeq 135, HG002 201, mason 0.
+- **Timing** (grid7, 20k pairs, 4 tasks, 10 runs each, median wall / CPU vs lean G4 N5k):
+
+  | config | mason | NovaSeq | HG002 |
+  |---|---|---|---|
+  | lean | 0.715 / 2.77 | 0.668 / 2.53 | 0.714 / 2.75 |
+  | + floors, ceilings 1–3, z fallback | +0.7% / +1.1% | +0.7% / +2.8% | −3.8% / −3.6% |
+  | + rarest-seed ceiling (default) | +3.5% / +3.6% | +1.2% / +3.0% | −0.5% / +0.4% |
+
+  Profile (1 thread): `mateB` takes 11 ms per 20k pairs, or 37 ms with the rarest-seed ceiling (~1.2% of the total).
+- **Results** (G = 4, 20k pairs; without → with the rarest-seed ceiling):
+
+  | | mason | NovaSeq | HG002 |
+  |---|---|---|---|
+  | T1 / T1g / T1gm | 83.73 / 2.94 / 0.76 | 76.20 / 6.66 / 2.54 | 82.22 / 2.75 / 1.84 |
+  | T2 % | 0.43 → 2.95 | 0.43 → 2.53 | 0.30 → 2.54 |
+  | T3 % | 12.14 → 9.63 | 14.18 → 12.08 | 12.89 → 10.66 |
+  | T3 mates with a ceiling | 26.6% → 35.4% | 20.1% → 27.0% | 18.9% → 25.4% |
+  | T2 gap (ceiling − floor) p50 / p90 | 11 / 16 → 4 / 56 | 0 / 16 → 4 / 120 | 8 / 16 → 8 / 200 |
+  | T3 gap, mates with a ceiling, p50 / p90 | 0 / 8 → 0 / 20 | 0 / 8 → 0 / 72 | 0 / 8 → 0 / 164 |
+  | T3 gap, all mates (none = 4·len), p50 / p90 | 592 / 600 → 583 / 600 | 583 / 604 → 568 / 604 | 775 / 992 → 719 / 988 |
+  | T3 non-exact mates with floor > 0 / > G+1 | 48% / 37% | 46% / 39% | 43% / 37% |
+  | T3 pairs: pair floor > G | 100% | 90% | 88% |
+  | T3 pairs: a mate floor > its RT cap (> 16: subset) | 20% (10%) → 24% (12%) | 39% (18%) → 44% (21%) | 40% (36%) → 46% (42%) |
+  | T2+T3 pair floor p50 / p90 | 8 / 17 | 8 / 17 | 8 / 17 |
+  | T2+T3 pairs without a floor | 0 | 135 (all < 25 bp) | 201 (all < 25 bp) |
+
+  - Floor sources: empty blocks fire for 0 mates, because a block must be absent on both strands. The enumeration gives 4 / 8. RT cap + 1 gives 13 / 17.
+  - Only RT noHit gives a mate floor above RT's cap. Gated (give-up) pairs, which skip RT, reach only the pair > G level.
+- **Checks**:
+  - Lost-at-≤G against RT: 0 on every set.
+  - mason T1 wrong: 0. T1g: 2. T1gm (skipped): 95 off the truth.
+  - T2/T3 ceiling alignments off the truth: 20 / 104 → 319 / 285. These are upper bounds, not placements.
+- **Pair-level guarantee kernel, PROVED** (`codecs/PairGuarantee.lean`, standard axioms):
+  - `pairGK` = `hitsAtKP G` for both mates, then `bestPairD` and the flag "a proper pair seen".
+  - `pairGK_eq`: the kernel returns `pairSpecUT` at caps (G, G), and the flag is set exactly when a proper pair exists with both mates within G.
+  - `pairGK_guarantee`: if a proper pair (properPairU sl) at any caps ≥ G has pair score ≥ −G, the kernel returns `(r, true)` with `r = pairSpecUT` at those caps, and `r = none` only with `PairTieOk`.
+  - Length condition in the hypotheses: `fastT G` on both mates. `pairGK_guarantee4`: G = 4, both mates ≥ 50 bp, `dcost0`. `pairGK_guarantee0`: G = 0, ≥ 25 bp. Outside the condition the kernel returns `none`.
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
