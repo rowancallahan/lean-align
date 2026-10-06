@@ -5,6 +5,7 @@ import PairRegion
 import ReadTrim
 import PairRouter
 import PairNear
+import PairGuarantee
 import AlignmentCigarCheck
 
 /-!
@@ -2588,6 +2589,7 @@ def main (args : List String) : IO UInt32 := do
       -- enumeration's best verified hit, 4 (WG_XCEIL=1, default; 0 = off) gapless on ≤ WG_XCT diagonals of the rarest seed;
       -- `pl` its alignment when concrete, re-scored by `checkRuns` (`rs`).  st: U (exact), B, S.
       let xCeil := (← IO.getEnv "WG_XCEIL").getD "1" == "1"
+      let xGK := (← IO.getEnv "WG_PGK").getD "0" == "1"
       -- WG_XZ=0: no fallback to the guarantee at 0 when G does not apply
       let xZ := (← IO.getEnv "WG_XZ").getD "1" == "1"
       let alnX (R Rr : ByteArray) (v st mm : Nat) : Option (Placement × Int) × Bool :=
@@ -2644,6 +2646,18 @@ def main (args : List String) : IO UInt32 := do
             if xBnd && !xOld then rtxB a b s1 s2 rk g1 g2 else
             rtxU a b s1 s2 rk (if xPerf then some (perfX pk offs pgs a s1 1).1 else none)
               (if xPerf then some (perfX pk offs pgs b s2 1).1 else none)
+          -- WG_PGK=1: the proved kernel `pairGK` (codecs/PairGuarantee.lean) in place of `pairGX`
+          -- where it applies (fastT G on both mates); its answer is pairSpecUT, flag = pair seen
+          let gk := if pgOn && xGK then pairGK dcost0 usl lo hi pgG pk ByteArray.empty offs pgs a b else none
+          if let some (r, seen) := gk then
+            match r with
+            | some (x, y) =>
+              ("T1g", { st := "P", cap := cap1F a.size, pen := (-x.2).toNat, pl := some x },
+                { st := "P", cap := cap1F b.size, pen := (-y.2).toNat, pl := some y })
+            | none =>
+              if seen then ("T1gm", { st := "P", cap := cap1F a.size }, { st := "P", cap := cap1F b.size })
+              else rest none none
+          else
           if pgOn then
             let (_, _, res, (swap, done, bx)) := pairGX pk offs pgs usl lo hi a b s1 s2 pgG
             -- the enumerated mate's floor and best hit (`floor_enum`), when its enumeration completed
