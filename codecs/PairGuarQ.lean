@@ -141,6 +141,16 @@ termination_by hi - lo
 def offsOk (offs : Array Nat) (pgs : Array PGen) : Bool :=
   (List.range pgs.size).all fun c => decide (pgs.size ≤ c + 1) || decide (offs[c]! + pgs[c]!.n ≤ offs[c + 1]!)
 
+/-- The diagonals held by at least `need` of the arrays `all`, from the first `k` arrays of `l`
+(each diagonal once: skipped when an earlier array `prev` holds it). -/
+def candsB (need : Nat) (all prev : List (Array Nat)) : List (Array Nat) → Nat → List Nat
+  | [], _ => []
+  | _, 0 => []
+  | arr :: rest, k + 1 =>
+    (arr.toList.filterMap fun e =>
+      if need ≤ suppA all (e / 16) 0 && prev.all (fun a => !anyNear a (e / 16) (e / 16)) then some (e / 16) else none) ++
+    candsB need all (arr :: prev) rest k
+
 /-- One strand's windows within `lim` (gapless, `lim ≤ 7`): the anchor diagonals of the
 `sbound lim + 2` rarest seeds held by all but `sbound lim` of them, each placed in its chromosome
 (`chromOf`), through the kernel `ker c st` (virtual chromosome `t + c`). -/
@@ -151,7 +161,7 @@ def hitsGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (o
   let ps := prepG ix Rs m Ls
   let J := (ordG (ps.map (LookG.size ix)) m).take (sbound lim + 2)
   let acc := J.map fun j => LookG.look ix G Rs (j * Ls) (Rs.size - j * Ls) ps[j]!
-  (diagsB acc (J.length - sbound lim) 0).filterMap fun D =>
+  (candsB (J.length - sbound lim) acc [] acc (sbound lim + 1)).filterMap fun D =>
     let x := D - Rs.size
     let c := chromOf offs x 0 n
     if Rs.size ≤ D ∧ c < n ∧ offs[c]! ≤ x ∧ x - offs[c]! + Rs.size ≤ gsz c then
@@ -244,7 +254,7 @@ def pairsQC (dc : Nat → Nat) (sl lo hi Gc : Nat) (pgs2 : Array PGen) (RY RYr :
     let p : PairHit := if swap then (y, x) else (x, y)
     if -(Gc : Int) ≤ pairScoreD dc p then some p else none
 
-/-- As `pairGQ`, with global diagonal X hits (`hitsAtQ`) and `pairsQC` (speed candidate; equality to `pairGQ` not yet proved).  **The fast pair-level guarantee at `Gc`, early stop**: the enumerated mate's hits within `Gc`
+/-- As `pairGQ`, with global diagonal X hits (`hitsAtQ`) and `pairsQC` (meets `pairGF_sound`'s statement: `pairGQC_sound`, PairGuarQE).  **The fast pair-level guarantee at `Gc`, early stop**: the enumerated mate's hits within `Gc`
 (raw lookups), the perfect ones' pairs first, then the others' (bound: their best score), stopping
 when the answer is settled.  Answer as `pairGF`'s. -/
 def pairGQC (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMzR) (offs : Array Nat)

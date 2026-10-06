@@ -2783,7 +2783,7 @@ def main (args : List String) : IO UInt32 := do
       let xReg := (← IO.getEnv "WG_XREG").getD "1" == "1"
       let xCap ← envN "WG_XCAP" 60
       let nc := pgs.size
-      -- WG_PG=G (0 or 4; unset: off): the pair-level guarantee (`pairGX`) on RT's unmapped and gated
+      -- WG_PG=G (0 or 4; unset: off): the pair-level guarantee (proved `pairGQC`; WG_PGF) on RT's unmapped and gated
       -- pairs; WG_XLAD=1 (default off): budgeted exact rungs (cap, 12, 8, 4) per mate
       -- (else, and when no rung is affordable, the mate's perfect hits: best 0, or best > 0)
       let pgE := (← IO.getEnv "WG_PG").getD ""
@@ -2882,14 +2882,13 @@ def main (args : List String) : IO UInt32 := do
       -- `pl` its alignment when concrete, re-scored by `checkRuns` (`rs`).  st: U (exact), B, S.
       let xCeil := (← IO.getEnv "WG_XCEIL").getD "1" == "1"
       let xGK := (← IO.getEnv "WG_PGK").getD "0" == "1"
-      -- WG_PGF=1: the proved fast kernel `pairGF` (codecs/PairGuarFast.lean) in place of `pairGX`
-      let xGF := (← IO.getEnv "WG_PGF").getD "0" == "1" || (← IO.getEnv "WG_PGF").getD "0" == "S" ||
-        (← IO.getEnv "WG_PGF").getD "0" == "Q" || (← IO.getEnv "WG_PGF").getD "0" == "C"
-      let xGFS := (← IO.getEnv "WG_PGF").getD "0" == "S"
-      -- WG_PGF=Q: the proved early-stop kernel `pairGQ` (codecs/PairGuarQ.lean)
-      let xGFQ := (← IO.getEnv "WG_PGF").getD "0" == "Q"
-      -- WG_PGF=C: its speed candidate `pairGQC` (global diagonal X hits, cached partner words)
-      let xGFC := (← IO.getEnv "WG_PGF").getD "0" == "C"
+      -- the pair guarantee (WG_PGF): default C, the proved `pairGQC` (codecs/PairGuarQ.lean, `pairGQC_sound` in
+      -- PairGuarQE.lean); Q its reference `pairGQ`; 1 `pairGF`; S an unproved early-stop prototype; 0 the unproved `pairGX`
+      let pgfE := (← IO.getEnv "WG_PGF").getD "C"
+      let xGF := pgfE == "1" || pgfE == "S" || pgfE == "Q" || pgfE == "C"
+      let xGFS := pgfE == "S"
+      let xGFQ := pgfE == "Q"
+      let xGFC := pgfE == "C"
       -- WG_PGXF=1: pairGX with the spec fixes (pairGXF) in place of pairGX
       let pgxE := (← IO.getEnv "WG_PGXF").getD "0"
       let pgx := if pgxE == "1" then pairGXF false false else if pgxE == "K" then pairGXF true false else if pgxE == "R" then pairGXF false true else if pgxE == "Q" then pairGQB else pairGX
@@ -3385,7 +3384,7 @@ def main (args : List String) : IO UInt32 := do
         let mut gBig := 0
         let mut gBigT := 0
         let mut nO := 0
-        let mut gfT : Array Nat := #[0, 0, 0, 0, 0]
+        let mut gfT : Array Nat := #[0, 0, 0, 0, 0, 0, 0]
         let mut gfBad := 0
         let mut gfPB := 0
         let mut gfH : Array Nat := #[]
@@ -3432,6 +3431,11 @@ def main (args : List String) : IO UInt32 := do
                 let z5 ← IO.monoNanosNow
                 let gf ← (← IO.mkRef (pairGF dcost0 usl lo hi pgG swap pk offs pgs a b)).get
                 let z6 ← IO.monoNanosNow
+                let xq ← (← IO.mkRef (hitsAtQ pgG (pk : PkMzR) offs pgs RX)).get
+                let z7 ← IO.monoNanosNow
+                let gb ← (← IO.mkRef (pairGQB pk offs pgs usl lo hi a b s1 s2 pgG)).get
+                let z8 ← IO.monoNanosNow
+                gfT := (gfT.set! 5 (gfT[5]! + (z7 - z6) + (if xq.isSome then 0 else 1))).set! 6 (gfT[6]! + (z8 - z7) + (if gb.2.1 == 0 then 0 else 0))
                 gfT := ((gfT.set! 2 (gfT[2]! + (z4 - z3))).set! 3 (gfT[3]! + (z5 - z4))).set! 4 (gfT[4]! + (z6 - z5))
                 let key := fun (x : Placement × Int) => s!"{x.1.1.chr} {x.1.1.start} {x.1.1.len} {decide (x.1.2 = Strand.fwd)} {x.2}"
                 let srt := fun (l : List (Placement × Int)) => (l.map key).toArray.qsort (fun u v => decide (u < v))
@@ -3488,7 +3492,7 @@ def main (args : List String) : IO UInt32 := do
         if xGF then
           let sh := gfH.qsort (· < ·)
           let hp (q : Nat) : Nat := if sh.isEmpty then 0 else sh[min (sh.size - 1) (sh.size * q / 100)]!
-          say s!"GFPROF pairs {gfH.size}; µs: X hits (hitsAtKP3) {gfT[0]! / 1000}, partners (pairsGF) {gfT[1]! / 1000}; X hits p50 {hp 50} p90 {hp 90} p99 {hp 99} max {hp 100}; worst {gfMax / 1000} µs: {gfWorst}; pairGQ {gfT[2]! / 1000}, pairGQC {gfT[3]! / 1000}, pairGF {gfT[4]! / 1000}; X lists differ (Q vs C) {gfBad}, answers differ {gfPB}"
+          say s!"GFPROF pairs {gfH.size}; µs: X hits (hitsAtKP3) {gfT[0]! / 1000}, partners (pairsGF) {gfT[1]! / 1000}; X hits p50 {hp 50} p90 {hp 90} p99 {hp 99} max {hp 100}; worst {gfMax / 1000} µs: {gfWorst}; pairGQ {gfT[2]! / 1000}, pairGQC {gfT[3]! / 1000}, pairGF {gfT[4]! / 1000}, hitsAtQ {gfT[5]! / 1000}, pairGQB {gfT[6]! / 1000}; X lists differ (Q vs C) {gfBad}, answers differ {gfPB}"
         say s!"TIERPROF pairs {min xpN r1.size}, RT-unmapped or gated {cnt} (gated {nG}); µs: gate+RT {t[0]! / 1000}, pair guarantee G={pgG} {t[1]! / 1000} (worst {gMax / 1000}: {gWorst}; over 5 ms {gBig} pairs, {gBigT / 1000} µs; not applicable {nX}), candidates checked p50 {pct 50} p99 {pct 99} max {pct 100}; mates' perfect hits {t[2]! / 1000}, ladder {t[3]! / 1000}, {if xBnd && !xOld then "floor/ceiling (mateB)" else "free bounds"} {t[4]! / 1000} ({nO} over mates)"
         let tl := (List.range scans.size).foldl (fun (h : Std.HashMap Nat Nat) i =>
           let v := scans[i]!

@@ -576,12 +576,42 @@ Floors use only values lean already computes; perfect hits, the ladder and the f
   - Tier % HiSeq: T1 82.04; T1g 2.84; T1gm 1.83; T2 2.42; T3 10.86; x 0.95; z 0.89.
 - **Unrouted pairs**: in the 200k run, 35 HiSeq and 11 NovaSeq pairs have a mate that ReadTrim cuts away completely. The bench drops these pairs before routing (`routeG` reason `trimmedAway`, pass 0). `tierPair` will tag them T0.
 - **Next**:
-  - Get speed back within 5% of pairGX while keeping `pairGF_sound`:
+  - (Done 2026-10-06: `pairGQC`, next section.) Get speed back within 5% of pairGX while keeping `pairGF_sound`:
     - settle score 0 first;
     - stop at the second pair;
     - sorted-merge join of both mates' hits;
     - cheaper anchored enumeration.
   - Then `tierPair` and the RT noHit floor.
+
+### Fast pair guarantee at pairGX speed, PROVED (`pairGQC`; codecs/PairGuarQ*.lean; 2026-10-06)
+- **Kernels** (codecs/PairGuarQ.lean):
+  - `pairGQ`: raw-lookup X hits (`hitsAtKP3` over `PkMzR`), partner scan `pscanQ` (word reject `rejW` before `kerHKG`), an early-stop fold (`goP`: score-0 hits first, then the rest bounded by their best score).
+  - `pairGQC`: the same with the two components that cost 2×, replaced:
+    - X hits `hitsAtQ`: global diagonals (`candsB`: diagonals held by all but `sbound` of the `sbound + 2` rarest seeds, from the first `sbound + 1` arrays), chromosome by binary search (`chromOf`), kernel at length n. `offsOk` (chromosomes in order) is checked at run time; else `hitsAtKP3`.
+    - Partner scan `pscanC`: genome words carried along (`scanWC`).
+- **Proofs** (standard axioms, no sorry):
+  - PairGuarQB (helper b): `rejW_ker`, `pscanQ_eq`.
+  - PairGuarQC (helper c): `stepP_inv`, `foldP_inv`, `goP_spec`, `goP2_spec`, `ansOk`.
+  - PairGuarQD: `pairGQ_sound`, `pairGQ_some`, with `pairGF_sound`'s statement.
+  - PairGuarQE: `pscanC_eq` (= `pscanQ`); `hitsGS_mem` and `mem_hitsAtQ_mzR` (X list = `hitsBoth (−G)` for G ≤ 7: gapless, one exact seed per window by `coverLE`, ≤ sbound failing seeds); `pairGQC_sound`, `pairGQC_some`.
+- **Bench**: `WG_PGF` default is now C (`pairGQC`). Q = `pairGQ`, 1 = `pairGF`, 0 = the unproved `pairGX`.
+- **Profile** (1 thread, µs over the profiled pairs mason 3254 / NovaSeq 4743 / HG002 3543):
+
+  | Kernel | mason | NovaSeq | HG002 |
+  |---|---|---|---|
+  | pairGX (unproved) | 548k | 863k | 549k |
+  | pairGQB (bench prototype) | 642k | 982k | 648k |
+  | pairGQ | 1101k | 2068k | 1347k |
+  | **pairGQC** | **362k** | **771k** | **497k** |
+  | pairGF | 2410k | 7205k | 3943k |
+
+  - Answers are identical for pairGQ, pairGQC and pairGF, and the X lists are equal, on every profiled pair.
+- **E2E RTX, 20k pairs, 4 threads** (WG_PG=4 WG_XBUD=5000; wall / CPU s; medians of 3, cleanest block):
+  - pairGX: 0.78 / 2.95, 0.65 / 2.51, 0.72 / 2.81.
+  - pairGQC: 0.72 / 2.83, 0.67 / 2.59, 0.75 / 2.92.
+  - The 4-thread wall time is noisy while other builds run, and a second block was +10–30% for both kernels.
+  - Kept pairs: pairGQC 17344 / 16714 / 17155; pairGX 17333 / 16570 / 16989 (pairGX is not spec-exact).
+- **Where the 2× was**: the per-chromosome slicing in `hitsAtKP3`, and the list merge sort in `diagsB`. Uncached partner words added ~25%. The fold structure (functional vs mutable) did not matter.
 
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
