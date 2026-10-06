@@ -622,6 +622,35 @@ Floors use only values lean already computes; perfect hits, the ladder and the f
   - Kept pairs: pairGQC 17344 / 16714 / 17155; pairGX 17333 / 16570 / 16989 (pairGX is not spec-exact).
 - **Where the 2× was**: the per-chromosome slicing in `hitsAtKP3`, and the list merge sort in `diagsB`. Uncached partner words added ~25%. The fold structure (functional vs mutable) did not matter.
 
+### Tier router, PROVED (`tierPair`; codecs/TierRouter.lean; branch `speed/tier-router`, 2026-10-06)
+- `tierPair cfg pk offs pgs O1 O2 : TierOut` is mode RTX's whole decision path. Steps: trimmed-away mate (T0); budget gate; RT (`routeG` + `kpKerB`, T1); `pairGQC` at G or else at 0 (T1g / T1gm, suffix z / x); per-mate floors and ceilings (`mateT`); the heuristic; then T2 (both mates have a ceiling) or T3.
+- **Untrusted inputs** are fields of `TierCfg`, and the theorem holds for any of them:
+  - `gate` (bench: `gaveUpR WG_XBUD`);
+  - `pref` (which mate the guarantee enumerates);
+  - `ceil` (bench `ceilX`, the rarest-seed gapless diagonal);
+  - `heur` (bench: `heurP`, whose output is turned into `Cand` proposals).
+- Every proposed alignment is re-checked inside `tierPair` (`chkCand`: in range, score ≤ 0, `checkRuns` gives the score). Floors are computed only by proved code: `emptyCnt` (`floor_look`), RT's `noHit` at the routed cap c gives c + 1, RT's unique best (`noPartner`), and the guarantee's X list (`gxOf`).
+- **`tierPair_sound`** (hyps: `cutOk`, `GenomeBytes`, `check2P`, and `Encodes R mᵢ` for each present mate) gives `TierOk usl lo hi g m1 m2 O1 O2 (tierPair …)`, one case per tag:
+  - T0: that mate is `none`, with reason `trimmedAway`.
+  - T1: `pairSpecT (−c1) (−c2) = some (pl1, pl2)` (from `routeKPB_ok`).
+  - T1g: `g0 ≤ 7`, the enumerated mate satisfies `fastT g0`, and `pairSpecUT … (−P1) (−P2) = some (pl1, pl2)` for all P1, P2 ≥ g0.
+  - T1gm: the same, but `PairTieOk`.
+  - T2: `FloorOk` and, per mate, `CeilOk`. The ceiling has a placement with score ≥ −pH; when `cg` is set, `pl` is a real alignment with its CIGAR (`CigarOk`, from `checkRuns_sound`).
+  - T3: `FloorOk`. Per mate, `MateFloor cd` (every placement has penalty ≥ cd). When the guarantee saw no pair (`pf = some G0`), every proper pair at caps ≥ G0 scores < −G0.
+- Lemmas: `mateFloor_noHit` / `_best` / `_enum` / `_look`, `chkCand_sound`, `cigar_hit`, `upA_inv`, `applyC_inv`, `mateT_inv`, `nhOf_ok` / `ccOf_ok` / `knOf_ok` (from `Settled`), `pairGQC_seen`, `tierG_ok`, `tierB_ok`, `tierRest_ok`. All use standard axioms.
+- **Bench**: RTX now runs only `tierPair`. Removed: `rtxP` / `rtxB` / `mateB` / `rtxU` / `ladM` / `upX`; the env vars WG_PGF (0/Q/1/S), WG_PGK, WG_PGXF, WG_XLAD, WG_XPERF, WG_XFREE and WG_XBND; and the old WG_XPROF profile, now replaced by a short one. `boundX` became `ceilX` (ceiling only; the empty-lookup floors are counted by the proved `emptyCnt`). The bench-only `MateX` and `rescoreRuns` are now the codecs ones.
+- Change vs before: the cap used for `pD` / `pR = 2` is RT's routed cap. This is the same as `cap1F` while pass 2 is off, which is the default.
+- **Check** (20k sets, WG_MODES=RTX WG_PG=4 WG_XBUD=5000, 4 threads):
+  - The `tiers_*.tsv` and `RTX_*.tsv` dumps are byte-identical to the previous RTX (40191a9) on mason, NovaSeq and HG002.
+  - Tags: mason T1 16746 / T2 2236 / T1g 598 / T3 280 / T1gm 140.
+  - Speed is unchanged within noise. Wall s summed over the 3 sets, three interleaved runs each:
+    - before: 2.46, 2.56, 2.42;
+    - after: 2.36, 2.53, 2.59.
+- **Still unproved glue**:
+  - the bench around `tierPair`: reading and trimming reads, threads, output;
+  - which pairs `fRTX` reports (T1 / T1g);
+  - the untrusted helpers listed above, which affect only which tag a pair gets.
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
