@@ -839,6 +839,19 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
   4. Re-time everything.
   5. Manuscript.
 - **Later (Rowan, 2026-10-06): full-recall mode.** A slower mode, up to about 10× slower, that checks every candidate and reports every exact best location (all multimapper copies, no budget skips). Planned alongside the long-read work below.
+- **Freeze timing (431fc2a, 2026-10-06, quiet box)**
+  - Run: `bench/final_stats.py`, 200k pairs, 4 threads, median of 3, mapping only (index load excluded).
+  - Tiers and minibwa comparison: same as the freeze tables (output identical); 0 violations.
+
+  | set | minibwa | RTX | minibwa/RTX wall | minibwa/RTX CPU | pairs/CPU-s | peak RSS (ours / minibwa) |
+  |---|---|---|---|---|---|---|
+  | HiSeq 2x250 | 25.74 s | 7.21 s | 3.57x | 3.53x | ~7.2k | 5.8 / 8.0 GB |
+  | NovaSeq 2x151 | 13.70 s | 6.91 s | 1.98x | 1.89x | ~7.4k | 5.7 / 7.7 GB |
+  | mason 2x150 | 12.78 s | 7.69 s | 1.66x | 1.61x | ~6.6k | 5.6 / 7.7 GB |
+
+- **TODO after freeze: streaming input.** The bench loads each whole read set; memory grows with input size, not threads.
+  - Stream R1/R2 in chunks, assert mate names match and both files end together.
+  - Per-pair proofs are unaffected. A parser stated over whole files may need a chunked = whole lemma.
 - Later roadmap: simulated long reads (ONT) and HiFi (paper: Badread), with new long-read kernels and possibly a new spec.
 - Long-term roadmap (with long reads): a full-recall mode that maps (almost) every pair minibwa maps, at about minibwa's speed (need not be faster). Needs MAPQ (own spec), tie/non-proper handling, end clipping or deeper caps.
 - Per-mate margin (paused, needs its own spec): define the second best over placements at a non-overlapping locus; under "any different placement" the margin is always ≤ 8, because extending the window by one letter costs at most one 1-letter gap. Bench prototype `WG_MARGIN=k` in bench/WholeGenome.lean writes `<mode>_<set>.margin_k<k>.tsv`. It is unproved and untested, and exact only while stage B does not run (P ≤ 16).
