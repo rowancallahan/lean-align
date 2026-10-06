@@ -338,6 +338,7 @@ structure Strand where
   as : Array Nat := #[]
   looked : Nat := 0
   k : Nat := 0          -- seeds looked up
+  pre : Option (Array Nat) := none   -- first lookup, done ahead (`prefetch`)
   tag : Nat
 deriving Inhabited
 
@@ -362,7 +363,9 @@ def step (idx : Idx) (g : ByteArray) (s : Strand) (b : Best) : Strand × Best :=
   let q := idx.q
   let j := s.order[s.k]!
   let looked := s.looked ||| (1 <<< j)
-  let lj := lookup idx g s.r j s.vs[j]!.toUInt64
+  let lj := match s.k, s.pre with
+    | 0, some l => l
+    | _, _ => lookup idx g s.r j s.vs[j]!.toUInt64
   let fresh := newOnly s.as lj 0 0 #[]
   let as := merge s.as lj 0 0 #[]
   let mut b := b
@@ -385,13 +388,36 @@ are scored when their anchor first appears (later seeds cannot change their
 penalty, and best only decreases); gapped ones (≥ 8) at every lookup with
 k ≥ 3 while best ≥ 8: if the final best is ≥ 8, every stream ended with such a
 lookup, over all its anchors. -/
-def mapStreams (idx : Idx) (g : ByteArray) (rs : Array ByteArray) : Best × Nat := Id.run do
-  assert! rs.all fun r => r.size / 4 == idx.q && r.size + 3 ≤ BIAS && r.size == 4 * idx.q
-  let mut ss : Array Strand := (List.range rs.size).toArray.map fun i => mkStream idx rs[i]! (i * TAG)
+def compTab : ByteArray := Id.run do
+  let mut t := ByteArray.mk ((List.range 256).toArray.map (·.toUInt8))
+  for (c, v) in [(65, 84), (84, 65), (67, 71), (71, 67)] do t := t.set! c v
+  return t
+
+def revCompGo (r : ByteArray) (i : Nat) (o : ByteArray) : ByteArray :=
+  if h : i < r.size then revCompGo r (i + 1) (o.set! (r.size - 1 - i) (compTab.get! (r.get! i).toNat)) else o
+termination_by r.size - i
+
+/-- Reverse complement (letters other than ACGT kept). -/
+def revComp (r : ByteArray) : ByteArray := revCompGo r 0 r   -- first set! copies (r is shared)
+
+/-- The first lookup of a stream, done ahead of time (same value `step` would
+compute: `lookup` is a pure function of the index and the seed). -/
+def prefetch (idx : Idx) (g : ByteArray) (s : Strand) : Strand :=
+  let j := s.order[0]!
+  { s with pre := some (lookup idx g s.r j s.vs[j]!.toUInt64) }
+
+/-- The streams of one read: itself, and with `both` its reverse complement. -/
+def streamsOf (idx : Idx) (r : ByteArray) (both : Bool) : Array Strand :=
+  assert! r.size / 4 == idx.q && r.size + 3 ≤ BIAS && r.size == 4 * idx.q
+  let rs := if both then #[r, revComp r] else #[r]
+  (List.range rs.size).toArray.map fun i => mkStream idx rs[i]! (i * TAG)
+
+def mapStreams (idx : Idx) (g : ByteArray) (ss : Array Strand) : Best × Nat := Id.run do
+  let mut ss := ss
   assert! ss.all fun s => s.vs.all (· >>> 61 == 0)
   let mut b : Best := {}
   let mut lookups := 0
-  for _ in [0:4 * rs.size] do
+  for _ in [0:4 * ss.size] do
     if b.pen == 0 && b.amb then break
     let mut pick := ss.size
     for i in [0:ss.size] do
@@ -408,24 +434,29 @@ def mapStreams (idx : Idx) (g : ByteArray) (rs : Array ByteArray) : Best × Nat 
     lookups := lookups + 1
   return (b, lookups)
 
-def compTab : ByteArray := Id.run do
-  let mut t := ByteArray.mk ((List.range 256).toArray.map (·.toUInt8))
-  for (c, v) in [(65, 84), (84, 65), (67, 71), (71, 67)] do t := t.set! c v
-  return t
-
-def revCompGo (r : ByteArray) (i : Nat) (o : ByteArray) : ByteArray :=
-  if h : i < r.size then revCompGo r (i + 1) (o.set! (r.size - 1 - i) (compTab.get! (r.get! i).toNat)) else o
-termination_by r.size - i
-
-/-- Reverse complement (letters other than ACGT kept). -/
-def revComp (r : ByteArray) : ByteArray := revCompGo r 0 r   -- first set! copies (r is shared)
-
 /-- Unique best window (start, len, penalty, reverse?) over the read (and
 with `both` its reverse complement: a different strand is a different window),
 and the number of seed lookups. -/
-def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × Nat × Bool) × Nat :=
-  let (b, k) := mapStreams idx g (if both then #[r, revComp r] else #[r])
+def mapReadS (idx : Idx) (g : ByteArray) (ss : Array Strand) : Option (Nat × Nat × Nat × Bool) × Nat :=
+  let (b, k) := mapStreams idx g ss
   (if b.pen ≤ cap && !b.amb then some (b.st % TAG, b.len, b.pen, b.st ≥ TAG) else none, k)
+
+def mapRead (idx : Idx) (g r : ByteArray) (both : Bool) : Option (Nat × Nat × Nat × Bool) × Nat :=
+  mapReadS idx g (streamsOf idx r both)
+
+/-- `rs.map f` computed in groups of G: first every stream of the group
+(seed codes, bucket sizes: the bucket-start reads of the whole group), then
+every first lookup (the entry reads), then the rest of each item.  Only the
+order of memory reads changes: `prefetch` stores exactly the list `step`
+would look up, so each result equals the ungrouped one. -/
+def grouped {α β : Type} [Inhabited β] (G : Nat) (prep : α → Array Strand) (pf : Strand → Strand)
+    (f : Array Strand → β) (xs : Array α) : Array β := Id.run do
+  let mut out := Array.emptyWithCapacity xs.size
+  for k in [0:(xs.size + G - 1) / G] do
+    let grp := (xs.extract (k * G) (k * G + G)).map prep
+    let grp := grp.map (·.map pf)
+    for ss in grp do out := out.push (f ss)
+  return out
 
 abbrev Hit := Nat × Nat × Nat × Bool    -- start, len, penalty, reverse strand?
 
@@ -446,20 +477,28 @@ both strands (unique best window), then keep the pair only if both mates map
 and `proper` holds", i.e. (mapRead m1 both, mapRead m2 both) filtered.  Mate 2
 is not searched when mate 1 is unmapped or ambiguous: the filter rejects the
 pair whatever mate 2 gives. -/
-def mapPair (idx : Idx) (g : ByteArray) (lo hi : Nat) (m1 m2 : ByteArray) : Option (Hit × Hit) × Nat :=
-  match mapRead idx g m1 true with
+def mapPairS (idx : Idx) (g : ByteArray) (lo hi : Nat) (s1 s2 : Array Strand) : Option (Hit × Hit) × Nat :=
+  match mapReadS idx g s1 with
   | (none, k1) => (none, k1)
   | (some a, k1) =>
-    match mapRead idx g m2 true with
+    match mapReadS idx g s2 with
     | (some b, k2) => (if proper lo hi a b then some (a, b) else none, k1 + k2)
     | (none, k2) => (none, k1 + k2)
 
-def mapPairs (idx : Idx) (g : ByteArray) (lo hi : Nat) (ps : Array (ByteArray × ByteArray)) (tasks : Nat) :
+def mapPair (idx : Idx) (g : ByteArray) (lo hi : Nat) (m1 m2 : ByteArray) : Option (Hit × Hit) × Nat :=
+  mapPairS idx g lo hi (streamsOf idx m1 true) (streamsOf idx m2 true)
+
+/-- Pairs; with G > 0 in groups of G (`grouped`: the 4 streams of a pair are
+prepared and prefetched together; mate 2's are wasted when mate 1 is none). -/
+def mapPairs (idx : Idx) (g : ByteArray) (lo hi : Nat) (ps : Array (ByteArray × ByteArray)) (tasks G : Nat) :
     Array (Option (Hit × Hit) × Nat) :=
-  let f := fun (p : ByteArray × ByteArray) => mapPair idx g lo hi p.1 p.2
-  if tasks ≤ 1 then ps.map f else
+  let run := fun (xs : Array (ByteArray × ByteArray)) =>
+    if G == 0 then xs.map fun p => mapPair idx g lo hi p.1 p.2
+    else grouped G (fun p => streamsOf idx p.1 true ++ streamsOf idx p.2 true) (prefetch idx g)
+      (fun ss => mapPairS idx g lo hi (ss.extract 0 2) (ss.extract 2 4)) xs
+  if tasks ≤ 1 then run ps else
   let csz := (ps.size + tasks - 1) / tasks
-  let ts := (List.range tasks).map fun t => Task.spawn fun _ => (ps.extract (t * csz) (t * csz + csz)).map f
+  let ts := (List.range tasks).map fun t => Task.spawn fun _ => run (ps.extract (t * csz) (t * csz + csz))
   ts.foldl (fun acc t => acc ++ t.get) #[]
 
 def showHit (h : Hit) : String := s!"{h.1}\t{h.2.1}\t{-(Int.ofNat h.2.2.1)}\t{if h.2.2.2 then "-" else "+"}"
@@ -473,7 +512,8 @@ def pairMain (g : ByteArray) (idx : Idx) (rlines : Array String) (m2path : Strin
   let hi := ((← IO.getEnv "PAIR_MAX").getD "1000").toNat!
   let tasks := ((← IO.getEnv "PROTO_TASKS").getD "1").toNat!
   let t1 ← IO.monoNanosNow
-  let out := mapPairs idx g lo hi ps tasks
+  let G := ((← IO.getEnv "PROTO_GROUP").getD "0").toNat!
+  let out := mapPairs idx g lo hi ps tasks G
   let kept := (out.filter (·.1.isSome)).size
   IO.println s!"pairs: {ps.size}  kept: {kept}  lookups/pair: {Float.ofNat (out.foldl (· + ·.2) 0) / Float.ofNat ps.size}"
   let t2 ← IO.monoNanosNow
@@ -506,12 +546,15 @@ def rss : IO String := do
   return " ".intercalate ((st.splitOn "\n").filter (fun l => l.startsWith "VmRSS" || l.startsWith "VmHWM"))
 
 /-- Map `reads` in `tasks` chunks, one `Task.spawn` each (pure: = reads.map). -/
-def mapAll (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray) (tasks : Nat) :
+def mapAll (idx : Idx) (g : ByteArray) (both : Bool) (reads : Array ByteArray) (tasks : Nat) (G : Nat := 0) :
     Array (Option (Nat × Nat × Nat × Bool) × Nat) :=
-  if tasks ≤ 1 then reads.map (mapRead idx g · both) else
+  let run := fun (xs : Array ByteArray) =>
+    if G == 0 then xs.map (mapRead idx g · both)
+    else grouped G (streamsOf idx · both) (prefetch idx g) (mapReadS idx g) xs
+  if tasks ≤ 1 then run reads else
   let csz := (reads.size + tasks - 1) / tasks
   let ts := (List.range tasks).map fun t =>
-    Task.spawn fun _ => (reads.extract (t * csz) (t * csz + csz)).map (mapRead idx g · both)
+    Task.spawn fun _ => run (reads.extract (t * csz) (t * csz + csz))
   ts.foldl (fun acc t => acc ++ t.get) #[]
 
 /-- `mapAll` mapping each distinct read once (identical read ⇒ identical answer). -/
@@ -550,7 +593,8 @@ def main (args : List String) : IO UInt32 := do
   let both := (← IO.getEnv "PROTO_BOTH").isSome
   let mut out : Array (Option (Nat × Nat × Nat × Bool) × Nat) := #[]
   let dedup := (← IO.getEnv "PROTO_DEDUP").isSome
-  for _ in [0:reps] do out := if dedup then mapDedup idx g both reads tasks else mapAll idx g both reads tasks
+  let G := ((← IO.getEnv "PROTO_GROUP").getD "0").toNat!
+  for _ in [0:reps] do out := if dedup then mapDedup idx g both reads tasks else mapAll idx g both reads tasks G
   let res := out.map (·.1)
   let mapped := (res.filter (·.isSome)).size
   IO.println s!"mapped: {mapped}  lookups/read: {Float.ofNat (out.foldl (· + ·.2) 0) / Float.ofNat reads.size}"
