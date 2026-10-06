@@ -33,6 +33,24 @@ chromosome at `o` of length `len`, in its coordinates. -/
   (a.extract (lbA a (16 * (o + base)) 0 a.size) (lbA a (16 * (o + len + 1 + base - q)) 0 a.size)).map
     (· - 16 * o)
 
+/-- `sliceG` without building an array for an empty slice (`sliceG_eqE`). -/
+@[inline] def sliceGE (a : Array Nat) (base o len : Nat) : Array Nat :=
+  let i := lbA a (16 * (o + base)) 0 a.size
+  let j := lbA a (16 * (o + len + 1 + base - q)) 0 a.size
+  if j ≤ i then #[] else (a.extract i j).map (· - 16 * o)
+
+/-- Compiled code runs `sliceGE`. -/
+@[csimp] theorem sliceG_eqE : @sliceG = @sliceGE := by
+  funext a base o len
+  unfold sliceG sliceGE
+  simp only []
+  split
+  · next h =>
+    apply Array.ext
+    · simp; omega
+    · intro k h1 h2; simp at h2
+  · rfl
+
 /-- One strand: seeds left, seeds looked up (newest first), slices per chromosome
 (newest first). -/
 structure GS where
