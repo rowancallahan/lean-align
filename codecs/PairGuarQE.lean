@@ -178,7 +178,7 @@ theorem hitsGS_mem (w : Window) (k : Nat) :
     (w, k) ∈ hitsGS ix E offs pgs.size (fun c => pgs[c]!.n) ker t lim Rs ↔
       (∃ c, c < pgs.size ∧ w.chr = t + c) ∧ k ≤ lim ∧ cwB lim read g w = k := by
   unfold hitsGS
-  simp only [List.mem_filterMap]
+  simp only [List.mem_filterMap, candsC_nil]
   constructor
   · rintro ⟨D, -, hD⟩
     split at hD
@@ -526,6 +526,7 @@ end MapSpec.Fast
 
 #print axioms MapSpec.Fast.pscanC_eq
 #print axioms MapSpec.Fast.hitsGS_mem
+#print axioms MapSpec.Fast.candsC_eq
 #print axioms MapSpec.Fast.mem_hitsAtQ_mzR
 #print axioms MapSpec.Fast.pairGQC_sound
 #print axioms MapSpec.Fast.pairGQC_some
