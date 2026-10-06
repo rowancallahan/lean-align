@@ -306,6 +306,88 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
         m2 := { st := "U", cap := cfg.rcfg.cap1 b.size, cd := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
     | .unmapped rs k => tierRest cfg pk offs pgs a b (some (rs, k)) r.c1 r.c2
 
+/-- `mapChromsGBFG` with both strands' packed reads given (`mapChromsGBFG_eqP`). -/
+@[specialize] def mapChromsGBFGP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
+  let n := gbs.size
+  let gbs2 := gbs ++ gbs
+  let m := R.size / 25
+  let Ls := R.size / m
+  let x := ilGFG kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+    ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
+    ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
+  let b := (List.range n).foldl (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
+  (List.range n).foldl (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
+
+theorem mapChromsGBFG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
+    (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) :
+    mapChromsGBFG kf1 kf2 P ix G offs gbs R Rr ps pr =
+      mapChromsGBFGP kf1 kf2 (packRP R) (packRP Rr) P ix G offs gbs R Rr ps pr := by
+  unfold mapChromsGBFG mapChromsGBFGP
+  simp only [chromKBFG_eqK]
+
+/-- `mapChromsGBKG` with the reverse complement and both packed reads given (`mapChromsGBKG_eqP`). -/
+@[specialize] def mapChromsGBKGP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array Gt) (pvs : Array PGen) (R Rr : ByteArray) (K1 K2 : RP) : Best :=
+  let gbs2 := gbs ++ gbs
+  let pvs2 := pvs ++ pvs
+  let m := R.size / 25
+  let Ls := R.size / m
+  mapChromsGBFGP (kerHKG R K1 gbs2 pvs2) (kerHKG Rr K2 gbs2 pvs2) K1 K2 P ix G offs gbs R Rr
+    (prepGK ix R K1 m Ls) (prepGK ix Rr K2 m Ls)
+
+theorem mapChromsGBKG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (gbs : Array Gt) (pvs : Array PGen) (R : ByteArray) :
+    mapChromsGBKG P ix G offs gbs pvs R =
+      mapChromsGBKGP P ix G offs gbs pvs R (revCompK R) (packRP R) (packRP (revCompK R)) := by
+  unfold mapChromsGBKG mapChromsGBKGP
+  simp only [mapChromsGBFG_eqP]
+
+/-- `regionPenKP` with the reverse complement and both packed reads given (`regionPenKP_eqP`). -/
+def regionPenKPP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (rl : Nat → Nat → L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R Rr : ByteArray) (K1 K2 : RP) (b : Placement) : Nat :=
+  let c := b.1.chr
+  if c < pgs.size && fastT P R then
+    let x := regionB P lo hi R.size b
+    let x1 := min x.2 pgs[c]!.n
+    if x.1 < x1 then
+      let v := view pgs[c]! x.1 (x1 - x.1)
+      (mapChromsGBKGP P (rl (offs[c]! + x.1) (offs[c]! + x1)) G #[0] #[v] #[v] R Rr K1 K2).pen
+    else P
+  else P
+
+theorem regionPenKP_eqP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (rl : Nat → Nat → L)
+    (G : ByteArray) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (b : Placement) :
+    regionPenKP P lo hi rl G offs pgs R b =
+      regionPenKPP P lo hi rl G offs pgs R (revCompK R) (packRP R) (packRP (revCompK R)) b := by
+  unfold regionPenKP regionPenKPP
+  simp only [mapChromsGBKG_eqP]
+
+/-- `mateKP` reading the packed reads from the preparation (`mateKP_eqP`: the same for `prepMate`). -/
+def mateKPP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : MateR :=
+  let b := mapChromsGBFGP (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+    (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) s.K1 s.K2 P ix G offs pgs R s.Rr s.ps s.pr
+  (decodeP pgs.size P b, decide (b.pen ≤ P))
+
+theorem mateKP_eqP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
+    mateKP P ix G offs pgs R (prepMate ix R : PrepM Pp) = mateKPP P ix G offs pgs R (prepMate ix R : PrepM Pp) := by
+  unfold mateKP mateKPP
+  simp only [mapChromsGBFG_eqP]
+  rfl
+
+/-- `mateH` on a mate's search function `mt` (`mateH K P R s = mateHF K.hint R (K.mate · R s) P`). -/
+@[inline] def mateHF (hint : Bool) (R : ByteArray) (mt : Nat → MateR) (P h : Nat) : MateR :=
+  if hint && h < P && fastT h R then
+    let x := mt h
+    if x.1.isSome || x.2 then x else mt P
+  else mt P
+
 /-- `passG` with both mates' preparations given (`passGS_eq`). -/
 def passGS (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep) : Out :=
   if K.noPair P1 P2 R1 R2 then .unmapped .noPair none else
@@ -322,13 +404,31 @@ def passGS (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 
 theorem passGS_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) :
     passGS K P1 P2 ord lo hi R1 R2 (K.prep R1) (K.prep R2) = passG K P1 P2 ord lo hi R1 R2 := rfl
 
-/-- `routeG` on two reads, pass 1's preparations given (`routeGS_eq`). -/
-def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K1.Prep) : Routed :=
+/-- `passGS` with each mate's genome search (`m1`, `m2`) and region search (`g1`, `g2`) given
+(`passGSF_eq`). -/
+def passGSF (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep)
+    (m1 m2 : Nat → MateR) (g1 g2 : Nat → Placement → Nat) : Out :=
+  if K.noPair P1 P2 R1 R2 then .unmapped .noPair none else
+  let sw := match ord with
+    | some o => o
+    | none => decide (K.cost P2 s2 < K.cost P1 s1)
+  if sw then
+    (stepR .two .one lo hi (m2 P2) (g1 P1) (fun r => decide (P1 < r)) (mateHF K.hint R1 m1 P1)).swap
+  else
+    stepR .one .two lo hi (m1 P1) (g2 P2) (fun r => decide (P2 < r)) (mateHF K.hint R2 m2 P2)
+
+theorem passGSF_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep) :
+    passGSF K P1 P2 ord lo hi R1 R2 s1 s2 (fun Q => K.mate Q R1 s1) (fun Q => K.mate Q R2 s2)
+      (fun Q => K.region Q R1) (fun Q => K.region Q R2) = passGS K P1 P2 ord lo hi R1 R2 s1 s2 := rfl
+
+/-- `routeG` on two reads, pass 1's preparations and searches given (`routeGS_eq`). -/
+def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K1.Prep)
+    (m1 m2 : Nat → MateR) (g1 g2 : Nat → Placement → Nat) : Routed :=
   let A1 := rc.cap1 R1.size
   let A2 := rc.cap1 R2.size
   let o := if !fastT A1 R1 then .unmapped (.tooShort .one) none
     else if !fastT A2 R2 then .unmapped (.tooShort .two) none
-    else passGS K1 A1 A2 (rc.ord1 R1 R2) lo hi R1 R2 s1 s2
+    else passGSF K1 A1 A2 (rc.ord1 R1 R2) lo hi R1 R2 s1 s2 m1 m2 g1 g2
   match o with
   | .mapped _ => ⟨o, 1, A1, A2⟩
   | .unmapped r k =>
@@ -339,7 +439,9 @@ def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) 
     else ⟨o, 1, A1, A2⟩
 
 theorem routeGS_eq (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) :
-    routeGS rc K1 K2 lo hi R1 R2 (K1.prep R1) (K1.prep R2) = routeG rc K1 K2 lo hi (some R1) (some R2) := rfl
+    routeGS rc K1 K2 lo hi R1 R2 (K1.prep R1) (K1.prep R2) (fun Q => K1.mate Q R1 (K1.prep R1))
+      (fun Q => K1.mate Q R2 (K1.prep R2)) (fun Q => K1.region Q R1) (fun Q => K1.region Q R2) =
+      routeG rc K1 K2 lo hi (some R1) (some R2) := rfl
 
 /-- `tierRest` with both mates' preparations given (`tierRest_eqS`). -/
 def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) : TierOut :=
@@ -373,7 +475,8 @@ def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Opti
 theorem tierRest_eqS (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) :
     tierRest cfg pk offs pgs a b rk c1 c2 = tierRestS cfg pk offs pgs a b (prepMate pk a) (prepMate pk b) rk c1 c2 := rfl
 
-/-- `tierPairB` with each mate prepared once, for the gate, RT's pass 1 and the rest (`tierPairB_eqS`). -/
+/-- `tierPairB` with each mate prepared once, for the gate, RT's pass 1 and the rest; RT's pass 1 reads the
+packed reads from the preparations (`tierPairB_eqS`). -/
 def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
   match O1, O2 with
   | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
@@ -382,7 +485,11 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
     let s1 : PrepM MzP := prepMate pk a
     let s2 : PrepM MzP := prepMate pk b
     if cfg.gate a b s1 s2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
+    let rl := fun x y => ((pk, x, y) : RgMz)
     let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b s1 s2
+      (fun Q => mateKPP Q pk ByteArray.empty offs pgs a s1) (fun Q => mateKPP Q pk ByteArray.empty offs pgs b s2)
+      (fun Q => regionPenKPP Q cfg.lo cfg.hi rl ByteArray.empty offs pgs a s1.Rr s1.K1 s1.K2)
+      (fun Q => regionPenKPP Q cfg.lo cfg.hi rl ByteArray.empty offs pgs b s2.Rr s2.K1 s2.K2)
     match r.out with
     | .mapped (x, y) =>
       { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
@@ -395,7 +502,23 @@ end router
 /-- Compiled code runs `tierPairBS`. -/
 @[csimp] theorem tierPairB_eqS : @tierPairB = @tierPairBS := by
   funext cfg pk offs pgs O1 O2
-  cases O1 <;> cases O2 <;> rfl
+  cases O1 with
+  | none => rfl
+  | some a =>
+    cases O2 with
+    | none => rfl
+    | some b =>
+      have hm : ∀ R, (fun Q => mateKPP Q pk ByteArray.empty offs pgs R (prepMate pk R : PrepM MzP)) =
+          (fun Q => (tierKer cfg pk offs pgs cfg.j1).mate Q R (prepMate pk R : PrepM MzP)) :=
+        fun R => funext fun Q => (mateKP_eqP Q pk ByteArray.empty offs pgs R).symm
+      have hr : ∀ R, (fun Q => regionPenKPP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R
+            (prepMate pk R : PrepM MzP).Rr (prepMate pk R : PrepM MzP).K1 (prepMate pk R : PrepM MzP).K2) =
+          (fun Q => (tierKer cfg pk offs pgs cfg.j1).region Q R) :=
+        fun R => funext fun Q => funext fun x =>
+          (regionPenKP_eqP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R x).symm
+      simp only [tierPairBS]
+      rw [hm a, hm b, hr a, hr b]
+      rfl
 
 /-! ## What the tags mean -/
 
