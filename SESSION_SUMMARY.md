@@ -298,6 +298,18 @@ One command: `python3 bench/final_stats.py`.
   - Whole process wall s: RTX 34.6 / 24.4 / 24.0; minibwa 48.2 / 26.8 / 25.1.
   - Peak RSS: 5.6–5.8 GB vs 7.7–8.0 GB.
 
+## RTX constant factors, 150 bp (branch `speed/150-loops`, 2026-10-06)
+Compiled-code rewrites only, each `@[csimp]` with an equality proof; theorems unchanged; WG_TIEROUT=1 tier and RTX dumps byte-identical to 67bbb1a on hiseq / nova / mason 200k.
+- Profile (callgrind, 1000 nova pairs inside tierPair): partner scan `pscanC` (scanWC) ~15%, rc/free ~10%, `packLoop` ~9%, gate prep + `costP` ~8%, minimizer bucket scans (`rawScan`, `scanAW`) ~7%, `lanesAny` 3%.
+- `pscanC_eq_pscanD` (PairGuarQ): partner scan on UInt64 positions, genome words carried, block flags re-read only at a 32-boundary (`scanWF_eq`, `scanWE_eq`).
+- `rawLookP_eqD` (PairGuarQ): raw bucket scan on UInt64 slots (`rawScan_eqU`, guard `rawSmall`).
+- `lookupPW_eqK` (MzWord): bucket entries whose UInt64 key differs skipped before `okAtW` (`scanAWK_eq`).
+- `mapChromsGBFG_eqK` (WgPacked): each strand's read packed once per search, not per chromosome.
+- `costP_eqI` (PairRegion): insertion sort for the few lookup sizes (`isortN_eq` = mergeSort).
+- `sliceG_eqE` (FastGenPair): no array built for an empty slice.
+- Instructions per 1000 nova pairs 1314M → ~1100M. Mapping wall s, 4 threads, median of 3 interleaved vs 67bbb1a: hiseq 9.35 → 8.77, nova 8.27 → 7.79, mason 8.60 → 8.32 (−3 to −6%; the box is noisy, ±10% per run).
+- Not done: sharing the gate's preps with passG (gate is an opaque `TierCfg` field), candidate diagonals (speed/150-stage).
+
 ## Tier-1 / short-read workhorse (branch `speed/fast-proved`, 2026-10-05)
 Done (all proved, check.sh green on 58b0faf):
 - Main-path speed (body changes, equality lemmas): shapes table (`shapesT_eq`/`shapesKT_eq`; the mergeSort was 1/3 of stage K), reverse complement by table (`complTab_get`), `sbound` table (`sbound_def`), best window not re-scored (`addK`, `inv_skipP`). chr21 1 task, 250 bp both strands: T=−16 35k → ~51k reads/s, T=−12 60k → ~90k.
