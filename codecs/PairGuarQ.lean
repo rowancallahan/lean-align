@@ -127,6 +127,228 @@ def pscanC (pgs2 : Array PGen) (RY RYr : ByteArray) (KY KYr : RP) (sl lo hi lim 
   if fw then scanWC RYr KYr P lim f a (b + 1 - a) u (gword P.w u) (gword P.w (u + 1)) []
   else scanWC RY KY P lim f a (b + 1 - a) u (gword P.w u) (gword P.w (u + 1)) []
 
+/-! ### The partner scan on `UInt64` positions (compiled in place of `pscanC`: `pscanC_eq_pscanD`) -/
+
+/-- `scanWC` with the read's first word `w0`, `lim / 4` (`l4`) and the chromosome end `top = P.o + P.n`
+hoisted, the absolute position `A = P.o + st` a `UInt64`, and the genome words `cur` / `nxt` of
+`A / 32`, `A / 32 + 1` advanced when `A` leaves its 32-letter block. -/
+def scanWE {α : Type} (w : ByteArray) (w0 : UInt64) (l4 : Nat) (top : UInt64) (f : Nat → Option α) :
+    Nat → Nat → UInt64 → UInt64 → UInt64 → List α → List α
+  | 0, _, _, _, _, acc => acc
+  | k + 1, st, A, cur, nxt, acc =>
+    let s := (A &&& 31).toNat
+    let rej := decide (A + 32 ≤ top) && w.get! (17 * (A >>> 6).toNat) == 1 &&
+      w.get! (17 * ((A + 31) >>> 6).toNat) == 1 &&
+      decide (l4 < cnt64 (fold (w0 ^^^ comb cur nxt s (2 * s).toUInt64 (64 - 2 * s).toUInt64)))
+    let acc' := if rej then acc else match f st with | some v => v :: acc | none => acc
+    if s = 31 then scanWE w w0 l4 top f k (st + 1) (A + 1) nxt (gword w ((A >>> 5).toNat + 2)) acc'
+    else scanWE w w0 l4 top f k (st + 1) (A + 1) cur nxt acc'
+
+/-- The two block flags `scanWE` reads at position `A`. -/
+@[inline] def flgW (w : ByteArray) (A : UInt64) : Bool :=
+  w.get! (17 * (A >>> 6).toNat) == 1 && w.get! (17 * ((A + 31) >>> 6).toNat) == 1
+
+/-- `scanWE` with the block flags `fl = flgW w A` carried (re-read only where `A`'s blocks can change)
+and the shift `A % 32` kept a `UInt64`. -/
+def scanWF {α : Type} (w : ByteArray) (w0 : UInt64) (l4 : Nat) (top : UInt64) (f : Nat → Option α) :
+    Nat → Nat → UInt64 → UInt64 → UInt64 → Bool → List α → List α
+  | 0, _, _, _, _, _, acc => acc
+  | k + 1, st, A, cur, nxt, fl, acc =>
+    let s := A &&& 31
+    let rej := decide (A + 32 ≤ top) && fl &&
+      decide (l4 < cnt64 (fold (w0 ^^^ comb cur nxt s.toNat (2 * s) (64 - 2 * s))))
+    let acc' := if rej then acc else match f st with | some v => v :: acc | none => acc
+    if s = 31 then scanWF w w0 l4 top f k (st + 1) (A + 1) nxt (gword w ((A >>> 5).toNat + 2)) (flgW w (A + 1)) acc'
+    else if s = 0 then scanWF w w0 l4 top f k (st + 1) (A + 1) cur nxt (flgW w (A + 1)) acc'
+    else scanWF w w0 l4 top f k (st + 1) (A + 1) cur nxt fl acc'
+
+theorem flgW_succ (w : ByteArray) (A : UInt64) (h31 : A &&& 31 ≠ 31) (h0 : A &&& 31 ≠ 0)
+    (hb : A.toNat + 64 < 2 ^ 64) : flgW w (A + 1) = flgW w A := by
+  have hs : (A &&& 31).toNat = A.toNat % 32 := by
+    rw [UInt64.toNat_and]; exact Nat.and_two_pow_sub_one_eq_mod A.toNat 5
+  have n31 : A.toNat % 32 ≠ 31 := by
+    intro h; apply h31; apply UInt64.toNat_inj.1; rw [hs, h]; rfl
+  have n0 : A.toNat % 32 ≠ 0 := by
+    intro h; apply h0; apply UInt64.toNat_inj.1; rw [hs, h]; rfl
+  have e1 : ((A + 1) >>> 6).toNat = (A >>> 6).toNat := by
+    rw [UInt64.toNat_shiftRight, UInt64.toNat_shiftRight, UInt64.toNat_add]
+    simp [Nat.shiftRight_eq_div_pow]; omega
+  have e2 : ((A + 1 + 31) >>> 6).toNat = ((A + 31) >>> 6).toNat := by
+    rw [UInt64.toNat_shiftRight, UInt64.toNat_shiftRight, UInt64.toNat_add, UInt64.toNat_add,
+      UInt64.toNat_add]
+    simp [Nat.shiftRight_eq_div_pow]; omega
+  simp only [flgW, e1, e2]
+
+theorem scanWF_eq {α : Type} (w : ByteArray) (w0 : UInt64) (l4 : Nat) (top : UInt64) (f : Nat → Option α) :
+    ∀ (k st : Nat) (A cur nxt : UInt64) (fl : Bool) (acc : List α), fl = flgW w A →
+      A.toNat + k + 64 < 2 ^ 64 →
+      scanWF w w0 l4 top f k st A cur nxt fl acc = scanWE w w0 l4 top f k st A cur nxt acc
+  | 0, st, A, cur, nxt, fl, acc, _, _ => by simp only [scanWF, scanWE]
+  | k + 1, st, A, cur, nxt, fl, acc, hfl, hb => by
+    have hs : (A &&& 31).toNat = A.toNat % 32 := by
+      rw [UInt64.toNat_and]; exact Nat.and_two_pow_sub_one_eq_mod A.toNat 5
+    have h2 : 2 * (A &&& 31) = (2 * (A &&& 31).toNat).toUInt64 := by
+      apply UInt64.toNat_inj.1; rw [UInt64.toNat_mul, hs]; simp; try omega
+    have h64 : 64 - 2 * (A &&& 31) = (64 - 2 * (A &&& 31).toNat).toUInt64 := by
+      apply UInt64.toNat_inj.1; rw [UInt64.toNat_sub_of_le, UInt64.toNat_mul, hs]
+      · simp; try omega
+      · rw [UInt64.le_iff_toNat_le, UInt64.toNat_mul, hs]; simp; omega
+    have h31 : (A &&& 31 = 31) ↔ ((A &&& 31).toNat = 31) := by
+      constructor
+      · intro h; rw [h]; rfl
+      · intro h; apply UInt64.toNat_inj.1; rw [h]; rfl
+    have hrej : (decide (A + 32 ≤ top) && fl &&
+        decide (l4 < cnt64 (fold (w0 ^^^ comb cur nxt (A &&& 31).toNat (2 * (A &&& 31)) (64 - 2 * (A &&& 31)))))) =
+        (decide (A + 32 ≤ top) && w.get! (17 * (A >>> 6).toNat) == 1 &&
+          w.get! (17 * ((A + 31) >>> 6).toNat) == 1 &&
+          decide (l4 < cnt64 (fold (w0 ^^^ comb cur nxt (A &&& 31).toNat (2 * (A &&& 31).toNat).toUInt64
+            (64 - 2 * (A &&& 31).toNat).toUInt64)))) := by
+      rw [hfl, h64, h2, flgW]; simp only [Bool.and_assoc]
+    simp only [scanWF, scanWE]
+    rw [hrej]
+    by_cases e31 : A &&& 31 = 31
+    · have e31' : (A &&& 31).toNat = 31 := h31.1 e31
+      simp only [e31, if_true]
+      exact scanWF_eq w w0 l4 top f k (st + 1) (A + 1) _ _ _ _ rfl
+        (by rw [UInt64.toNat_add]; simp; omega)
+    · have e31' : ¬ (A &&& 31).toNat = 31 := fun h => e31 (h31.2 h)
+      simp only [e31, e31', if_false]
+      have hA1 : (A + 1).toNat = A.toNat + 1 := by rw [UInt64.toNat_add]; simp; omega
+      by_cases e0 : A &&& 31 = 0
+      · simp only [e0, if_true]
+        exact scanWF_eq w w0 l4 top f k (st + 1) (A + 1) _ _ _ _ rfl (by rw [hA1]; omega)
+      · simp only [e0, if_false]
+        exact scanWF_eq w w0 l4 top f k (st + 1) (A + 1) _ _ _ _
+          (by rw [hfl, flgW_succ w A e31 e0 (by omega)]) (by rw [hA1]; omega)
+
+/-- `pscanC` with the scan `scanWF` (`scanWE` with the flags carried) when the read word path applies and all positions are below `2^62`. -/
+def pscanD (pgs2 : Array PGen) (RY RYr : ByteArray) (KY KYr : RP) (sl lo hi lim : Nat)
+    (x : Placement) : List (Placement × Int) :=
+  let ny := RY.size
+  let fw := decide (x.2 = Strand.fwd)
+  let a := if fw then x.1.start + lo - ny else x.1.start + x.1.len - hi
+  let b := if fw then x.1.start + hi - ny else x.1.start + x.1.len - lo
+  let P := pgs2[x.1.chr]!
+  let f := fun s =>
+    let k := if x.2 = Strand.fwd then kerHKG RYr KYr pgs2 pgs2 x.1.chr s ny lim
+      else kerHKG RY KY pgs2 pgs2 x.1.chr s ny lim
+    let y : Placement := (⟨x.1.chr, s, ny⟩, if x.2 = Strand.fwd then Strand.rev else Strand.fwd)
+    if k ≤ lim ∧ properPairU sl lo hi x y = true then some (y, -(k : Int)) else none
+  let R := if fw then RYr else RY
+  let K := if fw then KYr else KY
+  if K.ok && decide (32 ≤ R.size) && decide (P.o + P.n + a + (b + 1 - a) + 64 < 4611686018427387904) then
+    scanWF P.w K.w[0]! (lim / 4) (P.o + P.n).toUInt64 f (b + 1 - a) a (P.o + a).toUInt64
+      (gword P.w ((P.o + a) / 32)) (gword P.w ((P.o + a) / 32 + 1)) (flgW P.w (P.o + a).toUInt64) []
+  else pscanC pgs2 RY RYr KY KYr sl lo hi lim x
+
+theorem scanWC_eqW {α : Type} (R : ByteArray) (K : RP) (P : PGen) (lim : Nat) (f : Nat → Option α) :
+    ∀ (k a u : Nat) (acc : List α),
+      scanWC R K P lim f a k u (gword P.w u) (gword P.w (u + 1)) acc =
+        scanW (fun s => if rejW R K P s lim then none else f s) a k acc
+  | 0, a, u, acc => by simp only [scanWC, scanW]
+  | k + 1, a, u, acc => by
+    simp only [scanWC, scanW]
+    have hc : (if (P.o + a) / 32 = u then gword P.w u else if (P.o + a) / 32 = u + 1 then gword P.w (u + 1)
+        else gword P.w ((P.o + a) / 32)) = gword P.w ((P.o + a) / 32) := by
+      split
+      · next h => rw [h]
+      · split
+        · next h => rw [h]
+        · rfl
+    have hn : (if (P.o + a) / 32 = u then gword P.w (u + 1) else gword P.w ((P.o + a) / 32 + 1)) =
+        gword P.w ((P.o + a) / 32 + 1) := by
+      split
+      · next h => rw [h]
+      · rfl
+    rw [hc, hn, scanWC_eqW R K P lim f k (a + 1) ((P.o + a) / 32)]
+    congr 1
+    have hr : rejC R K P a lim (gword P.w ((P.o + a) / 32)) (gword P.w ((P.o + a) / 32 + 1)) =
+        rejW R K P a lim := rfl
+    rw [hr]
+    cases rejW R K P a lim <;> rfl
+
+theorem scanWE_eq {α : Type} (R : ByteArray) (K : RP) (P : PGen) (lim : Nat) (f : Nat → Option α)
+    (hK : K.ok = true) (hR : 32 ≤ R.size) (htop : P.o + P.n < 4611686018427387904) :
+    ∀ (k st : Nat) (A : UInt64) (acc : List α), A.toNat = P.o + st → P.o + st + k + 64 < 4611686018427387904 →
+      scanWE P.w K.w[0]! (lim / 4) (P.o + P.n).toUInt64 f k st A
+        (gword P.w ((P.o + st) / 32)) (gword P.w ((P.o + st) / 32 + 1)) acc =
+        scanW (fun s => if rejW R K P s lim then none else f s) st k acc
+  | 0, st, A, acc, _, _ => by simp only [scanWE, scanW]
+  | k + 1, st, A, acc, hA, hb => by
+    have hs : (A &&& 31).toNat = (P.o + st) % 32 := by
+      rw [UInt64.toNat_and, ← hA]; exact Nat.and_two_pow_sub_one_eq_mod A.toNat 5
+    have h6 : (A >>> 6).toNat = (P.o + st) / 64 := by
+      rw [UInt64.toNat_shiftRight, ← hA]; simp [Nat.shiftRight_eq_div_pow]
+    have h5 : (A >>> 5).toNat = (P.o + st) / 32 := by
+      rw [UInt64.toNat_shiftRight, ← hA]; simp [Nat.shiftRight_eq_div_pow]
+    have h31 : (A + 31).toNat = P.o + st + 31 := by
+      rw [UInt64.toNat_add]; simp; omega
+    have h31' : ((A + 31) >>> 6).toNat = (P.o + st + 31) / 64 := by
+      rw [UInt64.toNat_shiftRight, h31]; simp [Nat.shiftRight_eq_div_pow]
+    have h1 : (A + 1).toNat = P.o + (st + 1) := by
+      rw [UInt64.toNat_add]; simp; omega
+    have htopN : ((P.o + P.n).toUInt64).toNat = P.o + P.n := by simp; omega
+    have hle : decide (A + 32 ≤ (P.o + P.n).toUInt64) = decide (st + 32 ≤ P.n) := by
+      have h32 : (A + 32).toNat = P.o + st + 32 := by rw [UInt64.toNat_add]; simp; omega
+      rw [decide_eq_decide, UInt64.le_iff_toNat_le, h32, htopN]; omega
+    have hrej : (decide (A + 32 ≤ (P.o + P.n).toUInt64) && P.w.get! (17 * (A >>> 6).toNat) == 1 &&
+        P.w.get! (17 * ((A + 31) >>> 6).toNat) == 1 &&
+        decide (lim / 4 < cnt64 (fold (K.w[0]! ^^^ comb (gword P.w ((P.o + st) / 32)) (gword P.w ((P.o + st) / 32 + 1))
+          (A &&& 31).toNat (2 * (A &&& 31).toNat).toUInt64 (64 - 2 * (A &&& 31).toNat).toUInt64)))) =
+        rejW R K P st lim := by
+      rw [hle, h6, h31', hs]
+      simp only [rejW, hK, hR, Bool.true_and, decide_true]
+    simp only [scanWE, scanW]
+    rw [hrej]
+    have hacc : (if rejW R K P st lim = true then acc else match f st with | some v => v :: acc | none => acc) =
+        (match (if rejW R K P st lim = true then none else f st) with | some v => v :: acc | none => acc) := by
+      cases rejW R K P st lim <;> rfl
+    rw [hacc, hs]
+    split
+    · next h =>
+      have e1 : (P.o + (st + 1)) / 32 = (P.o + st) / 32 + 1 := by omega
+      have e2 := scanWE_eq R K P lim f hK hR htop k (st + 1) (A + 1)
+        (match (if rejW R K P st lim = true then none else f st) with | some v => v :: acc | none => acc) h1 (by omega)
+      have e3 : (P.o + st) / 32 + 1 + 1 = (P.o + st) / 32 + 2 := by omega
+      rw [e1, e3] at e2
+      rw [h5]; exact e2
+    · next h =>
+      have e1 : (P.o + (st + 1)) / 32 = (P.o + st) / 32 := by omega
+      have e2 := scanWE_eq R K P lim f hK hR htop k (st + 1) (A + 1)
+        (match (if rejW R K P st lim = true then none else f st) with | some v => v :: acc | none => acc) h1 (by omega)
+      rw [e1] at e2
+      exact e2
+
+theorem pscanD_eq (pgs2 : Array PGen) (RY RYr : ByteArray) (KY KYr : RP) (sl lo hi lim : Nat) (x : Placement) :
+    pscanD pgs2 RY RYr KY KYr sl lo hi lim x = pscanC pgs2 RY RYr KY KYr sl lo hi lim x := by
+  unfold pscanD
+  by_cases hfw : x.2 = Strand.fwd
+  · simp only [hfw, decide_true, if_true]
+    split
+    · next hg =>
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hg
+      obtain ⟨⟨hK, hR⟩, hb⟩ := hg
+      unfold pscanC
+      simp only [hfw, decide_true, if_true]
+      rw [scanWF_eq _ _ _ _ _ _ _ _ _ _ _ _ rfl (by simp; omega),
+        scanWE_eq _ _ _ _ _ hK hR (by omega) _ _ _ _ (by simp; omega) (by omega), scanWC_eqW]
+    · rfl
+  · simp only [hfw, decide_false, Bool.false_eq_true, if_false]
+    split
+    · next hg =>
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hg
+      obtain ⟨⟨hK, hR⟩, hb⟩ := hg
+      unfold pscanC
+      simp only [hfw, decide_false, Bool.false_eq_true, if_false]
+      rw [scanWF_eq _ _ _ _ _ _ _ _ _ _ _ _ rfl (by simp; omega),
+        scanWE_eq _ _ _ _ _ hK hR (by omega) _ _ _ _ (by simp; omega) (by omega), scanWC_eqW]
+    · rfl
+
+/-- Compiled code runs `pscanD`. -/
+@[csimp] theorem pscanC_eq_pscanD : @pscanC = @pscanD := by
+  funext pgs2 RY RYr KY KYr sl lo hi lim x
+  exact (pscanD_eq pgs2 RY RYr KY KYr sl lo hi lim x).symm
+
 /-! ## Part A': the enumerated mate's hits by global diagonals -/
 
 /-- The last `c ∈ [lo, hi)` with `offs[c] ≤ x` (binary search; `lo` when none). -/
