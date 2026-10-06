@@ -852,6 +852,28 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
 - **TODO after freeze: streaming input.** The bench loads each whole read set; memory grows with input size, not threads.
   - Stream R1/R2 in chunks, assert mate names match and both files end together.
   - Per-pair proofs are unaffected. A parser stated over whole files may need a chunked = whole lemma.
+- **Idea for later (Rowan, 2026-10-06): reuse proved results across reads (certificate memo).**
+  - **Idea:** when read A is proved unique best (say 3 errors at locus X), store that result. A later read B that has the same sequence over the part of A that carries the errors can reuse A's proof. B's best alignment must then pass through X, so B skips most of its seeds and checks only the rest of its own sequence at X. Known paths can also bound other candidates, so some seeds can be skipped.
+  - **Exact duplicates (sound, easy):** an identical read or pair gets an identical result, because the mapper is a pure function. The proof is trivial. The gain is the duplicate rate (PCR and optical duplicates, about 5–15% in WGS). Key the memo on the pair's bases.
+  - **Overlapping reads (sound only with a margin):** a unique best for A's part S does not alone make X best for B. B's other part T could fit much better somewhere S fits slightly worse. The sound version:
+    1. Store A's floor F for every other placement, not just "unique": no other placement of S costs < F. Today's T1 gives F = cap + 1.
+    2. Lemma: restricting B's end-to-end alignment to S gives an alignment of S that costs no more (penalties ≥ 0). So every B placement whose S part is not at X costs ≥ F.
+    3. Score B at X directly, cost c. If c < F, then X is B's unique best (pairSpec-style uniqueness). Otherwise fall back to the normal search, using F as a floor and c as a ceiling to prune seeds.
+    - Watch out for placements shifted by 1–2 letters near X. They are "other placements" of S, already covered by F, but indels at the S/T boundary need care in the lemma.
+    - Example: A has 3 mismatches, so 12 penalty, and F = 17. Then B qualifies only if its rest adds < 5 penalty at X, i.e. at most 1 more mismatch.
+  - **Expected hit rate (critical):**
+    - The errors that read A carries are mostly its own sequencing errors, not shared with other reads. Only true variants (SNPs) recur. The useful shared part is usually an exact stretch, not "the same 3 errors".
+    - Reads arrive in random genome order, so the memo must cover the whole genome. At 30× each locus is seen ~30 times over the run, so hits exist, but the 200k bench (~0.003×) shows almost none.
+    - Finding a memo hit means hashing B's substrings into a second, read-built index. That is about the cost of seeding, so the saving is the verify and extension work, not seeding.
+  - **Risks:**
+    - A shared memo across threads makes some results order-dependent. Only proved-optimal outputs, which are order-independent, may use it.
+    - Heuristic tiers must not read from it, or output becomes non-deterministic.
+    - Memory grows with the number of entries.
+  - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
+  - **Measure first:**
+    - The exact duplicate-pair rate on 1M NovaSeq pairs.
+    - On ≥ 1M pairs, the fraction of T2/T3 pairs that share an S part with an earlier T1 pair and pass c < F.
+    - Together these bound the gain before building anything.
 - Later roadmap: simulated long reads (ONT) and HiFi (paper: Badread), with new long-read kernels and possibly a new spec.
 - Long-term roadmap (with long reads): a full-recall mode that maps (almost) every pair minibwa maps, at about minibwa's speed (need not be faster). Needs MAPQ (own spec), tie/non-proper handling, end clipping or deeper caps.
 - Per-mate margin (paused, needs its own spec): define the second best over placements at a non-overlapping locus; under "any different placement" the margin is always ≤ 8, because extending the window by one letter costs at most one 1-letter gap. Bench prototype `WG_MARGIN=k` in bench/WholeGenome.lean writes `<mode>_<set>.margin_k<k>.tsv`. It is unproved and untested, and exact only while stage B does not run (P ≤ 16).
