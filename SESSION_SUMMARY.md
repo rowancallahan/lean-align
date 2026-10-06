@@ -869,6 +869,12 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
     - A shared memo across threads makes some results order-dependent. Only proved-optimal outputs, which are order-independent, may use it.
     - Heuristic tiers must not read from it, or output becomes non-deterministic.
     - Memory grows with the number of entries.
+  - **Indels and SVs (Rowan):** this may help most here.
+    - A germline indel is shared by every read covering it, unlike sequencing errors, so the hit rate is higher.
+    - Indel reads are also the expensive ones (stage B, band search).
+    - Limit: an indel whose penalty exceeds the cap is outside the proved tiers. The memo can then only give a ceiling: reuse the stored path as the first candidate and prune with its cost. There is no floor, so the result stays heuristic (T2).
+    - Reads that span an SV breakpoint score badly under end-to-end scoring with no clipping. A ceiling helps them only for speed.
+  - **Memory:** budget up to ~12 GB, double today's 5.8 GB. 10M entries at ~32 bytes is ~0.3 GB, so RAM is not the limit. Lookup cost and determinism are.
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
   - **Measure first:**
     - The exact duplicate-pair rate on 1M NovaSeq pairs.
