@@ -786,6 +786,50 @@ Floors use only values lean already computes; perfect hits, the ladder and the f
   - which pairs `fRTX` reports (T1 / T1g);
   - the untrusted helpers listed above, which affect only which tag a pair gets.
 
+### RTX on 150 bp mates: profile, two proved speedups (branch `speed/150-stage`, 2026-10-06)
+- **Profile**: gdb stack samples on 200k pairs, 1 thread, share of `tierPair` samples, plus the bench's WG_XPROF TIERSPLIT timers.
+  - mason: RT 57% (cap-16 search `mateKP` 47%, of which stage K is about 45%); the rest (`tierRestS`) 20%; `costP` 10%.
+  - NovaSeq: `pairGQC` 42% (`hitsAtQ` 29%, of which `candsB` 12%, raw lookups 9% and kernel checks 8%; partner scans `pscanC`/`goP` 13%); RT 31%; `heurP` 10%; `costP` 5%.
+  - Gated pairs (WG_XBUD=5000): on NovaSeq the guarantee's tail pays most. At 20k pairs, 156 of 2082 gated pairs take 0.62 of 0.81 s.
+- **Staged search (small cap first, then cap 16): not done.** The cap-16 search is already adaptive.
+  - Seeds are looked up rarest first, both strands interleaved, and it stops after sbound(best) + 1 seeds.
+  - Stage K runs only when gapBound(min(best, P)) > 0.
+  - A small-cap stage therefore repeats work the search already skips. This matches RTL (`mapSpecBoth_mono` hints), which was slower.
+- **Change 1** (`codecs/TierRouter.lean`):
+  - `tierPairB` prepares each mate once (`prepMate`) and computes each pass-1 cost once (`costP`). The gate, RT (`tierRTS`) and the rest (`tierRestS`) share them.
+  - Before, the bench gate (`gaveUpR`) recomputed both preps and costs, and RT recomputed them again. The gate took about 12% of `tierPair`.
+  - `TierCfg.gate` now receives the costs.
+  - `tierRTS_eq` proves (by `rfl`) that `tierRTS` with RT's own preps and costs is `tierRT`.
+  - `tierPairB_sound` / `tierPair_sound` keep their statements.
+- **Change 2** (`codecs/PairGuarQ.lean`): `hitsGS` runs `candsC` instead of `candsB`.
+  - A diagonal that an earlier array already holds is skipped before its support is counted.
+  - The support is counted only over the current and later arrays, and stops at `need` (`atLeastD`).
+  - `candsC_eq` proves `candsB need (prev.reverse ++ l) prev l k = candsC need prev l k`, so the lists are identical. `hitsGS_mem` goes through `candsC_nil`. All of this uses standard axioms.
+- **Output**: `RTX_*.tsv` and `tiers_*.tsv` (WG_TIEROUT=1) are byte-identical between change 1 alone and changes 1+2 on all three 200k sets.
+  - Against ecd0669, `RTX_*.tsv` is identical.
+  - `tiers_*.tsv` differs only on T1gm / T1gmz rows, where the old row is a prefix of the new one. These are the `gm` columns added by the speed/final-stats merge (67bbb1a); no other row changes.
+- **Speed**: 200k sets, 4 threads, BIG.lock per run. The shared 4-core box was loaded by other jobs outside the lock, so wall times swung 8–17 s within a binary. Mapping CPU s is the steadier measure.
+  - Interleaved runs (median of 3, WG_TIEROUT=1), ecd0669 → changes 1+2:
+    - mason 32.4 → 30.5 (−6%);
+    - NovaSeq 32.5 → 28.7 (−12%);
+    - HG002 HiSeq 34.5 → 30.2 (−12%).
+  - Change 1 alone: 32.9 / 29.8 / 32.0.
+  - `bench/final_stats.py --no-dump`, median of 3 per binary, ecd0669 → new:
+    - HiSeq 37.2 → 32.6;
+    - NovaSeq 30.7 → 29.3;
+    - mason 33.5 → 32.5.
+  - minibwa/ours mapping-time ratio for the new binary (same run):
+    - HiSeq 3.19× wall / 3.14× CPU;
+    - NovaSeq 1.76× / 1.68×;
+    - mason 1.47× / 1.44×.
+  - The baseline's own run was too contended to compare (minibwa NovaSeq wall 16.9 vs 13.2 s).
+  - **Net**: about 5–12% less CPU. The 2× target is not reached on NovaSeq or mason.
+- **Next levers (measured, not done)**:
+  - the 3rd-array binary searches in `candsC` (a merge or gallop walk);
+  - the partner scans `pscanC` per X hit;
+  - `hitsAtQ` enumerating every X hit before `goP` can stop (the list is only needed when no pair is settled);
+  - stage K in RT on mason.
+
 ### Roadmap: fast deep caps (T = −17 … −39), intermediate exact stages before the banded step
 Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), but above 16 reads fall through to stage B (banded DP): chr21 2×250 1% error, T=−24 1.24k pairs/s, T=−39 48 (vs 28.6k at −16). Candidate exact speed-ups, each to be proved equal to the spec:
 - Hamming tier: word XOR + popcount over the packed genome at every seed-hit diagonal gives an upper bound U for the read; DP only for candidates whose lower bound ≤ U.
