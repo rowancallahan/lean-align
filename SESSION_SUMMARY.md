@@ -734,6 +734,16 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
     - Paralogous sequence variants in segmental duplications can be "learned" from mis-mapped reads and then pull other reads to the wrong copy. Only learn from T1/T1g (proved unique) placements, with a minimum count and an allele fraction ≥ ~20%.
     - Indels need patched windows of a different length.
   - **Measure first:** on 1M NovaSeq pairs, the fraction of T1 pairs whose only mismatches are recurring (≥ 5 reads) SNPs, and their share of mapping time. That bounds the gain before building anything.
+- **Decided (Rowan, 2026-10-06):**
+  - No end clipping in the spec.
+  - Multimappers whose best pairs have identical scores are dropped.
+  - TODO later: when the best pairs do not tie, report one placement with its bounds. Not needed now.
+- **Plan after T2 certification:**
+  1. Statistics.
+  2. Freeze.
+  3. Rowan rewrites the spec and reorganizes the code.
+  4. Re-time everything.
+  5. Manuscript.
 - Later roadmap: simulated long reads (ONT) and HiFi (paper: Badread), with new long-read kernels and possibly a new spec.
 - Long-term roadmap (with long reads): a full-recall mode that maps (almost) every pair minibwa maps, at about minibwa's speed (need not be faster). Needs MAPQ (own spec), tie/non-proper handling, end clipping or deeper caps.
 - Per-mate margin (paused, needs its own spec): define the second best over placements at a non-overlapping locus; under "any different placement" the margin is always ≤ 8, because extending the window by one letter costs at most one 1-letter gap. Bench prototype `WG_MARGIN=k` in bench/WholeGenome.lean writes `<mode>_<set>.margin_k<k>.tsv`. It is unproved and untested, and exact only while stage B does not run (P ≤ 16).
