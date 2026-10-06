@@ -83,6 +83,103 @@ termination_by hi - t
 
 end MzW
 
+/-! ## The key test on `UInt64` slots (compiled in place of `lookupPW`: `lookupPW_eqK`) -/
+
+section MzWU
+open Mz
+
+/-- Slot `t` before its `toNat` (`slot_eqW`). -/
+@[inline] def slotW (B : ByteArray) (sw t : Nat) : UInt64 :=
+  let j := sw * t
+  if sw = 4 then rd4 B j
+  else if sw = 5 then rd4 B j ||| byteAt B (j + 4) 32
+  else if sw = 6 then rd4 B j ||| byteAt B (j + 4) 32 ||| byteAt B (j + 5) 40
+  else rd4 B j ||| (rd4 B (j + 4) <<< 32)
+
+theorem slot_eqW (ix : MzIdx) (t : Nat) : ix.slot t = (slotW ix.sl ix.sw t).toNat := rfl
+
+/-- `scanAW` with the key test on the `UInt64` slot first (`kb`, `key`: `ix.kbM`, the key, as
+`UInt64`s); an entry whose key differs is skipped without `okAtW`. -/
+def scanAWK (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
+  if t < hi then
+    scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit (t + 1)
+      (if (slotW ix.sl ix.sw t &&& kb) != keyU then acc
+       else if okAtW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t then
+        acc.push (anc base bit (ix.posOf (ix.slot t) - o)) else acc)
+  else acc
+termination_by hi - t
+
+theorem okAtW_key (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (s o key bw aw pmo o2 n1 a2 n2 t : Nat) (hkb : ix.kbM < 2 ^ 64) (hkey : key < 2 ^ 64)
+    (h : (slotW ix.sl ix.sw t &&& ix.kbM.toUInt64) != key.toUInt64) :
+    okAtW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t = false := by
+  have hne : (ix.slot t &&& ix.kbM == key) = false := by
+    rw [slot_eqW]
+    have e1 : (slotW ix.sl ix.sw t &&& ix.kbM.toUInt64).toNat = (slotW ix.sl ix.sw t).toNat &&& ix.kbM := by
+      rw [UInt64.toNat_and]; congr 1; simp; omega
+    have hk : (key.toUInt64).toNat = key := by simp; omega
+    simp only [bne_iff_ne, ne_eq] at h
+    rw [← e1]
+    simp only [beq_eq_false_iff_ne, ne_eq]
+    intro h2; apply h; apply UInt64.toNat_inj.1; rw [h2, hk]
+  unfold okAtW
+  simp only [hne, Bool.false_and]
+
+theorem scanAWK_eq (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) (hkb : ix.kbM < 2 ^ 64) (hkey : key < 2 ^ 64) :
+    ∀ n t acc, hi - t = n →
+      scanAWK ix G R rc rok ix.kbM.toUInt64 key.toUInt64 s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =
+        scanAW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc := by
+  intro n
+  induction n with
+  | zero =>
+    intro t acc hn
+    have h' : ¬ t < hi := by omega
+    rw [scanAWK, scanAW, if_neg h', if_neg h']
+  | succ n ih =>
+    intro t acc hn
+    have h' : t < hi := by omega
+    rw [scanAWK, scanAW, if_pos h', if_pos h']
+    rw [ih (t + 1) _ (by omega)]
+    congr 1
+    split
+    · next hk => rw [okAtW_key ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t hkb hkey hk]; rfl
+    · rfl
+
+/-- `lookupPW` through `scanAWK` when the key mask fits a `UInt64` (`lookupPW_eqK`). -/
+@[inline] def lookupPWK (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base bit : Nat) : Array Nat :=
+  let o := p.o
+  let v := p.v
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  let r := seedLE R s Mz.q 0 0 true
+  let key := p.h &&& ix.kbM
+  if ix.kbM < 2 ^ 64 && key < 2 ^ 64 then
+    scanAWK ix G R r.1 r.2 ix.kbM.toUInt64 key.toUInt64 s o key ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+      ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+      (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
+      (ix.hiB p.b) base bit (ix.loB p.b) #[]
+  else
+    scanAW ix G R r.1 r.2 s o key ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+      ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+      (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
+      (ix.hiB p.b) base bit (ix.loB p.b) #[]
+
+/-- Compiled code runs `lookupPWK`. -/
+@[csimp] theorem lookupPW_eqK : @lookupPW = @lookupPWK := by
+  funext ix G R s p base bit
+  unfold lookupPW lookupPWK
+  simp only []
+  split
+  · next h =>
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    rw [scanAWK_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ h.1 h.2 _ _ _ rfl]
+  · rfl
+
+end MzWU
+
+
 /-! ## Proofs -/
 
 theorem seedLE_spec (R : ByteArray) (j k : Nat) (hk : k ≤ 32) :
