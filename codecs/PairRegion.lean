@@ -189,65 +189,6 @@ def costP {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
     (((a.toList.map (LookG.size ix)).mergeSort (· ≤ ·)).take (sbound P + 1)).foldl (· + ·) 0
   max (one s.ps) (one s.pr)
 
-/-- `x` put into the increasing list `l`. -/
-def insN (x : Nat) : List Nat → List Nat
-  | [] => [x]
-  | y :: ys => if x ≤ y then x :: y :: ys else y :: insN x ys
-
-/-- Insertion sort of a short list (`isortN_eq`: `mergeSort` by `≤`). -/
-def isortN : List Nat → List Nat
-  | [] => []
-  | x :: xs => insN x (isortN xs)
-
-theorem insN_perm (x : Nat) : ∀ l : List Nat, (insN x l).Perm (x :: l)
-  | [] => List.Perm.refl _
-  | y :: ys => by
-    unfold insN
-    split
-    · exact List.Perm.refl _
-    · exact ((insN_perm x ys).cons y).trans (List.Perm.swap x y ys)
-
-theorem isortN_perm : ∀ l : List Nat, (isortN l).Perm l
-  | [] => List.Perm.refl _
-  | x :: xs => (insN_perm x (isortN xs)).trans ((isortN_perm xs).cons x)
-
-theorem insN_sorted (x : Nat) : ∀ l : List Nat, l.Pairwise (fun a b => decide (a ≤ b) = true) →
-    (insN x l).Pairwise (fun a b => decide (a ≤ b) = true)
-  | [], _ => List.pairwise_singleton _ _
-  | y :: ys, h => by
-    unfold insN
-    split
-    · next hxy =>
-      refine List.Pairwise.cons ?_ h
-      intro b hb
-      simp only [List.mem_cons] at hb
-      rcases hb with rfl | hb
-      · simpa using hxy
-      · have := (List.pairwise_cons.1 h).1 b hb
-        simp only [decide_eq_true_eq] at this ⊢; omega
-    · next hxy =>
-      have h' := List.pairwise_cons.1 h
-      refine List.Pairwise.cons ?_ (insN_sorted x ys h'.2)
-      intro b hb
-      have hb' := (insN_perm x ys).subset hb
-      simp only [List.mem_cons] at hb'
-      rcases hb' with rfl | hb'
-      · simp only [decide_eq_true_eq]; omega
-      · exact h'.1 b hb'
-
-theorem isortN_sorted : ∀ l : List Nat, (isortN l).Pairwise (fun a b => decide (a ≤ b) = true)
-  | [] => List.Pairwise.nil
-  | x :: xs => insN_sorted x _ (isortN_sorted xs)
-
-theorem isortN_eq (l : List Nat) : l.mergeSort (fun a b => decide (a ≤ b)) = isortN l := by
-  apply List.Perm.eq_of_pairwise (le := fun a b => decide (a ≤ b) = true)
-  · intro a b _ _ h1 h2; simp only [decide_eq_true_eq] at h1 h2; omega
-  · exact List.pairwise_mergeSort (le := fun a b => decide (a ≤ b))
-      (fun a b c h1 h2 => by simp only [decide_eq_true_eq] at h1 h2 ⊢; omega)
-      (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) l
-  · exact isortN_sorted l
-  · exact (List.mergeSort_perm l _).trans (isortN_perm l).symm
-
 /-- `costP` with the insertion sort (`costP_eqI`). -/
 def costPI {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
   let one := fun (a : Array Pp) =>
