@@ -4,9 +4,10 @@ import MateFloor
 import AlignmentCigarCheck
 
 /-!
-# The tier router (`tierPair`): mode RTX's decisions, proved
+# The tier router (`tierPairB`): mode RTX's decisions, proved
 
-Every pair gets a tag with what is proved about it (`tierPair_sound`):
+Every pair gets a tag with what is proved about it (`tierPairB_sound`; `TierOpt` adds the last step,
+`tierPair` / `tierPair_sound`, which promotes some `T2` pairs to `T1u`, `T1um` or `T2b`):
 
 * `T0`: a mate was trimmed away (`ReadTrim`; reason `trimmedAway`).
 * `T1`: the router RT (`routeG` with `kpKerB`) mapped the pair: `pairSpecT` at RT's caps.
@@ -16,6 +17,9 @@ Every pair gets a tag with what is proved about it (`tierPair_sound`):
 * `T2`: both mates have a ceiling (a placement within it exists; a CIGAR re-checked by `checkRuns`
   when one is reported) and proved floors.
 * `T3`: proved floors only.
+* (`TierOpt`) `T1u` / `T1um`: the exact pair search `pairGXE` at `G0 = pH₁ + pH₂ ≤ 16`: the unique
+  proper pair `pairSpecUT` at every caps `≥ G0`, or a proved tie.  `T2b`: the two ceiling placements
+  form a proper pair that no proper pair outscores (a best pair; it may tie).
 
 Floors come from: empty seed lookups (`floor_look`), RT's `noHit` at cap `c` (`c + 1`, from
 `routeKPB_ok`), RT's known best (`noPartner`), the guarantee's completed enumeration of one mate
@@ -167,11 +171,12 @@ def knOf (mt : Mate) : Option (Reason × Option (Placement × Int)) → Option (
 
 /-- Tags. -/
 inductive Tag where
-  | t0 | t1 | t1g | t1gm | t2 | t3
+  | t0 | t1 | t1g | t1gm | t2 | t3 | t1u | t1um | t2b
 deriving DecidableEq, Repr, Inhabited
 
 def Tag.str : Tag → String
   | .t0 => "T0" | .t1 => "T1" | .t1g => "T1g" | .t1gm => "T1gm" | .t2 => "T2" | .t3 => "T3"
+  | .t1u => "T1u" | .t1um => "T1um" | .t2b => "T2b"
 
 /-- A routed pair: tag, suffix (`""`, `z` guarantee at 0, `x` no guarantee), mates, RT's or the
 trimmer's reason, RT's caps, the guarantee's `G0` and enumerated mate (`sw`: mate 2), and `pf = some G0`
@@ -211,6 +216,9 @@ structure TierCfg where
   ceil : ByteArray → PrepM MzP → Option (Nat × Nat × Nat) := fun _ _ => none
   heur : ByteArray → ByteArray → PrepM MzP → PrepM MzP → MateX → MateX → Option Cand × Option Cand :=
     fun _ _ _ _ _ _ => (none, none)
+  /-- (`TierOpt`) the exact pair search on a tier 2 pair: none = skip (off, or over budget); `some sw`:
+  run it, enumerating mate 2 when `sw`. -/
+  xe : TierOut → ByteArray → ByteArray → Option Bool := fun _ _ _ => none
 
 section router
 variable (cfg : TierCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen)
@@ -282,9 +290,9 @@ def tierRest (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int)
           { tag := t.1, sfx := sfx, m1 := t.2.1, m2 := t.2.2, why := why, c1 := c1, c2 := c2, g0 := G0,
             sw := swap, pf := some G0 }
 
-/-- **The tier router** (mode RTX): trimmed-away mates (T0); the gate; RT (T1); the guarantee (T1g,
-T1gm); floors, ceilings and the heuristic (T2, T3). -/
-def tierPair (O1 O2 : Option ByteArray) : TierOut :=
+/-- **The tier router** before `TierOpt`'s last step: trimmed-away mates (T0); the gate; RT (T1); the
+guarantee (T1g, T1gm); floors, ceilings and the heuristic (T2, T3). -/
+def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
   match O1, O2 with
   | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
   | _, none => { tag := .t0, why := some (.trimmedAway .two) }
@@ -346,6 +354,14 @@ def TierOk (usl lo hi : Nat) (g : Genome) (m1 m2 : List Char) (O1 O2 : Option By
       ∀ P1 P2 : Nat, t.g0 ≤ P1 → t.g0 ≤ P2 → PairTieOk dcost0 usl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2
   | .t2 => FloorOk usl lo hi g m1 m2 t ∧ CeilOk g m1 t.m1 ∧ CeilOk g m2 t.m2
   | .t3 => FloorOk usl lo hi g m1 m2 t
+  | .t1u => t.g0 ≤ 16 ∧ ∀ P1 P2 : Nat, t.g0 ≤ P1 → t.g0 ≤ P2 → ∃ x y, t.m1.pl = some x ∧ t.m2.pl = some y ∧
+        pairSpecUT sc0 dcost0 usl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2 = some (x, y)
+  | .t1um => t.g0 ≤ 16 ∧
+      ∀ P1 P2 : Nat, t.g0 ≤ P1 → t.g0 ≤ P2 → PairTieOk dcost0 usl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2
+  | .t2b => ∃ x y, t.m1.pl = some x ∧ t.m2.pl = some y ∧
+      (x, y) ∈ properPairs usl lo hi (hitsBoth sc0 x.2 g m1) (hitsBoth sc0 y.2 g m2) ∧
+      ∀ T1 T2 : Int, ∀ w ∈ properPairs usl lo hi (hitsBoth sc0 T1 g m1) (hitsBoth sc0 T2 g m2),
+        pairScoreD dcost0 w ≤ pairScoreD dcost0 (x, y)
 
 /-! ## Floors -/
 
@@ -1024,11 +1040,11 @@ theorem tierRest_ok {a b : ByteArray} (ha : Encodes a m1) (hb : Encodes b m2)
         exact tierOk_B B3 B1 B2 hpf
 
 include hcut hg hchk in
-/-- **The tier router is sound**: what each tag claims holds (`TierOk`), for any gate, preference,
-ceiling diagonal and heuristic. -/
-theorem tierPair_sound (O1 O2 : Option ByteArray) (h1 : ∀ R, O1 = some R → Encodes R m1)
+/-- **The tier router (before `TierOpt`'s last step) is sound**: what each tag claims holds
+(`TierOk`), for any gate, preference, ceiling diagonal and heuristic. -/
+theorem tierPairB_sound (O1 O2 : Option ByteArray) (h1 : ∀ R, O1 = some R → Encodes R m1)
     (h2 : ∀ R, O2 = some R → Encodes R m2) :
-    TierOk cfg.usl cfg.lo cfg.hi g m1 m2 O1 O2 (tierPair cfg ((ix, G) : PkMz) offs (cutAll G offs ns) O1 O2) := by
+    TierOk cfg.usl cfg.lo cfg.hi g m1 m2 O1 O2 (tierPairB cfg ((ix, G) : PkMz) offs (cutAll G offs ns) O1 O2) := by
   cases O1 with
   | none => exact Or.inl ⟨rfl, rfl⟩
   | some a =>
@@ -1037,7 +1053,7 @@ theorem tierPair_sound (O1 O2 : Option ByteArray) (h1 : ∀ R, O1 = some R → E
     | some b =>
       have ha := h1 a rfl
       have hb := h2 b rfl
-      unfold tierPair
+      unfold tierPairB
       dsimp only
       by_cases hgate : cfg.gate a b = true
       · rw [if_pos hgate]
@@ -1066,7 +1082,7 @@ end main
 
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.tierPair_sound
+#print axioms MapSpec.Fast.tierPairB_sound
 #print axioms MapSpec.Fast.tierRest_ok
 #print axioms MapSpec.Fast.mateT_inv
 #print axioms MapSpec.Fast.chkCand_sound

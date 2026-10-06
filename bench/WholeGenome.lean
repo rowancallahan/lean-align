@@ -9,7 +9,7 @@ import PairGuarantee
 import PairGuarFast
 import PairGuarQ
 import AlignmentCigarCheck
-import TierRouter
+import TierOpt
 
 /-!
 Benchmark only (unproved IO).  Whole genome with the genome held once
@@ -3266,7 +3266,7 @@ def main (args : List String) : IO UInt32 := do
       let routeL (a b : ByteArray) : Routed := routeG { rcfg with ord1 := ordL } kL kL lo hi (some a) (some b)
       let fRTL : ByteArray → ByteArray → PairOut := fun a b => (routeL a b).out.toOpt
       -- Tier router (mode RTX; dump WG_TIEROUT=1 → <WG_OUT>/tiers_<set>.tsv): the proved `tierPair`
-      -- (codecs/TierRouter.lean, `tierPair_sound`).  Untrusted helpers passed to it: the budget gate
+      -- (codecs/TierRouter.lean and TierOpt.lean, `tierPair_sound`).  Untrusted helpers passed to it: the budget gate
       -- (`gaveUpR` WG_XBUD; 0 = no gate), the guarantee's mate order (smaller rarest-seed buckets), the
       -- rarest-seed ceiling diagonal (`ceilX`; WG_XCEIL=0 off; bucket ≤ WG_XCK, ≤ WG_XCT diagonals) and the
       -- tier 2 heuristic `heurP` (WG_XH=0 off), whose alignments `tierPair` re-checks with `checkRuns`.
@@ -3316,6 +3316,26 @@ def main (args : List String) : IO UInt32 := do
       -- the heuristic's proposals: a mate whose ceiling it replaced (sources 5, 6, 7)
       let candOf (m : MateX) : Option Cand :=
         if m.pR ≥ 5 && m.pR < 1000000 then m.pl.map fun h => { pl := h, runs := m.runs, src := m.pR } else none
+      -- WG_XEBUD=N (0 = off): the exact pair search `pairGXE` (`tierUp`, codecs/TierOpt.lean) on a T2 pair with
+      -- c = pH₁ + pH₂ ≤ WG_XEMAX (≤ 16 in any case), enumerating the mate with the smaller sum of its
+      -- `sbound c + 1` rarest buckets per strand, when that sum is ≤ N
+      let xeBud ← envN "WG_XEBUD" 0
+      let xeMax ← envN "WG_XEMAX" 16
+      -- WG_XESUM=1 (default): the budget bounds both mates' sums (the near search looks up the other mate too)
+      let xeSum := (← IO.getEnv "WG_XESUM").getD "1" == "1"
+      let xeSel := fun (t : TierOut) (a b : ByteArray) =>
+        let c := t.m1.pH + t.m2.pH
+        if xeBud == 0 || xeMax < c || 16 < c then none else
+        let k := sbound c + 1
+        let cst := fun (R : ByteArray) =>
+          let s : PrepM MzP := prepMate pk R
+          let one := fun (pp : Array MzP) =>
+            (((List.range (R.size / 25)).map fun j => LookG.size pk pp[j]!).mergeSort (· ≤ ·)).take k |>.foldl (· + ·) 0
+          one s.ps + one s.pr
+        let ca := cst a
+        let cb := cst b
+        let sw := decide (cb < ca)
+        if xeBud < (if xeSum then ca + cb else min ca cb) then none else some sw
       let tcfg : TierCfg := {
         rcfg := rcfg
         j1 := j1
@@ -3333,12 +3353,13 @@ def main (args : List String) : IO UInt32 := do
           if xH then
             let o := heurP hcfg pk offs pgs usl lo hi a b s1 s2 m1 m2
             (candOf o.1, candOf o.2)
-          else (none, none) }
+          else (none, none)
+        xe := xeSel }
       let tierP (a b : ByteArray) : TierOut := tierPair tcfg pk offs pgs (some a) (some b)
-      -- mode RTX reports the proved pairs only (T1, T1g)
+      -- mode RTX reports the proved unique pairs only (T1, T1g, T1u)
       let fRTX : ByteArray → ByteArray → PairOut := fun a b =>
         let t := tierP a b
-        if t.tag != .t1 && t.tag != .t1g then none else
+        if t.tag != .t1 && t.tag != .t1g && t.tag != .t1u then none else
         match t.m1.pl, t.m2.pl with
         | some x, some y => some (x, y)
         | _, _ => none
