@@ -197,7 +197,8 @@ deriving Inhabited
 def TierOut.tagStr (t : TierOut) : String := t.tag.str ++ t.sfx
 
 /-- Settings and untrusted helpers of the tier router.  `pg`: the guarantee's `G` (none: off; used
-when `≤ 7`); `xZ`: fall back to the guarantee at 0; `gate`: pairs that skip RT, given both mates' `prepMate` (any gate is sound);
+when `≤ 7`); `xZ`: fall back to the guarantee at 0; `gate`: pairs that skip RT, given both mates' `prepMate` and pass-1 lookup costs
+(`costP` at `rcfg.cap1`) (any gate is sound);
 `pref`: when both mates are on the fast path at `G0`, enumerate mate 2 (`true`); `ceil`: a gapless
 diagonal `(v, D, mm)` as a ceiling candidate (re-checked); `heur`: the tier 2 heuristic's alignments
 (re-checked). -/
@@ -211,7 +212,7 @@ structure TierCfg where
   usl : Nat := 0
   pg : Option Nat := some 4
   xZ : Bool := true
-  gate : ByteArray → ByteArray → PrepM MzP → PrepM MzP → Bool := fun _ _ _ _ => false
+  gate : ByteArray → ByteArray → PrepM MzP → PrepM MzP → Nat → Nat → Bool := fun _ _ _ _ _ _ => false
   pref : Nat → ByteArray → ByteArray → PrepM MzP → PrepM MzP → Bool := fun _ _ _ _ _ => false
   ceil : ByteArray → PrepM MzP → Option (Nat × Nat × Nat) := fun _ _ => none
   heur : ByteArray → ByteArray → PrepM MzP → PrepM MzP → MateX → MateX → Option Cand × Option Cand :=
@@ -297,7 +298,8 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
   | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
   | _, none => { tag := .t0, why := some (.trimmedAway .two) }
   | some a, some b =>
-    if cfg.gate a b (prepMate pk a) (prepMate pk b) then tierRest cfg pk offs pgs a b none 0 0 else
+    if cfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cfg.rcfg.cap1 a.size) (prepMate pk a : PrepM MzP))
+        (costP pk (cfg.rcfg.cap1 b.size) (prepMate pk b : PrepM MzP)) then tierRest cfg pk offs pgs a b none 0 0 else
     let r := tierRT cfg pk offs pgs a b
     match r.out with
     | .mapped (x, y) =>
@@ -404,31 +406,31 @@ def passGS (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 
 theorem passGS_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) :
     passGS K P1 P2 ord lo hi R1 R2 (K.prep R1) (K.prep R2) = passG K P1 P2 ord lo hi R1 R2 := rfl
 
-/-- `passGS` with each mate's genome search (`m1`, `m2`) and region search (`g1`, `g2`) given
+/-- `passGS` with the lookup costs (`k1`, `k2`), each mate's genome search (`m1`, `m2`) and region search (`g1`, `g2`) given
 (`passGSF_eq`). -/
-def passGSF (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep)
-    (m1 m2 : Nat → MateR) (g1 g2 : Nat → Placement → Nat) : Out :=
+def passGSF (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray)
+    (k1 k2 : Nat) (m1 m2 : Nat → MateR) (g1 g2 : Nat → Placement → Nat) : Out :=
   if K.noPair P1 P2 R1 R2 then .unmapped .noPair none else
   let sw := match ord with
     | some o => o
-    | none => decide (K.cost P2 s2 < K.cost P1 s1)
+    | none => decide (k2 < k1)
   if sw then
     (stepR .two .one lo hi (m2 P2) (g1 P1) (fun r => decide (P1 < r)) (mateHF K.hint R1 m1 P1)).swap
   else
     stepR .one .two lo hi (m1 P1) (g2 P2) (fun r => decide (P2 < r)) (mateHF K.hint R2 m2 P2)
 
 theorem passGSF_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep) :
-    passGSF K P1 P2 ord lo hi R1 R2 s1 s2 (fun Q => K.mate Q R1 s1) (fun Q => K.mate Q R2 s2)
+    passGSF K P1 P2 ord lo hi R1 R2 (K.cost P1 s1) (K.cost P2 s2) (fun Q => K.mate Q R1 s1) (fun Q => K.mate Q R2 s2)
       (fun Q => K.region Q R1) (fun Q => K.region Q R2) = passGS K P1 P2 ord lo hi R1 R2 s1 s2 := rfl
 
-/-- `routeG` on two reads, pass 1's preparations and searches given (`routeGS_eq`). -/
-def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K1.Prep)
-    (m1 m2 : Nat → MateR) (g1 g2 : Nat → Placement → Nat) : Routed :=
+/-- `routeG` on two reads, pass 1's lookup costs and searches given (`routeGS_eq`). -/
+def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray)
+    (k1 k2 : Nat) (m1 m2 : Nat → MateR) (g1 g2 : Nat → Placement → Nat) : Routed :=
   let A1 := rc.cap1 R1.size
   let A2 := rc.cap1 R2.size
   let o := if !fastT A1 R1 then .unmapped (.tooShort .one) none
     else if !fastT A2 R2 then .unmapped (.tooShort .two) none
-    else passGSF K1 A1 A2 (rc.ord1 R1 R2) lo hi R1 R2 s1 s2 m1 m2 g1 g2
+    else passGSF K1 A1 A2 (rc.ord1 R1 R2) lo hi R1 R2 k1 k2 m1 m2 g1 g2
   match o with
   | .mapped _ => ⟨o, 1, A1, A2⟩
   | .unmapped r k =>
@@ -439,7 +441,8 @@ def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) 
     else ⟨o, 1, A1, A2⟩
 
 theorem routeGS_eq (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) :
-    routeGS rc K1 K2 lo hi R1 R2 (K1.prep R1) (K1.prep R2) (fun Q => K1.mate Q R1 (K1.prep R1))
+    routeGS rc K1 K2 lo hi R1 R2 (K1.cost (rc.cap1 R1.size) (K1.prep R1)) (K1.cost (rc.cap1 R2.size) (K1.prep R2))
+      (fun Q => K1.mate Q R1 (K1.prep R1))
       (fun Q => K1.mate Q R2 (K1.prep R2)) (fun Q => K1.region Q R1) (fun Q => K1.region Q R2) =
       routeG rc K1 K2 lo hi (some R1) (some R2) := rfl
 
@@ -484,9 +487,11 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
   | some a, some b =>
     let s1 : PrepM MzP := prepMate pk a
     let s2 : PrepM MzP := prepMate pk b
-    if cfg.gate a b s1 s2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
+    let c1 := costP pk (cfg.rcfg.cap1 a.size) s1
+    let c2 := costP pk (cfg.rcfg.cap1 b.size) s2
+    if cfg.gate a b s1 s2 c1 c2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
     let rl := fun x y => ((pk, x, y) : RgMz)
-    let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b s1 s2
+    let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b c1 c2
       (fun Q => mateKPP Q pk ByteArray.empty offs pgs a s1) (fun Q => mateKPP Q pk ByteArray.empty offs pgs b s2)
       (fun Q => regionPenKPP Q cfg.lo cfg.hi rl ByteArray.empty offs pgs a s1.Rr s1.K1 s1.K2)
       (fun Q => regionPenKPP Q cfg.lo cfg.hi rl ByteArray.empty offs pgs b s2.Rr s2.K1 s2.K2)
@@ -1267,7 +1272,9 @@ theorem tierPairB_sound (O1 O2 : Option ByteArray) (h1 : ∀ R, O1 = some R → 
       have hb := h2 b rfl
       unfold tierPairB
       dsimp only
-      by_cases hgate : cfg.gate a b (prepMate ((ix, G) : PkMz) a) (prepMate ((ix, G) : PkMz) b) = true
+      by_cases hgate : cfg.gate a b (prepMate ((ix, G) : PkMz) a) (prepMate ((ix, G) : PkMz) b)
+          (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 a.size) (prepMate ((ix, G) : PkMz) a : PrepM MzP))
+          (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 b.size) (prepMate ((ix, G) : PkMz) b : PrepM MzP)) = true
       · rw [if_pos hgate]
         exact tierRest_ok cfg g m1 m2 ix G offs ns hcut hg hchk ha hb (fun _ _ h => by cases h)
       rw [if_neg hgate]

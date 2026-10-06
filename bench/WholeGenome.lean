@@ -3393,7 +3393,7 @@ def main (args : List String) : IO UInt32 := do
         usl := usl
         pg := if pgOn then some pgG else none
         xZ := xZ
-        gate := fun a b s1 s2 => xBud != 0 && (xBud < costP pk (cap1F a.size) s1 || xBud < costP pk (cap1F b.size) s2)
+        gate := fun _ _ _ _ c1 c2 => xBud != 0 && (xBud < c1 || xBud < c2)
         pref := gPref
         ceil := fun R s => if xCeil then ceilX pk offs pgs R s xCK xCT else none
         heur := fun a b s1 s2 m1 m2 =>
@@ -3788,7 +3788,8 @@ def main (args : List String) : IO UInt32 := do
           let a := r1[k]!
           let b := r2[k]!
           let u0 ← IO.monoNanosNow
-          let o ← (← IO.mkRef (if tcfg.gate a b (prepMate pk a) (prepMate pk b) then none else some (tierRT tcfg pk offs pgs a b))).get
+          let o ← (← IO.mkRef (if tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cap1F a.size) (prepMate pk a : PrepM MzP))
+            (costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)) then none else some (tierRT tcfg pk offs pgs a b))).get
           let u1 ← IO.monoNanosNow
           let t ← (← IO.mkRef (tierP a b)).get
           let u2 ← IO.monoNanosNow
