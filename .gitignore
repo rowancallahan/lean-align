@@ -2,3 +2,4 @@
 *.olean
 out/
 .claude/
+__pycache__/
