@@ -151,6 +151,77 @@ def candsB (need : Nat) (all prev : List (Array Nat)) : List (Array Nat) → Nat
       if need ≤ suppA all (e / 16) 0 && prev.all (fun a => !anyNear a (e / 16) (e / 16)) then some (e / 16) else none) ++
     candsB need all (arr :: prev) rest k
 
+/-- `need ≤ suppA l D 0`, stopping at the `need`-th array holding `D` (`atLeastD_eq`). -/
+def atLeastD (D : Nat) : Nat → List (Array Nat) → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, a :: as => if anyNear a D D then atLeastD D n as else atLeastD D (n + 1) as
+
+/-- `candsB` as run: the earlier arrays checked first (a diagonal one of them holds is skipped
+without counting), then the support counted over the current and later arrays only, stopping at
+`need` (`candsC_eq`: the same list). -/
+def candsC (need : Nat) (prev : List (Array Nat)) : List (Array Nat) → Nat → List Nat
+  | [], _ => []
+  | _, 0 => []
+  | arr :: rest, k + 1 =>
+    (arr.toList.filterMap fun e =>
+      if prev.all (fun a => !anyNear a (e / 16) (e / 16)) && atLeastD (e / 16) need (arr :: rest)
+      then some (e / 16) else none) ++
+    candsC need (arr :: prev) rest k
+
+theorem suppA0_cons (a : Array Nat) (as : List (Array Nat)) (D : Nat) :
+    suppA (a :: as) D 0 = if anyNear a D D = true then suppA as D 0 + 1 else suppA as D 0 := by
+  unfold suppA
+  simp only [Nat.sub_zero, Nat.add_zero, List.filter_cons]
+  split <;> simp
+
+theorem atLeastD_eq (D : Nat) : ∀ (n : Nat) (l : List (Array Nat)), atLeastD D n l = decide (n ≤ suppA l D 0)
+  | 0, _ => by simp [atLeastD]
+  | n + 1, [] => by simp [atLeastD, suppA]
+  | n + 1, a :: as => by
+    have ih1 := atLeastD_eq D n as
+    have ih2 := atLeastD_eq D (n + 1) as
+    rw [show atLeastD D (n + 1) (a :: as) = (if anyNear a D D then atLeastD D n as else atLeastD D (n + 1) as)
+      from rfl, suppA0_cons]
+    cases h : anyNear a D D
+    · simp only [Bool.false_eq_true, if_false, ih2]
+    · simp only [if_true, ih1]
+      simp
+
+theorem suppA_append_none (p l : List (Array Nat)) (D : Nat) (hp : (p.all fun a => !anyNear a D D) = true) :
+    suppA (p ++ l) D 0 = suppA l D 0 := by
+  unfold suppA
+  rw [List.filter_append, List.length_append]
+  have : (p.filter fun arr => anyNear arr (D - 0) (D + 0)) = [] := by
+    rw [List.filter_eq_nil_iff]; intro a ha
+    have := List.all_eq_true.1 hp a ha
+    simpa using this
+  rw [this, List.length_nil, Nat.zero_add]
+
+/-- **`candsC` is `candsB`.** -/
+theorem candsC_eq (need : Nat) : ∀ (prev l : List (Array Nat)) (k : Nat),
+    candsB need (prev.reverse ++ l) prev l k = candsC need prev l k
+  | _, [], _ => by simp [candsB, candsC]
+  | _, _ :: _, 0 => by simp [candsB, candsC]
+  | prev, arr :: rest, k + 1 => by
+    unfold candsB candsC
+    have ih := candsC_eq need (arr :: prev) rest k
+    rw [List.reverse_cons, List.append_assoc, List.singleton_append] at ih
+    rw [ih]
+    congr 1
+    congr 1
+    funext e
+    cases hp : (prev.all fun a => !anyNear a (e / 16) (e / 16))
+    · simp
+    · have hp' : (prev.reverse.all fun a => !anyNear a (e / 16) (e / 16)) = true := by
+        rw [List.all_reverse]; exact hp
+      rw [suppA_append_none _ _ _ hp', atLeastD_eq]
+      simp
+
+theorem candsC_nil (need : Nat) (l : List (Array Nat)) (k : Nat) :
+    candsC need [] l k = candsB need l [] l k := by
+  rw [← candsC_eq]; rfl
+
 /-- One strand's windows within `lim` (gapless, `lim ≤ 7`): the anchor diagonals of the
 `sbound lim + 2` rarest seeds held by all but `sbound lim` of them, each placed in its chromosome
 (`chromOf`), through the kernel `ker c st` (virtual chromosome `t + c`). -/
@@ -161,7 +232,7 @@ def hitsGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (o
   let ps := prepG ix Rs m Ls
   let J := (ordG (ps.map (LookG.size ix)) m).take (sbound lim + 2)
   let acc := J.map fun j => LookG.look ix G Rs (j * Ls) (Rs.size - j * Ls) ps[j]!
-  (candsB (J.length - sbound lim) acc [] acc (sbound lim + 1)).filterMap fun D =>
+  (candsC (J.length - sbound lim) [] acc (sbound lim + 1)).filterMap fun D =>
     let x := D - Rs.size
     let c := chromOf offs x 0 n
     if Rs.size ≤ D ∧ c < n ∧ offs[c]! ≤ x ∧ x - offs[c]! + Rs.size ≤ gsz c then
