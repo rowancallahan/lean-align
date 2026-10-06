@@ -197,7 +197,7 @@ deriving Inhabited
 def TierOut.tagStr (t : TierOut) : String := t.tag.str ++ t.sfx
 
 /-- Settings and untrusted helpers of the tier router.  `pg`: the guarantee's `G` (none: off; used
-when `≤ 7`); `xZ`: fall back to the guarantee at 0; `gate`: pairs that skip RT (any gate is sound);
+when `≤ 7`); `xZ`: fall back to the guarantee at 0; `gate`: pairs that skip RT, given both mates' `prepMate` (any gate is sound);
 `pref`: when both mates are on the fast path at `G0`, enumerate mate 2 (`true`); `ceil`: a gapless
 diagonal `(v, D, mm)` as a ceiling candidate (re-checked); `heur`: the tier 2 heuristic's alignments
 (re-checked). -/
@@ -211,7 +211,7 @@ structure TierCfg where
   usl : Nat := 0
   pg : Option Nat := some 4
   xZ : Bool := true
-  gate : ByteArray → ByteArray → Bool := fun _ _ => false
+  gate : ByteArray → ByteArray → PrepM MzP → PrepM MzP → Bool := fun _ _ _ _ => false
   pref : Nat → ByteArray → ByteArray → PrepM MzP → PrepM MzP → Bool := fun _ _ _ _ _ => false
   ceil : ByteArray → PrepM MzP → Option (Nat × Nat × Nat) := fun _ _ => none
   heur : ByteArray → ByteArray → PrepM MzP → PrepM MzP → MateX → MateX → Option Cand × Option Cand :=
@@ -297,7 +297,7 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
   | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
   | _, none => { tag := .t0, why := some (.trimmedAway .two) }
   | some a, some b =>
-    if cfg.gate a b then tierRest cfg pk offs pgs a b none 0 0 else
+    if cfg.gate a b (prepMate pk a) (prepMate pk b) then tierRest cfg pk offs pgs a b none 0 0 else
     let r := tierRT cfg pk offs pgs a b
     match r.out with
     | .mapped (x, y) =>
@@ -306,7 +306,96 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
         m2 := { st := "U", cap := cfg.rcfg.cap1 b.size, cd := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
     | .unmapped rs k => tierRest cfg pk offs pgs a b (some (rs, k)) r.c1 r.c2
 
+/-- `passG` with both mates' preparations given (`passGS_eq`). -/
+def passGS (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep) : Out :=
+  if K.noPair P1 P2 R1 R2 then .unmapped .noPair none else
+  let sw := match ord with
+    | some o => o
+    | none => decide (K.cost P2 s2 < K.cost P1 s1)
+  if sw then
+    (stepR .two .one lo hi (K.mate P2 R2 s2) (K.region P1 R1) (fun r => decide (P1 < r))
+      (mateH K P1 R1 s1)).swap
+  else
+    stepR .one .two lo hi (K.mate P1 R1 s1) (K.region P2 R2) (fun r => decide (P2 < r))
+      (mateH K P2 R2 s2)
+
+theorem passGS_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) :
+    passGS K P1 P2 ord lo hi R1 R2 (K.prep R1) (K.prep R2) = passG K P1 P2 ord lo hi R1 R2 := rfl
+
+/-- `routeG` on two reads, pass 1's preparations given (`routeGS_eq`). -/
+def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K1.Prep) : Routed :=
+  let A1 := rc.cap1 R1.size
+  let A2 := rc.cap1 R2.size
+  let o := if !fastT A1 R1 then .unmapped (.tooShort .one) none
+    else if !fastT A2 R2 then .unmapped (.tooShort .two) none
+    else passGS K1 A1 A2 (rc.ord1 R1 R2) lo hi R1 R2 s1 s2
+  match o with
+  | .mapped _ => ⟨o, 1, A1, A2⟩
+  | .unmapped r k =>
+    let B1 := cap2Of rc R1
+    let B2 := cap2Of rc R2
+    if rc.pass2 && rc.goOn r && rc.gate2 R1 R2 && !(B1 == A1 && B2 == A2) then
+      ⟨pass2G K2 rc.swap2 A1 A2 B1 B2 r lo hi R1 R2 k, 2, B1, B2⟩
+    else ⟨o, 1, A1, A2⟩
+
+theorem routeGS_eq (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) :
+    routeGS rc K1 K2 lo hi R1 R2 (K1.prep R1) (K1.prep R2) = routeG rc K1 K2 lo hi (some R1) (some R2) := rfl
+
+/-- `tierRest` with both mates' preparations given (`tierRest_eqS`). -/
+def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) : TierOut :=
+  let why := rk.map (·.1)
+  let plain := fun (sfx : String) =>
+    let t := tierB cfg pk pgs a b s1 s2 rk c1 c2 none none
+    ({ tag := t.1, sfx := sfx, m1 := t.2.1, m2 := t.2.2, why := why, c1 := c1, c2 := c2 } : TierOut)
+  match cfg.pg with
+  | none => plain ""
+  | some G =>
+    if 7 < G then plain "" else
+    match tierPick cfg pk offs pgs G a b s1 s2 with
+    | (_, _, none) => plain "x"
+    | (G0, sfx, some (swap, (r, seen, lX))) =>
+      match r with
+      | some (x, y) =>
+        { tag := .t1g, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
+          m1 := { st := "P", cap := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
+          m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+      | none =>
+        if seen then
+          { tag := .t1gm, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
+            m1 := { st := "P", cap := cfg.rcfg.cap1 a.size }, m2 := { st := "P", cap := cfg.rcfg.cap1 b.size } }
+        else
+          let gx := gxOf pgs.size G0 lX
+          let t := if swap then tierB cfg pk pgs a b s1 s2 rk c1 c2 none (some gx)
+            else tierB cfg pk pgs a b s1 s2 rk c1 c2 (some gx) none
+          { tag := t.1, sfx := sfx, m1 := t.2.1, m2 := t.2.2, why := why, c1 := c1, c2 := c2, g0 := G0,
+            sw := swap, pf := some G0 }
+
+theorem tierRest_eqS (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) :
+    tierRest cfg pk offs pgs a b rk c1 c2 = tierRestS cfg pk offs pgs a b (prepMate pk a) (prepMate pk b) rk c1 c2 := rfl
+
+/-- `tierPairB` with each mate prepared once, for the gate, RT's pass 1 and the rest (`tierPairB_eqS`). -/
+def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
+  match O1, O2 with
+  | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
+  | _, none => { tag := .t0, why := some (.trimmedAway .two) }
+  | some a, some b =>
+    let s1 : PrepM MzP := prepMate pk a
+    let s2 : PrepM MzP := prepMate pk b
+    if cfg.gate a b s1 s2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
+    let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b s1 s2
+    match r.out with
+    | .mapped (x, y) =>
+      { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
+        m1 := { st := "U", cap := cfg.rcfg.cap1 a.size, cd := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
+        m2 := { st := "U", cap := cfg.rcfg.cap1 b.size, cd := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+    | .unmapped rs k => tierRestS cfg pk offs pgs a b s1 s2 (some (rs, k)) r.c1 r.c2
+
 end router
+
+/-- Compiled code runs `tierPairBS`. -/
+@[csimp] theorem tierPairB_eqS : @tierPairB = @tierPairBS := by
+  funext cfg pk offs pgs O1 O2
+  cases O1 <;> cases O2 <;> rfl
 
 /-! ## What the tags mean -/
 
@@ -1055,7 +1144,7 @@ theorem tierPairB_sound (O1 O2 : Option ByteArray) (h1 : ∀ R, O1 = some R → 
       have hb := h2 b rfl
       unfold tierPairB
       dsimp only
-      by_cases hgate : cfg.gate a b = true
+      by_cases hgate : cfg.gate a b (prepMate ((ix, G) : PkMz) a) (prepMate ((ix, G) : PkMz) b) = true
       · rw [if_pos hgate]
         exact tierRest_ok cfg g m1 m2 ix G offs ns hcut hg hchk ha hb (fun _ _ h => by cases h)
       rw [if_neg hgate]
