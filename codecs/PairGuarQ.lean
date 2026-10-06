@@ -56,6 +56,135 @@ def rawLookP (ix : Mz.MzIdx) (G : PGen) (R : ByteArray) (s base : Nat) (p : MzP)
     if incA a a.size 0 then a else mzLookSP ix G R s base p
   else mzLookSP ix G R s base p
 
+/-- `rdSlot` before its `toNat`. -/
+@[inline] def rdSlotU (B : ByteArray) (sw t : Nat) : UInt64 :=
+  let j := sw * t
+  if sw = 4 then Mz.rd4 B j
+  else if sw = 5 then Mz.rd4 B j ||| Mz.byteAt B (j + 4) 32
+  else if sw = 6 then Mz.rd4 B j ||| Mz.byteAt B (j + 4) 32 ||| Mz.byteAt B (j + 5) 40
+  else Mz.rd4 B j ||| (Mz.rd4 B (j + 4) <<< 32)
+
+theorem rdSlot_eqU (B : ByteArray) (sw t : Nat) : Mz.rdSlot B sw t = (rdSlotU B sw t).toNat := rfl
+
+/-- `rawScan` on `UInt64` slots: the masks, shifts and fields of `rawOk` as `UInt64`s
+(`rawScan_eqU`, when they are below `2^64` and the shifts below 64). -/
+def rawScanU (sl : ByteArray) (sw o : Nat) (kb tm fm T bs as fs o2 key bw aw pmo : UInt64) (hi base : Nat) (t : Nat)
+    (acc : Array Nat) : Array Nat :=
+  if t < hi then
+    let e := rdSlotU sl sw t
+    let pos := e >>> T
+    let tg := e &&& tm
+    let ok := (e &&& kb) == key && (decide (o ≤ pos.toNat) &&
+      ((tg >>> fs) != 0 || (((tg >>> bs) &&& fm) &&& pmo) == bw && ((tg >>> as) &&& fm) >>> o2 == aw))
+    rawScanU sl sw o kb tm fm T bs as fs o2 key bw aw pmo hi base (t + 1)
+      (if ok then acc.push (anc base 0 (pos.toNat - o)) else acc)
+  else acc
+termination_by hi - t
+
+theorem u_and (x : UInt64) (m : Nat) (hm : m < 2 ^ 64) : (x &&& m.toUInt64).toNat = x.toNat &&& m := by
+  rw [UInt64.toNat_and]; congr 1; simp; omega
+
+theorem u_shr (x : UInt64) (n : Nat) (hn : n < 64) : (x >>> n.toUInt64).toNat = x.toNat >>> n := by
+  rw [UInt64.toNat_shiftRight]; congr 1; simp; omega
+
+theorem u_beq (x : UInt64) (m : Nat) (hm : m < 2 ^ 64) : (x == m.toUInt64) = (x.toNat == m) := by
+  have : (m.toUInt64).toNat = m := by simp; omega
+  apply Bool.eq_iff_iff.2
+  simp only [beq_iff_eq]
+  constructor
+  · intro h; rw [h, this]
+  · intro h; apply UInt64.toNat_inj.1; rw [h, this]
+
+theorem u_bne0 (x : UInt64) : (x != 0) = (x.toNat != 0) := by
+  apply Bool.eq_iff_iff.2
+  simp only [bne_iff_ne, ne_eq]
+  constructor
+  · intro h h0; exact h (UInt64.toNat_inj.1 (by rw [h0]; rfl))
+  · intro h h0; exact h (by rw [h0]; rfl)
+
+/-- The condition under which `rawScanU` runs in place of `rawScan`. -/
+def rawSmall (ix : Mz.MzIdx) (key bw aw pmo o2 : Nat) : Bool :=
+  decide (ix.kbM < 2 ^ 64) && decide (ix.tM < 2 ^ 64) && decide (ix.fM < 2 ^ 64) && decide (ix.T < 64) &&
+  decide (ix.bsh < 64) && decide (ix.ash < 64) && decide (ix.fsh < 64) && decide (o2 < 64) &&
+  decide (key < 2 ^ 64) && decide (bw < 2 ^ 64) && decide (aw < 2 ^ 64) && decide (pmo < 2 ^ 64)
+
+theorem rawScan_eqU (ix : Mz.MzIdx) (o key bw aw pmo o2 hi base : Nat) (h : rawSmall ix key bw aw pmo o2 = true) :
+    ∀ (t : Nat) (acc : Array Nat), rawScan ix o key bw aw pmo o2 hi base t acc =
+      rawScanU ix.sl ix.sw o ix.kbM.toUInt64 ix.tM.toUInt64 ix.fM.toUInt64 ix.T.toUInt64 ix.bsh.toUInt64
+        ix.ash.toUInt64 ix.fsh.toUInt64 o2.toUInt64 key.toUInt64 bw.toUInt64 aw.toUInt64 pmo.toUInt64 hi base t acc := by
+  simp only [rawSmall, Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hkb, htm⟩, hfm⟩, hT⟩, hbs⟩, has⟩, hfs⟩, ho2⟩, hkey⟩, hbw⟩, haw⟩, hpmo⟩ := h
+  have e1 : ∀ x : UInt64, ((x >>> ix.T.toUInt64).toNat) = x.toNat >>> ix.T := fun x => u_shr x _ hT
+  have hand : ∀ (x : UInt64) (m : Nat), m < 2 ^ 64 → (x &&& m.toUInt64).toNat = x.toNat &&& m := u_and
+  have ok : ∀ t, rawOk ix o key bw aw pmo o2 t =
+      ((rdSlotU ix.sl ix.sw t &&& ix.kbM.toUInt64) == key.toUInt64 &&
+        (decide (o ≤ (rdSlotU ix.sl ix.sw t >>> ix.T.toUInt64).toNat) &&
+          (((rdSlotU ix.sl ix.sw t &&& ix.tM.toUInt64) >>> ix.fsh.toUInt64) != 0 ||
+            ((((rdSlotU ix.sl ix.sw t &&& ix.tM.toUInt64) >>> ix.bsh.toUInt64) &&& ix.fM.toUInt64) &&&
+              pmo.toUInt64) == bw.toUInt64 &&
+            (((rdSlotU ix.sl ix.sw t &&& ix.tM.toUInt64) >>> ix.ash.toUInt64) &&& ix.fM.toUInt64) >>>
+              o2.toUInt64 == aw.toUInt64))) := by
+    intro t
+    simp only [rawOk, Mz.MzIdx.slot, rdSlot_eqU, Mz.MzIdx.posOf, Mz.MzIdx.tagOf, Mz.MzIdx.flagF,
+      Mz.MzIdx.befF, Mz.MzIdx.aftF]
+    rw [u_beq _ _ hkey, u_beq _ _ hbw, u_beq _ _ haw, u_bne0, hand _ _ hkb, e1,
+      u_shr _ _ hfs, hand _ _ htm, hand _ _ hpmo, hand _ _ hfm, u_shr _ _ hbs,
+      u_shr _ _ ho2, hand _ _ hfm, u_shr _ _ has, hand _ _ htm]
+    exact rfl
+  have hp : ∀ t, ix.posOf (ix.slot t) = (rdSlotU ix.sl ix.sw t >>> ix.T.toUInt64).toNat := by
+    intro t; simp only [Mz.MzIdx.slot, rdSlot_eqU, Mz.MzIdx.posOf, e1]
+  have main : ∀ n t acc, hi - t = n → rawScan ix o key bw aw pmo o2 hi base t acc =
+      rawScanU ix.sl ix.sw o ix.kbM.toUInt64 ix.tM.toUInt64 ix.fM.toUInt64 ix.T.toUInt64 ix.bsh.toUInt64
+        ix.ash.toUInt64 ix.fsh.toUInt64 o2.toUInt64 key.toUInt64 bw.toUInt64 aw.toUInt64 pmo.toUInt64 hi base t acc := by
+    intro n
+    induction n with
+    | zero =>
+      intro t acc hn
+      have h' : ¬ t < hi := by omega
+      rw [rawScan, rawScanU, if_neg h', if_neg h']
+    | succ n ih =>
+      intro t acc hn
+      have h' : t < hi := by omega
+      rw [rawScan, rawScanU, if_pos h', if_pos h']
+      simp only []
+      rw [← ok t, ← hp t]
+      exact ih (t + 1) _ (by omega)
+  intro t acc
+  exact main _ t acc rfl
+
+/-- `rawScan` through `rawScanU` when the fields fit. -/
+@[inline] def rawScanD (ix : Mz.MzIdx) (o key bw aw pmo o2 hi base : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
+  if rawSmall ix key bw aw pmo o2 then
+    rawScanU ix.sl ix.sw o ix.kbM.toUInt64 ix.tM.toUInt64 ix.fM.toUInt64 ix.T.toUInt64 ix.bsh.toUInt64
+      ix.ash.toUInt64 ix.fsh.toUInt64 o2.toUInt64 key.toUInt64 bw.toUInt64 aw.toUInt64 pmo.toUInt64 hi base t acc
+  else rawScan ix o key bw aw pmo o2 hi base t acc
+
+theorem rawScanD_eq (ix : Mz.MzIdx) (o key bw aw pmo o2 hi base t : Nat) (acc : Array Nat) :
+    rawScanD ix o key bw aw pmo o2 hi base t acc = rawScan ix o key bw aw pmo o2 hi base t acc := by
+  unfold rawScanD
+  split
+  · next h => rw [rawScan_eqU _ _ _ _ _ _ _ _ _ h]
+  · rfl
+
+/-- `rawLookP` with the bucket scan `rawScanD` (`rawLookP_eqD`). -/
+def rawLookPD (ix : Mz.MzIdx) (G : PGen) (R : ByteArray) (s base : Nat) (p : MzP) : Array Nat :=
+  if p.ok then
+    let o := p.o
+    let v := p.v
+    let m1 := min o ix.c
+    let m2 := min (ix.w - 1 - o) ix.c
+    let a := rawScanD ix o (p.h &&& ix.kbM) ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+      ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+      (ix.hiB p.b) base (ix.loB p.b) #[]
+    if incA a a.size 0 then a else mzLookSP ix G R s base p
+  else mzLookSP ix G R s base p
+
+/-- Compiled code runs `rawLookPD`. -/
+@[csimp] theorem rawLookP_eqD : @rawLookP = @rawLookPD := by
+  funext ix G R s base p
+  unfold rawLookP rawLookPD
+  simp only [rawScanD_eq]
+
 /-- A minimizer index and its packed genome, looked up raw. -/
 def PkMzR := Mz.MzIdx × PGen
 
