@@ -3411,6 +3411,31 @@ def main (args : List String) : IO UInt32 := do
         match t.m1.pl, t.m2.pl with
         | some x, some y => some (x, y)
         | _, _ => none
+      -- dump only, T1gm lines: every proper pair within G0 of the guarantee's mate enumeration (no early
+      -- stop): `gm`, pairs, best penalty, pairs at the best, next penalty above the best (1000000 = none),
+      -- overlap of the first two best pairs (`same` both mates, `one` one mate, `diff`), those two pairs
+      let gmX (t : TierOut) (a b : ByteArray) : String :=
+        if t.tag != .t1gm then "" else
+        match hitsAtQ t.g0 (pk : PkMzR) offs pgs (if t.sw then b else a) with
+        | none => "\tgm\t-"
+        | some lX =>
+          let RY := if t.sw then a else b
+          let RYr := revCompK RY
+          let ps := lX.flatMap (pairsQC dcost0 usl lo hi t.g0 (pgs ++ pgs) RY RYr (packRP RY) (packRP RYr) t.sw)
+          let pen := fun (p : PairHit) => (-(pairScoreD dcost0 p)).toNat
+          let b0 := ps.foldl (fun m p => min m (pen p)) 1000000
+          let bs := ps.filter (fun p => pen p == b0)
+          let b1 := ps.foldl (fun m p => if b0 < pen p then min m (pen p) else m) 1000000
+          let ov := fun (x y : Placement × Int) => x.1.1.chr == y.1.1.chr && x.1.2 == y.1.2 &&
+            decide (x.1.1.start < y.1.1.start + y.1.1.len) && decide (y.1.1.start < x.1.1.start + x.1.1.len)
+          let sh := fun (x : Placement × Int) =>
+            s!"{x.1.1.chr}:{x.1.1.start}{if x.1.2 == Strand.rev then "-" else "+"}{(-x.2).toNat}"
+          let shp := fun (p : PairHit) => s!"{sh p.1}/{sh p.2}"
+          let loc := match bs with
+            | p :: q :: _ =>
+              if ov p.1 q.1 && ov p.2 q.2 then "same" else if ov p.1 q.1 || ov p.2 q.2 then "one" else "diff"
+            | _ => "-"
+          s!"\tgm\t{ps.length}\t{b0}\t{bs.length}\t{b1}\t{loc}\t{String.intercalate "," ((bs.take 2).map shp)}"
       let xdump : List (String × (ByteArray → ByteArray → String)) :=
         if (← IO.getEnv "WG_TIEROUT").getD "0" == "1" then
           [("tiers", fun a b => let t := tierP a b
@@ -3424,7 +3449,7 @@ def main (args : List String) : IO UInt32 := do
               | some (.noPartner x) => s!"noPartner{m x}"
               | some .notProper => "notProper"
               | some .noPair => "noPair"
-            s!"{t.tagStr}\t{t.m1.show}\t{t.m2.show}\t{w}\t{t.g0}\t{(t.pf.map toString).getD "-"}")] else []
+            s!"{t.tagStr}\t{t.m1.show}\t{t.m2.show}\t{w}\t{t.g0}\t{(t.pf.map toString).getD "-"}{gmX t a b}")] else []
       let modes := modes ++ ms.filterMap fun m =>
         if m == "RTL" then some (m, fRTL) else
         if m == "RTX" then some ("RTX", fRTX) else

@@ -257,6 +257,47 @@ Question: if the heuristic skips more of the repeats (lower WG_XBUD = N), can we
   - T3, 2.2 / 2.9 / 0.2%: on real data, 77% / 54% are soft-clipped by minibwa, 15% / 17% have a mate under 50 bp after trimming, and 15% / 26% are not paired by minibwa either.
   - Root cause: the end-to-end spec has no clipping, so adapter and chimeric ends that minibwa clips cost us penalty, and more seed effort does not fix that. End clipping in the spec (TODO (d)) is the next lever.
 
+## Final statistics for the freeze (branch `speed/final-stats`, bench only, 2026-10-06)
+One command: `python3 bench/final_stats.py`.
+- **Defaults:** the whole_genome of this checkout, WG_MODES=RTX WG_PG=4 WG_XBUD=5000, other knobs at their code defaults (WG_XEBUD 1500), 4 threads, HiSeq / NovaSeq / mason 200k, 3 interleaved timing rounds.
+- **Options:** `--env K=V`, `--no-timing`, `--keep`, `--sets`, `--rounds`.
+- **What it does:** writes the WG_TIEROUT dumps, joins them with minibwa (`tier_vs_mb.py`), then writes report.txt and the tiers / vs_mb / t1gm / t2gap / timing TSVs to `<scratchpad>/final/`. Dumps and joins are deleted afterwards. Every heavy step holds BIG.lock.
+- **Dump change (bench only):** T1gm lines in WG_TIEROUT get `gm` columns. They come from re-running the guarantee's enumeration (`hitsAtQ` + `pairsQC`) without the early stop. They list the number of pairs within G0, the best penalty, the pairs at the best, the next penalty, where the two first best pairs are, and those two pairs.
+
+**Freeze numbers** (ecd0669 + the harness; 200k; HiSeq / NovaSeq / mason):
+- **Tiers %:**
+  - T1 82.04 / 76.02 / 83.97; T1g 3.62 / 7.22 / 2.88; T1u 0.47 / 0.89 / 1.97.
+  - T1gm 1.80 / 2.32 / 0.70; T1um 0.49 / 0.43 / 0.97.
+  - T2b 0.76 / 0.70 / 1.30; T2 7.07 / 7.83 / 6.85; T3 3.73 / 4.59 / 1.37; T0 0.02 / 0.01 / 0.
+  - Proved unique and reported (T1 + T1g + T1u): 86.1 / 84.1 / 88.8%.
+- **vs minibwa** (pair penalty; ours better / equal / worse, %):
+  - T1: 0 / 100 / 0 on all three sets.
+  - T1g: 1.5 / 98.4 / 0.2, 1.0 / 98.9 / 0.1, 0.8 / 99.2 / 0.
+  - T1u: 2.3 / 96.6 / 1.1, 0.8 / 99.2 / 0.1, 0.1 / 99.9 / 0.
+  - T1gm, our tied best: 1.7 / 97.9 / 0.3, 2.5 / 97.2 / 0.3, 2.4 / 97.6 / 0.
+  - T2b: 3.1 / 95.9 / 1.0, 2.5 / 95.4 / 2.0, 1.2 / 98.8 / 0.
+  - T2, ceilings: 2.9 / 59.4 / 37.7, 2.1 / 68.0 / 29.9, 0.4 / 86.1 / 13.5.
+  - Where minibwa beats a proved best (T1g / T1u / T1gm / T2b), its pair is never proper under our rule.
+- **Violations: 0.** Checked: floors, T1 per-mate best, the T1g / T1u unique best, and the T1gm / T2b best score.
+- **mason correct, ours / minibwa (%):**
+  - T1 100 / 100; T1g 99.5 / 98.9; T1u 99.9 / 99.8; T2b 91.7 / 91.3; T2 82.6 / 92.0.
+  - T1um: minibwa 43.7.
+  - T1gm: minibwa 33.4. The truth is one of our two first tied best pairs for 65.5%.
+  - T3: minibwa 81.9.
+- **T1gm: 100% exact ties.** This is what `PairTieOk` proves: `stepP` raises the tie flag only on an equal score, so the early stop never ends on a close-but-unequal pair.
+  - Best penalty 0: 67 / 70 / 28%; best penalty 4: the rest.
+  - 2 pairs at the best: 38 / 35 / 50%; 10 or more: 27 / 31 / 22%.
+  - Tied pairs at different loci: 88 / 96 / 99%; one mate shared: 8 / 2 / 0.5%; the same locus shifted by 1 or 2 letters (tandem repeats): 4 / 2 / 1%.
+- **T2 + T2b pair gap**, ceil1 + ceil2 − max(fl1 + fl2, pfFloor pf):
+  - p50 / p90: 16 / 175, 16 / 100, 8 / 20.
+  - Gap ≤ 0 / ≤ 8 / ≤ 16: 10.8 / 30.4 / 50.5%, 11.5 / 32.8 / 55.4%, 15.9 / 58.6 / 85.6%.
+  - T2b is 100% at gap 0. The T2 that is left has gap p50 20 / 16 / 8.
+- **Timing**, 4 threads, median of 3 interleaved rounds:
+  - Mapping wall s (index load excluded; minibwa = worker end − "index loaded"): RTX 9.73 / 9.20 / 8.65; minibwa 36.45 / 16.89 / 12.26.
+  - minibwa / ours: 3.75× / 1.84× / 1.42× on wall, 2.91× / 1.54× / 1.36× on CPU. The box was shared; hiseq round 2 was slow for both mappers.
+  - Whole process wall s: RTX 34.6 / 24.4 / 24.0; minibwa 48.2 / 26.8 / 25.1.
+  - Peak RSS: 5.6–5.8 GB vs 7.7–8.0 GB.
+
 ## Tier-1 / short-read workhorse (branch `speed/fast-proved`, 2026-10-05)
 Done (all proved, check.sh green on 58b0faf):
 - Main-path speed (body changes, equality lemmas): shapes table (`shapesT_eq`/`shapesKT_eq`; the mergeSort was 1/3 of stage K), reverse complement by table (`complTab_get`), `sbound` table (`sbound_def`), best window not re-scored (`addK`, `inv_skipP`). chr21 1 task, 250 bp both strands: T=−16 35k → ~51k reads/s, T=−12 60k → ~90k.
