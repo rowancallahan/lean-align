@@ -91,6 +91,93 @@ def pscanQ (pgs2 : Array PGen) (RY RYr : ByteArray) (KY KYr : RP) (sl lo hi lim 
     let y : Placement := (⟨x.1.chr, s, ny⟩, if x.2 = Strand.fwd then Strand.rev else Strand.fwd)
     if k ≤ lim ∧ properPairU sl lo hi x y = true then some (y, -(k : Int)) else none) a (b + 1 - a) []
 
+/-- `rejW` with the two genome words given. -/
+@[inline] def rejC (R : ByteArray) (K : RP) (P : PGen) (st lim : Nat) (cur nxt : UInt64) : Bool :=
+  let A := P.o + st
+  K.ok && decide (32 ≤ R.size) && decide (st + 32 ≤ P.n) && P.w.get! (17 * (A / 64)) == 1 &&
+    P.w.get! (17 * ((A + 31) / 64)) == 1 &&
+    decide (lim / 4 < cnt64 (fold (K.w[0]! ^^^ comb cur nxt (A % 32) (2 * (A % 32)).toUInt64 (64 - 2 * (A % 32)).toUInt64)))
+
+/-- `scanW` of `f` with the starts rejected by `rejC` skipped; the genome words of the current
+32-letter block (`u`) carried along. -/
+def scanWC {α : Type} (R : ByteArray) (K : RP) (P : PGen) (lim : Nat) (f : Nat → Option α) :
+    Nat → Nat → Nat → UInt64 → UInt64 → List α → List α
+  | _, 0, _, _, _, acc => acc
+  | a, k + 1, u, cur, nxt, acc =>
+    let u' := (P.o + a) / 32
+    let cur' := if u' = u then cur else if u' = u + 1 then nxt else gword P.w u'
+    let nxt' := if u' = u then nxt else gword P.w (u' + 1)
+    scanWC R K P lim f (a + 1) k u' cur' nxt'
+      (if rejC R K P a lim cur' nxt' then acc else match f a with | some v => v :: acc | none => acc)
+
+/-- `pscanQ` with the genome words carried (the scan the kernel runs). -/
+def pscanC (pgs2 : Array PGen) (RY RYr : ByteArray) (KY KYr : RP) (sl lo hi lim : Nat)
+    (x : Placement) : List (Placement × Int) :=
+  let ny := RY.size
+  let fw := decide (x.2 = Strand.fwd)
+  let a := if fw then x.1.start + lo - ny else x.1.start + x.1.len - hi
+  let b := if fw then x.1.start + hi - ny else x.1.start + x.1.len - lo
+  let P := pgs2[x.1.chr]!
+  let u := (P.o + a) / 32
+  let f := fun s =>
+    let k := if x.2 = Strand.fwd then kerHKG RYr KYr pgs2 pgs2 x.1.chr s ny lim
+      else kerHKG RY KY pgs2 pgs2 x.1.chr s ny lim
+    let y : Placement := (⟨x.1.chr, s, ny⟩, if x.2 = Strand.fwd then Strand.rev else Strand.fwd)
+    if k ≤ lim ∧ properPairU sl lo hi x y = true then some (y, -(k : Int)) else none
+  if fw then scanWC RYr KYr P lim f a (b + 1 - a) u (gword P.w u) (gword P.w (u + 1)) []
+  else scanWC RY KY P lim f a (b + 1 - a) u (gword P.w u) (gword P.w (u + 1)) []
+
+/-! ## Part A': the enumerated mate's hits by global diagonals -/
+
+/-- The last `c ∈ [lo, hi)` with `offs[c] ≤ x` (binary search; `lo` when none). -/
+def chromOf (offs : Array Nat) (x : Nat) (lo hi : Nat) : Nat :=
+  if lo + 1 < hi then
+    let mid := (lo + hi) / 2
+    if offs[mid]! ≤ x then chromOf offs x mid hi else chromOf offs x lo mid
+  else lo
+termination_by hi - lo
+
+/-- The chromosomes are laid out in order, without overlap. -/
+def offsOk (offs : Array Nat) (pgs : Array PGen) : Bool :=
+  (List.range pgs.size).all fun c => decide (pgs.size ≤ c + 1) || decide (offs[c]! + pgs[c]!.n ≤ offs[c + 1]!)
+
+/-- One strand's windows within `lim` (gapless, `lim ≤ 7`): the anchor diagonals of the
+`sbound lim + 2` rarest seeds held by all but `sbound lim` of them, each placed in its chromosome
+(`chromOf`), through the kernel `ker c st` (virtual chromosome `t + c`). -/
+def hitsGS {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat) (n : Nat)
+    (gsz : Nat → Nat) (ker : Nat → Nat → Nat) (t lim : Nat) (Rs : ByteArray) : List (Window × Nat) :=
+  let m := Rs.size / 25
+  let Ls := Rs.size / m
+  let ps := prepG ix Rs m Ls
+  let J := (ordG (ps.map (LookG.size ix)) m).take (sbound lim + 2)
+  let acc := J.map fun j => LookG.look ix G Rs (j * Ls) (Rs.size - j * Ls) ps[j]!
+  (diagsB acc (J.length - sbound lim) 0).filterMap fun D =>
+    let x := D - Rs.size
+    let c := chromOf offs x 0 n
+    if Rs.size ≤ D ∧ c < n ∧ offs[c]! ≤ x ∧ x - offs[c]! + Rs.size ≤ gsz c then
+      let k := ker c (x - offs[c]!)
+      if k ≤ lim then some (⟨t + c, x - offs[c]!, Rs.size⟩, k) else none
+    else none
+
+/-- Every placement of a read within `lim ≤ 7`: by global diagonals when the chromosomes are in
+order (`offsOk`), else `hitsAtKP3`. -/
+def hitsAtQ (lim : Nat) (ix : PkMzR) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
+    Option (List (Placement × Int)) :=
+  if fastT lim R then
+    if offsOk offs pgs then
+      let n := pgs.size
+      let pgs2 := pgs ++ pgs
+      let Rr := revCompK R
+      let K := packRP R
+      let Kr := packRP Rr
+      some ((hitsGS ix ByteArray.empty offs n (fun c => pgs[c]!.n)
+          (fun c st => kerHKG R K pgs2 pgs2 c st R.size lim) 0 lim R ++
+        hitsGS ix ByteArray.empty offs n (fun c => pgs[c]!.n)
+          (fun c st => kerHKG Rr Kr pgs2 pgs2 (n + c) st Rr.size lim) n lim Rr).map
+        fun x => (decB n x.1, -(x.2 : Int)))
+    else hitsAtKP3 lim ix ByteArray.empty offs pgs R
+  else none
+
 /-! ## Part C: the early stop -/
 
 /-- Same placements. -/
@@ -144,6 +231,30 @@ def pairGQ (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMzR) (of
     let RY := if swap then R1 else R2
     let RYr := revCompK RY
     let f := pairsQ dc sl lo hi Gc (pgs ++ pgs) RY RYr (packRP RY) (packRP RYr) swap
+    let l0 := lX.filter fun x => decide (x.2 = 0)
+    let l1 := lX.filter fun x => !decide (x.2 = 0)
+    let U1 := l1.foldl (fun m x => max m x.2) (-(Gc : Int))
+    let s := goP dc f U1 l1 (goP dc f 0 l0 (none, false))
+    some (if s.2 then none else s.1, s.1.isSome, lX)
+
+/-- As `pairsQ`, with cached words (`pscanC`).  The pairs of one hit `x` of the enumerated mate (partners within `Gc − pen x`, pair score `≥ −Gc`). -/
+def pairsQC (dc : Nat → Nat) (sl lo hi Gc : Nat) (pgs2 : Array PGen) (RY RYr : ByteArray) (KY KYr : RP)
+    (swap : Bool) (x : Placement × Int) : List PairHit :=
+  (pscanC pgs2 RY RYr KY KYr sl lo hi (Gc - (-x.2).toNat) x.1).filterMap fun y =>
+    let p : PairHit := if swap then (y, x) else (x, y)
+    if -(Gc : Int) ≤ pairScoreD dc p then some p else none
+
+/-- As `pairGQ`, with global diagonal X hits (`hitsAtQ`) and `pairsQC` (speed candidate; equality to `pairGQ` not yet proved).  **The fast pair-level guarantee at `Gc`, early stop**: the enumerated mate's hits within `Gc`
+(raw lookups), the perfect ones' pairs first, then the others' (bound: their best score), stopping
+when the answer is settled.  Answer as `pairGF`'s. -/
+def pairGQC (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMzR) (offs : Array Nat)
+    (pgs : Array PGen) (R1 R2 : ByteArray) : Option (Option PairHit × Bool × List (Placement × Int)) :=
+  match hitsAtQ Gc ix offs pgs (if swap then R2 else R1) with
+  | none => none
+  | some lX =>
+    let RY := if swap then R1 else R2
+    let RYr := revCompK RY
+    let f := pairsQC dc sl lo hi Gc (pgs ++ pgs) RY RYr (packRP RY) (packRP RYr) swap
     let l0 := lX.filter fun x => decide (x.2 = 0)
     let l1 := lX.filter fun x => !decide (x.2 = 0)
     let U1 := l1.foldl (fun m x => max m x.2) (-(Gc : Int))

@@ -2884,10 +2884,12 @@ def main (args : List String) : IO UInt32 := do
       let xGK := (← IO.getEnv "WG_PGK").getD "0" == "1"
       -- WG_PGF=1: the proved fast kernel `pairGF` (codecs/PairGuarFast.lean) in place of `pairGX`
       let xGF := (← IO.getEnv "WG_PGF").getD "0" == "1" || (← IO.getEnv "WG_PGF").getD "0" == "S" ||
-        (← IO.getEnv "WG_PGF").getD "0" == "Q"
+        (← IO.getEnv "WG_PGF").getD "0" == "Q" || (← IO.getEnv "WG_PGF").getD "0" == "C"
       let xGFS := (← IO.getEnv "WG_PGF").getD "0" == "S"
       -- WG_PGF=Q: the proved early-stop kernel `pairGQ` (codecs/PairGuarQ.lean)
       let xGFQ := (← IO.getEnv "WG_PGF").getD "0" == "Q"
+      -- WG_PGF=C: its speed candidate `pairGQC` (global diagonal X hits, cached partner words)
+      let xGFC := (← IO.getEnv "WG_PGF").getD "0" == "C"
       -- WG_PGXF=1: pairGX with the spec fixes (pairGXF) in place of pairGX
       let pgxE := (← IO.getEnv "WG_PGXF").getD "0"
       let pgx := if pgxE == "1" then pairGXF false false else if pgxE == "K" then pairGXF true false else if pgxE == "R" then pairGXF false true else if pgxE == "Q" then pairGQB else pairGX
@@ -2906,6 +2908,7 @@ def main (args : List String) : IO UInt32 := do
         match gfSwap G0 a b s1 s2 with
         | none => none
         | some swap => (if xGFS then pairGFSB dcost0 usl lo hi G0 swap pk offs pgs a b
+            else if xGFC then pairGQC dcost0 usl lo hi G0 swap (pk : PkMzR) offs pgs a b
             else if xGFQ then pairGQ dcost0 usl lo hi G0 swap (pk : PkMzR) offs pgs a b
             else pairGF dcost0 usl lo hi G0 swap pk offs pgs a b).map fun v => (swap, v)
       -- the enumerated mate's floor and best hit from its exact hits within G0 (none: Hamming ≥ G0/4 + 1)
@@ -3425,17 +3428,17 @@ def main (args : List String) : IO UInt32 := do
                 let z3 ← IO.monoNanosNow
                 let q ← (← IO.mkRef (pairGQ dcost0 usl lo hi pgG swap (pk : PkMzR) offs pgs a b)).get
                 let z4 ← IO.monoNanosNow
-                let lXr ← (← IO.mkRef (@hitsAtKP3 PkMzR MzP _ _ pgG pk ByteArray.empty offs pgs RX)).get
+                let lXr ← (← IO.mkRef (pairGQC dcost0 usl lo hi pgG swap (pk : PkMzR) offs pgs a b)).get
                 let z5 ← IO.monoNanosNow
                 let gf ← (← IO.mkRef (pairGF dcost0 usl lo hi pgG swap pk offs pgs a b)).get
                 let z6 ← IO.monoNanosNow
                 gfT := ((gfT.set! 2 (gfT[2]! + (z4 - z3))).set! 3 (gfT[3]! + (z5 - z4))).set! 4 (gfT[4]! + (z6 - z5))
                 let key := fun (x : Placement × Int) => s!"{x.1.1.chr} {x.1.1.start} {x.1.1.len} {decide (x.1.2 = Strand.fwd)} {x.2}"
                 let srt := fun (l : List (Placement × Int)) => (l.map key).toArray.qsort (fun u v => decide (u < v))
-                if (lXr.map srt) != (lX.map srt) then gfBad := gfBad + 1
+                if (lXr.map fun (_, _, l) => srt l) != (q.map fun (_, _, l) => srt l) then gfBad := gfBad + 1
                 let ans := fun (v : Option (Option PairHit × Bool × List (Placement × Int))) =>
                   v.map fun (r, sn, _) => (r.map fun (p : PairHit) => (key p.1, key p.2), sn)
-                if ans q != ans gf then gfPB := gfPB + 1
+                if ans q != ans gf || ans lXr != ans gf then gfPB := gfPB + 1
                 gfH := gfH.push nh
                 if z2 - z0 > gfMax then
                   gfMax := z2 - z0
@@ -3485,7 +3488,7 @@ def main (args : List String) : IO UInt32 := do
         if xGF then
           let sh := gfH.qsort (· < ·)
           let hp (q : Nat) : Nat := if sh.isEmpty then 0 else sh[min (sh.size - 1) (sh.size * q / 100)]!
-          say s!"GFPROF pairs {gfH.size}; µs: X hits (hitsAtKP3) {gfT[0]! / 1000}, partners (pairsGF) {gfT[1]! / 1000}; X hits p50 {hp 50} p90 {hp 90} p99 {hp 99} max {hp 100}; worst {gfMax / 1000} µs: {gfWorst}; pairGQ {gfT[2]! / 1000}, its X hits (raw) {gfT[3]! / 1000}, pairGF {gfT[4]! / 1000}; X lists differ {gfBad}, answers differ {gfPB}"
+          say s!"GFPROF pairs {gfH.size}; µs: X hits (hitsAtKP3) {gfT[0]! / 1000}, partners (pairsGF) {gfT[1]! / 1000}; X hits p50 {hp 50} p90 {hp 90} p99 {hp 99} max {hp 100}; worst {gfMax / 1000} µs: {gfWorst}; pairGQ {gfT[2]! / 1000}, pairGQC {gfT[3]! / 1000}, pairGF {gfT[4]! / 1000}; X lists differ (Q vs C) {gfBad}, answers differ {gfPB}"
         say s!"TIERPROF pairs {min xpN r1.size}, RT-unmapped or gated {cnt} (gated {nG}); µs: gate+RT {t[0]! / 1000}, pair guarantee G={pgG} {t[1]! / 1000} (worst {gMax / 1000}: {gWorst}; over 5 ms {gBig} pairs, {gBigT / 1000} µs; not applicable {nX}), candidates checked p50 {pct 50} p99 {pct 99} max {pct 100}; mates' perfect hits {t[2]! / 1000}, ladder {t[3]! / 1000}, {if xBnd && !xOld then "floor/ceiling (mateB)" else "free bounds"} {t[4]! / 1000} ({nO} over mates)"
         let tl := (List.range scans.size).foldl (fun (h : Std.HashMap Nat Nat) i =>
           let v := scans[i]!
