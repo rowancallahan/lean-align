@@ -918,6 +918,12 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
       - Exact pieces (r = 1, k ≈ 20 for uniqueness) give a 5% floor rate.
       - Enough for HiFi (< 0.5%) and ONT R10 Q20+ (~1–3%) with a margin that grows with length. Example: 10 kb ONT at 2% has M = 500 and true cost ≈ 200; any other locus needs ≥ ~500 − (repeat pieces hitting it).
       - Old ONT (~10%) needs r = 2 (pieces matched with ≤ 1 edit, A*PA-style; k = 15 gives 13%), or longer pieces with t-edit certificates.
+    - **Sparser, smaller k-mers (Rowan):** for exact pieces, the floor rate is 1 / spacing, not 1 / k. Gaps between pieces add 0.
+      - Smaller k allows tighter spacing, but each lookup returns more hits: ~3000 for k = 10, ~180 for k = 12, ~11 for k = 14 (3.1 Gb / 4^k).
+      - Sparse pieces cut lookups, but spacing must stay below 1/ε.
+      - ε ≤ 3% (HiFi, ONT R10): 15-mers every ~30 bp, sparse and cheap.
+      - ε ≈ 10%: spacing ≈ 10, so dense 10–12-mers (many hits, count them per locus bin), or r = 2 inexact pieces.
+      - With a sampled (minimizer) index, pick read pieces the index is guaranteed to contain, as the short-read Mz design already does.
     - **Cheap:** hits per locus come from the lookups already done. Only a locus with ≥ M − ceiling/r hits can compete. Usually that is X alone, so one chain alignment plus counting proves global uniqueness.
     - **Repeats:** pieces in Alu / L1 copies hit many loci but only cover part of the read. The unique pieces carry the floor. The true limit is segmental duplications longer than the read, the same as for short reads.
     - **Limit:** a whole chromosome maps only to itself, as Rowan says. The exception is the near-identical copies (segdups, acrocentric arms, PARs), which need explicit handling.
