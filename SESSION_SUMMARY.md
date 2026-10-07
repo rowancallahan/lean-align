@@ -912,10 +912,15 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
     2. The seed floor gives a lower bound. If ceiling = floor, the result is proved optimal in that region, cheaply.
     3. Otherwise run the exact fallback on the region, pruned by the ceiling.
   - **Fallback choice:** A*PA2-style band doubling (Ukkonen) is easier to prove than A* with match pruning. Its lemma is "any path leaving the band costs > t", and doubling stops when cost ≤ t. Our banded kernels already have this shape. A*PA's match pruning makes the heuristic inconsistent, and its correctness argument is subtle, so prove plain A* or band doubling first.
-  - **Genome-wide uniqueness is the hard part:**
-    - With ~10% ONT error, k-mer seeds mostly break, so pigeonhole floors for other loci are weak.
-    - HiFi (< 1% error) gives strong floors.
-    - For ONT, expect a proved best within the chained region, plus weaker genome-wide floors.
+  - **Genome-wide uniqueness gets EASIER with length (Rowan, corrected 2026-10-07).** The floor at every other locus grows with read length, while repeats stay bounded.
+    - **Floor:** cut the read into M disjoint pieces of length k. At a locus Y (non-overlapping with X, window widened by the allowed drift), cost(Y) ≥ r · #(pieces with no match within r − 1 edits in Y's window). This is the same lemma as `sbound` / A*PA's seed heuristic.
+    - **Condition:** the floor rate r/k must exceed the read's error rate ε.
+      - Exact pieces (r = 1, k ≈ 20 for uniqueness) give a 5% floor rate.
+      - Enough for HiFi (< 0.5%) and ONT R10 Q20+ (~1–3%) with a margin that grows with length. Example: 10 kb ONT at 2% has M = 500 and true cost ≈ 200; any other locus needs ≥ ~500 − (repeat pieces hitting it).
+      - Old ONT (~10%) needs r = 2 (pieces matched with ≤ 1 edit, A*PA-style; k = 15 gives 13%), or longer pieces with t-edit certificates.
+    - **Cheap:** hits per locus come from the lookups already done. Only a locus with ≥ M − ceiling/r hits can compete. Usually that is X alone, so one chain alignment plus counting proves global uniqueness.
+    - **Repeats:** pieces in Alu / L1 copies hit many loci but only cover part of the read. The unique pieces carry the floor. The true limit is segmental duplications longer than the read, the same as for short reads.
+    - **Limit:** a whole chromosome maps only to itself, as Rowan says. The exception is the near-identical copies (segdups, acrocentric arms, PARs), which need explicit handling.
   - **Spec:** long reads need local, semi-global or split alignment (clipping, SVs), which is a new spec. Known paths (variant seeds) plug into chaining.
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
   - **Measure first:**
