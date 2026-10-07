@@ -926,6 +926,12 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
       - With a sampled (minimizer) index, pick read pieces the index is guaranteed to contain, as the short-read Mz design already does.
     - **Cheap:** hits per locus come from the lookups already done. Only a locus with ≥ M − ceiling/r hits can compete. Usually that is X alone, so one chain alignment plus counting proves global uniqueness.
     - **Repeats:** pieces in Alu / L1 copies hit many loci but only cover part of the read. The unique pieces carry the floor. The true limit is segmental duplications longer than the read, the same as for short reads.
+    - **Near-identical big copies (Rowan):** use a search cap, then pick one copy. Report it as a separate tier ("one of k near-identical copies", MAPQ 0, not proved unique). Focus effort on the "interesting" unique parts.
+      - PARs: the GRCh38 analysis set hard-masks the chrY PARs, so PAR reads map uniquely to chrX. Check that this matches the reference we use.
+    - **Length dispatch (Rowan):** `mapAny r := if len r ≥ Lmin then mapLong r else mapShort r`.
+      - The theorem is a case split over the two proved branches, so any Lmin is sound. Short-mate kernels are already dispatched this way by length.
+      - The output records which spec and tier it meets: the short spec is end-to-end; the long spec is semi-global or split.
+      - Long reads go to their own task queue, so they don't stall short-read batches.
     - **Limit:** a whole chromosome maps only to itself, as Rowan says. The exception is the near-identical copies (segdups, acrocentric arms, PARs), which need explicit handling.
   - **Spec:** long reads need local, semi-global or split alignment (clipping, SVs), which is a new spec. Known paths (variant seeds) plug into chaining.
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
