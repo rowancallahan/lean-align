@@ -900,6 +900,11 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
     - **Scaling:** pass-1 cost scales with the number of variants (~5M), not reads, so it is fixed and spreads over the run. The hit rate rises with coverage and saturates around ≥ 10×. With variant seeds in the index the lookup is part of seeding, so it is near free per read.
     - **Test:** the 200k genome-wide sets (~0.003×) show almost nothing. Use one chromosome at full depth, e.g. all HG002 chr20 reads at 30×.
   - **When:** round 2 of optimization, after Rowan cleans up the code and rewrites the spec.
+  - **Long reads (Rowan):** known paths amount to mapping against a personal genome and lifting coordinates back.
+    - HiFi: most differences are true variants, so the gain is large.
+    - ONT with large SVs: also large. Breakpoint search and split or chained alignment are the expensive, fragile part, and a learned SV path turns them into one continuous alignment. ONT's random indel errors are still paid per read.
+    - Pass 1 learns SV breakpoints from many reads. A consensus fixes ONT's fuzzy breakpoints.
+    - Proofs: an SV read scores very badly end-to-end against the plain reference, so proving it best needs the "reference + known variants" (path) spec.
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
   - **Measure first:**
     - The exact duplicate-pair rate on 1M NovaSeq pairs.
