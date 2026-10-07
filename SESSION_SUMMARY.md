@@ -905,6 +905,18 @@ Event-based pigeonhole proves the fast path exact to 15/23/39 (100/150/250 bp), 
     - ONT with large SVs: also large. Breakpoint search and split or chained alignment are the expensive, fragile part, and a learned SV path turns them into one continuous alignment. ONT's random indel errors are still paid per read.
     - Pass 1 learns SV breakpoints from many reads. A consensus fixes ONT's fuzzy breakpoints.
     - Proofs: an SV read scores very badly end-to-end against the plain reference, so proving it best needs the "reference + known variants" (path) spec.
+- **Long reads (Rowan, 2026-10-07): proved seed-and-chain with an A*PA-style exact fallback.**
+  - **Shared lemma:** A*PA's seed heuristic and our pigeonhole floor (`sbound`, missed seeds ⇒ cost ≥ …) are the same lower bound. A seed with no match in the remaining region costs ≥ 1 error.
+  - **Tiers:**
+    1. Chain the seeds and score the alignment along the chain exactly. That gives a ceiling.
+    2. The seed floor gives a lower bound. If ceiling = floor, the result is proved optimal in that region, cheaply.
+    3. Otherwise run the exact fallback on the region, pruned by the ceiling.
+  - **Fallback choice:** A*PA2-style band doubling (Ukkonen) is easier to prove than A* with match pruning. Its lemma is "any path leaving the band costs > t", and doubling stops when cost ≤ t. Our banded kernels already have this shape. A*PA's match pruning makes the heuristic inconsistent, and its correctness argument is subtle, so prove plain A* or band doubling first.
+  - **Genome-wide uniqueness is the hard part:**
+    - With ~10% ONT error, k-mer seeds mostly break, so pigeonhole floors for other loci are weak.
+    - HiFi (< 1% error) gives strong floors.
+    - For ONT, expect a proved best within the chained region, plus weaker genome-wide floors.
+  - **Spec:** long reads need local, semi-global or split alignment (clipping, SVs), which is a new spec. Known paths (variant seeds) plug into chaining.
   - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
   - **Measure first:**
     - The exact duplicate-pair rate on 1M NovaSeq pairs.
