@@ -83,8 +83,10 @@ structure MzIdx where
   bsh : Nat
   ash : Nat
   fsh : Nat
-  /-- `2^B + 1` LE `UInt32` bucket offsets -/
+  /-- `2^B + 1` LE `UInt32` bucket offsets, from `UInt32` `ob` on (a loaded index reads them
+  in place in the saved bytes) -/
   offs : ByteArray
+  ob : Nat := 0
   /-- bytes per slot (the builder writes 4, 5, 6 or 8) -/
   sw : Nat
   /-- slot `pos · 2^T + tag` per entry, `sw` little-endian bytes (a `ByteArray` is
@@ -121,8 +123,10 @@ variable (ix : MzIdx)
 @[inline] def ra (i : Nat) : Nat := ix.runs[2 * i]!
 @[inline] def rb (i : Nat) : Nat := ix.runs[2 * i + 1]!
 @[inline] def nr : Nat := ix.runs.size / 2
-@[inline] def loB (b : Nat) : Nat := getU32 ix.offs b
-@[inline] def hiB (b : Nat) : Nat := getU32 ix.offs (b + 1)
+@[inline] def loB (b : Nat) : Nat := getU32 ix.offs (ix.ob + b)
+@[inline] def hiB (b : Nat) : Nat := getU32 ix.offs (ix.ob + b + 1)
+/-- The bucket offsets as a fresh array: the checker's starting hints (any array is sound). -/
+def hint : ByteArray := ix.offs.extract (4 * ix.ob) (4 * (ix.ob + 2 ^ ix.B + 1))
 @[inline] def posOf (e : Nat) : Nat := e >>> ix.T
 @[inline] def tagOf (e : Nat) : Nat := e &&& ix.tM
 @[inline] def keyF (tg : Nat) : Nat := tg &&& ix.kbM
@@ -322,7 +326,7 @@ def checkCover (ix : MzIdx) (G : ByteArray) (c : Nat) : (n x : Nat) → Bool
 /-- The runtime checker. -/
 def check (ix : MzIdx) (G : ByteArray) : Bool :=
   checkParams ix && checkSound ix G (2 ^ ix.B) 0 &&
-    checkComp ix G ix.offs 0 (G.size + 1 - q) 0 &&
+    checkComp ix G ix.hint 0 (G.size + 1 - q) 0 &&
     checkRuns ix G ix.nr 0 && checkCover ix G 0 G.size 0
 
 /-! ## Builder (fast; not trusted — `check` certifies its output) -/

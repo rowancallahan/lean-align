@@ -348,7 +348,7 @@ def checkCoverV (ix : MzIdx) (G : GV) (c : Nat) : (n x : Nat) → Bool
 /-- `check2` reading a view. -/
 def check2V (ix : MzIdx) (G : GV) : Bool :=
   checkParams ix && checkSoundV ix G (2 ^ ix.B) 0 &&
-    (let s := rollToV G (q - 1); compRV ix G ix.offs 0 (G.n + 1 - q) 0 s.1 s.2) &&
+    (let s := rollToV G (q - 1); compRV ix G ix.hint 0 (G.n + 1 - q) 0 s.1 s.2) &&
     checkRunsV ix G ix.nr 0 && checkCoverV ix G 0 G.n 0
 
 /-- `checkSoundV` on `P` tasks (as `checkSoundPar`). -/
@@ -363,7 +363,7 @@ def checkSoundParV (ix : MzIdx) (G : GV) (P : Nat) : Bool :=
 /-- `check2V` with the per-entry pass on `P` tasks, run beside the sequential passes. -/
 def check3V (ix : MzIdx) (G : GV) (P : Nat) : Bool :=
   let seq := Task.spawn (prio := .dedicated) fun _ =>
-    (let s := rollToV G (q - 1); compRV ix G ix.offs 0 (G.n + 1 - q) 0 s.1 s.2) &&
+    (let s := rollToV G (q - 1); compRV ix G ix.hint 0 (G.n + 1 - q) 0 s.1 s.2) &&
       checkRunsV ix G ix.nr 0 && checkCoverV ix G 0 G.n 0
   checkParams ix && checkSoundParV ix G P && seq.get
 

@@ -43,7 +43,7 @@ def compR (ix : MzIdx) (G : ByteArray) (fill : ByteArray) (last : Nat) :
 /-- The runtime checker, with the rolling completeness pass. -/
 def check2 (ix : MzIdx) (G : ByteArray) : Bool :=
   checkParams ix && checkSound ix G (2 ^ ix.B) 0 &&
-    (let s := rollTo G (q - 1); compR ix G ix.offs 0 (G.size + 1 - q) 0 s.1 s.2) &&
+    (let s := rollTo G (q - 1); compR ix G ix.hint 0 (G.size + 1 - q) 0 s.1 s.2) &&
     checkRuns ix G ix.nr 0 && checkCover ix G 0 G.size 0
 
 /-! ## Proof -/

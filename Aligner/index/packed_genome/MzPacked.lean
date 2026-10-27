@@ -115,7 +115,7 @@ def checkCoverP (ix : MzIdx) (G : PGen) (c : Nat) : (n x : Nat) → Bool
 /-- `check2` reading a packed genome. -/
 def check2P (ix : MzIdx) (G : PGen) : Bool :=
   checkParams ix && checkSoundP ix G (2 ^ ix.B) 0 &&
-    (let s := rollToP G (q - 1); compRP ix G ix.offs 0 (G.n + 1 - q) 0 s.1 s.2) &&
+    (let s := rollToP G (q - 1); compRP ix G ix.hint 0 (G.n + 1 - q) 0 s.1 s.2) &&
     checkRunsP ix G ix.nr 0 && checkCoverP ix G 0 G.n 0
 
 /-! ## Builder (not trusted; copy of `buildW`) -/

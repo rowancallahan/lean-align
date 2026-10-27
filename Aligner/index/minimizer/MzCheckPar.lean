@@ -73,7 +73,7 @@ theorem checkSoundPar_eq (ix : MzIdx) (G : ByteArray) (P : Nat) :
 /-- `check2` with the per-entry pass on `P` tasks. -/
 def check3 (ix : MzIdx) (G : ByteArray) (P : Nat) : Bool :=
   checkParams ix && checkSoundPar ix G P &&
-    (let s := rollTo G (q - 1); compR ix G ix.offs 0 (G.size + 1 - q) 0 s.1 s.2) &&
+    (let s := rollTo G (q - 1); compR ix G ix.hint 0 (G.size + 1 - q) 0 s.1 s.2) &&
     checkRuns ix G ix.nr 0 && checkCover ix G 0 G.size 0
 
 theorem check3_eq (ix : MzIdx) (G : ByteArray) (P : Nat) : check3 ix G P = check ix G := by

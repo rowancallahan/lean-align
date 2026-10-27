@@ -6,10 +6,10 @@ import ParMap
 this file fills in the two holes, `buildIndex` and `alignPairs`, and proves `alignPairs_correct`
 from the bridge lemmas (`Proofs/Bridge.lean`) and the router's `tierPair_sound`.
 
-The index is checked once, when it is built: `buildIndex` writes the index only if it loads back
-to exactly what was built and passes the router's checks (`IndexOk`); otherwise it writes an empty
-index, and `alignPairs` then answers every pair with the bound 0 (always true). So `alignPairs`
-never re-checks the index, and the proof gets the checks from `hIndex`. -/
+The index is checked once, when it is built: `buildIndex` writes the index only if what it loads
+to passes the router's checks (`indexOk`); otherwise it writes an empty index, and `alignPairs`
+then answers every pair with the bound 0 (always true). So `alignPairs` never re-checks the index,
+and the proof gets the checks from `hIndex`. -/
 
 namespace Spec
 
@@ -25,39 +25,43 @@ def buildLoaded (byteGenome : GenomeFile) : LoadedIndex :=
   let G := Index.packAll gbs
   (Index.buildMz gbs G, G, Index.offsOf gbs, gbs.map (·.size))
 
--- one ByteArray: magic, then the four parts
+-- one ByteArray: `G.w`, `ix.sl`, the bucket offsets, the small fields, where they start, magic
+-- (`Proofs/Index.lean`). Slot `t` of the loaded index is slot `t - m` of `ix.sl`.
 def saveIndex (loaded : LoadedIndex) : ByteArray :=
   let (ix, G, offs, ns) := loaded
-  Index.putNats (Index.putNats (Index.putPGen (Index.putMz (Index.putU64 .empty Index.magic) ix) G) offs) ns
+  let b := ByteArray.emptyWithCapacity (G.w.size + ix.sl.size + ix.offs.size + ix.sw + 4 + G.ex.size +
+    8 * (40 + ix.pm.size + ix.runs.size + offs.size + ns.size))
+  let b := Index.pad (b ++ G.w) ix.sw
+  let m := b.size / ix.sw
+  let b := Index.pad (b ++ ix.sl) 4
+  let ob := b.size / 4
+  let b := Index.putOffs b ix.offs m
+  let hp := b.size
+  let b := Index.putNats (Index.putNats (Index.putPGen (Index.putMz b ix ob) G) offs) ns
+  Index.putU64 (Index.putNat b hp) Index.magic
 
--- Note (speed): `loadIndex` copies `ix.offs`, `ix.sl`, `G.w`, `G.ex` out of `index` (`extract`) and
--- rebuilds `ix.pm`, `ix.runs`, `offs`, `ns`, on every call, i.e. once per `alignPairs` chunk.
+-- copies nothing big: `ix.offs`, `ix.sl`, `G.w` are `index` itself; rebuilds `G.ex`, `ix.pm`,
+-- `ix.runs`, `offs`, `ns` (small) on every call, i.e. once per `alignPairs` chunk
 def loadIndex (index : ByteArray) : Option LoadedIndex :=
-  if index.size < 8 then none else
+  if index.size < 16 then none else
   (do
+    let hp ← Index.rdNat index
     if (← Index.rdU64 index) != Index.magic then failure
+    set hp
     let ix ← Index.rdMz index
     let G ← Index.rdPGen index
     let offs ← Index.rdNats index
     let ns ← Index.rdNats index
-    if (← get) != index.size then failure
-    return (ix, G, offs, ns) : Index.Rd LoadedIndex).run' 0
+    if (← get) != index.size - 16 then failure
+    return (ix, G, offs, ns) : Index.Rd LoadedIndex).run' (index.size - 16)
 
 -- the router's hypotheses, as one check run at build time
 def indexOk (byteGenome : GenomeFile) (loaded : LoadedIndex) : Bool :=
   let (ix, G, offs, ns) := loaded
   MapSpec.Fast.cutOk G offs ns && MapSpec.Mz.check3P ix G 4 && Index.chromsOk byteGenome G offs ns
 
--- saving then loading gives back what was saved (checked at build time)
-def roundTrips (saved : ByteArray) (loaded : LoadedIndex) : Bool :=
-  decide (loadIndex saved = some loaded)
-
 theorem loadIndex_empty : loadIndex ByteArray.empty = none := by
   simp [loadIndex]
-
-theorem roundTrips_load {saved : ByteArray} {loaded : LoadedIndex} (h : roundTrips saved loaded = true) :
-    loadIndex saved = some loaded :=
-  of_decide_eq_true h
 
 theorem indexOk_sound {byteGenome : GenomeFile} {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen}
     {offs ns : Array Nat} (h : indexOk byteGenome (ix, G, offs, ns) = true) :
@@ -67,11 +71,13 @@ theorem indexOk_sound {byteGenome : GenomeFile} {ix : MapSpec.Mz.MzIdx} {G : Map
   simp only [indexOk, Bool.and_eq_true, MapSpec.Mz.check3P_eq] at h
   exact ⟨h.1.1, Index.chromsOk_sound h.2, h.1.2⟩
 
--- the index holds everything the aligner needs, the genome included
+-- the index holds everything the aligner needs, the genome included; the check runs on what
+-- `saved` loads to (nothing about saving or loading is proved)
 def buildIndex (byteGenome : GenomeFile) : ByteArray :=
-  let loaded := buildLoaded byteGenome
-  let saved := saveIndex loaded
-  if roundTrips saved loaded && indexOk byteGenome loaded then saved else ByteArray.empty
+  let saved := saveIndex (buildLoaded byteGenome)
+  match loadIndex saved with
+  | some loaded => if indexOk byteGenome loaded then saved else ByteArray.empty
+  | none => ByteArray.empty
 
 /-! ## The aligner -/
 
@@ -126,12 +132,14 @@ theorem loadIndex_buildIndex (byteGenome : GenomeFile) :
     loadIndex (buildIndex byteGenome) = none ∨
     ∃ loaded, loadIndex (buildIndex byteGenome) = some loaded ∧ indexOk byteGenome loaded = true := by
   unfold buildIndex
-  simp only
-  split
-  · rename_i h
-    simp only [Bool.and_eq_true] at h
-    exact .inr ⟨_, roundTrips_load h.1, h.2⟩
-  · exact .inl loadIndex_empty
+  generalize saveIndex (buildLoaded byteGenome) = saved
+  dsimp only
+  cases h : loadIndex saved with
+  | none => exact .inl (by simp [loadIndex_empty])
+  | some loaded =>
+    by_cases hok : indexOk byteGenome loaded = true
+    · exact .inr ⟨loaded, by simp [h, hok], hok⟩
+    · exact .inl (by simp [hok, loadIndex_empty])
 
 theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
     (byteGenome : GenomeFile) (hGenome : byteGenome.decode = genome)
@@ -166,7 +174,7 @@ theorem alignPairs_correct (insertSettings : InsertSettings)
       (alignPairs insertSettings index bytePairs)[i]? = some result →
       trimmedPairs[i]? = some mates →
       PairResult.Correct insertSettings genome mates.1 mates.2 result := by
-  subst hMates hIndex
+  subst hMates index
   have hLoaded : ∀ l, loadIndex (buildIndex byteGenome) = some l → indexOk byteGenome l = true := by
     intro l hl
     rcases loadIndex_buildIndex byteGenome with h | ⟨l', h, hok⟩

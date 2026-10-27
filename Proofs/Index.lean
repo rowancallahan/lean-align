@@ -8,8 +8,11 @@ import WgPacked
   over the view of the chromosomes; when the view is not right (chromosomes shorter than 2^20,
   `catOkV`) the same builder reading the packed genome (`Mz.buildWP`). Nothing here is trusted:
   `indexOk` checks the result.
-* save / load: one `ByteArray`: magic, then every field (`Nat` as 8 LE bytes, arrays and bytes
-  length-prefixed). Nothing about the format is proved; `roundTrips` checks it once at build time.
+* save / load: one `ByteArray`, laid out so that loading copies nothing big: `G.w` at byte 0, then
+  `ix.sl` from byte `sw · m`, then the bucket offsets (each plus `m`) from `UInt32` `ob`, then the
+  small fields (`Nat` as 8 LE bytes, arrays and bytes length-prefixed), where they start, and the
+  magic. The loaded `G.w`, `ix.sl`, `ix.offs` are the saved bytes themselves. Nothing about the
+  format is proved: `buildIndex` checks the loaded index itself.
 * check: `cutOk`, `check3P` (= `check2P`, 4 tasks), and every chromosome view spells the genome's
   bytes. -/
 
@@ -40,7 +43,7 @@ def buildMz (gbs : Array ByteArray) (G : PGen) : Mz.MzIdx :=
 
 /-! ## Save -/
 
-def magic : UInt64 := 0x3158444941474C4C  -- "LLGAIDX1"
+def magic : UInt64 := 0x3258444941474C4C  -- "LLGAIDX2"
 
 def putU64 (b : ByteArray) (x : UInt64) : ByteArray :=
   (List.range 8).foldl (fun b i => b.push (x >>> (8 * i).toUInt64).toUInt8) b
@@ -51,21 +54,27 @@ def putNats (b : ByteArray) (xs : Array Nat) : ByteArray := xs.foldl putNat (put
 
 def putBytes (b : ByteArray) (x : ByteArray) : ByteArray := putNat b x.size ++ x
 
-def putMz (b : ByteArray) (ix : Mz.MzIdx) : ByteArray :=
+-- zeros up to a multiple of `a`
+def pad (b : ByteArray) (a : Nat) : ByteArray := Nat.fold ((a - b.size % a) % a) (fun _ _ b => b.push 0) b
+
+-- the bucket offsets (LE `UInt32`s), each plus `m`
+def putOffs (b offs : ByteArray) (m : Nat) : ByteArray :=
+  Nat.fold (offs.size / 4) (fun i _ b =>
+    let x := (getU32 offs i + m).toUInt32
+    ((b.push x.toUInt8).push (x >>> 8).toUInt8 |>.push (x >>> 16).toUInt8).push (x >>> 24).toUInt8) b
+
+-- the small fields; the bucket offsets start at `UInt32` `ob` (`offs`, `sl` are not written here)
+def putMz (b : ByteArray) (ix : Mz.MzIdx) (ob : Nat) : ByteArray :=
   let b := [ix.k, ix.B, ix.w, ix.c, ix.kb, ix.kf, ix.T].foldl putNat b
   let b := putU64 b ix.kmU
   let b := putNat b ix.t
   let b := putU64 b ix.tmU
   let b := [ix.kbM, ix.fM, ix.tM].foldl putNat b
   let b := putNats b ix.pm
-  let b := [ix.bsh, ix.ash, ix.fsh].foldl putNat b
-  let b := putBytes b ix.offs
-  let b := putNat b ix.sw
-  let b := putBytes b ix.sl
+  let b := [ix.bsh, ix.ash, ix.fsh, ob, ix.sw].foldl putNat b
   putNats b ix.runs
 
-def putPGen (b : ByteArray) (G : PGen) : ByteArray :=
-  putBytes (putBytes (putNat (putNat b G.n) G.o) G.w) G.ex
+def putPGen (b : ByteArray) (G : PGen) : ByteArray := putBytes (putNat (putNat b G.n) G.o) G.ex
 
 /-! ## Load: a parser reading `bs` from a position -/
 
@@ -87,12 +96,13 @@ def rdNats (bs : ByteArray) : Rd (Array Nat) := do
   let p ← get
   if p + 8 * n ≤ bs.size then rdNatsGo bs n (Array.emptyWithCapacity n) else failure
 
--- copies the bytes (see the note in `Proofs/Aligner.lean`)
+-- copies the bytes (only `G.ex`, small)
 def rdBytes (bs : ByteArray) : Rd ByteArray := do
   let n ← rdNat bs
   let p ← get
   if p + n ≤ bs.size then set (p + n); return bs.extract p (p + n) else failure
 
+-- `offs` and `sl` are `bs` itself (see `putOffs`)
 def rdMz (bs : ByteArray) : Rd Mz.MzIdx := do
   let k ← rdNat bs; let B ← rdNat bs; let w ← rdNat bs; let c ← rdNat bs
   let kb ← rdNat bs; let kf ← rdNat bs; let T ← rdNat bs
@@ -100,17 +110,13 @@ def rdMz (bs : ByteArray) : Rd Mz.MzIdx := do
   let kbM ← rdNat bs; let fM ← rdNat bs; let tM ← rdNat bs
   let pm ← rdNats bs
   let bsh ← rdNat bs; let ash ← rdNat bs; let fsh ← rdNat bs
-  let offs ← rdBytes bs; let sw ← rdNat bs; let sl ← rdBytes bs; let runs ← rdNats bs
-  return { k, B, w, c, kb, kf, T, kmU, t, tmU, kbM, fM, tM, pm, bsh, ash, fsh, offs, sw, sl, runs }
+  let ob ← rdNat bs; let sw ← rdNat bs; let runs ← rdNats bs
+  return { k, B, w, c, kb, kf, T, kmU, t, tmU, kbM, fM, tM, pm, bsh, ash, fsh, offs := bs, ob, sw, sl := bs, runs }
 
+-- `w` is `bs` itself (it starts at byte 0)
 def rdPGen (bs : ByteArray) : Rd PGen := do
-  let n ← rdNat bs; let o ← rdNat bs; let w ← rdBytes bs; let ex ← rdBytes bs
-  return { n, o, w, ex }
-
-/-! ## Equality, decided (only `roundTrips` runs it; `ByteArray` equality is `memcmp`) -/
-
-deriving instance DecidableEq for PGen
-deriving instance DecidableEq for Mz.MzIdx
+  let n ← rdNat bs; let o ← rdNat bs; let ex ← rdBytes bs
+  return { n, o, w := bs, ex }
 
 /-! ## Check -/
 
