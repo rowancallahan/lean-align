@@ -45,12 +45,24 @@ def samName (name : String) : String :=
   let name := (name.splitOn " ").headD name
   if name.endsWith "/1" || name.endsWith "/2" then (name.dropEnd 2).toString else name
 
--- SEQ and QUAL as on the forward strand of the reference: reversed (and complemented) on reverse
+-- `complement` (Mapping.lean) on one byte: A <-> T, C <-> G, everything else unchanged
+def complementByte (byte : UInt8) : UInt8 :=
+  if byte == 65 then 84 else if byte == 84 then 65 else if byte == 67 then 71 else if byte == 71 then 67 else byte
+
+-- the bytes in reverse order, each through `f`
+def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity bytes.size
+  for i in [0:bytes.size] do
+    out := out.push (f bytes[bytes.size - 1 - i]!)
+  return out
+
+-- SEQ and QUAL as on the forward strand of the reference: reversed (and complemented) on reverse.
+-- Byte for byte the same as decoding to letters and back for the ASCII letters reads are made of.
 def samSequence (record : FastqRecord) (strand : Strand) : String × String :=
   match strand with
-  | .forward => (String.ofList (decodeRead record.letters), record.quality)
-  | .reverse => (String.ofList (reverseComplement (decodeRead record.letters)),
-                 String.ofList record.quality.toList.reverse)
+  | .forward => (String.fromUTF8! record.letters, record.quality)
+  | .reverse => (String.fromUTF8! (reverseMapBytes complementByte record.letters),
+                 String.fromUTF8! (reverseMapBytes id record.quality.toUTF8))
 
 def uniquenessText : Uniqueness → String
   | .unique      => "unique"

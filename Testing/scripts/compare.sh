@@ -12,6 +12,9 @@ set -u   # no -e: a tool that fails (e.g. out of memory) is recorded and the res
 cd "$(dirname "$0")/../.."
 root=$PWD; D=$root/Testing/data/downloads; B=$root/.lake/build/bin
 T="python3 $root/Testing/scripts/timed.py"
+# map timings repeat REPEAT times (default 3); report the median (this box varies ~30% run to run)
+R=${REPEAT:-3}
+TR() { label=$1; shift; i=0; while [ $i -lt $R ]; do $T "$label run$((i+1))" "$@"; i=$((i+1)); done; }
 G=${1:-$D/chr21.fa}; O=${OUT:-${TMPDIR:-/tmp}/lean_align_compare}; mkdir -p "$O"
 sets=${SETS:-"hiseq250:hg002_200k novaseq151:novaseq_200k mason:sim_mason low:sim_low"}
 threads=${THREADS:-"2 4"}
@@ -26,10 +29,10 @@ $T "minibwa index" "$MINIBWA" index ${MB_INDEX_FLAGS:-} -t 1 "$G" "$O/mb"
 echo "== map"
 for s in $sets; do n=${s%%:*}; r1=$D/${s#*:}_R1.fq; r2=$D/${s#*:}_R2.fq
   for t in $threads; do
-    $T "$n shim t$t" taskset -c $(cores $t) $B/lean-align map "$O/shim.idx" "$r1" "$r2" "$O/$n.shim.sam" 100 1000
+    TR "$n shim t$t" taskset -c $(cores $t) $B/lean-align map "$O/shim.idx" "$r1" "$r2" "$O/$n.shim.sam" 100 1000
     [ "${BENCH:-1}" = 1 ] && WG_MODES=RTX WG_TASKS=$t WG_READS="$n=$r1:$r2:0" $T "$n bench t$t" taskset -c $(cores $t) $B/whole_genome pmap "$O/wg" "$G" | grep -E "^TIME|RESULT"
-    $T "$n minibwa t$t" taskset -c $(cores $t) sh -c "'$MINIBWA' map -t $t '$O/mb' '$r1' '$r2' > '$O/$n.mb.sam'"
-    $T "$n minibwa-native t$t" taskset -c $(cores $t) sh -c "'$MINIBWA_NATIVE' map -t $t '$O/mb' '$r1' '$r2' > /dev/null"
+    TR "$n minibwa t$t" taskset -c $(cores $t) sh -c "'$MINIBWA' map -t $t '$O/mb' '$r1' '$r2' > '$O/$n.mb.sam'"
+    TR "$n minibwa-native t$t" taskset -c $(cores $t) sh -c "'$MINIBWA_NATIVE' map -t $t '$O/mb' '$r1' '$r2' > /dev/null"
   done
 done
 
@@ -38,6 +41,6 @@ python3 -c "import random; random.seed(1); print('>tiny'); print(''.join(random.
 $B/lean-align build "$O/tiny.fa" "$O/tiny.idx"
 for s in $sets; do n=${s%%:*}; r1=$D/${s#*:}_R1.fq; r2=$D/${s#*:}_R2.fq
   for t in $threads; do
-    $T "$n shim I/O only t$t" taskset -c $(cores $t) $B/lean-align map "$O/tiny.idx" "$r1" "$r2" "$O/$n.tiny.sam" 100 1000
+    TR "$n shim I/O only t$t" taskset -c $(cores $t) $B/lean-align map "$O/tiny.idx" "$r1" "$r2" "$O/$n.tiny.sam" 100 1000
   done
 done
