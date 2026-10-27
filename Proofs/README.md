@@ -20,14 +20,14 @@
   score (`scoreWalk` is the same function on both sides; map the steps).
 - **B2** `hit_of_alignment`, `alignment_of_hit`: `hitsBoth` (old: windows × strands, each with its
   best score `windowScore` via `getBestAlignment`) against `GenomicAlignment`. Use
-  `getBestAlignment_returns_a_maximum_score` / `_valid_walk` (core/AlignmentSpec.lean) and B1.
+  `getBestAlignment_returns_a_maximum_score` / `_valid_walk` (Proofs/core/AlignmentSpec.lean) and B1.
   Note `oldPlacement` uses `stop - start`; `fits` gives `start ≤ stop`.
-- **B3** `isProper_iff`: `Mapping.IsProper` vs `properPairU` (core/PairSpecU.lean). Same
+- **B3** `isProper_iff`: `Mapping.IsProper` vs `properPairU` (Proofs/core/PairSpecU.lean). Same
   conditions; arithmetic.
-- **B4** `encodes_decodeRead`: `Encodes` (kernels/mapper_band/MapperBandKernel.lean) holds for
+- **B4** `encodes_decodeRead`: `Encodes` (Aligner/kernels/mapper_band/MapperBandKernel.lean) holds for
   `decodeRead` (`Char.ofNat` of a byte has that byte's `toNat`).
 - **B5** the index (`Aligner.lean`): define `buildLoaded` (the fast builders the freeze used:
-  bench/WholeGenome.lean `build` / `pmap` modes), `saveIndex` / `loadIndex` (one ByteArray;
+  Bench/benches/WholeGenome.lean `build` / `pmap` modes), `saveIndex` / `loadIndex` (one ByteArray;
   `loadIndex ByteArray.empty = none`, e.g. a magic header), `indexOk` (cutOk, check2P, and the
   unpacked chromosomes equal the genome's bytes), `roundTrips`; prove the three lemmas.
 - **B6** `answerOf_correct` (`Bridge.lean`): case on the tag. Bounds: t1 (each mate's unique best at
@@ -39,7 +39,7 @@
 
 ## Names to know (so the old code is not confusing)
 
-- `sc0` (old code, `MapSpec.sc0`, used in ~63 files under mapper/, index/, kernels/) **is**
+- `sc0` (old code, `MapSpec.sc0`, used in ~63 files under Aligner/mapper/, index/, kernels/) **is**
   `defaultScoring` from the spec: match 0, mismatch −4, gap open −6, gap extend −2. It is the same
   numbers in the old `AlignmentSpec.Scoring` type. The bridge calls it `oldDefaultScoring`. Renaming
   it in the old code is left for the proof-golfing pass; do not rename it while proving.
@@ -56,4 +56,4 @@
   to `Spec/` (comparator checks this after the Lean 4.35 bump).
 - No new axioms; no `sorry`, `native_decide`, `implemented_by`, `extern`, `unsafe`, `partial` in
   finished proofs. Check with `#print axioms Spec.alignPairs_correct`.
-- Build: `lake build Proofs`. Full re-check: `sh scripts/check.sh`.
+- Build: `lake build Proofs`. Full re-check: `sh Bench/scripts/check.sh`.

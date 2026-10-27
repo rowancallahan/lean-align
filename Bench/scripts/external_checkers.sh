@@ -1,13 +1,13 @@
 #!/bin/sh
 # Replays the proof through every checker `lake check --paranoid` runs, invoked exactly as
 # Lake's src/lean/lake/Lake/CLI/Check.lean does (bundledKernels, runExternalKernel), for boxes
-# without `bwrap` where `lake check` cannot start.   sh scripts/external_checkers.sh [full|target]
+# without `bwrap` where `lake check` cannot start.   sh Bench/scripts/external_checkers.sh [full|target]
 #   full   (default) export Proofs.Aligner and everything it imports
 #   target export only what alignPairs_correct, alignPairs and buildIndex depend on
 # Differences from `lake check --paranoid`: no sandbox around build/export, and the export is
 # Proofs.Aligner rather than every default target.  Run `lake build` first.
 set -eu
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 mode="${1:-full}"
 B="$(dirname "$(elan which lean)")"
 out="${TMPDIR:-/tmp}/lean_align_checkers"

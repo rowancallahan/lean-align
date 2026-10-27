@@ -1,16 +1,16 @@
 #!/bin/sh
-# Developer check: uses the cached lake build, so unchanged files are not re-elaborated.   sh scripts/CI_check.sh
+# Developer check: uses the cached lake build, so unchanged files are not re-elaborated.   sh Bench/scripts/CI_check.sh
 # Exit 0 = frozen files match their checksums, everything builds, every
 # certificate and spec file elaborates with standard axioms only and no sorry,
 # and the executable cross-codec check passes.
 set -u
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 fail=0
 tmp="${TMPDIR:-/tmp}"
 step() { printf '\n== %s\n' "$1"; }
 
 step "frozen files (checksums)"
-shasum -a 256 -c FROZEN_CONTRACT.sha256 || fail=1
+(cd Aligner/trimmer && shasum -a 256 -c FROZEN_CONTRACT.sha256) || fail=1
 shasum -a 256 -c Spec/FROZEN.sha256 || fail=1
 
 step "lake build"
@@ -34,7 +34,7 @@ print(f"ok   {len(lists) + len(none)} theorems, standard axioms only; sorry only
 PY
 
 step "certificates (not build modules: they share the name Certificate)"
-for c in kernels/*/Certificate.lean core/Certificate.lean trimmer/Certificate.lean core/Cli.lean core/Run.lean; do
+for c in Aligner/kernels/*/Certificate.lean Proofs/core/Certificate.lean Aligner/trimmer/Certificate.lean Proofs/core/Cli.lean Proofs/core/Run.lean; do
   log="$tmp/lean_align_$(echo "$c" | tr '/' '_').log"
   lake env lean "$c" >"$log" 2>&1
   rc=$?
@@ -55,16 +55,16 @@ PY
 done
 
 step "trimmer proof audit"
-if lake env lean trimmer/ReadWindowProofAudit.lean >"$tmp/lean_align_trimmer_audit.log" 2>&1 &&
+if lake env lean Aligner/trimmer/ReadWindowProofAudit.lean >"$tmp/lean_align_trimmer_audit.log" 2>&1 &&
     ! grep -q "sorryAx" "$tmp/lean_align_trimmer_audit.log"; then echo "audit ok"; else echo "FAIL trimmer audit"; fail=1; fi
 
 step "executable cross-codec check"
-lake env lean checks/CheckCertified.lean >"$tmp/lean_align_cross.log" 2>&1 || fail=1
+lake env lean Bench/checks/CheckCertified.lean >"$tmp/lean_align_cross.log" 2>&1 || fail=1
 tail -3 "$tmp/lean_align_cross.log"
 
 step "forbidden tokens in Main.lean and LeanAlign/"
-if grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |IO.Process|getStdout|getStderr" Main.lean LeanAlign/*.lean; then fail=1; else echo "none"; fi
-if grep -nE "IO\." LeanAlign/*.lean; then echo "FAIL: IO in the pure library"; fail=1; else echo "LeanAlign/ is IO-free"; fi
+if grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |IO.Process|getStdout|getStderr" Main.lean Aligner/LeanAlign/*.lean; then fail=1; else echo "none"; fi
+if grep -nE "IO\." Aligner/LeanAlign/*.lean; then echo "FAIL: IO in the pure library"; fail=1; else echo "LeanAlign/ is IO-free"; fi
 
 step "result"
 [ $fail -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"
