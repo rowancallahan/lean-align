@@ -105,8 +105,18 @@ So on this data the k250 word kernels are ~3% self (~10% inclusive under kerGKG 
 allocation/refcount is ~13.5%, list building ~6%, per-read seeding (seedLE + miniGo + packLoopU + revCompLoop) ~12.5%.
 
 ======================================================================================================
-C. After the hamW / fwdW / bwdW prototypes (this branch; see notes/LOOP_SHAPE_PLAN.md)
+C. After the prototypes on this branch (hamW, fwdW, bwdW, seedLE, revCompLoop, miniGo; notes/LOOP_SHAPE_PLAN.md)
 ======================================================================================================
+hamWU / fwdWU / bwdWU / seedLEU / revCompLoopU / miniGoU (generated C): `goto _start` loops over size_t /
+uint64_t only; no lean_nat_*, no lean_inc/lean_dec in the loop path; Nat only on exits (selLow / selHigh result)
+and in the cold fallbacks (gwordS, rw[j.toNat]!, B.get! p.toNat).
+Measured inside tierPair (ab_ir, 2000 pairs, dumps identical): production settings 597.5 M → 553.5 M Ir (−7.4%),
+RTX 1,247.9 M → 1,187.0 M (−4.9%). Per function: see LOOP_SHAPE_PLAN.md §5.
+Pitfall found on the way: a Nat literal ≥ 2^32 in compiled code is `lean_cstr_to_nat("…")` (GMP string parse)
+on every evaluation unless it ends up in a closed term; still present per call in pscanD (2^62) and
+checkRunsFast3Go / diagMisFast3 (2^32).
+
+============================================================================================
 hamWU / fwdWU / bwdWU (generated C): `goto _start` loops over size_t / uint64_t only; no lean_nat_*, no
 lean_inc/lean_dec, read word by lean_array_uget_borrowed + one unbox, genome word = 8 lean_byte_array_uget
 from one size_t offset. The cold fallbacks (gwordS, rw[j.toNat]!) are outside the loop path.
