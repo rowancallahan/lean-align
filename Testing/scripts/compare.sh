@@ -7,6 +7,7 @@
 # Last step: the shim on a tiny genome = its FASTQ/SAM I/O cost alone.
 # SETS="hiseq250:hg002_200k" limits the read sets (name:file prefix in Testing/data/downloads).
 # Needs: lake build whole_genome; MINIBWA (default build) and MINIBWA_NATIVE set to the two binaries.
+# PREBUILT=Testing/data/prebuilt: use a release's indexes (skips the index builds and the bench).
 # MB_INDEX_FLAGS="-l" builds minibwa's index in its low-memory mode.
 set -u   # no -e: a tool that fails (e.g. out of memory) is recorded and the rest still run
 cd "$(dirname "$0")/../.."
@@ -23,11 +24,18 @@ sets=${SETS:-"hiseq250:hg002_200k novaseq151:novaseq_200k mason:sim_mason low:si
 threads=${THREADS:-"2 4"}
 cores() { echo "0-$(($1 - 1))"; }
 
-echo "== index"
+if [ -n "${PREBUILT:-}" ]; then   # indexes from a release (Testing/data/fetch_release.sh): no index builds
+  echo "== index (prebuilt from $PREBUILT)"
+  for f in "$PREBUILT"/shim.idx "$PREBUILT"/shim.idx.chromosomes "$PREBUILT"/mb.*; do ln -sf "$f" "$O/$(basename "$f")"; done
+  BENCH=0
+else
+  echo "== index"
 $T "shim build" $B/lean-align build "$G" "$O/shim.idx"
 [ "${BENCH:-1}" = 1 ] && $T "bench build" $B/whole_genome build "$O/wg" "$G"
 [ "${BENCH:-1}" = 1 ] && WG_CHECK=1 WG_MODES=RTX WG_READS="" $T "bench check index (once)" $B/whole_genome pmap "$O/wg" "$G" >/dev/null
 $T "minibwa index" "$MINIBWA" index ${MB_INDEX_FLAGS:-} -t 1 "$G" "$O/mb"
+
+fi
 
 echo "== map"
 for s in $sets; do n=${s%%:*}; r1=$D/${s#*:}_R1.fq; r2=$D/${s#*:}_R2.fq
