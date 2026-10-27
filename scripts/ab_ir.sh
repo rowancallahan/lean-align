@@ -4,13 +4,16 @@
 #   sh scripts/ab_ir.sh <whole_genome A> <whole_genome B> [dir=out/bench] [pairs=2000] [top=25]
 # Prints total Ir for A and B, B/A, and the top functions of each by self Ir.
 set -eu
+# AB_PROD=1: the router settings of the spec's alignPairs (Proofs/Aligner.lean tierCfg): pair guarantee at 4, no gate,
+# no ceilings, no tier-2 heuristic, no exact pair search. Default (unset): the bench's RTX mode (heurP, gate 60000, ...).
+if [ "${AB_PROD:-0}" = 1 ]; then export WG_PG=4 WG_XBUD=0 WG_XCEIL=0 WG_XH=0 WG_XEBUD=0; fi
 A=$1; B=$2; D=${3:-out/bench}; P=${4:-2000}; TOP=${5:-25}
-O=$D/ab_ir; mkdir -p "$O"
+O=$D/ab_ir${AB_PROD:+_prod}; mkdir -p "$O/A" "$O/B"
 L=$((2 * P))
 head -n $L "$D/g/p150_1.reads.txt" > "$O/r1.txt"; head -n $L "$D/g/p150_2.reads.txt" > "$O/r2.txt"
 for x in A B; do
   if [ $x = A ]; then bin=$A; else bin=$B; fi
-  WG_READS="p=$O/r1.txt:$O/r2.txt:0" WG_MODES=RTX WG_TASKS=1 WG_OUT="$O/$x" WG_TIEROUT=1 \
+  WG_READS="p=$O/r1.txt:$O/r2.txt:0" WG_MODES=RTX WG_TASKS=1 WG_OUT="$O/$x" \
     valgrind --tool=callgrind --toggle-collect='lp_lean__align_MapSpec_Fast_tierPair' --callgrind-out-file="$O/$x.cg" "$bin" pmap "$D/g/ix" "$D/g/chr1.fa" "$D/g/chr2.fa" \
     > "$O/$x.log" 2>&1
   callgrind_annotate --threshold=100 "$O/$x.cg" 2>/dev/null | head -n $((TOP + 25)) > "$O/$x.top.txt"
