@@ -715,9 +715,11 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
   return pick
 
 
-/-- The bench's default mode-RTX settings (WholeGenome.lean with no WG_* variables set): budget gate at
-60000, no pair guarantee, the rarest-seed ceiling (bucket ≤ 500, ≤ 16 diagonals), the tier 2 heuristic,
-and the exact pair search on tier 2 pairs with budget 1500 (c ≤ 16). -/
+/-- The router settings `alignPairs` runs with: the bench's mode-RTX defaults (budget gate at 60000, no
+pair guarantee, the rarest-seed ceiling (bucket ≤ 500, ≤ 16 diagonals), the exact pair search on tier 2
+pairs with budget 1500 (c ≤ 16)) except the tier 2 heuristic, which is off (bench: WG_XH=0). While answers
+are bounds only (M1) the heuristic's ceilings never reach the output, and it costs over half the mapping
+time on easy reads (chr21 mason 200k, 4 cores: 12.4 s → 5.2 s). Turn it back on for M2 (`heur` below). -/
 def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (lo hi usl : Nat) : TierCfg :=
   let hcfg : HCfg :=
     { w := 8, r := 2, ck := 2000, np := 8, dl := 16, seeds := true, near := true, band := true
@@ -737,9 +739,6 @@ def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (
     gate := fun _ _ _ _ c1 c2 => 60000 < c1 || 60000 < c2
     pref := fun G0 a b s1 s2 => decide (rare (sbound G0 + 2) b s2 < rare (sbound G0 + 2) a s1)
     ceil := fun R s => ceilX pk offs pgs R s 500 16
-    heur := fun a b s1 s2 m1 m2 =>
-      let o := heurP hcfg pk offs pgs usl lo hi a b s1 s2 m1 m2
-      (candOf o.1, candOf o.2)
     xe := fun t a b =>
       let c := t.m1.pH + t.m2.pH
       if 16 < c then none else
