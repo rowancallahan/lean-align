@@ -1,4 +1,4 @@
-import Proofs.Bridge
+import Proofs.Index
 
 /-! # 3. The aligner, proved. `Spec/Aligner.lean`'s types are in `Proofs/Answer.lean` (unchanged);
 this file fills in the two holes, `buildIndex` and `alignPairs`, and proves `alignPairs_correct`
@@ -17,38 +17,53 @@ open Bridge
 
 abbrev LoadedIndex := MapSpec.Mz.MzIdx × MapSpec.Fast.PGen × Array Nat × Array Nat
 
--- TODO(B5): the fast builders (bench/WholeGenome.lean `build` mode: Mz.buildWV, the packer)
+-- the fast builders the harness uses (bench/WholeGenome.lean `build` and `pmap` modes; `Proofs/Index.lean`)
 def buildLoaded (byteGenome : GenomeFile) : LoadedIndex :=
-  sorry
+  let gbs := byteGenome.map (·.2)
+  let G := Index.packAll gbs
+  (Index.buildMz gbs G, G, Index.offsOf gbs, gbs.map (·.size))
 
--- TODO(B5): one ByteArray holding all four parts; `loadIndex ByteArray.empty = none`
+-- one ByteArray: magic, then the four parts
 def saveIndex (loaded : LoadedIndex) : ByteArray :=
-  sorry
+  let (ix, G, offs, ns) := loaded
+  Index.putNats (Index.putNats (Index.putPGen (Index.putMz (Index.putU64 .empty Index.magic) ix) G) offs) ns
 
+-- Note (speed): `loadIndex` copies `ix.offs`, `ix.sl`, `G.w`, `G.ex` out of `index` (`extract`) and
+-- rebuilds `ix.pm`, `ix.runs`, `offs`, `ns`, on every call, i.e. once per `alignPairs` chunk.
 def loadIndex (index : ByteArray) : Option LoadedIndex :=
-  sorry
+  if index.size < 8 then none else
+  (do
+    if (← Index.rdU64 index) != Index.magic then failure
+    let ix ← Index.rdMz index
+    let G ← Index.rdPGen index
+    let offs ← Index.rdNats index
+    let ns ← Index.rdNats index
+    if (← get) != index.size then failure
+    return (ix, G, offs, ns) : Index.Rd LoadedIndex).run' 0
 
--- TODO(B5): the router's hypotheses, as one check run at build time
+-- the router's hypotheses, as one check run at build time
 def indexOk (byteGenome : GenomeFile) (loaded : LoadedIndex) : Bool :=
-  sorry
+  let (ix, G, offs, ns) := loaded
+  MapSpec.Fast.cutOk G offs ns && MapSpec.Mz.check3P ix G 4 && Index.chromsOk byteGenome G offs ns
 
--- TODO(B5): saving then loading gives back what was saved (checked at build time)
+-- saving then loading gives back what was saved (checked at build time)
 def roundTrips (saved : ByteArray) (loaded : LoadedIndex) : Bool :=
-  sorry
+  decide (loadIndex saved = some loaded)
 
 theorem loadIndex_empty : loadIndex ByteArray.empty = none := by
-  sorry
+  simp [loadIndex]
 
 theorem roundTrips_load {saved : ByteArray} {loaded : LoadedIndex} (h : roundTrips saved loaded = true) :
-    loadIndex saved = some loaded := by
-  sorry
+    loadIndex saved = some loaded :=
+  of_decide_eq_true h
 
 theorem indexOk_sound {byteGenome : GenomeFile} {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen}
     {offs ns : Array Nat} (h : indexOk byteGenome (ix, G, offs, ns) = true) :
     MapSpec.Fast.cutOk G offs ns = true ∧
     MapSpec.GenomeBytes ((MapSpec.Fast.cutAll G offs ns).map MapSpec.Mz.unpack) (oldGenome byteGenome.decode) ∧
     MapSpec.Mz.check2P ix G = true := by
-  sorry
+  simp only [indexOk, Bool.and_eq_true, MapSpec.Mz.check3P_eq] at h
+  exact ⟨h.1.1, Index.chromsOk_sound h.2, h.1.2⟩
 
 -- the index holds everything the aligner needs, the genome included
 def buildIndex (byteGenome : GenomeFile) : ByteArray :=
