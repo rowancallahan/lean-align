@@ -38,5 +38,8 @@ for r in 1 2; do
   { curl -sSfL "$NOVA.R$r.fastq.gz" 2>/dev/null || true; } | gunzip -c 2>/dev/null | head -n 4800000 | tail -n 800000 > $f
 done
 [ "$mode" = full ] && get "$IG/WholeGenomeFasta/genome.fa" hg38.fa
+# Soft-masked repeats are lowercase; the spec compares letters exactly and the packer would store every
+# lowercase letter as an exception. minibwa folds case too, so both tools get the uppercase copy.
+[ "$mode" = full ] && { [ -s hg38.upper.fa ] || awk '/^>/{print; next}{print toupper($0)}' hg38.fa > hg38.upper.fa; }
 
 if [ -f SHA256 ]; then shasum -a 256 -c SHA256; else shasum -a 256 *.fa *.fq > SHA256; cat SHA256; fi

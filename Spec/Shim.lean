@@ -13,7 +13,7 @@ def Spec.chunkPairs (chunk : Array (Spec.FastqRecord × Spec.FastqRecord)) :
 def main (args : List String) : IO UInt32 := do
   match args with
   | ["build", genomePath, indexPath] =>
-    let byteGenome := Spec.parseFasta (← IO.FS.readBinFile genomePath)
+    let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
     IO.FS.writeBinFile indexPath (Spec.buildIndex byteGenome)
     IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome)
     return 0

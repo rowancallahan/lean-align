@@ -1169,3 +1169,5 @@ Speed work in progress (branches, each must prove `= mapSpec` and pass `scripts/
 See the branch tips' commit messages for what is finished on each.
 1. Finish and merge the three speed branches; re-measure.
 4. Compare with minibwa.
+- 2026-10-27 (evening): hg38 from iGenomes is soft-masked (repeats lowercase, ~half the genome). Our code treats only ACGT as bases and the packer stores each non-ACGT letter as an exception (3 boxed UInt32 per lowercase letter -> tens of GB): the whole-genome build ran out of memory for that reason. minibwa folds case (kom_nt4_table maps acgt like ACGT). Rowan: uppercase the genome for the benchmarks (fetch.sh writes hg38.upper.fa; names unchanged). Uppercase hg38 build peaks at ~4 GB. Also: FASTA is now streamed (Spec.readFasta), not read whole.
+- TODO (Rowan, later): letter case in the spec (uppercase in readFasta?) and possibly an ACGT-only alphabet for genome and reads (simpler proofs: Read as a 4-letter type; small speed gain; needs a decision for N gaps in hg38 and reads with N).

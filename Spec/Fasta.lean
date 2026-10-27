@@ -1,29 +1,39 @@
 import Spec.Aligner
+import Spec.Fastq
 
 /-! # The genome FASTA and the saved chromosome list. Unproved (trusted) plumbing for the shim;
 the FASTA parser gets a proof later. -/
 
 namespace Spec
 
+-- a line without its trailing spaces and tabs (FastqReader.line already drops "\n" and "\r")
+def trimLineEnd (line : ByteArray) : ByteArray := Id.run do
+  let mut stop := line.size
+  while 0 < stop && (line[stop - 1]! == 32 || line[stop - 1]! == 9) do
+    stop := stop - 1
+  return if stop == line.size then line else line.extract 0 stop
+
 -- FASTA: a line starting with '>' names a chromosome; the lines after it are its letters.
--- Read as bytes, one line at a time (no Strings except the names), so memory stays near the genome's size.
-def parseFasta (bytes : ByteArray) : GenomeFile := Id.run do
+-- Streamed from the file a block at a time, so memory stays near the genome's own size.
+def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+  let reader ← FastqReader.ofHandle handle
   let mut chromosomes : GenomeFile := #[]
-  let mut i := 0
-  while i < bytes.size do
-    let mut j := i
-    while j < bytes.size && bytes[j]! != 10 do
-      j := j + 1
-    -- the line is [i, stop): no "\n", no trailing "\r", spaces or tabs
-    let mut stop := j
-    while i < stop && (bytes[stop - 1]! == 13 || bytes[stop - 1]! == 32 || bytes[stop - 1]! == 9) do
-      stop := stop - 1
-    if i < stop && bytes[i]! == 62 then
-      chromosomes := chromosomes.push (String.fromUTF8! (bytes.extract (i + 1) stop), ByteArray.empty)
-    else if !chromosomes.isEmpty then
-      chromosomes := chromosomes.modify (chromosomes.size - 1) fun (name, sequence) =>
-        (name, sequence ++ bytes.extract i stop)
-    i := j + 1
+  let mut name := ""
+  let mut sequence := ByteArray.empty
+  let mut started := false
+  repeat
+    let some line ← reader.line | break
+    let line := trimLineEnd line
+    if 0 < line.size && line[0]! == 62 then
+      if started then
+        chromosomes := chromosomes.push (name, sequence)
+      name := String.fromUTF8! (line.extract 1 line.size)
+      sequence := ByteArray.empty
+      started := true
+    else if started then
+      sequence := sequence ++ line
+  if started then
+    chromosomes := chromosomes.push (name, sequence)
   return chromosomes
 
 -- chromosome names and lengths, in genome order (saved next to the index at build time)
