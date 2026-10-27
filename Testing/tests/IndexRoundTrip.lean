@@ -1,7 +1,7 @@
 import Proofs.Aligner
 
 /-! Index round trip on a tiny synthetic genome: `lake env lean tests/IndexRoundTrip.lean`.
-Expected: `(442, #[0, 300, 430], #[300, 130, 12], ?, true, true, true, true, true)` (genome
+Expected: `(442, #[0, 300, 430], #[300, 130, 12], 268436464, true, true, true, true, true)` (genome
 letters, offsets, lengths, index bytes (B = 26: 2^26 + 1 bucket offsets), indexOk of what the saved
 index loads to, the loaded genome and slots are the saved bytes, buildIndex = saved, empty and
 truncated indexes load to none). Interpreted: ~12 min. These
