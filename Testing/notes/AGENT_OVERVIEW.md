@@ -24,6 +24,9 @@ losing the proof.
 - Proved speedups still to port from old branches: `speed/150-stage`, `speed/150-loops` (old folder
   layout; see the "Branch check" entry near the end of `SESSION_SUMMARY.md`).
 
+- The tier 2 heuristic is OFF in `alignPairs` (`TierHeur.rtxCfg`): it only pays once tier 2 pairs are
+  reported (M2). Turn it back on then; see SESSION_SUMMARY.md (2026-10-27 evening).
+
 ## Where things are
 
 | Path | What |
