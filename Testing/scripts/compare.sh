@@ -6,7 +6,7 @@
 # Runs one after another, nothing else on the box.   sh Testing/scripts/compare.sh [genome.fa]
 # SETS="hiseq250:hg002_200k" limits the read sets (name:file prefix in Testing/data/downloads).
 # Needs: lake build whole_genome; MINIBWA (default build) and MINIBWA_NATIVE set to the two binaries.
-set -eu
+set -u   # no -e: a tool that fails (e.g. out of memory) is recorded and the rest still run
 cd "$(dirname "$0")/../.."
 root=$PWD; D=$root/Testing/data/downloads; B=$root/.lake/build/bin
 T="python3 $root/Testing/scripts/timed.py"
