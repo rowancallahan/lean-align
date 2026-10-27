@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
 
 @[default_target]
 lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Index, `Proofs.Aligner]
+  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Index, `Proofs.Aligner, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
 
 @[default_target]
 lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
@@ -148,8 +148,12 @@ lean_lib LeanAlign where
   roots := #[`LeanAlign]
 
 @[default_target]
-lean_exe «lean-align» where
+lean_exe «lean-align» where              -- the shim (Main.lean): build INDEX / map pairs to SAM, calling the proved alignPairs
   root := `Main
+
+lean_exe pairwise where                  -- the old pairwise tool (input.seq → output.tsv); to be removed after the speed check
+  srcDir := "Aligner"
+  root := `PairwiseMain
 
 -- ──────────────────────────── bench ─────────────────────────────
 

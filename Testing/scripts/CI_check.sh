@@ -62,9 +62,12 @@ step "executable cross-codec check"
 lake env lean Testing/checks/CheckCertified.lean >"$tmp/lean_align_cross.log" 2>&1 || fail=1
 tail -3 "$tmp/lean_align_cross.log"
 
-step "forbidden tokens in Main.lean and LeanAlign/"
-if grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |IO.Process|getStdout|getStderr" Main.lean Aligner/LeanAlign/*.lean; then fail=1; else echo "none"; fi
+step "forbidden tokens in the executables and LeanAlign/"
+if grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |IO.Process|getStdout|getStderr" Aligner/PairwiseMain.lean Aligner/LeanAlign/*.lean; then fail=1; else echo "none"; fi
 if grep -nE "IO\." Aligner/LeanAlign/*.lean; then echo "FAIL: IO in the pure library"; fail=1; else echo "LeanAlign/ is IO-free"; fi
+if grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Fastq.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean; then fail=1; else echo "shim files: no sorry / native_decide / extern / unsafe / implemented_by"; fi
+for f in Fasta Fastq Sam; do sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean && echo "Proofs/$f.lean mirrors Spec/$f.lean" || { echo "FAIL: Proofs/$f.lean differs from Spec/$f.lean"; fail=1; }; done
+sed "1d; s/^import Proofs.Sam$/import Spec.Sam/" Main.lean | cmp -s - Spec/Shim.lean && echo "Main.lean mirrors Spec/Shim.lean" || { echo "FAIL: Main.lean differs from Spec/Shim.lean"; fail=1; }
 
 step "result"
 [ $fail -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"
