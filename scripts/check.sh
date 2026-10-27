@@ -11,13 +11,14 @@ step() { printf '\n== %s\n' "$1"; }
 
 step "frozen files (checksums)"
 shasum -a 256 -c FROZEN_CONTRACT.sha256 || fail=1
-shasum -a 256 -c spec/FROZEN_SPEC.sha256 || fail=1
+shasum -a 256 -c old_spec/FROZEN_SPEC.sha256 || fail=1
+shasum -a 256 -c Spec/FROZEN.sha256 || fail=1
 
 step "lake build"
 lake build >"$tmp/lean_align_build.log" 2>&1 && echo "build ok" || { tail -20 "$tmp/lean_align_build.log"; fail=1; }
 
 step "certificates and spec theorems (axioms)"
-for c in codecs/*.lean pool/*/Certificate.lean spec/Certificate.lean trimmer/Certificate.lean spec/Cli.lean spec/Run.lean; do
+for c in codecs/*.lean pool/*/Certificate.lean old_spec/Certificate.lean trimmer/Certificate.lean old_spec/Cli.lean old_spec/Run.lean; do
   log="$tmp/lean_align_$(echo "$c" | tr '/' '_').log"
   lake env lean "$c" >"$log" 2>&1
   rc=$?

@@ -7,8 +7,10 @@ lean-align: proved pairwise alignment, compiled to one command-line tool.
 
   Main.lean            every file-system call the tool makes (trusted, short)
   LeanAlign/           pure code: command line (Cli) and bytes-in → bytes-out (Run)
-  spec/                frozen alignment specification, and theorems about Cli and Run
-  codecs/<kernel>/    alignment codecs, each proved against spec/AlignmentSpec.lean
+  Spec/                THE specification: Alignment, Mapping, Aligner, Shim (frozen, Spec/FROZEN.sha256);
+                       Sam, Fasta, Fastq are trusted plumbing for the shim (not guaranteed)
+  old_spec/            the earlier frozen specs the current proofs are built on, and theorems about Cli and Run
+  codecs/<kernel>/    alignment codecs, each proved against old_spec/AlignmentSpec.lean
   trimmer/             read-window trimmer (frozen contract + proved implementations)
   checks/, scripts/    executable cross-checks and the full re-check script
 
@@ -21,8 +23,12 @@ package lean_align where
 -- ───────────────────────────── spec ─────────────────────────────
 
 @[default_target]
-lean_lib AlignmentSpecLib where
-  srcDir := "spec"
+lean_lib Spec where                  -- THE specification (statements only; buildIndex / alignPairs are holes)
+  globs := #[.submodules `Spec]
+
+@[default_target]
+lean_lib AlignmentSpecLib where       -- earlier specs, still what the codecs are proved against
+  srcDir := "old_spec"
   roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec, `PairSpecTier, `PairSpecU]
 
 -- ──────────────────────────── codecs ────────────────────────────

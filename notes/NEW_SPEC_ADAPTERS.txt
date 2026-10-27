@@ -1,0 +1,143 @@
+Adapters needed to connect new_spec/path/ to the existing proofs (started 2026-10-26).
+Each is a lemma linking a new definition to the old one the proofs use. Status: none written yet.
+
+ALIGNMENT (new_spec/path/Alignment.lean vs spec/AlignmentSpec.lean)
+ A1. Scoring conversion: new Scoring (with proof fields) -> old Scoring; defaultScoring -> sc0.
+     (Path is now a structure: steps + usesQuery / usesReference, written with List.count;
+      scoreWalk and allPaths are the proved versions word for word.)
+ A2. Counting lemma: (steps.map xConsumed).sum = steps.count .diag + steps.count .gapY, and
+     the same for yConsumed / gapX. Turns old IsMonotoneWalk into the two Path fields.   (induction)
+ A3. Old AlignmentOptimal (all walks) <-> new "for all other : Path, other.score <= score" (inlined in AlignmentResult.Correct and alignSpec_optimal): pair each valid
+     walk with its proofs via A2.                                                          (from A2)
+ A4. Path.score = old walkScore on path.steps.                                            (unfold)
+ A5. allPaths now returns valid Paths (built with Path.addDiag / addGapX / addGapY).
+     Need: (allPaths q r).map Path.steps = old allPaths q r (same order; induction), so alignSpec
+     picks the old getBestAlignment path, same score. allPaths_complete ("every Path
+     is in allPaths") is now stated in the spec; from the old monotone_iff_enumerated + A2.
+ A6. allPaths_ne_nil.                                                                      (new, small)
+ A7. cigar_decodes: decodeCigar path.cigar = path.steps (encodeCigar loses nothing).      (new, small)
+     No Cigar type: Path.cigar is the run array; the way back is the path itself.
+ A9. Kernels must output merged runs: either the router outputs
+     (encodeCigar (expandCigar runs)).toArray, or prove mergeRuns = encode . decode.
+     IMPLEMENTATION CHANGE (proof code) - later.
+
+MAPPING (new_spec/path/Mapping.lean, rewrite of 2026-10-26, vs spec/MapSpec.lean, PairSpec,
+PairSpecU, codecs/PairDispatch, PairLadder, TierRouter). The previous version is kept as
+new_spec/path/MappingOld.lean (Aligner still imports it until Aligner is rewritten).
+The new Mapping is stated with Props over all alignments (∀ / ∃), not with computed lists.
+ M1. Placement (chromosome, start, stop, strand) <-> old (Window chr start len, Strand):
+     stop = start + len; Placement.reference <-> windowSequence; Strand.orient <-> strandRead.  (small)
+ M2. One read: old mapReadBothStrands t genome read = some (p, s) <->
+     ∃ a : GenomicAlignment, a.placement ~ p, a.score = s, t <= s, a.IsUniqueBest.
+     Needs: an old hit's score (window best via getBestAlignment) = the best Path score at that
+     placement (A5 + alignSpec_optimal); selectUniqueBy <-> IsUniqueBest.                    (medium)
+ M3. MateFloor (now to be written in the Aligner rewrite; text in notes/NEW_SPEC_PAIR_SCENARIOS.txt): old (for all thresholds, every hit has floor <= -score) <-> new (every
+     GenomicAlignment scores <= -floor). From M2's "hit score = best path score".            (small)
+ M4. PairAlignment.IsProper (one definition: same chromosome, opposite strands, facing, fragment
+     bounds, no dovetail; "opposite strands" replaces "forward mate is forward and reverse mate is
+     reverse" - equivalent given the forward-first ordering)
+     = old properPairNoDovetail (Bool -> Prop).                                                (small)
+     MEANING CHANGE for T1: old mapPairEachMate used properPair WITHOUT the dovetail test;
+     new EachMateUnique uses ProperPair (with it).
+     DECIDED (Rowan, 2026-10-27): one ProperPair, with NoDovetail, for every tier. The router's
+     T1 path adds the dovetail test (dovetailSlack 0) before answering T1; a pair that fails it
+     falls through to the later tiers. T1 proof gains that conjunct. IMPLEMENTATION CHANGE - later.
+ M5. Pairs (scenarios moved to the Aligner rewrite; text in notes/NEW_SPEC_PAIR_SCENARIOS.txt): old properPairs / bestPair / mapPairBest / PairTie / mapPairEachMate (noDistanceCost)
+     <-> PairAlignment.IsCandidate / IsUniqueBest / IsEachMateUnique and IsPairTie
+     (PairAlignment = an alignment of each mate; pair score = sum of mate scores).
+     Same "hit score = best path score" step as M2.                                            (medium)
+ M6. exists_best (new; "best" written out, no IsBest definition): a best GenomicAlignment exists for a non-empty genome (finitely many
+     placements, allPaths per placement).                                                      (new, medium)
+ M7. Removed from the spec: Window, windowSequence, windowScore, allWindows, hitsOf,
+     selectUniqueBy, hitsBothStrands, mapReadBothStrands, mapPairEachMate, forwardReverse,
+     properPair, properPairNoDovetail, pairScore, properPairs, bestPair, noDistanceCost,
+     distanceCostPerKilobase (optional distance cost dropped), mapPairBest, PairTie,
+     IsCigarOf, strandRead. PairConfig moved here from Aligner.
+ M8. dovetailSlack: router uses usl = 0; spec default 0.
+ NOTE: the mapping layer is no longer executable (no #guard / fuzzing against it). If wanted,
+     a naive mapper (enumerate placements, alignSpec each, pick unique best) can be added
+     later as a witness / test oracle, with a theorem that its answer IsUniqueBest.
+
+ALIGNER (new_spec/path/Aligner.lean, bounds design of 2026-10-27, vs codecs/TierRouter.lean TierOk /
+tierPair_sound). Every answer: PairAnswer {found : Option PairReport, bestPossibleScore : Int,
+uniqueness : unique | multimapper | unknown, tier : Tier (no claim)}, or trimmedAway. Claim
+(PairAnswer.Correct): found is a real proper pair printed exactly; no proper pair scores above
+bestPossibleScore; unique -> found is the unique best proper pair; multimapper -> found is a best
+proper pair and another best proper pair sits at different placements. The previous tiered
+version is kept in scratch (AlignerTiersBefore.lean) for reference.
+ R1. CIGAR: reports must print real alignments (pair.report = report). STRONGER than old TierOk for
+     T1/T1g/T1u/T2b (old had no CIGAR). Needs the router's CIGAR per reported mate from a correct
+     alignment kernel at that placement/strand (AlignmentKernelCorrect + merged runs, A9).
+ R2. How old tiers fill the answer, and what each needs:
+     T1, T1g, T1u -> found = pair, bound = its score, unique. Old claims imply "unique best proper
+       pair" (thresholds collapse: "at t and every looser threshold" includes all proper pairs;
+       T1's two per-mate unique bests give the unique best pair).
+     T1gm, T1um -> found = one of the tied best pairs, bound = its score, multimapper.
+       NEW OBLIGATION: the router must report a tied pair, and the tie proof must name it and the
+       second one (old PairTieOk only says no unique best exists among candidates).
+     T2b -> found = pair, bound = its score (gap 0), unknown. From t2Opt_sound.
+     T2 -> found = the pair in hand if proper (router must check properness), bound from the mates'
+       floors / pfFloor, unknown.
+     T3 -> found = none, bound from floors, unknown.
+     T0 -> trimmedAway.
+ R2b. TIER NAMES (for reporting: the tier goes in a custom output tag, with uniqueness and the bound).
+     Old router tag -> Tier constructor -> what the answer holds -> freeze share (200k HiSeq/NovaSeq/mason):
+       T1   -> eachMateUnique    -> found pair, bound = its score, unique        82.0 / 76.0 / 84.0 %
+       T1g  -> quickSearchUnique -> found pair, bound = its score, unique         3.6 /  7.2 /  2.9 %
+       T1u  -> deepSearchUnique  -> found pair, bound = its score, unique         0.5 /  0.9 /  2.0 %
+       T1gm -> quickSearchTie    -> one tied pair, bound = its score, multimapper 1.8 /  2.3 /  0.7 %
+       T1um -> deepSearchTie     -> one tied pair, bound = its score, multimapper 0.5 /  0.4 /  1.0 %
+       T2b  -> bestUnchecked     -> found pair, bound = its score (gap 0), unknown 0.8 / 0.7 / 1.3 %
+       T2   -> stoppedEarly      -> pair if proper, bound from floors, unknown    7.1 /  7.8 /  6.9 %
+       T3   -> boundsOnly        -> no pair, bound from floors, unknown           3.7 /  4.6 /  1.4 %
+       T0   -> (not a tier) PairResult.trimmedAway                                ~0 %
+     Suggested reporting: found + unique -> mapped, high MAPQ; found + unknown -> mapped, MAPQ from
+     the gap (bestPossibleScore - found score; 0 if the gap is 0 and it may tie); multimapper ->
+     MAPQ 0 (or unmapped flag), the tied pair as the placement; no pair -> unmapped. Tags: tier,
+     uniqueness, bestPossibleScore. -7 / -16 are the current search limits (stand-in values).
+ R3. Dropped for now (can be add-on theorems / fields later): per-mate bounds (MateBounds), T1's
+     "each mate unique on its own", threshold-level tie detail.
+ R4. Bound: old floors are penalties f1, f2 (and pfFloor); bestPossibleScore = -(f1 + f2) or tighter.
+ R5. InsertSettings (top-level settings, was PairConfig / InsertSize): range : Nat × Nat (min, max, both included),
+     dovetailSlack (0). Old TierCfg lo, hi, usl.
+ R5b. PairResult.Correct: an `aligned` answer requires both trimmed mates present (match on the two
+     Options; otherwise False) - replaces `getD []`. Router obligation: when a mate is trimmed away
+     it answers trimmedAway (old T0), never aligned.
+ R5c. LATER (Rowan): thread `Scoring` through Mapping and Aligner instead of the fixed
+     defaultScoring in GenomicAlignment.score.
+ R6. Inputs (2026-10-27): the spec's conclusion is about the useful types (Genome, Option Read); the
+     bytes appear only in hypotheses: hGenome : file.decode = genome, hMate1/2 : bytes.map decodeRead
+     = trimmed. alignPair : InsertSize → GenomeFile → (index : ByteArray) → Option ByteArray →
+     Option ByteArray → PairResult is THE function the IO shim calls (comparator definition_names);
+     no decoding happens at run time, so speed is unchanged. Adapter: decodeRead / GenomeFile.decode
+     <-> the router's GenomeBytes / Encodes predicates (bytes < 256 is automatic for UInt8; catOk
+     layout of the concatenated genome). Positions below 2^40 (Rowan's bound) go here as a
+     hypothesis if the fixed-width code needs it.
+ R7. INDEX: alignPair_correct assumes index = buildIndex genome (a hypothesis, not an axiom; a
+     saved index is checked by hash in the IO shim). The router theorems assume the index checker
+     passes (checkAll / checkAllMz); no theorem yet that the fast builders pass it. Options: prove
+     builder -> checker passes, or have alignPair run the checker with a proved fallback.
+ R6b. (2026-10-27, supersedes the alignPair parts of R6/R7) The one hole the shim calls is
+     alignPairs : InsertSettings → (index : ByteArray) → List (Option ByteArray × Option ByteArray)
+     → List PairResult, over a chunk of pairs. alignPair / alignPair_correct / alignPairs_chunks
+     are gone. The genome bytes appear only in hGenome / hIndex: the index must carry the genome
+     (as the freeze's pmap did: index files + saved packed genome .pgw/.pgx/.pgc, no FASTA at map
+     time). Shim modes: `build GENOME.fa INDEX` (parseFasta + buildIndex + save) and `map INDEX ...`.
+     Obligations:
+       - buildIndex serializes MzIdx (.meta/.offs/.sl/.runs) + PGen (w, ex, n, o) + cuts (offs, ns)
+         into one ByteArray; alignPairs reads them back.
+       - SPEED RISK: alignPairs is called once per chunk with the whole index. Any per-call
+         ByteArray.extract of the parts copies GBs per chunk. DECIDED (Rowan, 2026-10-27): the
+         index stays one ByteArray (any layout can change later without a spec change); the
+         kernels read the parts in place at offsets into the blob, and those reads get re-proved.
+         Per-call cheap work (meta parse, mkIdx, cutAll, rdU64s of .runs) needs measuring
+         against the 100k-pair chunk.
+       - The freeze trusted a loaded index through `<pre>.hash` written after check3P passed
+         (WG_CHECK=1). The new shim's map mode has only the TRUSTED comment; add the hash check back.
+ R8. Pending (Rowan): trimming in the pipeline (trim, buildIndex, align), streaming / Task layer
+     proved equal to the plain map up to permutation, tier and status as custom output tags,
+     single (unpaired) reads.
+
+CHECKING
+ C1. `lake check --paranoid` and `lake comparator` need Lean >= v4.35.0; the repo is on
+     v4.33.0. Bump the toolchain on a branch first and rebuild the proofs before relying on it.
