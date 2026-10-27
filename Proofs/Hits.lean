@@ -25,7 +25,7 @@ theorem consumed (ws : List AlignmentSpec.Step) :
   induction ws with
   | nil => simp
   | cons s ws ih =>
-    cases s <;> simp [newStepOf, AlignmentSpec.xConsumed, AlignmentSpec.yConsumed, List.count_cons] <;> omega
+    cases s <;> simp [newStepOf, AlignmentSpec.xConsumed, AlignmentSpec.yConsumed] <;> omega
 
 def pathOfWalk {xs ys : Read} {ws : List AlignmentSpec.Step}
     (h : AlignmentSpec.IsMonotoneWalk ws xs ys) : Path xs ys :=
@@ -128,5 +128,59 @@ theorem windowScore_eq_some {sc : AlignmentSpec.Scoring} {read : List Char} {g :
     cases hb : AlignmentSpec.getBestAlignment sc read ys with
     | none => simp [hb]
     | some b => obtain ⟨p, q⟩ := b; simp [hb]
+
+/-! ## Hits -/
+
+def oldStrandOf : Strand → MapSpec.Strand
+  | .forward => .fwd
+  | .reverse => .rev
+
+theorem reverseComplement_eq (read : Read) : reverseComplement read = MapSpec.revComp read := by
+  simp [reverseComplement, MapSpec.revComp, complement_eq]
+
+theorem mem_hitsBoth {sc : AlignmentSpec.Scoring} {T : Int} {g : MapSpec.Genome} {read : Read}
+    {pl : MapSpec.Placement} {s : Int} :
+    (pl, s) ∈ MapSpec.hitsBoth sc T g read ↔
+      ∃ strand : Strand, pl.2 = oldStrandOf strand ∧
+        (pl.1, s) ∈ MapSpec.hitsOf (MapSpec.windowScore sc (strand.orient read) g) T (MapSpec.allWindows g) := by
+  obtain ⟨w, st⟩ := pl
+  unfold MapSpec.hitsBoth
+  simp only [List.mem_append, List.mem_map, Prod.mk.injEq]
+  constructor
+  · rintro (⟨⟨w', s'⟩, h, ⟨rfl, rfl⟩, rfl⟩ | ⟨⟨w', s'⟩, h, ⟨rfl, rfl⟩, rfl⟩)
+    · exact ⟨.forward, rfl, h⟩
+    · exact ⟨.reverse, rfl, by simpa [Strand.orient, reverseComplement_eq] using h⟩
+  · rintro ⟨strand, hst, h⟩
+    cases strand
+    · exact Or.inl ⟨(w, s), h, by simp_all [oldStrandOf]⟩
+    · exact Or.inr ⟨(w, s), by simpa [Strand.orient, reverseComplement_eq] using h, by simp_all [oldStrandOf]⟩
+
+theorem hit_of_walk (genome : Genome) (read : Read) (T : Int) (strand : Strand) (w : MapSpec.Window)
+    (ref : Read) (hseq : MapSpec.windowSeq (og genome) w = some ref) (ws : List AlignmentSpec.Step)
+    (hw : AlignmentSpec.IsMonotoneWalk ws (strand.orient read) ref)
+    (hT : T ≤ AlignmentSpec.walkScore MapSpec.sc0 (strand.orient read) ref ws) :
+    ∃ s, AlignmentSpec.walkScore MapSpec.sc0 (strand.orient read) ref ws ≤ s ∧
+      ((w, oldStrandOf strand), s) ∈ MapSpec.hitsBoth MapSpec.sc0 T (og genome) read := by
+  obtain ⟨c, hc, hlen⟩ := windowSeq_some hseq
+  obtain ⟨⟨path, s⟩, hbest⟩ := AlignmentSpec.getBestAlignment_returns_some MapSpec.sc0 (strand.orient read) ref
+  have hle := AlignmentSpec.getBestAlignment_returns_a_maximum_score _ _ _ path s ws hbest hw
+  refine ⟨s, hle, mem_hitsBoth.2 ⟨strand, rfl, mem_hitsOf.2 ⟨mem_allWindows _ w c hc hlen, ?_, Int.le_trans hT hle⟩⟩⟩
+  exact windowScore_eq_some.2 ⟨ref, path, hseq, hbest⟩
+
+theorem alignment_of_hit_aux {genome : Genome} {read : Read} {T : Int} {pl : MapSpec.Placement} {s : Int}
+    (h : (pl, s) ∈ MapSpec.hitsBoth MapSpec.sc0 T (og genome) read) :
+    ∃ a : GenomicAlignment genome read,
+      a.placement = ⟨pl.1.chr, pl.1.start, pl.1.start + pl.1.len,
+        match pl.2 with | .fwd => .forward | .rev => .reverse⟩ ∧ a.score = s := by
+  obtain ⟨strand, hst, hin⟩ := mem_hitsBoth.1 h
+  obtain ⟨hwin, hscore, -⟩ := mem_hitsOf.1 hin
+  obtain ⟨ys, bp, hseq, hbest⟩ := windowScore_eq_some.1 hscore
+  obtain ⟨hwalk, hsc⟩ := AlignmentSpec.getBestAlignment_returns_a_valid_walk _ _ _ _ _ hbest
+  have hfit : (⟨pl.1.chr, pl.1.start, pl.1.start + pl.1.len, strand⟩ : Placement).reference genome = some ys := by
+    refine (reference_iff _ _ _).2 ⟨by simp, ?_⟩
+    simpa using hseq
+  refine ⟨⟨_, ys, hfit, pathOfWalk hwalk⟩, ?_, ?_⟩
+  · cases strand <;> simp_all [oldStrandOf]
+  · exact (score_pathOfWalk hwalk).trans hsc
 
 end Spec.Hits

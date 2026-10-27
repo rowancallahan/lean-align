@@ -1,5 +1,6 @@
 import Proofs.Answer
 import TierOpt
+import Proofs.Hits
 
 /-! # Bridge: the existing router proofs (old spec: windows, hits, thresholds) → the new spec.
 
@@ -65,14 +66,21 @@ theorem hit_of_alignment {genome : Genome} {read : Read} (alignment : GenomicAli
     (T : Int) (hT : T ≤ alignment.score) :
     ∃ s, alignment.score ≤ s ∧
       (oldPlacement alignment.placement, s) ∈ MapSpec.hitsBoth oldDefaultScoring T (oldGenome genome) read := by
-  sorry
+  obtain ⟨hle, hseq⟩ := (Hits.reference_iff genome alignment.placement alignment.reference).1 alignment.fits
+  have hs := score_eq_walkScore alignment.path
+  obtain ⟨s, h1, h2⟩ := Hits.hit_of_walk genome read T alignment.placement.strand _ alignment.reference hseq
+    _ (walk_of_path alignment.path) (by rw [← hs]; exact hT)
+  have e : oldStrand = Hits.oldStrandOf := by funext x; cases x <;> rfl
+  exact ⟨s, by rw [GenomicAlignment.score, hs]; exact h1, by simp only [oldPlacement, e]; exact h2⟩
 
 -- a hit's score is reached by an alignment at that placement (needed for M2)
 theorem alignment_of_hit {genome : Genome} {read : Read} {T : Int} {hit : MapSpec.Placement × Int}
     (h : hit ∈ MapSpec.hitsBoth oldDefaultScoring T (oldGenome genome) read) :
     ∃ alignment : GenomicAlignment genome read,
       alignment.placement = newPlacement hit.1 ∧ alignment.score = hit.2 := by
-  sorry
+  obtain ⟨a, h1, h2⟩ := Hits.alignment_of_hit_aux h
+  obtain ⟨⟨w, st⟩, s⟩ := hit
+  exact ⟨a, by cases st <;> exact h1, h2⟩
 
 /-! ## B3. Proper pairs are the same -/
 
