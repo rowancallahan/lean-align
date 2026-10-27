@@ -1,7 +1,7 @@
 #!/bin/sh
-# Downloads the benchmark data into Bench/data/downloads/ (not in git).
-#   sh Bench/data/fetch.sh small   chr21 (47 MB) + first 1M HG002 pairs (2x250 bp)
-#   sh Bench/data/fetch.sh full    the above + whole hg38 (3.1 GB)
+# Downloads the benchmark data into Testing/data/downloads/ (not in git).
+#   sh Testing/data/fetch.sh small   chr21 (47 MB) + first 1M HG002 pairs (2x250 bp)
+#   sh Testing/data/fetch.sh full    the above + whole hg38 (3.1 GB)
 # Genome: UCSC hg38 via the nf-core iGenomes mirror on S3 (same sequence as hgdownload.soe.ucsc.edu).
 # Reads: GIAB HG002 (NA24385) NIST HiSeq 2500 2x250 bp, PCR-free, lane 1 file 004.
 # Checksums of what was downloaded are written to downloads/SHA256 and verified on later runs.

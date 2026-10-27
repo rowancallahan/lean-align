@@ -9,7 +9,7 @@ lean-align: proved paired-end alignment, compiled to one command-line tool.
   Spec/        THE specification (frozen, Spec/FROZEN.sha256)
   Proofs/      Spec/ with the proofs filled in; Proofs/core/ = the internal model the code is proved against
   Aligner/     the code that runs: kernels/, index/, mapper/, trimmer/, LeanAlign/ (CLI, bytes in / bytes out)
-  Bench/       benches/, scripts/ (CI_check.sh, check.sh), checks/, tests/, data/, notes/
+  Testing/       benches/, scripts/ (CI_check.sh, check.sh), checks/, tests/, data/, notes/
 
 Module names are unchanged from the read_window_trimmer repository; folders map to modules below.
 -/
@@ -154,101 +154,101 @@ lean_exe «lean-align» where
 -- ──────────────────────────── bench ─────────────────────────────
 
 lean_exe map_bench where              -- benchmark only; prints to stdout
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `MapBench
 
 lean_exe proto where                  -- speed prototype only (unproved)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `Proto
 
 lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `MapBench2
 
 lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark only)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `BandBench
 
 lean_exe csr_bench where              -- CSR index build/save/load/check timing (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `CsrBench
 
 lean_exe par_bench where              -- parMap threads / shared-memory check only
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `ParBench
 
 lean_exe stream_bench where           -- writer overlapped with mapping, benchmark only
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `StreamBench
 
 lean_exe lowerr_bench where           -- benchmark only: low-error fast path vs mapWith
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `LowErrBench
 
 lean_exe group_bench where            -- dedup / sort / binned pipelines vs plain streaming, benchmark only
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `GroupBench
 
 lean_exe gen_try where                 -- experiments on the general fast path (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `GenTry
 
 lean_exe fast_bench where             -- proved fast mapper on a real genome (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `FastBench
 
 lean_exe layout where                 -- index layout bench (unproved)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `Layout
 
 lean_exe proto_sketch where           -- seed-scheme prototype (unproved): k-mer / minimizer / syncmer / mod-minimizer index
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `ProtoSketch
 
 lean_exe mz_test where                -- randomized test: proved MzIndex lookup vs naive scan
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `MzTest
 
 lean_exe proto2 where                 -- speed prototype 2: closed-form scoring (unproved)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `Proto2
 
 lean_exe micro where                  -- micro-benchmarks of Lean code patterns
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `Micro
 
 lean_exe map_dump where               -- benchmark only; per-read results of the proved mapper
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `MapDump
 
 lean_exe proto0 where                 -- first speed prototype, kept for comparisons (unproved)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `Proto0
 
 lean_exe k250_bench where             -- word kernels vs byte kernels on candidate windows (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `K250Bench
 
 lean_exe gen_pair_bench where         -- proved general-path pair mapper (pairFastGB) over a concatenated index (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `GenPairBench
 
 lean_exe pair_bench where             -- proved pair mapper (pairFast) on mate files (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `PairBench
 
 lean_exe packed_bench where           -- 2-bit packed mismatch count vs byte loop (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `PackedBench
 
 lean_exe trim_map where               -- trimmed FASTQ pairs → proved trimmer → proved pair mapper (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `TrimMap
 
 lean_exe whole_genome where           -- whole genome held once: index over a view of the chromosomes (unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `WholeGenome
 
 lean_exe seed_lab where               -- seed lookup cost on the whole genome (benchmark only, unproved IO)
-  srcDir := "Bench/benches"
+  srcDir := "Testing/benches"
   root := `SeedLab

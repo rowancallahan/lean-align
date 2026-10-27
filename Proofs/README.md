@@ -27,7 +27,7 @@
 - **B4** `encodes_decodeRead`: `Encodes` (Aligner/kernels/mapper_band/MapperBandKernel.lean) holds for
   `decodeRead` (`Char.ofNat` of a byte has that byte's `toNat`).
 - **B5** the index (`Aligner.lean`): define `buildLoaded` (the fast builders the freeze used:
-  Bench/benches/WholeGenome.lean `build` / `pmap` modes), `saveIndex` / `loadIndex` (one ByteArray;
+  Testing/benches/WholeGenome.lean `build` / `pmap` modes), `saveIndex` / `loadIndex` (one ByteArray;
   `loadIndex ByteArray.empty = none`, e.g. a magic header), `indexOk` (cutOk, check2P, and the
   unpacked chromosomes equal the genome's bytes), `roundTrips`; prove the three lemmas.
 - **B6** `answerOf_correct` (`Bridge.lean`): case on the tag. Bounds: t1 (each mate's unique best at
@@ -56,4 +56,4 @@
   to `Spec/` (comparator checks this after the Lean 4.35 bump).
 - No new axioms; no `sorry`, `native_decide`, `implemented_by`, `extern`, `unsafe`, `partial` in
   finished proofs. Check with `#print axioms Spec.alignPairs_correct`.
-- Build: `lake build Proofs`. Full re-check: `sh Bench/scripts/check.sh`.
+- Build: `lake build Proofs`. Full re-check: `sh Testing/scripts/check.sh`.

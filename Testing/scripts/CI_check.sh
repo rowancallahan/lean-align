@@ -1,5 +1,5 @@
 #!/bin/sh
-# Developer check: uses the cached lake build, so unchanged files are not re-elaborated.   sh Bench/scripts/CI_check.sh
+# Developer check: uses the cached lake build, so unchanged files are not re-elaborated.   sh Testing/scripts/CI_check.sh
 # Exit 0 = frozen files match their checksums, everything builds, every
 # certificate and spec file elaborates with standard axioms only and no sorry,
 # and the executable cross-codec check passes.
@@ -59,7 +59,7 @@ if lake env lean Aligner/trimmer/ReadWindowProofAudit.lean >"$tmp/lean_align_tri
     ! grep -q "sorryAx" "$tmp/lean_align_trimmer_audit.log"; then echo "audit ok"; else echo "FAIL trimmer audit"; fail=1; fi
 
 step "executable cross-codec check"
-lake env lean Bench/checks/CheckCertified.lean >"$tmp/lean_align_cross.log" 2>&1 || fail=1
+lake env lean Testing/checks/CheckCertified.lean >"$tmp/lean_align_cross.log" 2>&1 || fail=1
 tail -3 "$tmp/lean_align_cross.log"
 
 step "forbidden tokens in Main.lean and LeanAlign/"

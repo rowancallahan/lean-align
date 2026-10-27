@@ -5,4 +5,4 @@ out/
 __pycache__/
 .nvimlog
 nvim.log
-Bench/data/downloads/
+Testing/data/downloads/

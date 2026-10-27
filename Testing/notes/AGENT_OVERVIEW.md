@@ -34,11 +34,11 @@ losing the proof.
 | `Aligner/mapper/TierRouter.lean` | The tier router `tierPair` and `tierPair_sound`; `TierOk` near line 555. |
 | `Aligner/kernels/`, `Aligner/index/` | Alignment kernels and index structures, each with its proofs. |
 | `Aligner/LeanAlign/`, `Main.lean` | Command line and the only file-system code. |
-| `Bench/scripts/CI_check.sh`, `check.sh`, `external_checkers.sh` | Developer check, final check, external kernels. |
-| `Bench/checks/AuditAlignPairs.lean` | Audit: no unsafe / extern / implemented_by / partial / extra axioms behind the top theorems. |
-| `Bench/benches/` | Benchmark executables and analysis scripts (`WholeGenome.lean` is the whole-genome harness). |
-| `Bench/data/fetch.sh` | Downloads chr21, hg38 and HG002 reads (iGenomes and GIAB on S3) into `Bench/data/downloads/`. |
-| `Bench/notes/` | Design notes, plans, `SESSION_SUMMARY.md` (dated log), `AGENTS_PLAN.md` (finished overnight plan). |
+| `Testing/scripts/CI_check.sh`, `check.sh`, `external_checkers.sh` | Developer check, final check, external kernels. |
+| `Testing/checks/AuditAlignPairs.lean` | Audit: no unsafe / extern / implemented_by / partial / extra axioms behind the top theorems. |
+| `Testing/benches/` | Benchmark executables and analysis scripts (`WholeGenome.lean` is the whole-genome harness). |
+| `Testing/data/fetch.sh` | Downloads chr21, hg38 and HG002 reads (iGenomes and GIAB on S3) into `Testing/data/downloads/`. |
+| `Testing/notes/` | Design notes, plans, `SESSION_SUMMARY.md` (dated log), `AGENTS_PLAN.md` (finished overnight plan). |
 
 Lean module names did not change when folders moved; `lakefile.lean` maps each folder to its modules.
 
@@ -48,7 +48,7 @@ Lean module names did not change when folders moved; `lakefile.lean` maps each f
 - Finished work has no `sorry`, new axioms, `native_decide`, `implemented_by`, `extern`, `unsafe`,
   `partial`. Speedups go in as a fast version + equality proof + `@[csimp]`, theorems untouched.
 - Never weaken a statement to make a proof go through; write the counterexample down instead.
-- Run `sh Bench/scripts/CI_check.sh` before committing; `sh Bench/scripts/check.sh` before calling
+- Run `sh Testing/scripts/CI_check.sh` before committing; `sh Testing/scripts/check.sh` before calling
   something done.
 - Lean in cloud boxes: release.lean-lang.org may be blocked; install elan and the
   `lean-4.35.0-linux.zip` release from GitHub, `elan toolchain link`, `elan override set`.
