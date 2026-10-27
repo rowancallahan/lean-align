@@ -144,6 +144,84 @@ def miniGo (v kmU : UInt64) (w : Nat) (o bo : Nat) (sh bh : UInt64) : Nat :=
   else bo
 termination_by w - o
 
+/-! ### `miniGo` on machine words (compiled code only): `miniGo_eq_miniGoF`, as `hamW_eq_hamWF`
+(kernels/k250/MapperK250.lean); before `MzIdx.mini`, which is inlined into its callers -/
+
+theorem miniU_n (n : Nat) (h : n < 2 ^ 32) : n.toUSize.toNat = n := by
+  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
+
+theorem miniU_succ (o : USize) (h : o.toNat < 2 ^ 31) : (o + 1).toNat = o.toNat + 1 := by
+  have hN : 2 ^ 32 ≤ 2 ^ System.Platform.numBits := USize.le_size
+  rw [USize.toNat_add, show (1 : USize).toNat = 1 by
+    show (USize.ofNat 1).toNat = 1; rw [USize.toNat_ofNat', Nat.mod_eq_of_lt (by omega)], Nat.mod_eq_of_lt (by omega)]
+
+/-- `miniGo` with `w`, `o`, `bo` in `USize` (`miniGoU_eq`). -/
+def miniGoU (v kmU : UInt64) (w : USize) (hw : w.toNat < 2 ^ 20) (o bo : USize) (sh bh : UInt64) : USize :=
+  if _h : o < w then
+    let h := ((v >>> sh) &&& kmU) * HC &&& kmU
+    if h < bh then miniGoU v kmU w hw (o + 1) o (sh - 2) h else miniGoU v kmU w hw (o + 1) bo (sh - 2) bh
+  else bo
+termination_by w.toNat - o.toNat
+decreasing_by
+  all_goals
+    have h' : o.toNat < w.toNat := _h
+    rw [miniU_succ o (by omega)]; omega
+
+theorem miniGoU_eq (v kmU : UInt64) (w : Nat) (wU : USize) (hwU : wU.toNat = w) (hw : wU.toNat < 2 ^ 20) :
+    ∀ n (oU boU : USize) (o bo : Nat) sh bh, w - o = n → oU.toNat = o → boU.toNat = bo → o < 2 ^ 20 →
+      (miniGoU v kmU wU hw oU boU sh bh).toNat = miniGo v kmU w o bo sh bh := by
+  intro n
+  induction n with
+  | zero =>
+    intro oU boU o bo sh bh hn ho hbo ho'
+    have h : ¬ oU < wU := fun h => by have h' : oU.toNat < wU.toNat := h; omega
+    rw [miniGoU, miniGo, dif_neg h, if_neg (by omega), hbo]
+  | succ n ih =>
+    intro oU boU o bo sh bh hn ho hbo ho'
+    have h : oU < wU := by show oU.toNat < wU.toNat; omega
+    rw [miniGoU, miniGo, dif_pos h, if_pos (show o < w by omega)]
+    simp only []
+    have e := miniU_succ oU (by omega)
+    split
+    · exact ih _ _ (o + 1) o _ _ (by omega) (by rw [e, ho]) ho (by omega)
+    · exact ih _ _ (o + 1) bo _ _ (by omega) (by rw [e, ho]) hbo (by omega)
+
+/-- `miniGo` for the compiled code (`miniGo_eq_miniGoF`). -/
+def miniGoF (v kmU : UInt64) (w : Nat) (o bo : Nat) (sh bh : UInt64) : Nat :=
+  if h : w < 1048576 ∧ o < 1048576 ∧ bo < 1048576 then
+    (miniGoU v kmU w.toUSize (by rw [miniU_n _ (by omega)]; omega) o.toUSize bo.toUSize sh bh).toNat
+  else miniGoS v kmU w o bo sh bh
+where
+  /-- The same as `miniGo` (its slow path; not rewritten by `csimp`). -/
+  miniGoS (v kmU : UInt64) (w : Nat) (o bo : Nat) (sh bh : UInt64) : Nat :=
+    if o < w then
+      let h := ((v >>> sh) &&& kmU) * HC &&& kmU
+      if h < bh then miniGoS v kmU w (o + 1) o (sh - 2) h else miniGoS v kmU w (o + 1) bo (sh - 2) bh
+    else bo
+  termination_by w - o
+
+theorem miniGoS_eq (v kmU : UInt64) (w : Nat) :
+    ∀ n o bo sh bh, w - o = n → miniGoF.miniGoS v kmU w o bo sh bh = miniGo v kmU w o bo sh bh := by
+  intro n
+  induction n with
+  | zero => intro o bo sh bh hn; rw [miniGoF.miniGoS, miniGo, if_neg (show ¬ o < w by omega), if_neg (show ¬ o < w by omega)]
+  | succ n ih =>
+    intro o bo sh bh hn
+    rw [miniGoF.miniGoS, miniGo, if_pos (show o < w by omega), if_pos (show o < w by omega)]
+    simp only []
+    split
+    · exact ih _ _ _ _ (by omega)
+    · exact ih _ _ _ _ (by omega)
+
+@[csimp] theorem miniGo_eq_miniGoF : @miniGo = @miniGoF := by
+  funext v kmU w o bo sh bh
+  unfold miniGoF
+  split
+  · rename_i h
+    exact (miniGoU_eq v kmU w _ (miniU_n _ (by omega)) _ _ _ _ o bo sh bh rfl (miniU_n _ (by omega))
+      (miniU_n _ (by omega)) (by omega)).symm
+  · exact (miniGoS_eq v kmU w _ o bo sh bh rfl).symm
+
 namespace MzIdx
 variable (ix : MzIdx)
 
