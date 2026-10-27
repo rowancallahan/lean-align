@@ -1,5 +1,6 @@
 import Proofs.Index
 import TierHeur
+import ParMap
 
 /-! # 3. The aligner, proved. `Spec/Aligner.lean`'s types are in `Proofs/Answer.lean` (unchanged);
 this file fills in the two holes, `buildIndex` and `alignPairs`, and proves `alignPairs_correct`
@@ -100,9 +101,17 @@ def alignOne (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
 def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   let loaded := loadIndex index
-  pairs.map fun (bytes1, bytes2) => alignOne insertSettings loaded bytes1 bytes2
+  -- 16 batches, one task each (ParMap.parMap_eq_map: the same as a plain map)
+  (ParMap.parMap 16 (fun (bytes1, bytes2) => alignOne insertSettings loaded bytes1 bytes2) pairs.toArray).toList
 
 /-! ## The proof -/
+
+theorem alignPairs_eq_map (insertSettings : InsertSettings) (index : ByteArray)
+    (pairs : List (Option ByteArray × Option ByteArray)) :
+    alignPairs insertSettings index pairs =
+      pairs.map fun (bytes1, bytes2) => alignOne insertSettings (loadIndex index) bytes1 bytes2 := by
+  simp [alignPairs, ParMap.parMap_eq_map]
+
 
 theorem noIndexAnswer_correct (insertSettings : InsertSettings) (genome : Genome) (mate1 mate2 : Read) :
     noIndexAnswer.Correct insertSettings genome mate1 mate2 := by
@@ -163,9 +172,9 @@ theorem alignPairs_correct (insertSettings : InsertSettings)
     rcases loadIndex_buildIndex byteGenome with h | ⟨l', h, hok⟩
     · rw [h] at hl; cases hl
     · rw [h] at hl; cases hl; exact hok
-  refine ⟨by simp [alignPairs], ?_⟩
+  refine ⟨by simp [alignPairs_eq_map], ?_⟩
   intro i result mates hResult hMatesAt
-  simp only [alignPairs, List.getElem?_map] at hResult hMatesAt
+  simp only [alignPairs_eq_map, List.getElem?_map] at hResult hMatesAt
   cases hAt : bytePairs[i]? with
   | none => simp [hAt] at hResult
   | some bytes =>

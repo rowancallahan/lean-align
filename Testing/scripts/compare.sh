@@ -1,6 +1,6 @@
 #!/bin/sh
 # Speed comparison on one genome and the read sets in Testing/data/downloads:
-#   shim     .lake/build/bin/lean-align (Main.lean: build, then map), 1 thread
+#   shim     .lake/build/bin/lean-align (Main.lean: build, then map); alignPairs maps each chunk on all cores
 #   bench    .lake/build/bin/whole_genome, mode RTX (the same proved tierPair), 1 and 4 tasks
 #   minibwa  default build and -march=native build, 1 and 4 threads
 # Runs one after another, nothing else on the box.   sh Testing/scripts/compare.sh [genome.fa]
@@ -21,7 +21,7 @@ $T "minibwa index" "$MINIBWA" index -t 1 "$G" "$O/mb"
 
 echo "== map"
 for s in $sets; do n=${s%%:*}; r1=$D/${s#*:}_R1.fq; r2=$D/${s#*:}_R2.fq
-  $T "$n shim t1" $B/lean-align map "$O/shim.idx" "$r1" "$r2" "$O/$n.shim.sam" 100 1000
+  $T "$n shim (alignPairs uses all cores)" $B/lean-align map "$O/shim.idx" "$r1" "$r2" "$O/$n.shim.sam" 100 1000
   for t in 1 4; do
     WG_MODES=RTX WG_TASKS=$t WG_READS="$n=$r1:$r2:0" $T "$n bench t$t" $B/whole_genome pmap "$O/wg" "$G" | grep -E "^TIME|RESULT"
     $T "$n minibwa t$t" sh -c "'$MINIBWA' map -t $t '$O/mb' '$r1' '$r2' > '$O/$n.mb.sam'"
