@@ -76,12 +76,28 @@ theorem alignment_of_hit {genome : Genome} {read : Read} {T : Int} {hit : MapSpe
 
 /-! ## B3. Proper pairs are the same -/
 
+theorem start_le_stop {genome : Genome} {read : Read} (alignment : GenomicAlignment genome read) :
+    alignment.placement.start ≤ alignment.placement.stop := by
+  have h := alignment.fits
+  unfold Placement.reference at h
+  split at h <;> simp_all
+
 theorem isProper_iff {genome : Genome} {mate1 mate2 : Read} (pair : PairAlignment genome mate1 mate2)
     (range : Nat × Nat) (dovetailSlack : Nat) :
     pair.IsProper range dovetailSlack ↔
       MapSpec.properPairU dovetailSlack range.1 range.2
         (oldPlacement pair.first.placement) (oldPlacement pair.second.placement) = true := by
-  sorry
+  have h1 := start_le_stop pair.first
+  have h2 := start_le_stop pair.second
+  obtain ⟨lo, hi⟩ := range
+  unfold PairAlignment.IsProper
+  generalize pair.first.placement = p at *
+  generalize pair.second.placement = q at *
+  obtain ⟨c1, s1, e1, t1⟩ := p
+  obtain ⟨c2, s2, e2, t2⟩ := q
+  cases t1 <;> cases t2 <;>
+    simp [MapSpec.properPairU, MapSpec.properPair, MapSpec.fwdRev,
+      oldPlacement, oldStrand] at * <;> omega
 
 /-! ## B4. Bytes -/
 
