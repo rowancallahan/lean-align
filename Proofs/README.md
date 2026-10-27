@@ -9,12 +9,12 @@
 | `Alignment.lean` | `cigar_decodes`, `allPaths_ne_nil`, `allPaths_complete`, `alignSpec_optimal` | proved |
 | `Mapping.lean` | `exists_best` | proved |
 | `Answer.lean` | `Spec/Aligner.lean` up to the holes, unchanged | (no proofs needed) |
-| `Bridge.lean` | old router proofs (`tierPair_sound`, `TierOk`) → new spec | B1–B4, B6 open |
-| `Aligner.lean` | `buildIndex`, `alignPairs` defined on the tier router; `alignPairs_correct` proved from the bridge | B5 open |
+| `Bridge.lean` (+ `Hits.lean`, `Tiers.lean`) | old router proofs (`tierPair_sound`, `TierOk`) → new spec | proved |
+| `Aligner.lean` | `buildIndex`, `alignPairs` defined on the tier router; `alignPairs_correct` proved from the bridge (+ `Index.lean`) | proved |
 
 `alignPairs_correct` is already proved *from* the open lemmas, so each one below is independent.
 
-## Open tasks
+## Tasks (all proved 2026-10-27; M2 next)
 
 - **B1** `walk_of_path`, `score_eq_walkScore`: a `Path` is an old `IsMonotoneWalk` with the same
   score (`scoreWalk` is the same function on both sides; map the steps).
