@@ -4,13 +4,14 @@
 #   bench    .lake/build/bin/whole_genome, mode RTX (the same proved tierPair), 1 and 4 tasks
 #   minibwa  default build and -march=native build, 1 and 4 threads
 # Runs one after another, nothing else on the box.   sh Testing/scripts/compare.sh [genome.fa]
+# SETS="hiseq250:hg002_200k" limits the read sets (name:file prefix in Testing/data/downloads).
 # Needs: lake build whole_genome; MINIBWA (default build) and MINIBWA_NATIVE set to the two binaries.
 set -eu
 cd "$(dirname "$0")/../.."
 root=$PWD; D=$root/Testing/data/downloads; B=$root/.lake/build/bin
 T="python3 $root/Testing/scripts/timed.py"
 G=${1:-$D/chr21.fa}; O=${OUT:-${TMPDIR:-/tmp}/lean_align_compare}; mkdir -p "$O"
-sets="hiseq250:hg002_200k novaseq151:novaseq_200k mason:sim_mason low:sim_low"
+sets=${SETS:-"hiseq250:hg002_200k novaseq151:novaseq_200k mason:sim_mason low:sim_low"}
 
 echo "== index"
 $T "shim build" $B/lean-align build "$G" "$O/shim.idx"
