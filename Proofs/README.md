@@ -37,6 +37,19 @@
 - **M2** (after M1 is green): report the found pair with a CIGAR and `unique` / `multimapper`
   (notes/NEW_SPEC_ADAPTERS.txt R1, R2; T1's pairs need the dovetail check, R2/M4).
 
+## Names to know (so the old code is not confusing)
+
+- `sc0` (old code, `MapSpec.sc0`, used in ~63 files under mapper/, index/, kernels/) **is**
+  `defaultScoring` from the spec: match 0, mismatch −4, gap open −6, gap extend −2. It is the same
+  numbers in the old `AlignmentSpec.Scoring` type. The bridge calls it `oldDefaultScoring`. Renaming
+  it in the old code is left for the proof-golfing pass; do not rename it while proving.
+- Other old → new names: `Window` (chromosome, start, length) × `Strand` (`fwd` / `rev`) is the old
+  placement; the new `Placement` uses (chromosome, start, stop, `forward` / `reverse`), see
+  `oldPlacement` / `newPlacement`. Old `revComp` = new `reverseComplement`. Old "penalty" P is
+  score −P. `dcost0` (distance cost 0) makes the old pair score the plain sum of the two mates' scores.
+- Milestone M1 is deliberately bounds-only: `answerOf` reports no pair and `uniqueness := .unknown`.
+  That is correct and intended for the first green proof, not a bug. M2 adds the reported pair.
+
 ## Rules
 
 - Do not edit `Spec/` (frozen; `Spec/FROZEN.sha256`). Statements in `Proofs/` must stay identical
