@@ -1,0 +1,46 @@
+theorem uget_uLevel_mf (wxe : WF m margin xe) (wxo : WF m margin xo) (wye : WF m margin ye)
+    (wyo : WF m margin yo) (wdm : WF m margin dm) (hm : 1 ≤ margin)
+    (hb : m + n + 2 < 2 ^ 30) (hlen : len ≤ m + n + 1) (hxa : xa.size = m) (t : Nat) (ht : t < len) :
+    (uget margin (uLevel m n len margin xa ya xe xo ye yo dm) (·.mf) t).toNat =
+      pointM m n xa ya (toRF margin dm (·.mf))
+        (toRF margin (uLevel m n len margin xa ya xe xo ye yo dm) (·.xf))
+        (toRF margin (uLevel m n len margin xa ya xe xo ye yo dm) (·.yf)) t := by
+  have wl := wf_uLevel m n len margin xa ya xe xo ye yo dm wxe wxo wye wyo wdm hm hb hlen hxa
+  obtain ⟨_, _, _, _, sdm⟩ := uBand_src len xe xo ye yo dm
+  have hxf := uget_uLevel_xf m n len margin xa ya xe xo ye yo dm wxe wxo hm hb hlen t ht
+  have hyf := uget_uLevel_yf m n len margin xa ya xe xo ye yo dm wye wyo hm hb hlen t ht
+  by_cases he : min (uBandHi xe xo ye yo dm) len ≤ uBandLo len xe xo ye yo dm
+  · rw [uLevel_empty m n len margin xa ya xe xo ye yo dm he] at *
+    rw [uget_uEmpty margin _ rfl]
+    rw [pointM_zero]
+    · rfl
+    · rw [rget_toRF m margin dm _ wdm.mf hm]
+      unfold uget
+      rw [ugetA_out m margin dm.lo dm.w dm.mf wdm.mf hm t (src_out dm _ _ t t sdm (by omega) (by omega) (by omega))]
+      rfl
+    · rw [rget_toRF m margin uEmpty (fun x => x.xf) wl.xf hm, uget_uEmpty margin _ rfl]; rfl
+    · rw [rget_toRF m margin uEmpty (fun x => x.yf) wl.yf hm, uget_uEmpty margin _ rfl]; rfl
+  · have hf := uLevel_fronts m n len margin xa ya xe xo ye yo dm he
+    simp only at hf
+    obtain ⟨hlo, hw, arrX, arrY, arrM, hX, hY, hM, sX, sY, sM, gX, gY, gM⟩ := hf
+    unfold pointM
+    rw [rget_toRF m margin (uLevel m n len margin xa ya xe xo ye yo dm) (fun x => x.xf) wl.xf hm,
+      rget_toRF m margin (uLevel m n len margin xa ya xe xo ye yo dm) (fun x => x.yf) wl.yf hm,
+      rget_toRF m margin dm (fun x => x.mf) wdm.mf hm]
+    simp only [uget] at hxf hyf ⊢
+    rw [hlo, hM, hX, hY, ugetA_padded margin _ _ arrM _ sM gM hm,
+      ugetA_padded margin _ _ arrX _ sX gX hm, ugetA_padded margin _ _ arrY _ sY gY hm]
+    rw [hlo, hX, ugetA_padded margin _ _ arrX _ sX gX hm] at hxf
+    rw [hlo, hY, ugetA_padded margin _ _ arrY _ sY gY hm] at hyf
+    by_cases hin : uBandLo len xe xo ye yo dm ≤ t ∧ t < uBandLo len xe xo ye yo dm + (min (uBandHi xe xo ye yo dm) len - uBandLo len xe xo ye yo dm)
+    · rw [if_pos hin] at hxf hyf ⊢
+      rw [cellM_toNat m n margin xa ya dm wdm.mf hm hb hxa t (by omega) _ _
+        (by rw [hxf]; exact pointX_le m n margin xe xo wxe.xf wxo.mf hm t)
+        (by rw [hyf]; exact pointY_le m n len margin ye yo wye.yf wyo.mf hm t),
+        rget_toRF m margin dm (fun x => x.mf) wdm.mf hm]
+      rfl
+    · rw [if_neg hin] at hxf hyf ⊢
+      rw [ugetA_out m margin dm.lo dm.w dm.mf wdm.mf hm t
+        (src_out dm _ _ t t sdm (by omega) (by omega) (by omega))]
+      rfl
+

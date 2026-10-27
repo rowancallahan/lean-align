@@ -1,0 +1,42 @@
+Moved out of new_spec/path/Mapping.lean on 2026-10-27, to be used in the Aligner rewrite.
+NOTE: IsProper now takes (fragmentRange : Nat × Nat) (dovetailSlack : Nat) instead of a PairConfig;
+update `pair.IsProper config` below accordingly.
+(the tier file). Lean text, compiled against Mapping.lean as of that date.
+
+-- every alignment of a read has penalty at least `floor`
+def MateFloor (genome : Genome) (read : Read) (floor : Nat) : Prop :=
+  ∀ alignment : GenomicAlignment genome read, alignment.score ≤ -(floor : Int)
+
+/-! ## Pair scenarios -/
+
+-- proper, and each mate scores at least its threshold (a penalty cap `P` is the threshold `-P`)
+def PairAlignment.IsCandidate {genome : Genome} {mate1 mate2 : Read}
+    (config : PairConfig) (threshold1 threshold2 : Int) (pair : PairAlignment genome mate1 mate2) :
+    Prop :=
+  pair.IsProper config ∧ threshold1 ≤ pair.first.score ∧ threshold2 ≤ pair.second.score
+
+-- a candidate whose mates are each the unique best on their own
+def PairAlignment.IsEachMateUnique {genome : Genome} {mate1 mate2 : Read}
+    (config : PairConfig) (threshold1 threshold2 : Int) (pair : PairAlignment genome mate1 mate2) :
+    Prop :=
+  pair.IsCandidate config threshold1 threshold2 ∧
+    pair.first.IsUniqueBest ∧ pair.second.IsUniqueBest
+
+-- a candidate no candidate beats, and every candidate at different placements scores lower
+def PairAlignment.IsUniqueBest {genome : Genome} {mate1 mate2 : Read}
+    (config : PairConfig) (threshold1 threshold2 : Int) (pair : PairAlignment genome mate1 mate2) :
+    Prop :=
+  pair.IsCandidate config threshold1 threshold2 ∧
+    ∀ other : PairAlignment genome mate1 mate2,
+      other.IsCandidate config threshold1 threshold2 →
+        other.score ≤ pair.score ∧
+        ((other.first.placement, other.second.placement) ≠
+            (pair.first.placement, pair.second.placement) →
+          other.score < pair.score)
+
+-- candidates exist, but none is the unique best
+def IsPairTie (config : PairConfig) (genome : Genome) (mate1 mate2 : Read)
+    (threshold1 threshold2 : Int) : Prop :=
+  (∃ pair : PairAlignment genome mate1 mate2, pair.IsCandidate config threshold1 threshold2) ∧
+    ¬ ∃ pair : PairAlignment genome mate1 mate2, pair.IsUniqueBest config threshold1 threshold2
+

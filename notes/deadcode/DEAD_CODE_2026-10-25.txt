@@ -1,0 +1,1367 @@
+Dead code report, lean-align main 24a07e4, 2026-10-25 (generated; untracked).
+Live = reachable from: tierPair, tierPair_sound, check3P/check3P_eq, buildWP, cutAll/cutOk,
+trimReadQ/trimRead_eq_contract/trimRead_acgt, parMap/parMap_eq_map/chunks/chunks_text,
+the 10 @[csimp] swaps, wfaAlignU3 + its 3 theorems, and everything in LeanAlign/.
+Rerun: lake env lean --run notes/deadcode/Dead.lean <runRoots> <proofRoots> LeanAlign > out.tsv
+       python3 -I notes/deadcode/agg.py . out.tsv agg.json
+
+A. Files not imported by any live root (whole file removable):
+   codecs/FastGenBatch.lean (short-read batched path; planned tier for <100 bp)
+   codecs/FastGenBlock.lean
+   codecs/FastGenShort.lean
+   codecs/FastGenTier.lean
+   codecs/FastGenTierK.lean
+   codecs/FastGenTierPacked.lean
+   codecs/FastMapperPar.lean
+   codecs/PairRegionU.lean
+   codecs/PairSched.lean
+   codecs/ParGroup.lean
+   codecs/PreFilterMapper.lean
+   codecs/RepeatMask.lean
+   codecs/SketchMapper.lean
+   pool/mapper/MapperSketch.lean
+   pool/wfa/Certificate.lean
+   pool/wfa_offsets/AlignmentWfaDirect.lean
+   pool/wfa_offsets/AlignmentWfaLcp.lean
+   pool/wfa_runs/AlignmentWfaRunsVsWfa.lean
+
+B. Imported, but no declaration in the file is used (whole file removable once its importers drop it):
+     127 lines  codecs/PairHybrid.lean
+     153 lines  codecs/PairInterleave.lean
+     326 lines  codecs/PairJoint.lean
+     120 lines  pool/mapper/MapperFastLoop.lean
+     291 lines  pool/mapper/MapperFastMerge.lean
+     316 lines  pool/mapper/MapperFastSupport.lean
+     278 lines  pool/mapper/MapperInterleave.lean
+     259 lines  pool/mapper/MapperOneIndel.lean
+     108 lines  pool/mapper/MapperSeedsAmong.lean
+      62 lines  pool/wfa_runs/AlignmentWfaRunsFast.lean
+     203 lines  pool/wfa_u32/AlignmentWfaU32.lean
+     290 lines  pool/wfa_u32/ProbeU32.lean
+      43 lines  spec/PairSpecTier.lean
+
+C. Partly live files: dead declarations by name
+
+  codecs/BandScore.lean   (live defs 3, live theorems 2; dead defs 3, dead theorems 6)
+     def MapSpec.bandMapper
+     def MapSpec.genomeBytes
+     def MapSpec.toBytes
+     thm MapSpec.bandMapper_eq_mapSpec
+     thm MapSpec.bandMapper_index_eq_mapSpec
+     thm MapSpec.genomeBytes_ok
+     thm MapSpec.hitsOf_congr_faithful
+     thm MapSpec.mapWith_eq_mapSpec_of_faithful
+     thm MapSpec.toBytes_encodes
+
+  codecs/CsrIndex.lean   (live defs 2, live theorems 0; dead defs 23, dead theorems 9)
+     def MapSpec.CsrIndex
+     def MapSpec.CsrIndex.InBucket
+     def MapSpec.CsrIndex.entry
+     def MapSpec.CsrIndex.hi
+     def MapSpec.CsrIndex.lo
+     def MapSpec.CsrIndex.lookup
+     def MapSpec.buildCsr
+     def MapSpec.bumpU32
+     def MapSpec.checkAt
+     def MapSpec.checkIndex
+     def MapSpec.chromStarts
+     def MapSpec.countRun
+     def MapSpec.fillRun
+     def MapSpec.inversePositions
+     def MapSpec.inverseRun
+     def MapSpec.locate
+     def MapSpec.locateAux
+     def MapSpec.mapWithCsr
+     def MapSpec.prefixSum
+     def MapSpec.verifyChrom
+     def MapSpec.verifyIndex
+     def MapSpec.verifyRun
+     def MapSpec.zeroBytes
+     thm MapSpec.CsrIndex.mem_lookup
+     thm MapSpec.checkAt_spec
+     thm MapSpec.checkIndex_bucket
+     thm MapSpec.checkIndex_complete
+     thm MapSpec.mapWithCsr_eq_mapSpec
+     thm MapSpec.verifyChrom_spec
+     thm MapSpec.verifyIndex_bucket
+     thm MapSpec.verifyIndex_complete
+     thm MapSpec.verifyRun_spec
+
+  codecs/EarlyStopMapper.lean   (live defs 1, live theorems 1; dead defs 2, dead theorems 8)
+     def MapSpec.earlyLoop
+     def MapSpec.mapEarly
+     thm MapSpec.earlyLoop_spec
+     thm MapSpec.gapBound_mono
+     thm MapSpec.hitsOf_append
+     thm MapSpec.hits_functional
+     thm MapSpec.mapEarly_eq_mapSpec
+     thm MapSpec.mem_seedCands_among
+     thm MapSpec.selectUnique_cover_above
+     thm MapSpec.selectUnique_cover_all
+
+  codecs/FastGen.lean   (live defs 0, live theorems 2; dead defs 3, dead theorems 6)
+     def MapSpec.Fast.LookAllG
+     def MapSpec.Fast.checkAllH
+     def MapSpec.Fast.mapFastT
+     thm MapSpec.Fast.lookAllG_hashed
+     thm MapSpec.Fast.mapChromsG_inv
+     thm MapSpec.Fast.mapFastTG_eq_mapSpec
+     thm MapSpec.Fast.mapFastT_eq_mapSpec
+     thm MapSpec.Fast.mapSpec_iffT
+     thm MapSpec.Fast.slowMapT_eq
+
+  codecs/FastGenAlgo.lean   (live defs 47, live theorems 0; dead defs 8, dead theorems 0)
+     def MapSpec.Fast.addB
+     def MapSpec.Fast.chromG
+     def MapSpec.Fast.chromKB
+     def MapSpec.Fast.mapChromsG
+     def MapSpec.Fast.mapFastTG
+     def MapSpec.Fast.phase1
+     def MapSpec.Fast.slowMapT
+     def MapSpec.Fast.wst
+
+  codecs/FastGenCover.lean   (live defs 0, live theorems 2; dead defs 0, dead theorems 1)
+     thm MapSpec.Fast.cover
+
+  codecs/FastGenCoverL.lean   (live defs 1, live theorems 0; dead defs 0, dead theorems 2)
+     thm MapSpec.Fast.coverL
+     thm MapSpec.Fast.matchAt_iff
+
+  codecs/FastGenK250.lean   (live defs 20, live theorems 17; dead defs 3, dead theorems 7)
+     def MapSpec.Fast.checkPGs
+     def MapSpec.Fast.mapFastGBK
+     def MapSpec.Fast.pairFastGBK
+     thm MapSpec.Fast.advF_eq
+     thm MapSpec.Fast.checkPGs_ok
+     thm MapSpec.Fast.mapChromsGBK_eq
+     thm MapSpec.Fast.pairFastGBK_eq
+     thm MapSpec.Fast.pairFastGBK_hashed_eq_pairSpec
+     thm MapSpec.Fast.pairFastGBK_mz_eq_pairSpec
+     thm MapSpec.Fast.stageKF_eq
+
+  codecs/FastGenMz.lean   (live defs 1, live theorems 2; dead defs 3, dead theorems 4)
+     def MapSpec.Fast.mapAuto
+     def MapSpec.Fast.mapAutoMz
+     def MapSpec.Fast.mapFastTMz
+     thm MapSpec.Fast.lookAllG_mz
+     thm MapSpec.Fast.mapAutoMz_eq_mapSpec
+     thm MapSpec.Fast.mapAuto_eq_mapSpec
+     thm MapSpec.Fast.mapFastTMz_eq_mapSpec
+
+  codecs/FastGenPair.lean   (live defs 20, live theorems 34; dead defs 1, dead theorems 6)
+     def MapSpec.Fast.pairFastGB
+     thm MapSpec.Fast.chromKB_pen
+     thm MapSpec.Fast.lookG_hashed
+     thm MapSpec.Fast.lookG_mz
+     thm MapSpec.Fast.pairFastGB_eq_pairSpec
+     thm MapSpec.Fast.pairFastGB_hashed_eq_pairSpec
+     thm MapSpec.Fast.pairFastGB_mz_eq_pairSpec
+
+  codecs/FastGenPairPacked.lean   (live defs 3, live theorems 37; dead defs 3, dead theorems 21)
+     def MapSpec.Fast.mapFastGBP
+     def MapSpec.Fast.pairFastGBP
+     def MapSpec.Fast.pairLazy
+     thm MapSpec.Fast.addKP_same
+     thm MapSpec.Fast.addK_same
+     thm MapSpec.Fast.bandEndP_same
+     thm MapSpec.Fast.bandRowsP_same
+     thm MapSpec.Fast.bwdProf_same
+     thm MapSpec.Fast.chromKBS_same
+     thm MapSpec.Fast.chromKB_same
+     thm MapSpec.Fast.filt16P_same
+     thm MapSpec.Fast.fwdProf_same
+     thm MapSpec.Fast.gsAdv_same
+     thm MapSpec.Fast.ilG_same
+     thm MapSpec.Fast.ker16P_same
+     thm MapSpec.Fast.kerGP_same
+     thm MapSpec.Fast.kerHP_same
+     thm MapSpec.Fast.kerH_same
+     thm MapSpec.Fast.mapChromsGB_same
+     thm MapSpec.Fast.mapFastGBP_eq
+     thm MapSpec.Fast.pairFastGBP_mz_eq_pairSpec
+     thm MapSpec.Fast.pairLazy_match
+     thm MapSpec.Fast.stageKP_same
+     thm MapSpec.Fast.stageK_same
+
+  codecs/FastGenProof.lean   (live defs 6, live theorems 59; dead defs 2, dead theorems 6)
+     def MapSpec.Fast.BX
+     def MapSpec.Fast.arrOf
+     thm MapSpec.Fast.addB_inv
+     thm MapSpec.Fast.addB_pen
+     thm MapSpec.Fast.chromG_cover
+     thm MapSpec.Fast.chromKB_cover
+     thm MapSpec.Fast.chromKB_coverL
+     thm MapSpec.Fast.phase1_spec
+
+  codecs/FastMapper.lean   (live defs 2, live theorems 3; dead defs 6, dead theorems 9)
+     def MapSpec.Fast.LookAll
+     def MapSpec.Fast.checkAll
+     def MapSpec.Fast.mapFast
+     def MapSpec.Fast.mapFastG
+     def MapSpec.Fast.mapFastReads
+     def MapSpec.Fast.slowMap
+     thm MapSpec.Fast.cwG_eq
+     thm MapSpec.Fast.lookAll_hLook
+     thm MapSpec.Fast.mapFastG_eq_mapSpec
+     thm MapSpec.Fast.mapFastReads_eq_mapSpec
+     thm MapSpec.Fast.mapFast_eq_mapSpec
+     thm MapSpec.Fast.mapSpec_iff
+     thm MapSpec.Fast.mapSpec_seqs
+     thm MapSpec.Fast.penOf_some
+     thm MapSpec.Fast.slowMap_eq
+
+  codecs/FastMapperMz.lean   (live defs 12, live theorems 10; dead defs 5, dead theorems 4)
+     def MapSpec.Fast.checkAllMz
+     def MapSpec.Fast.mapFastMz
+     def MapSpec.Fast.mapFastMzPar
+     def MapSpec.Fast.mzL
+     def MapSpec.Fast.mzLook
+     thm MapSpec.Fast.mapFastMzPar_eq_mapSpec
+     thm MapSpec.Fast.mapFastMz_eq_mapSpec
+     thm MapSpec.Fast.mzLook_eq
+     thm MapSpec.Fast.mzLook_ok
+
+  codecs/LowErrorMapper.lean   (live defs 0, live theorems 1; dead defs 15, dead theorems 21)
+     def MapSpec.anchorWindows
+     def MapSpec.delLoop
+     def MapSpec.eqLoop
+     def MapSpec.gapStep
+     def MapSpec.gaplessA
+     def MapSpec.gaplessRef
+     def MapSpec.genomeArrays
+     def MapSpec.hamLoop
+     def MapSpec.indelA
+     def MapSpec.indelRef
+     def MapSpec.indelWindows
+     def MapSpec.lowErrorHits
+     def MapSpec.mapLowError
+     def MapSpec.mapLowErrorIndex
+     def MapSpec.mapReadsLowError
+     thm MapSpec.delLoop_eq
+     thm MapSpec.drop_erase
+     thm MapSpec.eqLoop_eq
+     thm MapSpec.errBound_pos
+     thm MapSpec.gapStep_eq
+     thm MapSpec.gaplessA_eq
+     thm MapSpec.gaplessRef_of_windowScore
+     thm MapSpec.gaplessRef_some
+     thm MapSpec.hamLoop_eq
+     thm MapSpec.indelA_eq
+     thm MapSpec.lookup_of_word
+     thm MapSpec.mapLowError_eq_mapSpec
+     thm MapSpec.mapReadsLowError_eq_mapSpec
+     thm MapSpec.mem_anchorWindows
+     thm MapSpec.mem_anchorWindows_gapless
+     thm MapSpec.mem_indelWindows
+     thm MapSpec.mem_lowErrorHits
+     thm MapSpec.take_erase
+     thm MapSpec.windowScore_of_gaplessRef
+     thm MapSpec.windowScore_of_indelRef
+     thm MapSpec.windowSeq_some
+
+  codecs/MateFloor.lean   (live defs 0, live theorems 5; dead defs 0, dead theorems 3)
+     thm MapSpec.Fast.floor_enum
+     thm MapSpec.Fast.length_filter_split
+     thm MapSpec.Fast.pair_floor
+
+  codecs/MzCheckPar.lean   (live defs 3, live theorems 4; dead defs 1, dead theorems 1)
+     def MapSpec.Fast.checkAllMzPar
+     thm MapSpec.Fast.checkAllMzPar_eq
+
+  codecs/MzIndex.lean   (live defs 48, live theorems 43; dead defs 10, dead theorems 5)
+     def MapSpec.Mz.build
+     def MapSpec.Mz.buildC
+     def MapSpec.Mz.buildW
+     def MapSpec.Mz.checkAll
+     def MapSpec.Mz.foldMins
+     def MapSpec.Mz.foldMinsGo
+     def MapSpec.Mz.mapWithMz
+     def MapSpec.Mz.mzLookup
+     def MapSpec.Mz.slotAt
+     def MapSpec.Mz.wordBytes
+     thm MapSpec.Mz.checkAll_complete
+     thm MapSpec.Mz.mapWithMz_eq_mapSpec
+     thm MapSpec.Mz.miniGo_lt
+     thm MapSpec.Mz.toChar_inj
+     thm MapSpec.Mz.wordBytes_get
+
+  codecs/MzView.lean   (live defs 0, live theorems 1; dead defs 37, dead theorems 31)
+     def MapSpec.Fast.GV
+     def MapSpec.Fast.GV.get
+     def MapSpec.Fast.GV.ofChroms
+     def MapSpec.Fast.RepV
+     def MapSpec.Fast.catOkV
+     def MapSpec.Fast.catOkVPar
+     def MapSpec.Fast.eqRunV
+     def MapSpec.Fast.lookupCodeAV
+     def MapSpec.Fast.lookupPV
+     def MapSpec.Fast.lookupSeedAV
+     def MapSpec.Fast.mzLookSV
+     def MapSpec.Fast.okAtV
+     def MapSpec.Fast.okEdgeV
+     def MapSpec.Fast.scanAV
+     def MapSpec.Fast.scanEdgeAV
+     def MapSpec.Fast.scanInsideAV
+     def MapSpec.Fast.scanRangeAV
+     def MapSpec.Fast.unpackV
+     def MapSpec.Mz.allAV
+     def MapSpec.Mz.allNotV
+     def MapSpec.Mz.buildWV
+     def MapSpec.Mz.check2V
+     def MapSpec.Mz.check3V
+     def MapSpec.Mz.checkBucketV
+     def MapSpec.Mz.checkCoverV
+     def MapSpec.Mz.checkRunsV
+     def MapSpec.Mz.checkSoundParV
+     def MapSpec.Mz.checkSoundV
+     def MapSpec.Mz.compRV
+     def MapSpec.Mz.entryOkV
+     def MapSpec.Mz.foldMinsGoV
+     def MapSpec.Mz.foldMinsV
+     def MapSpec.Mz.rollToV
+     def MapSpec.Mz.runOkV
+     def MapSpec.Mz.slotAtV
+     def MapSpec.Mz.wcGoV
+     def MapSpec.Mz.wcUV
+     thm MapSpec.Fast.catOkVPar_eq
+     thm MapSpec.Fast.catOkV_eq
+     thm MapSpec.Fast.eqRunV_eq
+     thm MapSpec.Fast.eqRunV_eqMz
+     thm MapSpec.Fast.mzLookSV_eq
+     thm MapSpec.Fast.okAtV_eq
+     thm MapSpec.Fast.pairFastGB_congrG
+     thm MapSpec.Fast.pairFastGB_view_eq_pairSpec
+     thm MapSpec.Fast.repV_unpack
+     thm MapSpec.Fast.scanAV_eq
+     thm MapSpec.Fast.scanEdgeAV_eq
+     thm MapSpec.Fast.scanInsideAV_eq
+     thm MapSpec.Fast.scanRangeAV_eq
+     thm MapSpec.Mz.allAV_eq
+     thm MapSpec.Mz.allNotV_eq
+     thm MapSpec.Mz.buildWV_eq
+     thm MapSpec.Mz.buildWV_eq'
+     thm MapSpec.Mz.check2V_eq
+     thm MapSpec.Mz.check2V_eq'
+     thm MapSpec.Mz.check3V_eq
+     thm MapSpec.Mz.check3V_eq'
+     thm MapSpec.Mz.checkCoverV_eq
+     thm MapSpec.Mz.checkRunsV_eq
+     thm MapSpec.Mz.checkSoundV_eq
+     thm MapSpec.Mz.compRV_eq
+     thm MapSpec.Mz.foldMinsGoV_eq
+     thm MapSpec.Mz.foldMinsV_eq
+     thm MapSpec.Mz.rollToV_eq
+     thm MapSpec.Mz.slotAtV_eq
+     thm MapSpec.Mz.wcGoV_eq
+     thm MapSpec.Mz.wcUV_eq
+
+  codecs/PairBnB.lean   (live defs 1, live theorems 7; dead defs 0, dead theorems 4)
+     thm MapSpec.bestPairD_restrict
+     thm MapSpec.bestPairD_restrictW
+     thm MapSpec.pairSpecUT_bnb
+     thm MapSpec.properPairs_filter
+
+  codecs/PairBox.lean   (live defs 0, live theorems 1; dead defs 8, dead theorems 4)
+     def MapSpec.Cover
+     def MapSpec.RROk
+     def MapSpec.RRes
+     def MapSpec.boxDone
+     def MapSpec.boxU
+     def MapSpec.boxWit
+     def MapSpec.certify
+     def MapSpec.maxScore
+     thm MapSpec.boxWit_mem
+     thm MapSpec.certify_ok
+     thm MapSpec.maxScore_spec
+     thm MapSpec.pair_le_boxU
+
+  codecs/PairConcat.lean   (live defs 3, live theorems 4; dead defs 13, dead theorems 18)
+     def MapSpec.Fast.CS
+     def MapSpec.Fast.CS.adv
+     def MapSpec.Fast.CS.init
+     def MapSpec.Fast.CS.live
+     def MapSpec.Fast.CS.next
+     def MapSpec.Fast.SC
+     def MapSpec.Fast.ilC
+     def MapSpec.Fast.mapChromsC
+     def MapSpec.Fast.mapFastC
+     def MapSpec.Fast.pairFastC
+     def MapSpec.Fast.sliceA
+     def MapSpec.Fast.stepC
+     def MapSpec.Fast.stepC1
+     thm MapSpec.Fast.SC.inv
+     thm MapSpec.Fast.SC.mono
+     thm MapSpec.Fast.advC_ok
+     thm MapSpec.Fast.bothC_dead
+     thm MapSpec.Fast.deadC_cover
+     thm MapSpec.Fast.extract_inc
+     thm MapSpec.Fast.ilC_inv
+     thm MapSpec.Fast.initC_ok
+     thm MapSpec.Fast.look_eq'
+     thm MapSpec.Fast.lzStepA_empty
+     thm MapSpec.Fast.mapChromsC_inv
+     thm MapSpec.Fast.mapFastC_eq_mapSpecBoth
+     thm MapSpec.Fast.pairFastC_eq_pairSpec
+     thm MapSpec.Fast.pairFastC_hashed_eq_pairSpec
+     thm MapSpec.Fast.pairFastC_mz_eq_pairSpec
+     thm MapSpec.Fast.sliceA_ok
+     thm MapSpec.Fast.stepC_fold
+     thm MapSpec.Fast.stepC_inv
+
+  codecs/PairConcatPacked.lean   (live defs 2, live theorems 1; dead defs 8, dead theorems 6)
+     def MapSpec.Fast.CS.advP
+     def MapSpec.Fast.ilCP
+     def MapSpec.Fast.lzStepAP
+     def MapSpec.Fast.mapChromsCP
+     def MapSpec.Fast.mapFastCP
+     def MapSpec.Fast.pairFastCP
+     def MapSpec.Fast.stepC1P
+     def MapSpec.Fast.stepCP
+     thm MapSpec.Fast.cutAll_get
+     thm MapSpec.Fast.ilCP_eq
+     thm MapSpec.Fast.lzStepAP_eq
+     thm MapSpec.Fast.pairFastCP_eq
+     thm MapSpec.Fast.pairFastCP_mz_eq_pairSpec
+     thm MapSpec.Fast.stepCP_eq
+
+  codecs/PairDispatch.lean   (live defs 1, live theorems 0; dead defs 4, dead theorems 8)
+     def MapSpec.Fast.dispatchOk
+     def MapSpec.Fast.pairDispatch
+     def MapSpec.Fast.pairDispatchK
+     def MapSpec.Fast.penOf
+     thm MapSpec.Fast.dispatchOk_iff
+     thm MapSpec.Fast.pairDispatchK_eq
+     thm MapSpec.Fast.pairDispatchK_hashed
+     thm MapSpec.Fast.pairDispatchK_mz
+     thm MapSpec.Fast.pairDispatch_eq_pairSpecT
+     thm MapSpec.Fast.pairDispatch_hashed
+     thm MapSpec.Fast.pairDispatch_mz
+     thm MapSpec.Fast.pairSpecT_same
+
+  codecs/PairExact.lean   (live defs 1, live theorems 2; dead defs 0, dead theorems 1)
+     thm MapSpec.Fast.pairGXE_some
+
+  codecs/PairGuarFast.lean   (live defs 7, live theorems 13; dead defs 1, dead theorems 6)
+     def MapSpec.Fast.pairGF
+     thm MapSpec.Fast.hitsAtKP3_some
+     thm MapSpec.Fast.hitsS3_mem
+     thm MapSpec.Fast.mem_hitsAtB3
+     thm MapSpec.Fast.mem_hitsAtKP3_mz
+     thm MapSpec.Fast.pairGF_some
+     thm MapSpec.Fast.pairGF_sound
+
+  codecs/PairGuarQ.lean   (live defs 33, live theorems 21; dead defs 1, dead theorems 1)
+     def MapSpec.Fast.pairGQ
+     thm MapSpec.Fast.rdSlot_eqU
+
+  codecs/PairGuarQD.lean   (live defs 0, live theorems 3; dead defs 0, dead theorems 2)
+     thm MapSpec.Fast.pairGQ_some
+     thm MapSpec.Fast.pairGQ_sound
+
+  codecs/PairGuarQE.lean   (live defs 0, live theorems 14; dead defs 0, dead theorems 2)
+     thm MapSpec.Fast.hitsAtQ_some
+     thm MapSpec.Fast.pairGQC_some
+
+  codecs/PairGuarantee.lean   (live defs 0, live theorems 1; dead defs 1, dead theorems 9)
+     def MapSpec.Fast.pairGK
+     thm MapSpec.Fast.fastT_four
+     thm MapSpec.Fast.fastT_zero
+     thm MapSpec.Fast.hitsAtKP_some
+     thm MapSpec.Fast.pairGK_eq
+     thm MapSpec.Fast.pairGK_guarantee
+     thm MapSpec.Fast.pairGK_guarantee0
+     thm MapSpec.Fast.pairGK_guarantee4
+     thm MapSpec.Fast.sbound_four
+     thm MapSpec.Fast.sbound_zero
+
+  codecs/PairLadder.lean   (live defs 4, live theorems 5; dead defs 5, dead theorems 16)
+     def MapSpec.Fast.capsU
+     def MapSpec.Fast.ladderU
+     def MapSpec.Fast.ladderUR
+     def MapSpec.Fast.pairUKP
+     def MapSpec.Fast.pairUKPR
+     thm MapSpec.Fast.bestPairD_congr
+     thm MapSpec.Fast.bestPairD_nil_of
+     thm MapSpec.Fast.fastU_ok
+     thm MapSpec.Fast.ladderUR_fst
+     thm MapSpec.Fast.ladderUR_snd
+     thm MapSpec.Fast.ladderU_eq
+     thm MapSpec.Fast.mapFastGBKP_mz
+     thm MapSpec.Fast.pairSpecUT_caps
+     thm MapSpec.Fast.pairUKPR_tie
+     thm MapSpec.Fast.pairUKP_mz_eq
+     thm MapSpec.Fast.rung_caps
+     thm MapSpec.Fast.rung_found
+     thm MapSpec.Fast.rung_full
+     thm MapSpec.Fast.rung_lift
+     thm MapSpec.Fast.rung_none
+     thm MapSpec.Fast.scoreFun_of_iff
+
+  codecs/PairLadderF.lean   (live defs 8, live theorems 7; dead defs 4, dead theorems 6)
+     def MapSpec.Fast.bestPairF
+     def MapSpec.Fast.ladderUF
+     def MapSpec.Fast.pairUKPF
+     def MapSpec.Fast.pairUKPRF
+     thm MapSpec.Fast.bestOfPairs_pp
+     thm MapSpec.Fast.bestPairF_eq
+     thm MapSpec.Fast.ladderUF_eq
+     thm MapSpec.Fast.pairUKPF_mz_eq
+     thm MapSpec.Fast.pairUKPRF_eq
+     thm MapSpec.Fast.pairUKPRF_tie
+
+  codecs/PairMapper.lean   (live defs 3, live theorems 7; dead defs 3, dead theorems 6)
+     def MapSpec.Fast.combineBest
+     def MapSpec.Fast.mapFastBoth
+     def MapSpec.Fast.pairFast
+     thm MapSpec.Fast.combineBest_spec
+     thm MapSpec.Fast.inv_amb_false
+     thm MapSpec.Fast.mapFastBoth_eq_mapSpecBoth
+     thm MapSpec.Fast.mapSpecBoth_iff
+     thm MapSpec.Fast.mem_hitsBoth_sc0
+     thm MapSpec.Fast.pairFast_eq_pairSpec
+
+  codecs/PairNear.lean   (live defs 7, live theorems 10; dead defs 3, dead theorems 11)
+     def MapSpec.Fast.ladderUB
+     def MapSpec.Fast.pairUKHN
+     def MapSpec.Fast.topE
+     thm MapSpec.Fast.bestPairD_congrPP
+     thm MapSpec.Fast.isEmpty_congr
+     thm MapSpec.Fast.ladderUB_eq
+     thm MapSpec.Fast.pairUKHN_eq
+     thm MapSpec.Fast.pairUKHN_mz_eq
+     thm MapSpec.Fast.pairUKHN_tie
+     thm MapSpec.Fast.rungB_false
+     thm MapSpec.Fast.rungB_true
+     thm MapSpec.Fast.scoreFun_sub
+     thm MapSpec.Fast.topE_congr
+     thm MapSpec.Fast.topW_none_iff
+
+  codecs/PairPacked.lean   (live defs 9, live theorems 5; dead defs 21, dead theorems 16)
+     def MapSpec.Fast.LookPk
+     def MapSpec.Fast.LzS.advP
+     def MapSpec.Fast.RepAll
+     def MapSpec.Fast.checkAllMzP
+     def MapSpec.Fast.checkAllPG
+     def MapSpec.Fast.gapAll2P
+     def MapSpec.Fast.gapL2P
+     def MapSpec.Fast.gapWP
+     def MapSpec.Fast.gappedPen2Pk
+     def MapSpec.Fast.hamSeedsP
+     def MapSpec.Fast.hamStepP
+     def MapSpec.Fast.ilLoopP
+     def MapSpec.Fast.lzStepP
+     def MapSpec.Fast.mapChromIP
+     def MapSpec.Fast.mapChromsIP
+     def MapSpec.Fast.mapFastIP
+     def MapSpec.Fast.mzLookP
+     def MapSpec.Fast.pairFastIP
+     def MapSpec.Fast.sameStep2P
+     def MapSpec.Fast.seedOnP
+     def MapSpec.Fast.supAtP
+     thm MapSpec.Fast.advP_eq
+     thm MapSpec.Fast.checkAllPG_ok
+     thm MapSpec.Fast.gapAll2P_eq
+     thm MapSpec.Fast.gapL2P_eq
+     thm MapSpec.Fast.gapWP_eq
+     thm MapSpec.Fast.gappedPen2Pk_eq
+     thm MapSpec.Fast.hamSeedsP_eq
+     thm MapSpec.Fast.ilLoopP_eq
+     thm MapSpec.Fast.mapChromIP_eq
+     thm MapSpec.Fast.mzLookP_eq
+     thm MapSpec.Fast.pairFastIP_eq
+     thm MapSpec.Fast.pairFastIP_eq_pairSpec
+     thm MapSpec.Fast.pairFastIP_mzP_eq_pairSpec
+     thm MapSpec.Fast.pairFastIP_mz_eq_pairSpec
+     thm MapSpec.Fast.sameStep2P_eq
+     thm MapSpec.Fast.supAtP_eq
+
+  codecs/PairReason.lean   (live defs 6, live theorems 6; dead defs 0, dead theorems 4)
+     thm MapSpec.Fast.pairSpecT_mono_some
+     thm MapSpec.Fast.reasonOk_none
+     thm MapSpec.Fast.reasonOk_notProper_mono
+     thm MapSpec.Fast.reasonOk_tie_mono
+
+  codecs/PairRegion.lean   (live defs 15, live theorems 20; dead defs 3, dead theorems 3)
+     def MapSpec.Fast.mapFastGBKPp
+     def MapSpec.Fast.pairRegionKP
+     def MapSpec.Fast.pairRegionStep
+     thm MapSpec.Fast.mapFastGBKPp_prep
+     thm MapSpec.Fast.pairRegionKP_mz_eq
+     thm MapSpec.Fast.pairRegionStep_eq
+
+  codecs/PairRouter.lean   (live defs 24, live theorems 17; dead defs 2, dead theorems 2)
+     def MapSpec.Fast.Out.toOpt
+     def MapSpec.Fast.routeKP
+     thm MapSpec.Fast.routeKP_ok
+     thm MapSpec.Fast.settled_none
+
+  codecs/PairUnique.lean   (live defs 0, live theorems 1; dead defs 24, dead theorems 43)
+     def MapSpec.Fast.Cov
+     def MapSpec.Fast.DSJ
+     def MapSpec.Fast.Fun
+     def MapSpec.Fast.SelInv
+     def MapSpec.Fast.addSel
+     def MapSpec.Fast.allHits
+     def MapSpec.Fast.candL
+     def MapSpec.Fast.candW
+     def MapSpec.Fast.deepen
+     def MapSpec.Fast.hitsCS
+     def MapSpec.Fast.hitsCSF
+     def MapSpec.Fast.hitsLv
+     def MapSpec.Fast.ilCS
+     def MapSpec.Fast.mapChromsCS
+     def MapSpec.Fast.mergeAll
+     def MapSpec.Fast.nearA
+     def MapSpec.Fast.pairFastU
+     def MapSpec.Fast.pairLevels
+     def MapSpec.Fast.pairSlowU
+     def MapSpec.Fast.pairsOf
+     def MapSpec.Fast.penFL
+     def MapSpec.Fast.selPairs
+     def MapSpec.Fast.selU
+     def MapSpec.Fast.toScore
+     thm MapSpec.Fast.anchor_near
+     thm MapSpec.Fast.bestPair_iff
+     thm MapSpec.Fast.bestPair_nil_left
+     thm MapSpec.Fast.bestPair_nil_right
+     thm MapSpec.Fast.bestPair_of_nil
+     thm MapSpec.Fast.bestPair_restrict
+     thm MapSpec.Fast.cov_deepen
+     thm MapSpec.Fast.cwP_hit
+     thm MapSpec.Fast.deepen_ok
+     thm MapSpec.Fast.dsj_of_sc
+     thm MapSpec.Fast.fun_hitsBoth
+     thm MapSpec.Fast.hit_candJ
+     thm MapSpec.Fast.hitsCSF_complete
+     thm MapSpec.Fast.hitsCSF_sound
+     thm MapSpec.Fast.hitsLv_complete
+     thm MapSpec.Fast.hitsLv_sound
+     thm MapSpec.Fast.ilCS_fst
+     thm MapSpec.Fast.ilCS_inv
+     thm MapSpec.Fast.incA_anchors
+     thm MapSpec.Fast.le_best
+     thm MapSpec.Fast.mapChromsCS_fst
+     thm MapSpec.Fast.mapChromsCS_ok
+     thm MapSpec.Fast.mem_allHits
+     thm MapSpec.Fast.mem_hitsBoth_cwP
+     thm MapSpec.Fast.mem_hitsCS
+     thm MapSpec.Fast.mem_pairsOf
+     thm MapSpec.Fast.mergeAll_get
+     thm MapSpec.Fast.nearA_of
+     thm MapSpec.Fast.no_hit
+     thm MapSpec.Fast.pairFastU_eq_pairSpecU
+     thm MapSpec.Fast.pairFastU_hashed_eq_pairSpecU
+     thm MapSpec.Fast.pairFastU_mz_eq_pairSpecU
+     thm MapSpec.Fast.pairLevels_eq
+     thm MapSpec.Fast.pairSlowU_eq
+     thm MapSpec.Fast.pairSpecU_of_unique
+     thm MapSpec.Fast.penB_len
+     thm MapSpec.Fast.penFL_eq
+     thm MapSpec.Fast.proper_close
+     thm MapSpec.Fast.selInv_add
+     thm MapSpec.Fast.selInv_foldl
+     thm MapSpec.Fast.selPairs_iff
+     thm MapSpec.Fast.selU_iff
+     thm MapSpec.Fast.strandScore_cwP
+
+  codecs/ParMap.lean   (live defs 4, live theorems 3; dead defs 1, dead theorems 2)
+     def MapSpec.mapReadsParArray
+     thm MapSpec.mapReadsParArray_eq_mapSpec
+     thm MapSpec.parMap_eq_mapSpec
+
+  codecs/ParStream.lean   (live defs 1, live theorems 1; dead defs 5, dead theorems 10)
+     def ParMap.bytesOf
+     def ParMap.chunkText
+     def ParMap.nextTask
+     def ParMap.numBatches
+     def ParMap.streamTasks
+     thm MapSpec.streamTasks_bytes_mapSpec
+     thm MapSpec.streamTasks_text_mapSpec
+     thm ParMap.bytesOf_eq
+     thm ParMap.foldl_toUTF8
+     thm ParMap.join_chunkText
+     thm ParMap.nextTask_get
+     thm ParMap.size_le_numBatches
+     thm ParMap.streamTasks_bytes
+     thm ParMap.streamTasks_gets
+     thm ParMap.streamTasks_text
+
+  codecs/ReadTrim.lean   (live defs 7, live theorems 14; dead defs 2, dead theorems 3)
+     def ReadTrim.defQ
+     def ReadTrim.trimRead
+     thm ParMap.stages_text
+     thm ReadTrim.trimRead_def_acgt
+     thm ReadTrim.trimRead_def_eq_contract
+
+  codecs/SeedMapper.lean   (live defs 1, live theorems 1; dead defs 10, dead theorems 8)
+     def MapSpec.Index
+     def MapSpec.Index.lookup
+     def MapSpec.buildIndex
+     def MapSpec.candidates
+     def MapSpec.indexMapper
+     def MapSpec.kernelScore
+     def MapSpec.mapReads
+     def MapSpec.mapWith
+     def MapSpec.mapWithIndex
+     def MapSpec.seedCandidates
+     thm MapSpec.buildIndex_complete
+     thm MapSpec.indexMapper_eq_mapSpec
+     thm MapSpec.kernelScore_eq
+     thm MapSpec.mapReads_eq_mapSpec
+     thm MapSpec.mapWithIndex_eq_indexMapper
+     thm MapSpec.mapWithIndex_eq_mapSpec
+     thm MapSpec.mapWith_eq_mapSpec
+     thm MapSpec.mem_candidates
+
+  codecs/SeedMapper2.lean   (live defs 2, live theorems 2; dead defs 12, dead theorems 11)
+     def MapSpec.candidatesK
+     def MapSpec.indexMapper2
+     def MapSpec.indexMapper2V
+     def MapSpec.mapReads2
+     def MapSpec.mapReads2V
+     def MapSpec.mapWith2
+     def MapSpec.mapWith2V
+     def MapSpec.mapWithIndex2
+     def MapSpec.mapWithIndex2V
+     def MapSpec.mapWithK
+     def MapSpec.seedCandidatesK
+     def MapSpec.seedOccurs
+     thm MapSpec.indexMapper2V_eq_mapSpec
+     thm MapSpec.indexMapper2_eq_mapSpec
+     thm MapSpec.mapReads2V_eq_mapSpec
+     thm MapSpec.mapReads2_eq_mapSpec
+     thm MapSpec.mapWith2V_eq_mapSpec
+     thm MapSpec.mapWith2_eq_mapSpec
+     thm MapSpec.mapWithIndex2V_eq_mapSpec
+     thm MapSpec.mapWithIndex2_eq_mapSpec
+     thm MapSpec.mapWithK_eq_mapSpec
+     thm MapSpec.mem_candidatesK
+     thm MapSpec.seedOccurs_complete
+
+  codecs/TierRouter.lean   (live defs 48, live theorems 36; dead defs 3, dead theorems 4)
+     def MapSpec.Fast.Tag.str
+     def MapSpec.Fast.TierOut.tagStr
+     def MapSpec.Fast.passGS
+     thm MapSpec.Fast.passGSF_eq
+     thm MapSpec.Fast.passGS_eq
+     thm MapSpec.Fast.routeGS_eq
+     thm MapSpec.Fast.tierRest_eqS
+
+  codecs/WfaU3.lean   (live defs 1, live theorems 3; dead defs 0, dead theorems 2)
+     thm AlignmentSpec.U32Proof.wfaAlignU3_score_eq_wfaAlign
+     thm AlignmentSpec.U32Proof.wfaAlignU3_score_fun_eq
+
+  codecs/WgPacked.lean   (live defs 26, live theorems 34; dead defs 5, dead theorems 8)
+     def MapSpec.Fast.pairDispatchKP
+     def MapSpec.Fast.pairDispatchP
+     def MapSpec.Fast.pairFastGBKP
+     def MapSpec.Fast.twoGap16G
+     def MapSpec.Fast.twoGapCG
+     thm MapSpec.Fast.advFG_bytes
+     thm MapSpec.Fast.pairDispatchKP_mz_eq
+     thm MapSpec.Fast.pairDispatchP_mz_eq
+     thm MapSpec.Fast.pairDispatch_view_eq
+     thm MapSpec.Fast.pairFastGBKP_mz_eq_pairSpec
+     thm MapSpec.Fast.twoGap16G_same
+     thm MapSpec.Fast.twoGapCG_bytes
+     thm MapSpec.Fast.twoGapCG_same
+
+  pool/band/AlignmentWavefront.lean   (live defs 6, live theorems 8; dead defs 22, dead theorems 29)
+     def AlignmentSpec.BCell
+     def AlignmentSpec.bBellman
+     def AlignmentSpec.bCellHead
+     def AlignmentSpec.bCellNone
+     def AlignmentSpec.bLastRow
+     def AlignmentSpec.bMkBase
+     def AlignmentSpec.bMkGapXOnly
+     def AlignmentSpec.bMkGapYOnly
+     def AlignmentSpec.bMkMain
+     def AlignmentSpec.bRowUp
+     def AlignmentSpec.bSpecRow
+     def AlignmentSpec.bTable
+     def AlignmentSpec.bandDoublingAlign
+     def AlignmentSpec.bandDoublingGo
+     def AlignmentSpec.bandHi
+     def AlignmentSpec.bandLo
+     def AlignmentSpec.bandedBestAux
+     def AlignmentSpec.bandedRun
+     def AlignmentSpec.inBand
+     def AlignmentSpec.offBandBound
+     def AlignmentSpec.specBCell
+     def AlignmentSpec.stepDev
+     thm AlignmentSpec.bBellman_diag_eq_none_prev
+     thm AlignmentSpec.bBellman_none_of_neg
+     thm AlignmentSpec.bBellman_wide
+     thm AlignmentSpec.bCellHead_bSpecRow
+     thm AlignmentSpec.bCellHead_cons
+     thm AlignmentSpec.bLastRow_eq
+     thm AlignmentSpec.bMkBase_spec
+     thm AlignmentSpec.bMkGapXOnly_spec
+     thm AlignmentSpec.bMkGapYOnly_spec
+     thm AlignmentSpec.bMkMain_spec
+     thm AlignmentSpec.bRowUp_eq
+     thm AlignmentSpec.bTable_eq
+     thm AlignmentSpec.bandDoublingAlign_equals_getBestAlignment
+     thm AlignmentSpec.bandDoublingGo_eq
+     thm AlignmentSpec.bandedBestAux_eq_bBellman
+     thm AlignmentSpec.bandedBestAux_none_of_bad
+     thm AlignmentSpec.bandedRun_eq
+     thm AlignmentSpec.bound_arith
+     thm AlignmentSpec.certified_global
+     thm AlignmentSpec.counts_of_not_inBand
+     thm AlignmentSpec.filter_inBand_map_cons
+     thm AlignmentSpec.inBand_false_of_bad
+     thm AlignmentSpec.inBand_of_wide
+     thm AlignmentSpec.maxOnHead
+     thm AlignmentSpec.maxOn_acc_exchange
+     thm AlignmentSpec.maxOn_filter_fold
+     thm AlignmentSpec.score_le_iff_penalty_ge
+     thm AlignmentSpec.specBCell_none_of_neg
+     thm AlignmentSpec.two_score_le_offBandBound
+
+  pool/gotoh/AlignmentAlgorithms.lean   (live defs 21, live theorems 23; dead defs 1, dead theorems 2)
+     def AlignmentSpec.bellmanAlign
+     thm AlignmentSpec.bellmanAlign_equals_getBestAlignment
+     thm AlignmentSpec.cellHead_cons
+
+  pool/mapper/MapperBandKernel.lean   (live defs 5, live theorems 12; dead defs 3, dead theorems 0)
+     def MapSpec.bandEnd
+     def MapSpec.bandRow
+     def MapSpec.bandRows
+
+  pool/mapper/MapperBandProof.lean   (live defs 3, live theorems 2; dead defs 1, dead theorems 3)
+     def MapSpec.CellRel
+     thm MapSpec.bandEnd_spec
+     thm MapSpec.bandRow_spec
+     thm MapSpec.bandRows_spec
+
+  pool/mapper/MapperBandPrune.lean   (live defs 10, live theorems 22; dead defs 0, dead theorems 1)
+     thm MapSpec.deadRow2_down
+
+  pool/mapper/MapperBandSpec.lean   (live defs 5, live theorems 14; dead defs 0, dead theorems 1)
+     thm MapSpec.bandOf_default
+
+  pool/mapper/MapperBytes.lean   (live defs 4, live theorems 4; dead defs 11, dead theorems 13)
+     def MapSpec.AsciiGenome
+     def MapSpec.ByteChrom
+     def MapSpec.ByteGenome
+     def MapSpec.byteWordCode
+     def MapSpec.charCode
+     def MapSpec.codeOfWord
+     def MapSpec.codeStep
+     def MapSpec.decodeGenome
+     def MapSpec.encodeGenome
+     def MapSpec.initCode
+     def MapSpec.wordAt
+     thm MapSpec.byteWordCode_eq
+     thm MapSpec.charCode_toChar
+     thm MapSpec.codeOfWord_append
+     thm MapSpec.codeOfWord_cons
+     thm MapSpec.codeOfWord_lt
+     thm MapSpec.codeOfWord_wordAt_succ
+     thm MapSpec.decodeBytes_toByteArray
+     thm MapSpec.decodeGenome_encodeGenome
+     thm MapSpec.foldl_codeStep
+     thm MapSpec.initCode_eq
+     thm MapSpec.toChar_toUInt8
+     thm MapSpec.windowSeq_decodeGenome
+     thm MapSpec.wordAt_decodeBytes
+
+  pool/mapper/MapperDefs.lean   (live defs 1, live theorems 0; dead defs 3, dead theorems 0)
+     def MapSpec.buildTable
+     def MapSpec.errBound
+     def MapSpec.wordsOf
+
+  pool/mapper/MapperFastAlgo.lean   (live defs 20, live theorems 0; dead defs 49, dead theorems 1)
+     def MapSpec.Fast.BIAS
+     def MapSpec.Fast.HIdx
+     def MapSpec.Fast.Look
+     def MapSpec.Fast.NB
+     def MapSpec.Fast.addGap
+     def MapSpec.Fast.bucketOf
+     def MapSpec.Fast.buildIdx
+     def MapSpec.Fast.cap
+     def MapSpec.Fast.checkIdx
+     def MapSpec.Fast.checkOdd
+     def MapSpec.Fast.fastOk
+     def MapSpec.Fast.fillOk
+     def MapSpec.Fast.firstOdd
+     def MapSpec.Fast.gapAll2
+     def MapSpec.Fast.gapL2
+     def MapSpec.Fast.gapW
+     def MapSpec.Fast.hLook
+     def MapSpec.Fast.hamSeeds
+     def MapSpec.Fast.hamStep
+     def MapSpec.Fast.increasing
+     def MapSpec.Fast.keyOf
+     def MapSpec.Fast.lazyLoop
+     def MapSpec.Fast.lookupH
+     def MapSpec.Fast.lookupSeed
+     def MapSpec.Fast.lzStep
+     def MapSpec.Fast.lzStepA
+     def MapSpec.Fast.mapChrom2
+     def MapSpec.Fast.mapChroms
+     def MapSpec.Fast.merge
+     def MapSpec.Fast.need
+     def MapSpec.Fast.newOnly
+     def MapSpec.Fast.pack32
+     def MapSpec.Fast.pop4
+     def MapSpec.Fast.pow2
+     def MapSpec.Fast.prepAll
+     def MapSpec.Fast.result
+     def MapSpec.Fast.sameStep2
+     def MapSpec.Fast.scanBucket
+     def MapSpec.Fast.scanIdx
+     def MapSpec.Fast.scanOdd
+     def MapSpec.Fast.seedHash
+     def MapSpec.Fast.seedHashes
+     def MapSpec.Fast.seedOn
+     def MapSpec.Fast.seedOrder
+     def MapSpec.Fast.setU32
+     def MapSpec.Fast.sizeH
+     def MapSpec.Fast.supAt
+     def MapSpec.Fast.supNear
+     def MapSpec.Fast.supScan
+     thm MapSpec.Fast.lzStep_eq_A
+
+  pool/mapper/MapperFastBest.lean   (live defs 1, live theorems 1; dead defs 2, dead theorems 4)
+     def MapSpec.Fast.Dom
+     def MapSpec.Fast.Inv
+     thm MapSpec.Fast.inv_add
+     thm MapSpec.Fast.inv_init
+     thm MapSpec.Fast.inv_skip
+     thm MapSpec.Fast.result_spec
+
+  pool/mapper/MapperFastBytes.lean   (live defs 7, live theorems 10; dead defs 3, dead theorems 1)
+     def MapSpec.penB
+     def MapSpec.penGap
+     def MapSpec.penSame
+     thm MapSpec.penB_eq_penL
+
+  pool/mapper/MapperFastIndex.lean   (live defs 5, live theorems 18; dead defs 7, dead theorems 27)
+     def MapSpec.Fast.EntryGood
+     def MapSpec.Fast.Filled
+     def MapSpec.Fast.Found
+     def MapSpec.Fast.Good
+     def MapSpec.Fast.LookOk
+     def MapSpec.Fast.Run
+     def MapSpec.Fast.anchorOf
+     thm MapSpec.Fast.bucketOf_lt
+     thm MapSpec.Fast.bucket_key_inj
+     thm MapSpec.Fast.c2N_inj
+     thm MapSpec.Fast.chain_lt
+     thm MapSpec.Fast.checkIdx_spec
+     thm MapSpec.Fast.checkOdd_spec
+     thm MapSpec.Fast.fillOk_spec
+     thm MapSpec.Fast.firstOdd_spec
+     thm MapSpec.Fast.good_mono
+     thm MapSpec.Fast.hLook_ok
+     thm MapSpec.Fast.hash_congr
+     thm MapSpec.Fast.hash_inj
+     thm MapSpec.Fast.increasing_spec
+     thm MapSpec.Fast.lookupH_none
+     thm MapSpec.Fast.lookupH_some
+     thm MapSpec.Fast.lookupSeed_spec
+     thm MapSpec.Fast.mix_inj
+     thm MapSpec.Fast.mix_lt
+     thm MapSpec.Fast.pow2_eq
+     thm MapSpec.Fast.range'_pairwise_in
+     thm MapSpec.Fast.roll_toNat
+     thm MapSpec.Fast.scanBucket_toList
+     thm MapSpec.Fast.scanIdx_spec
+     thm MapSpec.Fast.scanOdd_toList
+     thm MapSpec.Fast.seedHash_spec
+     thm MapSpec.Fast.wN_congr
+     thm MapSpec.Fast.wN_inj
+
+  pool/mapper/MapperFastKernel.lean   (live defs 0, live theorems 3; dead defs 1, dead theorems 4)
+     def MapSpec.Fast.hc
+     thm MapSpec.Fast.cap_eq
+     thm MapSpec.Fast.gappedPen2_spec
+     thm MapSpec.Fast.hamSeeds_spec
+     thm MapSpec.Fast.hamStep_spec
+
+  pool/mapper/MapperFastLazy.lean   (live defs 0, live theorems 1; dead defs 5, dead theorems 38)
+     def MapSpec.Fast.AnchorsM
+     def MapSpec.Fast.LoopState
+     def MapSpec.Fast.bit
+     def MapSpec.Fast.lnew
+     def MapSpec.Fast.maskJ
+     thm MapSpec.Fast.anchorM_index
+     thm MapSpec.Fast.anchorsM_init
+     thm MapSpec.Fast.anchorsM_of
+     thm MapSpec.Fast.bit_add
+     thm MapSpec.Fast.bit_add_all
+     thm MapSpec.Fast.bit_pow
+     thm MapSpec.Fast.finish
+     thm MapSpec.Fast.gapAll2_inv
+     thm MapSpec.Fast.gapL2_inv
+     thm MapSpec.Fast.gap_coverM
+     thm MapSpec.Fast.ite01'
+     thm MapSpec.Fast.lazyLoop_cons
+     thm MapSpec.Fast.lazyLoop_inv
+     thm MapSpec.Fast.lnew_complete
+     thm MapSpec.Fast.lnew_sub
+     thm MapSpec.Fast.look_eq
+     thm MapSpec.Fast.lzStepA_inv
+     thm MapSpec.Fast.lzStep_inv
+     thm MapSpec.Fast.mapChrom2_inv
+     thm MapSpec.Fast.mapChroms_inv
+     thm MapSpec.Fast.maskJ_add
+     thm MapSpec.Fast.maskJ_full
+     thm MapSpec.Fast.maskJ_lt
+     thm MapSpec.Fast.maskJ_zero
+     thm MapSpec.Fast.merge_step
+     thm MapSpec.Fast.mv_anchors
+     thm MapSpec.Fast.newOnly_spec
+     thm MapSpec.Fast.newOnly_toList
+     thm MapSpec.Fast.pop4_add
+     thm MapSpec.Fast.pop4_full
+     thm MapSpec.Fast.sameStep2_inv
+     thm MapSpec.Fast.seedBit_cases
+     thm MapSpec.Fast.seedHashes_get
+     thm MapSpec.Fast.seedOn_spec
+     thm MapSpec.Fast.seedOrder_spec
+     thm MapSpec.Fast.supAt_spec
+     thm MapSpec.Fast.supNearM_spec
+     thm MapSpec.Fast.term01
+
+  pool/mapper/MapperFastScore.lean   (live defs 4, live theorems 26; dead defs 2, dead theorems 7)
+     def MapSpec.penL
+     def MapSpec.penOf
+     thm MapSpec.counts_of_score
+     thm MapSpec.penL_del
+     thm MapSpec.penL_far
+     thm MapSpec.penL_ins
+     thm MapSpec.penL_of
+     thm MapSpec.penL_same
+     thm MapSpec.shape_of_score
+
+  pool/mapper/MapperGRead.lean   (live defs 1, live theorems 0; dead defs 0, dead theorems 2)
+     thm GRead.get_bytes
+     thm GRead.size_bytes
+
+  pool/mapper/MapperGapless.lean   (live defs 4, live theorems 9; dead defs 1, dead theorems 7)
+     def MapSpec.gapCap
+     thm MapSpec.diags_clean
+     thm MapSpec.errCoords_diags_length
+     thm MapSpec.gaplessScore_lt_of_cap
+     thm MapSpec.gapless_clean_seed
+     thm MapSpec.gapless_le_best
+     thm MapSpec.selectUnique_eq_some_iff
+     thm MapSpec.selectUnique_filter
+
+  pool/mapper/MapperGenLook.lean   (live defs 3, live theorems 1; dead defs 1, dead theorems 3)
+     def MapSpec.Fast.lookupHG
+     thm MapSpec.Fast.lookupHG_none
+     thm MapSpec.Fast.lookupHG_some
+     thm MapSpec.Fast.lookupHG_spec
+
+  pool/mapper/MapperGenScore.lean   (live defs 3, live theorems 10; dead defs 0, dead theorems 1)
+     thm MapSpec.penQ_le
+
+  pool/mapper/MapperK250Bits.lean   (live defs 0, live theorems 13; dead defs 0, dead theorems 1)
+     thm MapSpec.Fast.cntNZ_congr
+
+  pool/mapper/MapperLists.lean   (live defs 0, live theorems 2; dead defs 0, dead theorems 3)
+     thm MapSpec.mem_buildTable
+     thm MapSpec.mem_wordsOf
+     thm MapSpec.selectUnique_congr
+
+  pool/mapper/MapperMzWords.lean   (live defs 13, live theorems 22; dead defs 0, dead theorems 2)
+     thm MapSpec.Mz.allA_iff'
+     thm MapSpec.Mz.wcGo_zero'
+
+  pool/mapper/MapperPGen.lean   (live defs 10, live theorems 12; dead defs 10, dead theorems 7)
+     def MapSpec.Fast.PB
+     def MapSpec.Fast.PB.finish
+     def MapSpec.Fast.PB.init
+     def MapSpec.Fast.PB.push
+     def MapSpec.Fast.bwdMisP
+     def MapSpec.Fast.checkPG
+     def MapSpec.Fast.eqAll
+     def MapSpec.Fast.fwdMisP
+     def MapSpec.Fast.hammingP
+     def MapSpec.Fast.pack
+     thm MapSpec.Fast.bwdMisP_eq'
+     thm MapSpec.Fast.checkPG_ok
+     thm MapSpec.Fast.eqAll_ok
+     thm MapSpec.Fast.eqRunP_eq
+     thm MapSpec.Fast.eqRun_same
+     thm MapSpec.Fast.fwdMisP_eq'
+     thm MapSpec.Fast.hammingP_eq'
+
+  pool/mapper/MapperPacked.lean   (live defs 6, live theorems 11; dead defs 14, dead theorems 20)
+     def MapSpec.Packed.PackedOk
+     def MapSpec.Packed.allAcgt
+     def MapSpec.Packed.badCode
+     def MapSpec.Packed.badCount
+     def MapSpec.Packed.byteAt
+     def MapSpec.Packed.cntRange
+     def MapSpec.Packed.fld
+     def MapSpec.Packed.hamPacked
+     def MapSpec.Packed.packAcgt
+     def MapSpec.Packed.packGenome
+     def MapSpec.Packed.packN
+     def MapSpec.Packed.packW
+     def MapSpec.Packed.packWith
+     def MapSpec.Packed.win
+     thm MapSpec.Packed.allAcgt_iff
+     thm MapSpec.Packed.badCount_eq
+     thm MapSpec.Packed.chunk_eq
+     thm MapSpec.Packed.cntNZ_mod
+     thm MapSpec.Packed.cntNZ_xor
+     thm MapSpec.Packed.cntRange_add
+     thm MapSpec.Packed.cntRange_congr
+     thm MapSpec.Packed.cntRange_eq_countP
+     thm MapSpec.Packed.dig_packN
+     thm MapSpec.Packed.div_mod4_drop
+     thm MapSpec.Packed.fld_packWith
+     thm MapSpec.Packed.hamPacked_eq
+     thm MapSpec.Packed.hamPacked_fields
+     thm MapSpec.Packed.hamPacked_go
+     thm MapSpec.Packed.hamPacked_packGenome
+     thm MapSpec.Packed.packGenome_ok
+     thm MapSpec.Packed.packN_lt
+     thm MapSpec.Packed.packW_toNat
+     thm MapSpec.Packed.win_dig
+     thm MapSpec.Packed.win_nat
+
+  pool/mapper/MapperWalk.lean   (live defs 1, live theorems 1; dead defs 0, dead theorems 6)
+     thm MapSpec.errs_le_errBound
+     thm MapSpec.exists_clean_seed
+     thm MapSpec.inside_clean
+     thm MapSpec.le_length_of_all_mem
+     thm MapSpec.length_diff_le_errs
+     thm MapSpec.prefix_clean
+
+  pool/mapper/MapperWalk2.lean   (live defs 7, live theorems 10; dead defs 1, dead theorems 1)
+     def MapSpec.seedBound
+     thm MapSpec.exists_clean_seed2
+
+  pool/wfa/AlignmentExchange.lean   (live defs 0, live theorems 11; dead defs 0, dead theorems 16)
+     thm AlignmentSpec.bellmanAux_cons_cons_eq_diag
+     thm AlignmentSpec.bellmanAux_cons_cons_snd_le
+     thm AlignmentSpec.bellmanAux_match_extend
+     thm AlignmentSpec.bellmanAux_match_extend_none
+     thm AlignmentSpec.bellman_snd_none_le
+     thm AlignmentSpec.bellman_snd_prev_le
+     thm AlignmentSpec.gapX_branch_le_bellman
+     thm AlignmentSpec.gapX_defer_le_match
+     thm AlignmentSpec.gapX_extend_le_match
+     thm AlignmentSpec.gapY_branch_le_bellman
+     thm AlignmentSpec.gapY_defer_le_match
+     thm AlignmentSpec.gapY_extend_le_match
+     thm AlignmentSpec.getBestAlignment_match_extend
+     thm AlignmentSpec.le_bellmanAux_cons_cons_diag
+     thm AlignmentSpec.le_bellmanAux_cons_cons_gapX
+     thm AlignmentSpec.le_bellmanAux_cons_cons_gapY
+
+  pool/wfa/AlignmentWfa.lean   (live defs 54, live theorems 145; dead defs 16, dead theorems 20)
+     def AlignmentSpec.AFront
+     def AlignmentSpec.ALevel
+     def AlignmentSpec.aden
+     def AlignmentSpec.adenLevel
+     def AlignmentSpec.azipExt
+     def AlignmentSpec.cornerOfA
+     def AlignmentSpec.frontAtA
+     def AlignmentSpec.mapA
+     def AlignmentSpec.nextLevelA
+     def AlignmentSpec.seedLevelA
+     def AlignmentSpec.shiftDownA
+     def AlignmentSpec.shiftUpA
+     def AlignmentSpec.tgetA
+     def AlignmentSpec.wfaLoopA
+     def AlignmentSpec.wfaRunA
+     def AlignmentSpec.zipA
+     thm AlignmentSpec.aden_mapA
+     thm AlignmentSpec.aden_shiftDownA
+     thm AlignmentSpec.aden_shiftUpA
+     thm AlignmentSpec.aden_zipA
+     thm AlignmentSpec.azipExt_toList
+     thm AlignmentSpec.cornerOfA_den
+     thm AlignmentSpec.frontAtA_den
+     thm AlignmentSpec.incr_le_po
+     thm AlignmentSpec.lastPrev_reverse
+     thm AlignmentSpec.nextLevelA_den
+     thm AlignmentSpec.padTo_take
+     thm AlignmentSpec.seedLevelA_den
+     thm AlignmentSpec.stepWith_sound
+     thm AlignmentSpec.tgetA_den
+     thm AlignmentSpec.toList_cons_of_not_isEmpty
+     thm AlignmentSpec.toList_eq_nil_of_isEmpty
+     thm AlignmentSpec.wfaAlign_isSome
+     thm AlignmentSpec.wfaLoopA_eq
+     thm AlignmentSpec.wfaRunA_eq
+     thm AlignmentSpec.zipExt_eq_append
+
+  pool/wfa_fast/AlignmentWfaFast.lean   (live defs 5, live theorems 5; dead defs 18, dead theorems 27)
+     def AlignmentSpec.betterCellI
+     def AlignmentSpec.extendCellI
+     def AlignmentSpec.frontAtTI
+     def AlignmentSpec.mapTI
+     def AlignmentSpec.nextLevelI
+     def AlignmentSpec.pushDiagI
+     def AlignmentSpec.pushGapXI
+     def AlignmentSpec.pushGapYI
+     def AlignmentSpec.shiftDownTI
+     def AlignmentSpec.shiftUpTI
+     def AlignmentSpec.stepWithI
+     def AlignmentSpec.wfaAlignF
+     def AlignmentSpec.wfaAlignI
+     def AlignmentSpec.wfaLoopF
+     def AlignmentSpec.wfaLoopI
+     def AlignmentSpec.wfaRunF
+     def AlignmentSpec.wfaRunI
+     def AlignmentSpec.zipTI
+     thm AlignmentSpec.betterCellI_eq
+     thm AlignmentSpec.cornerOfTI_eq
+     thm AlignmentSpec.extendCellI_eq
+     thm AlignmentSpec.frontAtTI_eq
+     thm AlignmentSpec.mapTI_eq
+     thm AlignmentSpec.nextLevelI_eq
+     thm AlignmentSpec.pushDiagI_eq
+     thm AlignmentSpec.pushGapXI_eq
+     thm AlignmentSpec.pushGapYI_eq
+     thm AlignmentSpec.shiftDownTI_eq
+     thm AlignmentSpec.shiftUpTI_eq
+     thm AlignmentSpec.stepWithI_eq
+     thm AlignmentSpec.tgetTI_eq
+     thm AlignmentSpec.wfaAlignF_eq
+     thm AlignmentSpec.wfaAlignF_isSome
+     thm AlignmentSpec.wfaAlignF_score
+     thm AlignmentSpec.wfaAlignF_sound
+     thm AlignmentSpec.wfaAlignI_eq
+     thm AlignmentSpec.wfaAlignI_isSome
+     thm AlignmentSpec.wfaAlignI_score
+     thm AlignmentSpec.wfaAlignI_sound
+     thm AlignmentSpec.wfaAlignL_isSome
+     thm AlignmentSpec.wfaLoopF_eq
+     thm AlignmentSpec.wfaLoopI_eq
+     thm AlignmentSpec.wfaRunF_eq
+     thm AlignmentSpec.wfaRunI_eq
+     thm AlignmentSpec.zipTI_eq
+
+  pool/wfa_fast/AlignmentWfaFused.lean   (live defs 17, live theorems 18; dead defs 0, dead theorems 2)
+     thm AlignmentSpec.betterCell_none_left
+     thm AlignmentSpec.mapT_shiftUpT
+
+  pool/wfa_fast/AlignmentWfaLazyLevel.lean   (live defs 18, live theorems 13; dead defs 1, dead theorems 5)
+     def AlignmentSpec.extendCellL
+     thm AlignmentSpec.extendCellL_eq
+     thm AlignmentSpec.pushDiagL_eq
+     thm AlignmentSpec.pushGapXL_eq
+     thm AlignmentSpec.pushGapYL_eq
+     thm AlignmentSpec.stepWithL_eq
+
+  pool/wfa_offsets/AlignmentWfaArray.lean   (live defs 4, live theorems 6; dead defs 0, dead theorems 1)
+     thm AlignmentSpec.wfaAlignCA_isSome
+
+  pool/wfa_offsets/AlignmentWfaCertified.lean   (live defs 8, live theorems 7; dead defs 0, dead theorems 1)
+     thm AlignmentSpec.wfaAlignC_isSome
+
+  pool/wfa_offsets/AlignmentWfaOffR.lean   (live defs 40, live theorems 61; dead defs 0, dead theorems 1)
+     thm AlignmentSpec.rtob_shiftUpR
+
+  pool/wfa_offsets/AlignmentWfaView.lean   (live defs 19, live theorems 17; dead defs 2, dead theorems 3)
+     def AlignmentSpec.nextLevelV
+     def AlignmentSpec.zipView
+     thm AlignmentSpec.materialize_zipView
+     thm AlignmentSpec.nextLevelV_eq
+     thm AlignmentSpec.packV_shiftUpV
+
+  pool/wfa_runs/AlignmentCigarCheckFast.lean   (live defs 6, live theorems 11; dead defs 0, dead theorems 1)
+     thm AlignmentSpec.checkRunsFast3_sound
+
+  pool/wfa_runs/AlignmentWfaRuns.lean   (live defs 2, live theorems 3; dead defs 0, dead theorems 1)
+     thm AlignmentSpec.wfaAlignK_isSome
+
+  pool/wfa_small_errors/AlignmentCompact.lean   (live defs 4, live theorems 5; dead defs 0, dead theorems 1)
+     thm AlignmentSpec.wfaAlignHC_isSome
+
+  pool/wfa_small_errors/AlignmentSmallErrors.lean   (live defs 3, live theorems 6; dead defs 0, dead theorems 1)
+     thm AlignmentSpec.wfaAlignH_isSome
+
+  pool/wfa_u32/AlignmentWfaU32Fill.lean   (live defs 10, live theorems 10; dead defs 9, dead theorems 2)
+     def AlignmentSpec.U32Proof.LevelCheck
+     def AlignmentSpec.U32Proof.SrcOK
+     def AlignmentSpec.U32Proof.levelCheckB
+     def AlignmentSpec.U32Proof.srcArr
+     def AlignmentSpec.U32Proof.srcBase
+     def AlignmentSpec.U32Proof.srcOKB
+     def AlignmentSpec.U32Proof.uFillGo2
+     def AlignmentSpec.U32Proof.uLevel2
+     def AlignmentSpec.U32Proof.uLevel2Body
+     thm AlignmentSpec.U32Proof.levelCheckB_true
+     thm AlignmentSpec.U32Proof.srcOKB_true
+
+  pool/wfa_u32/AlignmentWfaU32FillSpec.lean   (live defs 0, live theorems 2; dead defs 0, dead theorems 2)
+     thm AlignmentSpec.U32Proof.uFillGo2_spec
+     thm AlignmentSpec.U32Proof.uFillGo2_step
+
+  pool/wfa_u32/AlignmentWfaU32Kernel2.lean   (live defs 0, live theorems 4; dead defs 0, dead theorems 9)
+     thm AlignmentSpec.U32Proof.certifiedRunsU2_spec
+     thm AlignmentSpec.U32Proof.uLoop2_some
+     thm AlignmentSpec.U32Proof.uRun2_some
+     thm AlignmentSpec.U32Proof.uRunD_some
+     thm AlignmentSpec.U32Proof.wfaAlignU2_isSome
+     thm AlignmentSpec.U32Proof.wfaAlignU2_score
+     thm AlignmentSpec.U32Proof.wfaAlignU2_score_eq_wfaAlign
+     thm AlignmentSpec.U32Proof.wfaAlignU2_score_fun_eq
+     thm AlignmentSpec.U32Proof.wfaAlignU2_sound
+
+  pool/wfa_u32/AlignmentWfaU32Level.lean   (live defs 10, live theorems 13; dead defs 1, dead theorems 11)
+     def AlignmentSpec.U32Proof.ValidCode
+     thm AlignmentSpec.U32Proof.betterR_valid
+     thm AlignmentSpec.U32Proof.probe_pushD_eq
+     thm AlignmentSpec.U32Proof.probe_pushD_toNat
+     thm AlignmentSpec.U32Proof.probe_pushX_eq
+     thm AlignmentSpec.U32Proof.probe_pushX_toNat
+     thm AlignmentSpec.U32Proof.probe_pushY_eq
+     thm AlignmentSpec.U32Proof.probe_pushY_toNat
+     thm AlignmentSpec.U32Proof.pushDR_valid
+     thm AlignmentSpec.U32Proof.pushXR_valid
+     thm AlignmentSpec.U32Proof.pushYR_valid
+     thm AlignmentSpec.U32Proof.ujoff_eq_raw
+
+  pool/wfa_u32/AlignmentWfaU32Level2.lean   (live defs 0, live theorems 9; dead defs 0, dead theorems 9)
+     thm AlignmentSpec.U32Proof.cellM2_eq
+     thm AlignmentSpec.U32Proof.cellX2_eq
+     thm AlignmentSpec.U32Proof.cellY2_eq
+     thm AlignmentSpec.U32Proof.read_D
+     thm AlignmentSpec.U32Proof.read_X
+     thm AlignmentSpec.U32Proof.read_Y
+     thm AlignmentSpec.U32Proof.srcOK_mono
+     thm AlignmentSpec.U32Proof.uLevel2Body_eq
+     thm AlignmentSpec.U32Proof.uLevel2_some
+
+  pool/wfa_u32/AlignmentWfaU32Loop.lean   (live defs 2, live theorems 7; dead defs 2, dead theorems 2)
+     def AlignmentSpec.U32Proof.uLoop
+     def AlignmentSpec.U32Proof.uRun
+     thm AlignmentSpec.U32Proof.uLoop_eq
+     thm AlignmentSpec.U32Proof.uRun_eq
+
+  pool/wfa_u32/AlignmentWfaU32Run2.lean   (live defs 7, live theorems 0; dead defs 5, dead theorems 0)
+     def AlignmentSpec.U32Proof.certifiedRunsU2
+     def AlignmentSpec.U32Proof.uLoop2
+     def AlignmentSpec.U32Proof.uRun2
+     def AlignmentSpec.U32Proof.uRunD
+     def AlignmentSpec.U32Proof.wfaAlignU2
+
+  spec/AlignmentSpec.lean   (live defs 9, live theorems 6; dead defs 1, dead theorems 1)
+     def AlignmentSpec.demoScoring
+     thm AlignmentSpec.mem_allPaths_iff_isMonotoneWalk
+
+  spec/MapSpec.lean   (live defs 7, live theorems 0; dead defs 2, dead theorems 0)
+     def MapSpec.mapSpec
+     def MapSpec.selectUnique
+
+  spec/PairSpec.lean   (live defs 8, live theorems 0; dead defs 3, dead theorems 1)
+     def MapSpec.bestPair
+     def MapSpec.pairSpec
+     def MapSpec.pairSpecU
+     thm MapSpec.selectUnique_eq_by
+
+  spec/PairSpecU.lean   (live defs 9, live theorems 0; dead defs 2, dead theorems 0)
+     def MapSpec.dcost1k
+     def MapSpec.pairSpecUTier1

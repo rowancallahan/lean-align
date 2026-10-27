@@ -1,0 +1,26 @@
+Generated C review (2026-10-25). Read-only look at .lake/build/ir/*.c for the router path; nothing changed.
+Scan script: $TMPDIR/cscan.py (counts lean_nat_* calls, boxed-array access, closures, allocation, refcount ops per C function).
+
+Main finding: positions and counters are `Nat` all through the kernels, so every add/compare/divide in
+the inner loops is a Lean `Nat` operation (scalar check + overflow branch + refcount on the boxed form),
+and the C compiler cannot vectorize or keep them in plain registers.
+
+Innermost packed kernel, pool/mapper/MapperK250.lean `hamW` (same shape: fwdW, bwdW, fwdL, bwdL):
+  * `rw : Array UInt64`: the read's packed words are a boxed array, so `rw[j]!` is a bounds-checked
+    pointer load + unbox per word (+ panic path).
+  * `u0 s lim stop j acc : Nat`: ~20 Nat ops and ~25 refcount ops per call in the generated C.
+  * `Packed.cnt64` is the `% 255` form (no hardware popcount; 1.7x slower in the toy test).
+  * `gword` → `gwordF` (csimp) still computes the byte offset `17 * (u / 2) + 1 + 8 * (u % 2)` in Nat
+    before switching to USize.
+Biggest functions by Nat ops (hundreds each, heavily inlined): stageKSP / stageKSV / kfiltV (TierRouter,
+FastGenWordFilt), kerGK / kerGKG, gappedL / gappedLG, scanAW / scanAWK / scanAWR (minimizer bucket scans),
+okAtW, ker16K / ker16KW / twoGap16K, MapSpec_Mz_scan / entryOk.
+
+Options for later (each = USize/UInt64 version + equality proof + @[csimp], theorems untouched):
+  1. Read words in a ByteArray (8 bytes per word, read with uget; clang merges the 8 byte loads into one
+     64-bit load) or another unboxed form, instead of `Array UInt64`.
+  2. Kernel counters/positions as USize (j, acc, stop, lim, u0; genome offsets in gwordF).
+  3. cnt64 → textbook popcount form (popcnt on x86-64-v2+).
+  4. Minimizer bucket scans (scanAW*, okAtW, rawScan) on USize positions.
+  5. Profile first: earlier callgrind put ker16K at 73% (inclusive) of the search on repeat-heavy reads, and
+     refcount/free at ~10% overall, so items 1-4 hit the hot part; expected gain is unmeasured.

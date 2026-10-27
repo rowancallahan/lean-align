@@ -1,0 +1,36 @@
+Dead-code plan (2026-10-25). On hold: Rowan works on the spec definitions first.
+Nothing has been deleted or moved. Full list by declaration: DEAD_CODE_2026-10-25.txt.
+"Dead" = not reachable from the router (tierPair, tierPair_sound), the packed index
+(check3P, buildWP, cutAll/cutOk), ReadTrim, ParMap, the 10 @[csimp] swaps, wfaAlignU3 + theorems, LeanAlign/.
+No bench/*.lean or checks/*.lean file imports a whole-dead file directly. scripts/check.sh compiles
+codecs/*.lean, so deleted files simply drop out of it.
+
+KEEP FOR LATER (move to a "later/" folder when we clean up)
+  codecs/FastGenBatch.lean, FastGenShort.lean, FastGenBlock.lean  reads under 100 bp (batched genome scan, shorter seeds)
+  codecs/ParStream.lean                                           streaming output/input (TODO after freeze)
+  codecs/SketchMapper.lean, pool/mapper/MapperSketch.lean          minimizer / syncmer / mod-minimizer theorem (index memory work)
+
+NEEDS ROWAN'S CALL
+  codecs/FastGenTier*.lean, spec/PairSpecTier.lean   tie T1 caps to read length (capOf)? if yes keep, else delete
+  codecs/PairUnique.lean, PairRegionU.lean, PairSched.lean   pairSpecU modes U/H/HN (slow); possible base for full-recall mode
+  codecs/RepeatMask.lean                              exact-duplicate masking proof (masking is not the plan)
+  codecs/PreFilterMapper.lean                         filter-before-scoring idea, forward-only version
+
+DELETE (superseded)
+  forward-only / old mappers: SeedMapper2, FastMapper, FastMapperPar, LowErrorMapper, EarlyStopMapper, CsrIndex
+    (dead declarations only; SeedMapper/FastMapper still have a few live lemmas)
+  old pair search: PairJoint, PairInterleave, PairHybrid, ParGroup, MzCheckPar (trim_map bench only)
+  byte-genome whole-genome view: dead parts of MzView (buildWV, check3V; RTX uses the packed index)
+  pool/mapper: MapperFastLoop, MapperFastMerge, MapperFastSupport, MapperInterleave, MapperOneIndel, MapperSeedsAmong
+  old kernels: pool/wfa_u32 U/U2 files (AlignmentWfaU32, Kernel2, Level2, ...), ProbeU32,
+    AlignmentWfaRunsFast, AlignmentWfaRunsVsWfa, AlignmentWfaDirect, AlignmentWfaLcp, pool/wfa/Certificate.lean,
+    dead declarations in pool/wfa, pool/band, pool/gotoh, pool/wfa_fast, pool/wfa_offsets
+  bench modes other than RTX that use the above (WholeGenome modes, old bench executables)
+
+DO NOT DELETE (not reached by the trace, but they are spec or checks)
+  spec/AlignmentSpec.lean (frozen), spec/AlignmentLexicographic.lean, spec/Cli.lean, spec/Run.lean,
+  spec/Certificate.lean, trimmer/, checks/CheckCertified.lean
+  codecs/PairDispatch.lean defines pairSpecT, which T1's guarantee is stated against (move it to spec/).
+
+Method when we do it: one branch; delete; `lake build` + scripts/check.sh + build bench/WholeGenome (RTX);
+rerun notes/deadcode/Dead.lean to confirm the live set is unchanged.
