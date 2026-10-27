@@ -16,6 +16,8 @@ export WG_XH=${WG_XH:-0}   # bench with the tier 2 heuristic off, as alignPairs 
 # map timings repeat REPEAT times (default 3); report the median (this box varies ~30% run to run)
 R=${REPEAT:-3}
 TR() { label=$1; shift; i=0; while [ $i -lt $R ]; do $T "$label run$((i+1))" "$@"; i=$((i+1)); done; }
+# MB_ONCE="hiseq250 novaseq151": read sets where minibwa runs once (slow, and steady run to run)
+TMB() { case " ${MB_ONCE:-} " in *" $n "*) l=$1; shift; $T "$l run1" "$@" ;; *) TR "$@" ;; esac; }
 G=${1:-$D/chr21.fa}; O=${OUT:-${TMPDIR:-/tmp}/lean_align_compare}; mkdir -p "$O"
 sets=${SETS:-"hiseq250:hg002_200k novaseq151:novaseq_200k mason:sim_mason low:sim_low"}
 threads=${THREADS:-"2 4"}
@@ -32,8 +34,8 @@ for s in $sets; do n=${s%%:*}; r1=$D/${s#*:}_R1.fq; r2=$D/${s#*:}_R2.fq
   for t in $threads; do
     TR "$n shim t$t" taskset -c $(cores $t) $B/lean-align map "$O/shim.idx" "$r1" "$r2" "$O/$n.shim.sam" 100 1000
     [ "${BENCH:-1}" = 1 ] && WG_MODES=RTX WG_TASKS=$t WG_READS="$n=$r1:$r2:0" $T "$n bench t$t" taskset -c $(cores $t) $B/whole_genome pmap "$O/wg" "$G" | grep -E "^TIME|RESULT"
-    TR "$n minibwa t$t" taskset -c $(cores $t) sh -c "'$MINIBWA' map -t $t '$O/mb' '$r1' '$r2' > '$O/$n.mb.sam'"
-    TR "$n minibwa-native t$t" taskset -c $(cores $t) sh -c "'$MINIBWA_NATIVE' map -t $t '$O/mb' '$r1' '$r2' > /dev/null"
+    TMB "$n minibwa t$t" taskset -c $(cores $t) sh -c "'$MINIBWA' map -t $t '$O/mb' '$r1' '$r2' > '$O/$n.mb.sam'"
+    TMB "$n minibwa-native t$t" taskset -c $(cores $t) sh -c "'$MINIBWA_NATIVE' map -t $t '$O/mb' '$r1' '$r2' > /dev/null"
   done
 done
 
