@@ -50,13 +50,44 @@ abbrev oldDefaultScoring : AlignmentSpec.Scoring := MapSpec.sc0
 
 /-! ## B1. Paths are the old monotone walks, with the same score -/
 
+def oldScoring (scoring : Scoring) : AlignmentSpec.Scoring :=
+  ⟨scoring.matchScore, scoring.mismatchScore, scoring.gapOpen, scoring.gapExtend⟩
+
+theorem scoreWalk_eq (scoring : Scoring) :
+    ∀ (steps : List Step) (query reference : Read) (previous : Option Step),
+      scoreWalk scoring steps query reference previous =
+        AlignmentSpec.scoreWalk (oldScoring scoring) (steps.map oldStep) query reference
+          (previous.map oldStep) := by
+  intro steps
+  induction steps with
+  | nil => intros; simp [scoreWalk, AlignmentSpec.scoreWalk]
+  | cons step rest ih =>
+    intro query reference previous
+    cases step <;> cases query <;> cases reference <;>
+      rcases previous with _ | (_ | _ | _) <;>
+      simp_all [scoreWalk, AlignmentSpec.scoreWalk, oldStep, oldScoring, Option.map]
+
+theorem sum_xConsumed (steps : List Step) :
+    ((steps.map oldStep).map AlignmentSpec.xConsumed).sum = steps.count .diag + steps.count .gapY := by
+  induction steps with
+  | nil => rfl
+  | cons s rest ih => cases s <;> simp_all [oldStep, AlignmentSpec.xConsumed] <;> omega
+
+theorem sum_yConsumed (steps : List Step) :
+    ((steps.map oldStep).map AlignmentSpec.yConsumed).sum = steps.count .diag + steps.count .gapX := by
+  induction steps with
+  | nil => rfl
+  | cons s rest ih => cases s <;> simp_all [oldStep, AlignmentSpec.yConsumed] <;> omega
+
 theorem walk_of_path {query reference : Read} (path : Path query reference) :
-    AlignmentSpec.IsMonotoneWalk (path.steps.map oldStep) query reference := by
-  sorry
+    AlignmentSpec.IsMonotoneWalk (path.steps.map oldStep) query reference :=
+  ⟨(sum_xConsumed path.steps).trans path.usesQuery, (sum_yConsumed path.steps).trans path.usesReference⟩
 
 theorem score_eq_walkScore {query reference : Read} (path : Path query reference) :
     path.score defaultScoring = AlignmentSpec.walkScore oldDefaultScoring query reference (path.steps.map oldStep) := by
-  sorry
+  unfold Path.score AlignmentSpec.walkScore
+  rw [scoreWalk_eq]
+  rfl
 
 /-! ## B2. Hits are the placements' best alignments -/
 
@@ -85,8 +116,47 @@ theorem isProper_iff {genome : Genome} {mate1 mate2 : Read} (pair : PairAlignmen
 
 /-! ## B4. Bytes -/
 
+theorem byteArray_toList_loop (bs : ByteArray) :
+    ∀ n i (r : List UInt8), bs.size - i = n →
+      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
+  intro n
+  induction n with
+  | zero =>
+    intro i r h
+    rw [ByteArray.toList.loop, if_neg (by omega)]
+    have : bs.data.toList.length ≤ i := by rw [Array.length_toList]; exact Nat.le_of_sub_eq_zero h
+    rw [List.drop_eq_nil_of_le this]; simp
+  | succ n ih =>
+    intro i r h
+    have hi' : i < bs.size := by omega
+    rw [ByteArray.toList.loop, if_pos hi', ih (i+1) _ (by omega)]
+    have hi : i < bs.data.toList.length := by rw [Array.length_toList]; exact hi'
+    rw [List.drop_eq_getElem_cons hi]
+    have : bs.get! i = bs.data[i] := by
+      rw [ByteArray.get!]; exact getElem!_pos bs.data i hi'
+    rw [this]
+    simp
+
+theorem byteArray_toList (bs : ByteArray) : bs.toList = bs.data.toList := by
+  rw [ByteArray.toList, byteArray_toList_loop bs _ 0 [] rfl]; simp
+
+theorem toNat_ofNat_lt (n : Nat) (h : n < 256) : (Char.ofNat n).toNat = n := by
+  have hv : n.isValidChar := Or.inl (by omega)
+  rw [Char.ofNat, dif_pos hv]
+  simp [Char.toNat, Char.ofNatAux]
+
 theorem encodes_decodeRead (bytes : ByteArray) : MapSpec.Encodes bytes (decodeRead bytes) := by
-  sorry
+  have hlen : (decodeRead bytes).length = bytes.size := by
+    unfold decodeRead
+    rw [List.length_map, byteArray_toList, Array.length_toList]; rfl
+  refine ⟨hlen.symm, fun i h => ?_⟩
+  have hi : i < bytes.size := hlen ▸ h
+  have hget : bytes.get! i = bytes[i] := by
+    rw [ByteArray.get!]; exact getElem!_pos bytes.data i hi
+  have hc : (decodeRead bytes)[i] = Char.ofNat bytes[i].toNat := by
+    unfold decodeRead
+    simp only [List.getElem_map, byteArray_toList, Array.getElem_toList]; rfl
+  rw [hget, hc, toNat_ofNat_lt _ bytes[i].toNat_lt]
 
 /-! ## The answer from the router's output (M1: bounds only) -/
 
