@@ -67,6 +67,10 @@ def putMz (b : ByteArray) (ix : Mz.MzIdx) : ByteArray :=
 def putPGen (b : ByteArray) (G : PGen) : ByteArray :=
   putBytes (putBytes (putNat (putNat b G.n) G.o) G.w) G.ex
 
+-- an upper bound on the saved size, so `saveIndex` writes into one buffer instead of growing it
+def savedSize (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) : Nat :=
+  512 + 8 * (ix.pm.size + ix.runs.size + offs.size + ns.size) + ix.offs.size + ix.sl.size + G.w.size + G.ex.size
+
 /-! ## Load: a parser reading `bs` from a position -/
 
 abbrev Rd := StateT Nat Option

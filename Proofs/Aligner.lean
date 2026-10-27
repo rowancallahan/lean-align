@@ -28,7 +28,7 @@ def buildLoaded (byteGenome : GenomeFile) : LoadedIndex :=
 -- one ByteArray: magic, then the four parts
 def saveIndex (loaded : LoadedIndex) : ByteArray :=
   let (ix, G, offs, ns) := loaded
-  Index.putNats (Index.putNats (Index.putPGen (Index.putMz (Index.putU64 .empty Index.magic) ix) G) offs) ns
+  Index.putNats (Index.putNats (Index.putPGen (Index.putMz (Index.putU64 (ByteArray.emptyWithCapacity (Index.savedSize ix G offs ns)) Index.magic) ix) G) offs) ns
 
 -- Note (speed): `loadIndex` copies `ix.offs`, `ix.sl`, `G.w`, `G.ex` out of `index` (`extract`) and
 -- rebuilds `ix.pm`, `ix.runs`, `offs`, `ns`, on every call, i.e. once per `alignPairs` chunk.
