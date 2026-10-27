@@ -18,8 +18,9 @@ losing the proof.
 - Milestone M1 is bounds-only: `answerOf` reports no pair and `uniqueness := .unknown`. Next (M2):
   report the found pair with its CIGAR and unique / multimapper (`notes/NEW_SPEC_ADAPTERS.txt`).
 - Speed work is prepared on branch `speed/loop-shape` (not merged): six proved USize kernels,
-  A/B scripts, and `notes/LOOP_SHAPE_PLAN.md` with ranked candidates. Biggest known item:
-  `loadIndex` re-copies the multi-GB index on every `alignPairs` chunk.
+  A/B scripts, and `notes/LOOP_SHAPE_PLAN.md` with ranked candidates. Its item I1 (`loadIndex`
+  re-copied the multi-GB index on every `alignPairs` chunk) is done on branch `speed/index-views`:
+  the loaded `G.w`, `ix.sl`, `ix.offs` are the saved bytes, and `buildIndex` checks the loaded index.
 - Proved speedups still to port from old branches: `speed/150-stage`, `speed/150-loops` (old folder
   layout; see the "Branch check" entry near the end of `SESSION_SUMMARY.md`).
 

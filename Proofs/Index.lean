@@ -57,7 +57,8 @@ def putBytes (b : ByteArray) (x : ByteArray) : ByteArray := putNat b x.size ++ x
 -- zeros up to a multiple of `a`
 def pad (b : ByteArray) (a : Nat) : ByteArray := Nat.fold ((a - b.size % a) % a) (fun _ _ b => b.push 0) b
 
--- the bucket offsets (LE `UInt32`s), each plus `m`
+-- the bucket offsets (LE `UInt32`s), each plus `m` (`m` + entries must stay below 2^32, hg38: ~1.1e9;
+-- past that the offsets wrap, the check fails, and the index is empty)
 def putOffs (b offs : ByteArray) (m : Nat) : ByteArray :=
   Nat.fold (offs.size / 4) (fun i _ b =>
     let x := (getU32 offs i + m).toUInt32
