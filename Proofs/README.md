@@ -20,9 +20,9 @@
   score (`scoreWalk` is the same function on both sides; map the steps).
 - **B2** `hit_of_alignment`, `alignment_of_hit`: `hitsBoth` (old: windows × strands, each with its
   best score `windowScore` via `getBestAlignment`) against `GenomicAlignment`. Use
-  `getBestAlignment_returns_a_maximum_score` / `_valid_walk` (old_spec/AlignmentSpec.lean) and B1.
+  `getBestAlignment_returns_a_maximum_score` / `_valid_walk` (core/AlignmentSpec.lean) and B1.
   Note `oldPlacement` uses `stop - start`; `fits` gives `start ≤ stop`.
-- **B3** `isProper_iff`: `Mapping.IsProper` vs `properPairU` (old_spec/PairSpecU.lean). Same
+- **B3** `isProper_iff`: `Mapping.IsProper` vs `properPairU` (core/PairSpecU.lean). Same
   conditions; arithmetic.
 - **B4** `encodes_decodeRead`: `Encodes` (kernels/mapper_band/MapperBandKernel.lean) holds for
   `decodeRead` (`Char.ofNat` of a byte has that byte's `toNat`).

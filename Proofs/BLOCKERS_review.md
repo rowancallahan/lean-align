@@ -1,7 +1,7 @@
 # Review of Proofs/Bridge.lean and Proofs/Aligner.lean (task B3, read-only)
 
 Result: **no false statement found.** `isProper_iff` is proved (commit on `proofs/proper-b3`).
-Checked by reading old_spec against Spec; nothing was compiled beyond the B3 proof.
+Checked by reading core against Spec; nothing was compiled beyond the B3 proof.
 
 ## Checked clean
 - `isProper_iff` (proved): strands, `fwdRev`, `stop - start` (needs `start ≤ stop`, from `fits`), dovetail terms.

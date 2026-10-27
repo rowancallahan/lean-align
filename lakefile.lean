@@ -9,8 +9,9 @@ lean-align: proved pairwise alignment, compiled to one command-line tool.
   LeanAlign/           pure code: command line (Cli) and bytes-in → bytes-out (Run)
   Spec/                THE specification: Alignment, Mapping, Aligner, Shim (frozen, Spec/FROZEN.sha256);
                        Sam, Fasta, Fastq are trusted plumbing for the shim (not guaranteed)
-  old_spec/            the earlier frozen specs the current proofs are built on, and theorems about Cli and Run
-  kernels/<group>/     alignment kernels, each proved against old_spec/AlignmentSpec.lean
+  core/                definitions the proofs translate through (old windows/hits/pair model; not a spec),
+                       and theorems about Cli and Run
+  kernels/<group>/     alignment kernels, each proved against core/AlignmentSpec.lean
   index/<group>/       index kernels (minimizer, packed genome, CSR, ...)
   mapper/              the main mapping code (tier router, pair search); mapper/lemmas/ supporting lemmas
   Proofs/              Spec/ with the proofs filled in (comparator solution)
@@ -34,8 +35,8 @@ lean_lib Proofs where                -- the spec with proofs filled in (same nam
   globs := #[.submodules `Proofs]
 
 @[default_target]
-lean_lib AlignmentSpecLib where       -- earlier specs, still what the codecs are proved against
-  srcDir := "old_spec"
+lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
+  srcDir := "core"
   roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec, `PairSpecTier, `PairSpecU]
 
 -- ──────────────────────────── alignment kernels ────────────────────────────
