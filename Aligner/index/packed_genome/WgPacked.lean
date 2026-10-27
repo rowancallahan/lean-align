@@ -39,7 +39,7 @@ def checkSoundParP (ix : MzIdx) (G : Fast.PGen) (P : Nat) : Bool :=
 /-- `check2P` with the per-entry pass on `P` tasks, run beside the sequential passes. -/
 def check3P (ix : MzIdx) (G : Fast.PGen) (P : Nat) : Bool :=
   let seq := Task.spawn (prio := .dedicated) fun _ =>
-    (let s := rollToP G (q - 1); compRP ix G ix.offs 0 (G.n + 1 - q) 0 s.1 s.2) &&
+    (let s := rollToP G (q - 1); compRP ix G ix.hint 0 (G.n + 1 - q) 0 s.1 s.2) &&
       checkRunsP ix G ix.nr 0 && checkCoverP ix G 0 G.n 0
   checkParams ix && checkSoundParP ix G P && seq.get
 

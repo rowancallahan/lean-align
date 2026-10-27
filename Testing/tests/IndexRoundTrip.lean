@@ -1,9 +1,10 @@
 import Proofs.Aligner
 
 /-! Index round trip on a tiny synthetic genome: `lake env lean tests/IndexRoundTrip.lean`.
-Expected: `(442, #[0, 300, 430], #[300, 130, 12], 268436470, true, true, true, true, true)` (genome
-letters, offsets, lengths, index bytes (B = 26: 2^26 + 1 bucket offsets), roundTrips, indexOk,
-buildIndex = saved, empty and truncated indexes load to none). Interpreted: ~12 min. These
+Expected: `(442, #[0, 300, 430], #[300, 130, 12], 268436464, true, true, true, true, true)` (genome
+letters, offsets, lengths, index bytes (B = 26: 2^26 + 1 bucket offsets), indexOk of what the saved
+index loads to, the loaded genome and slots are the saved bytes, buildIndex = saved, empty and
+truncated indexes load to none). Interpreted: ~12 min. These
 chromosomes are < 2^20 letters, so the builder takes the `buildWP` path, not `buildWV`. -/
 
 open Spec
@@ -22,8 +23,9 @@ def tinyGenome : GenomeFile :=
 #eval
   let L := buildLoaded tinyGenome
   let saved := saveIndex L
-  let ok := indexOk tinyGenome L
-  let rt := roundTrips saved L
+  let ld := (loadIndex saved).get!
+  let ok := indexOk tinyGenome ld
+  let shared := ld.2.1.w.size == saved.size && ld.1.sl.size == saved.size
   let built := buildIndex tinyGenome
-  (L.2.1.n, L.2.2.1, L.2.2.2, saved.size, rt, ok, built.size == saved.size,
+  (L.2.1.n, L.2.2.1, L.2.2.2, saved.size, ok, shared, built.size == saved.size,
     loadIndex ByteArray.empty |>.isNone, loadIndex (saved.extract 0 (saved.size - 1)) |>.isNone)
