@@ -23,15 +23,19 @@ def main (args : List String) : IO UInt32 := do
     -- and INDEX.chromosomes lists that genome's names and lengths
     let index ← IO.FS.readBinFile indexPath
     let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
-    let reads1 ← IO.FS.Handle.mk reads1Path .read
-    let reads2 ← IO.FS.Handle.mk reads2Path .read
+    let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
+    let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
     let out ← IO.FS.Handle.mk outPath .write
     for line in Spec.samHeader chromosomes do
       out.putStrLn line
+    -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+    let mut next ← IO.asTask (Spec.readChunk reads1 reads2 100000)
+    let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
     repeat
-      let chunk ← Spec.readChunk reads1 reads2 100000
+      let chunk ← IO.ofExcept next.get
       if chunk.isEmpty then
         break
+      next ← IO.asTask (Spec.readChunk reads1 reads2 100000)
       -- ╔══════════════════════════════════════════════════════════════════════════════════╗
       -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
       -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
@@ -39,11 +43,11 @@ def main (args : List String) : IO UInt32 := do
       -- ╚══════════════════════════════════════════════════════════════════════════════════╝
       let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
       -- ══════════════════════════════════════════════════════════════════════════════════
-      -- results come back in the same order as the pairs; `zip` lines each pair up with its result
-      for (pair, result) in chunk.toList.zip results do
-        let (record1, record2) := pair
-        for line in Spec.samLines chromosomes record1 record2 result do
-          out.putStrLn line
+      -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
+      let text := Spec.samChunk chromosomes chunk results 16
+      let previous := writing
+      writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+    IO.ofExcept writing.get
     return 0
   | _ =>
     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"

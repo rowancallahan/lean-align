@@ -124,4 +124,16 @@ def samLines (chromosomes : ChromosomeList) (record1 record2 : FastqRecord) (res
       | none =>
           [unmappedLine record1 .one (answerTags answer), unmappedLine record2 .two (answerTags answer)]
 
+-- one chunk's SAM text, formatted in `parts` tasks and joined in pair order (after the proved call)
+def samChunk (chromosomes : ChromosomeList) (chunk : Array (FastqRecord × FastqRecord))
+    (results : List PairResult) (parts : Nat) : ByteArray :=
+  let pairs := chunk.zip results.toArray
+  let size := (pairs.size + parts - 1) / parts
+  let tasks := (List.range parts).map fun part => Task.spawn fun _ =>
+    let text := (pairs.extract (part * size) ((part + 1) * size)).foldl (init := "")
+      fun text ((record1, record2), result) =>
+        (samLines chromosomes record1 record2 result).foldl (fun text line => text ++ line ++ "\n") text
+    text.toUTF8
+  tasks.foldl (fun bytes task => bytes ++ task.get) ByteArray.empty
+
 end Spec
