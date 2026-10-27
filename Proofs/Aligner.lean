@@ -1,4 +1,5 @@
 import Proofs.Index
+import TierHeur
 
 /-! # 3. The aligner, proved. `Spec/Aligner.lean`'s types are in `Proofs/Answer.lean` (unchanged);
 this file fills in the two holes, `buildIndex` and `alignPairs`, and proves `alignPairs_correct`
@@ -74,9 +75,10 @@ def buildIndex (byteGenome : GenomeFile) : ByteArray :=
 /-! ## The aligner -/
 
 -- the router's settings for these insert settings (any settings are sound; these are for speed)
-def tierCfg (insertSettings : InsertSettings) : MapSpec.Fast.TierCfg :=
-  { rcfg := { cap1 := fun n => if 150 ≤ n then 16 else if 100 ≤ n then 12 else if 75 ≤ n then 11 else 12 },
-    lo := insertSettings.range.1, hi := insertSettings.range.2, usl := insertSettings.dovetailSlack }
+def tierCfg (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (offs : Array Nat)
+    (pgs : Array MapSpec.Fast.PGen) : MapSpec.Fast.TierCfg :=
+  TierHeur.rtxCfg { cap1 := fun n => if 150 ≤ n then 16 else if 100 ≤ n then 12 else if 75 ≤ n then 11 else 12 }
+    pk offs pgs insertSettings.range.1 insertSettings.range.2 insertSettings.dovetailSlack
 
 -- the bound that always holds: every score is ≤ 0
 def noIndexAnswer : PairAnswer :=
@@ -91,7 +93,7 @@ def alignOne (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
       match loaded with
       | none => .aligned noIndexAnswer
       | some (ix, G, offs, ns) =>
-          .aligned (answerOf (MapSpec.Fast.tierPair (tierCfg insertSettings) (ix, G) offs
+          .aligned (answerOf (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) offs (MapSpec.Fast.cutAll G offs ns)) (ix, G) offs
             (MapSpec.Fast.cutAll G offs ns) (some read1) (some read2)))
 
 -- a chunk of pairs; the implementation may work across the chunk however it likes
@@ -137,7 +139,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
     | some (ix, G, offs, ns), hLoaded =>
       obtain ⟨hcut, hg, hchk⟩ := indexOk_sound (hLoaded _ rfl)
       rw [hGenome] at hg
-      have hok := MapSpec.Fast.tierPair_sound (tierCfg insertSettings) (oldGenome genome)
+      have hok := MapSpec.Fast.tierPair_sound (tierCfg insertSettings (ix, G) offs (MapSpec.Fast.cutAll G offs ns)) (oldGenome genome)
         (decodeRead read1) (decodeRead read2) ix G offs ns hcut hg hchk (some read1) (some read2)
         (fun R h => by cases h; exact encodes_decodeRead _) (fun R h => by cases h; exact encodes_decodeRead _)
       exact answerOf_correct insertSettings genome _ _ read1 read2 _ hok
