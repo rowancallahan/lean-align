@@ -16,8 +16,25 @@ shasum -a 256 -c Spec/FROZEN.sha256 || fail=1
 step "lake build"
 lake build >"$tmp/lean_align_build.log" 2>&1 && echo "build ok" || { tail -20 "$tmp/lean_align_build.log"; fail=1; }
 
-step "certificates and spec theorems (axioms)"
-for c in mapper/*.lean index/*/*.lean kernels/*/Certificate.lean kernels/wfa_u32/WfaU3.lean kernels/mapper_band/BandScore.lean kernels/k250/FastGenK250.lean Proofs/Alignment.lean Proofs/Mapping.lean core/Certificate.lean trimmer/Certificate.lean core/Cli.lean core/Run.lean; do
+step "axioms in the build (every module; Lake replays the messages of cached modules)"
+python3 - "$tmp/lean_align_build.log" <<'PY' || fail=1
+import re, sys
+out = open(sys.argv[1]).read()
+flat = re.sub(r"\s+", " ", out)
+lists = re.findall(r"'([^']+)' depends on axioms: \[([^\]]*)\]", flat)
+none = re.findall(r"'([^']+)' does not depend on any axioms", flat)
+bad = [(n, a) for n, a in lists if not set(x.strip() for x in a.split(",") if x.strip()) <= {"propext", "Classical.choice", "Quot.sound"}]
+errors = re.findall(r"^error.*$|^\S+:\d+:\d+: error.*$", out, re.M)
+sorries = [l for l in re.findall(r"^warning: (\S+):\d+:\d+: declaration uses .sorry.", out, re.M) if not l.startswith("Spec/")]
+for n, a in bad: print(f"FAIL non-standard axioms: {n}: [{a}]")
+for e in errors: print(f"FAIL {e}")
+for f in sorries: print(f"FAIL sorry outside Spec/: {f}")
+if bad or errors or sorries or not lists: sys.exit(1)
+print(f"ok   {len(lists) + len(none)} theorems, standard axioms only; sorry only in Spec/ (the statements)")
+PY
+
+step "certificates (not build modules: they share the name Certificate)"
+for c in kernels/*/Certificate.lean core/Certificate.lean trimmer/Certificate.lean core/Cli.lean core/Run.lean; do
   log="$tmp/lean_align_$(echo "$c" | tr '/' '_').log"
   lake env lean "$c" >"$log" 2>&1
   rc=$?
