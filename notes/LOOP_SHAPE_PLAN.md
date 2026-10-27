@@ -136,6 +136,18 @@ BMI2 shifts help a little. LTO may matter more than `-march` now that the hot lo
 *Risk.* None for proofs. A v3 binary dies with SIGILL on pre-Haswell CPUs; make it a build option. Full C rebuild.
 
 ### Further candidates found while reading / profiling (§B of the scan note)
+- **I1. Index re-parsed and copied on every `alignPairs` chunk (from the B5 index work, festive-fermi b2aed4f;
+  not in this branch yet).** `loadIndex` (`Proofs/Aligner.lean`) `extract`s `ix.offs` (~256 MB at B = 26), `ix.sl`
+  (GBs) and `G.w`/`G.ex` (~0.8 GB) out of the saved `index` ByteArray and rebuilds `pm`, `runs`, `offs`, `ns` once
+  per chunk of 100k pairs. `alignPairs` is a pure function of the ByteArray, so it cannot cache across calls; the
+  fix is to stop copying: `MzIdx` / `PGen` read their byte fields as views (base ByteArray + offset, reads via
+  `uget` at `off + i`) into the saved bytes, so parsing is O(header) and the multi-GB `extract`s go away. That is
+  a layout change (definitions of the index readers + their lemmas), or a csimp on `loadIndex` to a view-based
+  `LoadedIndex` if the readers are made generic over the byte source (`GRead`-style). Expected: several GB of
+  memcpy + allocation per chunk removed, i.e. ~0.5–2 s per 100k-pair chunk single-threaded on hg38, plus peak
+  memory (index held twice during a chunk). **Likely the largest whole-genome item; rank first for hg38 runs.**
+  The synthetic `whole_genome pmap` bench does not go through `loadIndex`, so measure it with the Spec shim
+  (`map INDEX R1 R2 OUT MIN MAX`) on chr21 / hg38.
 - **N1. Allocation + refcount (13.5% self) and list building (~6%).** `mi_free` / `lean_dec_ref_cold` /
   `mi_malloc_small` / `lean_del_core`; `List.range` (rescoreRuns 1.7%, shapes, ilGFG), `lean_list_to_array` → 
   `List.toArrayAux` + `lengthTR` (4.3% inclusive, 4,727 calls), `properPairs` filter, `mergeSort` (1.3%).
