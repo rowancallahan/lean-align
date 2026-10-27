@@ -1,4 +1,5 @@
 import Proofs.Answer
+import Proofs.Tiers
 import TierOpt
 
 /-! # Bridge: the existing router proofs (old spec: windows, hits, thresholds) → the new spec.
@@ -125,6 +126,101 @@ theorem answerOf_correct (insertSettings : InsertSettings) (genome : Genome) (ma
     (hok : MapSpec.Fast.TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
       (oldGenome genome) mate1 mate2 (some bytes1) (some bytes2) t) :
     (answerOf t).Correct insertSettings genome mate1 mate2 := by
-  sorry
+  -- an alignment gives a hit at its placement, at every threshold up to the hit's score
+  have hit_at : ∀ {read : Read} (alignment : GenomicAlignment genome read),
+      ∃ s, alignment.score ≤ s ∧ s ≤ 0 ∧ ∀ T, T ≤ s →
+        (oldPlacement alignment.placement, s) ∈ MapSpec.hitsBoth MapSpec.sc0 T (oldGenome genome) read := by
+    intro read alignment
+    obtain ⟨s, hs, hm⟩ := hit_of_alignment alignment alignment.score (Int.le_refl _)
+    refine ⟨s, hs, MapSpec.hitsBoth_nonpos _ _ _ _ hm, fun T hT => ?_⟩
+    rw [MapSpec.Fast.mem_hitsBoth_T] at hm ⊢
+    exact ⟨hm.1, hm.2.1, hT⟩
+  refine ⟨fun _ h => by simp [answerOf] at h, fun pair hp => ?_, by simp [answerOf]⟩
+  -- a proper pair gives a proper pair of hits, at all thresholds up to the hits' scores
+  obtain ⟨s1, s2, hle, h1n, h2n, hmem⟩ : ∃ s1 s2, pair.score ≤ s1 + s2 ∧ s1 ≤ 0 ∧ s2 ≤ 0 ∧
+      ∀ T1 T2, T1 ≤ s1 → T2 ≤ s2 →
+        ((oldPlacement pair.first.placement, s1), (oldPlacement pair.second.placement, s2)) ∈
+          MapSpec.properPairs insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+            (MapSpec.hitsBoth MapSpec.sc0 T1 (oldGenome genome) mate1)
+            (MapSpec.hitsBoth MapSpec.sc0 T2 (oldGenome genome) mate2) := by
+    obtain ⟨s1, h1, h1n, hm1⟩ := hit_at pair.first
+    obtain ⟨s2, h2, h2n, hm2⟩ := hit_at pair.second
+    refine ⟨s1, s2, by unfold PairAlignment.score; omega, h1n, h2n, fun T1 T2 hT1 hT2 => ?_⟩
+    rw [MapSpec.mem_properPairs]
+    exact ⟨hm1 T1 hT1, hm2 T2 hT2, (isProper_iff pair insertSettings.range insertSettings.dovetailSlack).mp hp⟩
+  suffices hb : s1 + s2 ≤ boundOf t by simp only [answerOf]; omega
+  have hm := hmem s1 s2 (Int.le_refl _) (Int.le_refl _)
+  rw [MapSpec.mem_properPairs] at hm
+  obtain ⟨hm1, hm2, -⟩ := hm
+  unfold MapSpec.Fast.TierOk at hok
+  unfold boundOf
+  cases htag : t.tag <;> rw [htag] at hok <;> simp only []
+  case t0 => simp at hok
+  case t1 =>
+    obtain ⟨x, y, hx, hy, hs⟩ := hok
+    rw [hx, hy]
+    unfold MapSpec.Fast.pairSpecT at hs
+    cases h1 : MapSpec.mapSpecBoth MapSpec.sc0 (-(t.c1 : Int)) (oldGenome genome) mate1 <;>
+      cases h2 : MapSpec.mapSpecBoth MapSpec.sc0 (-(t.c2 : Int)) (oldGenome genome) mate2 <;>
+      rw [h1, h2] at hs <;> simp only [reduceCtorEq] at hs
+    rename_i a b
+    split at hs
+    · simp only [Option.some.injEq, Prod.mk.injEq] at hs
+      obtain ⟨rfl, rfl⟩ := hs
+      have := le_of_mapSpecBoth h1 hm1
+      have := le_of_mapSpecBoth h2 hm2
+      simp only at *; omega
+    · cases hs
+  case t1g =>
+    obtain ⟨-, -, hall⟩ := hok
+    obtain ⟨c1, c2⟩ := cap_le (g0 := t.g0) h1n
+    obtain ⟨c3, c4⟩ := cap_le (g0 := t.g0) h2n
+    obtain ⟨x, y, hx, hy, hs⟩ := hall _ _ c1 c3
+    rw [hx, hy]
+    exact le_of_pairSpecUT hs (hmem _ _ c2 c4)
+  case t1u =>
+    obtain ⟨-, hall⟩ := hok
+    obtain ⟨c1, c2⟩ := cap_le (g0 := t.g0) h1n
+    obtain ⟨c3, c4⟩ := cap_le (g0 := t.g0) h2n
+    obtain ⟨x, y, hx, hy, hs⟩ := hall _ _ c1 c3
+    rw [hx, hy]
+    exact le_of_pairSpecUT hs (hmem _ _ c2 c4)
+  case t2b =>
+    obtain ⟨x, y, hx, hy, -, hall⟩ := hok
+    rw [hx, hy]
+    have := hall s1 s2 _ (hmem s1 s2 (Int.le_refl _) (Int.le_refl _))
+    rw [pairScoreD_dcost0, pairScoreD_dcost0] at this
+    exact this
+  case t1gm => omega
+  case t1um => omega
+  case t2 =>
+    replace hok := hok.1
+    obtain ⟨f1, f2, hpf⟩ := hok
+    have a1 := f1 s1 _ hm1
+    have a2 := f2 s2 _ hm2
+    simp only at a1 a2
+    rcases hp : t.pf with _ | G0
+    · simp only []; push_cast; omega
+    · simp only []
+      obtain ⟨c1, c2⟩ := cap_le (g0 := G0) h1n
+      obtain ⟨c3, c4⟩ := cap_le (g0 := G0) h2n
+      have := hpf G0 hp _ _ c1 c3 _ (hmem _ _ c2 c4)
+      rw [pairScoreD_dcost0] at this
+      simp only at this
+      push_cast; omega
+  case t3 =>
+    obtain ⟨f1, f2, hpf⟩ := hok
+    have a1 := f1 s1 _ hm1
+    have a2 := f2 s2 _ hm2
+    simp only at a1 a2
+    rcases hp : t.pf with _ | G0
+    · simp only []; push_cast; omega
+    · simp only []
+      obtain ⟨c1, c2⟩ := cap_le (g0 := G0) h1n
+      obtain ⟨c3, c4⟩ := cap_le (g0 := G0) h2n
+      have := hpf G0 hp _ _ c1 c3 _ (hmem _ _ c2 c4)
+      rw [pairScoreD_dcost0] at this
+      simp only at this
+      push_cast; omega
 
 end Spec.Bridge
