@@ -996,3 +996,171 @@ Flank table (C), measured, not built (held: ~20% exact gain vs a large proof bui
 - Speed prep (branch speed/loop-shape, based on 3f8ca20, NOT merged): @[csimp] USize versions of hamW, fwdW, bwdW, seedLE, revCompLoop, Mz.miniGo (proved, standard axioms, outputs byte-identical); synthetic data: tierPair instructions −7.4% (spec tierCfg) / −4.9% (bench RTX), 20k-pair wall time −10.6% / −5.9%. Ranked candidates in notes/LOOP_SHAPE_PLAN.md; I1 (ranked first for hg38): loadIndex copies ix.offs (~256 MB), ix.sl (GBs), G.w/G.ex (~0.8 GB) and rebuilds pm/runs/offs/ns on every alignPairs chunk — parse once or read views into the saved bytes.
 - NEXT: Rowan reviews + merges claude/festive-fermi-mf9mo6 into main; real-data speed runs from notes/LOOP_SHAPE_PLAN.md; then M2 (report the found pair with CIGAR + unique/multimapper), Lean 4.35 bump, comparator, lake check --paranoid.
 - 2026-10-27 (morning): Lean v4.35.0 bump (local branch lean-4.35, eab2d4d = this branch + lean-toolchain only): whole project builds (277 jobs), no proof edits needed; alignPairs_correct axioms [propext, Classical.choice, Quot.sound]; checks/AuditAlignPairs.lean clean. `lake check --paranoid` cannot start in the cloud box (needs `bwrap`; Ubuntu mirrors blocked; `--inadvisably-no-sandbox` refused by the permission policy). Instead ran the bundled checkers exactly as Lake's Check.lean invokes them on `lake env leanexport Proofs.Aligner` (795 MB, 95,482 declarations): leanchecker-paranoid OK (652 s), lean4lean OK (736 s), con-leche --verified OK (158 s), con-ron --verified OK (93 s), leanchecker OK (466 s). nanoda_bin: OOM-killed at ~14 GB (15 GB box) on the full export (4 and 1 threads) and on the closure export `leanexport Proofs.Aligner -- Spec.alignPairs_correct Spec.alignPairs Spec.buildIndex` (165 MB). To finish on a bigger machine: build on 4.35, run that export, then `nanoda_bin cfg.json` with {"use_stdin":false,"export_file_path":"<file>","permitted_axioms":["propext","Classical.choice","Quot.sound"],"unpermitted_axiom_hard_error":false,"num_threads":1,"nat_extension":true,"string_extension":true}; or just `lake check --paranoid` where bwrap is installed.
+- 2026-10-27 (later): Lean 4.35 bump merged onto claude/festive-fermi-mf9mo6 (lean-toolchain only). Spec/Aligner.lean gained `alignPairs_end_to_end` right under `alignPairs_correct` (Rowan approved; Spec/FROZEN.sha256 regenerated): from a pure `Genome` and trimmed pairs, `Genome.encode` / `encodePair` to bytes, `buildIndex`, `alignPairs`; one result per pair, each correct for the original genome and pair; only assumption: every letter is A, C, G, T or N (`GenomeIsDNA`, `MatesAreDNA`; upper case only, Rowan). Proof in Proofs/Aligner.lean (three byte round-trip lemmas + `alignPairs_correct`), standard axioms. Checked on 4.35: check.sh pass, audit clean (2546 constants), external kernels accept 95,501 decls (leanchecker-paranoid 603 s, lean4lean 734 s, con-leche 178 s, con-ron 105 s, leanchecker 485 s); nanoda OOM on the 15 GB box (no verdict).
+- 2026-10-27: old_spec/ moved to core/ (library `Core`): proof internals the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean; not a spec. FROZEN_SPEC.sha256 dropped; module/namespace names (AlignmentSpec, MapSpec, ...) unchanged for now. TODO (Rowan): rename them so Spec/ is the only "spec"; later simplify/golf the proofs.
+- 2026-10-27: checks split: scripts/CI_check.sh = developer check on the cached lake build (module axioms read from the one build log; only the 10 Certificate.lean + core/Cli + core/Run run via lake env lean; 48 s cached); scripts/check.sh = final check (rm -rf .lake/build, CI_check.sh, then scripts/external_checkers.sh full). Rowan chose no result caching for the external kernels (simplicity over speed).
+- Merge state: main fast-forwards to claude/festive-fermi-mf9mo6; proofs/* branches fully contained (safe to delete); keep speed/loop-shape; the other speed/* and archive/* branches are not in this history (their summary notes are copied below), check before deleting.
+- REMIND ROWAN: shim / trusted file loading review (Main.lean IO, Spec/Shim.lean, Fasta/Fastq/Sam: letter case, SAM flags); speed: loadIndex per-chunk copy (LOOP_SHAPE_PLAN I1), real-data runs of speed/loop-shape, x86 -march flags, full timing + accuracy comparisons.
+
+## Notes collected from other branches (2026-10-27)
+
+Lines from SESSION_SUMMARY.md on other branches that were not already here (exact or edited copies skipped). Copied verbatim, grouped by branch; heading levels inside are as on the branch.
+
+### From `speed/loop-shape`
+
+- 2026-10-27 (speed/loop-shape, cloud prep for the loop-shape campaign): @[csimp] USize versions of hamW, fwdW, bwdW (MapperK250), seedLE (MzWord), revCompLoop (FastGenK250), Mz.miniGo (MzIndex), each = USize loop + wrapper with a once-per-call bound test + verbatim slow copy, proved equal for all inputs (standard axioms; statements unchanged; check.sh passes). Synthetic 8 Mb genome, 2×150 pairs, dumps identical: tierPair Ir −7.4% with the spec's tierCfg settings (AB_PROD=1) / −4.9% in bench RTX; 20k pairs wall −10.6% / −5.9%. Harness: scripts/sim_genome.py, bench_data.sh, ab_kernel.sh, ab_pair.sh, ab_ir.sh (callgrind inside tierPair), cscan.py. Notes: notes/LOOP_SHAPE_PLAN.md (ranked candidates; bench RTX ≠ production settings; loadIndex per-chunk copies first for hg38), notes/GENERATED_C_SCAN_2026-10-27.txt. Pitfall: Nat literals ≥ 2^32 are parsed by GMP on every evaluation (pscanD still has one). Not measured: chr21/hg38, -march/LTO.
+
+### From `claude/upbeat-goldberg-kizkfd (2026-10-06/07)`
+
+- **Idea for later (Rowan, 2026-10-06): reuse proved results across reads (certificate memo).**
+  - **Idea:** when read A is proved unique best (say 3 errors at locus X), store that result. A later read B that has the same sequence over the part of A that carries the errors can reuse A's proof. B's best alignment must then pass through X, so B skips most of its seeds and checks only the rest of its own sequence at X. Known paths can also bound other candidates, so some seeds can be skipped.
+  - **Exact duplicates (sound, easy):** an identical read or pair gets an identical result, because the mapper is a pure function. The proof is trivial. The gain is the duplicate rate (PCR and optical duplicates, about 5–15% in WGS). Key the memo on the pair's bases.
+  - **Overlapping reads (sound only with a margin):** a unique best for A's part S does not alone make X best for B. B's other part T could fit much better somewhere S fits slightly worse. The sound version:
+    1. Store A's floor F for every other placement, not just "unique": no other placement of S costs < F. Today's T1 gives F = cap + 1.
+    2. Lemma: restricting B's end-to-end alignment to S gives an alignment of S that costs no more (penalties ≥ 0). So every B placement whose S part is not at X costs ≥ F.
+    3. Score B at X directly, cost c. If c < F, then X is B's unique best (pairSpec-style uniqueness). Otherwise fall back to the normal search, using F as a floor and c as a ceiling to prune seeds.
+    - Watch out for placements shifted by 1–2 letters near X. They are "other placements" of S, already covered by F, but indels at the S/T boundary need care in the lemma.
+    - Example: A has 3 mismatches, so 12 penalty, and F = 17. Then B qualifies only if its rest adds < 5 penalty at X, i.e. at most 1 more mismatch.
+  - **Expected hit rate (critical):**
+    - The errors that read A carries are mostly its own sequencing errors, not shared with other reads. Only true variants (SNPs) recur. The useful shared part is usually an exact stretch, not "the same 3 errors".
+    - Reads arrive in random genome order, so the memo must cover the whole genome. At 30× each locus is seen ~30 times over the run, so hits exist, but the 200k bench (~0.003×) shows almost none.
+    - Finding a memo hit means hashing B's substrings into a second, read-built index. That is about the cost of seeding, so the saving is the verify and extension work, not seeding.
+    - A shared memo across threads makes some results order-dependent. Only proved-optimal outputs, which are order-independent, may use it.
+    - Heuristic tiers must not read from it, or output becomes non-deterministic.
+    - Memory grows with the number of entries.
+  - **Indels and SVs (Rowan):** this may help most here.
+    - A germline indel is shared by every read covering it, unlike sequencing errors, so the hit rate is higher.
+    - Indel reads are also the expensive ones (stage B, band search).
+    - Limit: an indel whose penalty exceeds the cap is outside the proved tiers. The memo can then only give a ceiling: reuse the stored path as the first candidate and prune with its cost. There is no floor, so the result stays heuristic (T2).
+    - Reads that span an SV breakpoint score badly under end-to-end scoring with no clipping. A ceiling helps them only for speed.
+  - **Memory:** budget up to ~12 GB, double today's 5.8 GB. 10M entries at ~32 bytes is ~0.3 GB, so RAM is not the limit. Lookup cost and determinism are.
+  - **Two-pass build (Rowan):** with many reads and cores, first map a random sample with the slow, deep search aimed at indels. Learn the recurring indels and paths, freeze the table, then map everything. Freezing keeps output deterministic. It needs algorithm changes, so not now.
+  - **Variant seeds + lift (Rowan):**
+    - For each learned indel or SNP, add extra seeds to the index: k-mers of the alt sequence across the variant. Each points to an alt-coordinate record that lifts back to the reference locus in O(1).
+    - A read carrying the indel then hits the right locus with one seed lookup instead of a band search.
+    - **Soundness:** easy. Extra seeds only add candidates, and every candidate is still scored exactly against the reference. The pigeonhole seed coverage is unchanged, so the floor proofs still hold.
+    - **Speed:** finding the true locus early gives a tight ceiling early, which prunes the other candidates. The exhaustive floor part still runs at the read's reference penalty, so the gain is mostly in candidate finding and pruning.
+    - **Cost:** very little: a few extra index entries, plus one lift per hit.
+    - **Above-cap indels can be proved (Rowan), via pass-1 certificates, under the reference spec:**
+      1. Pass 1 runs the slow exhaustive search on window W, the stretch around the indel, and stores (W, locus X, best b, floor F). Here F is a proved lower bound on W's cost at every placement other than X, with b < F.
+         - The floor must be for W itself. A floor for the whole read A does not carry over to a substring of A, because a shorter window can fit elsewhere better.
+      2. Restriction lemma: B contains W, so any placement of B whose W part is not at X costs ≥ F.
+      3. Score B at X directly: cost c ≤ b + the cost of B's other bases at X. If they match exactly, c = b.
+      4. If c < F, then X is B's unique best. This holds at caps ≥ c, using the same "unique at any caps ≥ G0" form as T1u.
+      - Pairs: pair cost = sum of mate costs ≥ 0, so pairs with mate 1 away from X cost ≥ F. Pairs with mate 1 at X need only a local search for mate 2 near X.
+      - Trust: build the table with a proved function, so every entry carries a valid floor. Pass it as an argument with that invariant. No new trusted code.
+      - Shorter windows have more repeats, so lower margins (F − b). Pass 1 should pick W as long as the typical overlap allows.
+  - **Expected gain (rough, unmeasured):**
+    - **Large indels gain the most.** A germline indel is in every covering read (all if homozygous, half if heterozygous), so one certificate serves dozens of reads at 30×. These reads move from T2/T3 or the deep search to cheap and proved.
+      - Limit: the read must contain the whole window W. Reads ending inside the indel and insertions longer than the read do not qualify. The qualifying share is ~(read length − |W|) / read length, so 2×250 gains more than 2×150.
+    - **Errors at unique placements gain little.** Sequencing errors are not shared, and these reads are already cheap (T1). Shared SNPs do hit, but are also cheap today.
+    - **Speed:** about one indel per 6 kb in HG002, so ~5–8% of pairs touch one. Most are small indels that trigger the band search. At 3–5× a clean pair they take ~15–30% of time; bringing them to ~1× saves ~10–25% of wall time. Repeats, where most time goes, gain little (small margins).
+    - **Proved share:** pairs now in T2/T3 because of indels become proved. This may matter more than the speed.
+    - **Scaling:** pass-1 cost scales with the number of variants (~5M), not reads, so it is fixed and spreads over the run. The hit rate rises with coverage and saturates around ≥ 10×. With variant seeds in the index the lookup is part of seeding, so it is near free per read.
+    - **Test:** the 200k genome-wide sets (~0.003×) show almost nothing. Use one chromosome at full depth, e.g. all HG002 chr20 reads at 30×.
+  - **When:** round 2 of optimization, after Rowan cleans up the code and rewrites the spec.
+  - **Long reads (Rowan):** known paths amount to mapping against a personal genome and lifting coordinates back.
+    - HiFi: most differences are true variants, so the gain is large.
+    - ONT with large SVs: also large. Breakpoint search and split or chained alignment are the expensive, fragile part, and a learned SV path turns them into one continuous alignment. ONT's random indel errors are still paid per read.
+    - Pass 1 learns SV breakpoints from many reads. A consensus fixes ONT's fuzzy breakpoints.
+    - Proofs: an SV read scores very badly end-to-end against the plain reference, so proving it best needs the "reference + known variants" (path) spec.
+- **Long reads (Rowan, 2026-10-07): proved seed-and-chain with an A*PA-style exact fallback.**
+  - **Shared lemma:** A*PA's seed heuristic and our pigeonhole floor (`sbound`, missed seeds ⇒ cost ≥ …) are the same lower bound. A seed with no match in the remaining region costs ≥ 1 error.
+    1. Chain the seeds and score the alignment along the chain exactly. That gives a ceiling.
+    2. The seed floor gives a lower bound. If ceiling = floor, the result is proved optimal in that region, cheaply.
+    3. Otherwise run the exact fallback on the region, pruned by the ceiling.
+  - **Fallback choice:** A*PA2-style band doubling (Ukkonen) is easier to prove than A* with match pruning. Its lemma is "any path leaving the band costs > t", and doubling stops when cost ≤ t. Our banded kernels already have this shape. A*PA's match pruning makes the heuristic inconsistent, and its correctness argument is subtle, so prove plain A* or band doubling first.
+  - **Genome-wide uniqueness gets EASIER with length (Rowan, corrected 2026-10-07).** The floor at every other locus grows with read length, while repeats stay bounded.
+    - **Floor:** cut the read into M disjoint pieces of length k. At a locus Y (non-overlapping with X, window widened by the allowed drift), cost(Y) ≥ r · #(pieces with no match within r − 1 edits in Y's window). This is the same lemma as `sbound` / A*PA's seed heuristic.
+    - **Condition:** the floor rate r/k must exceed the read's error rate ε.
+      - Exact pieces (r = 1, k ≈ 20 for uniqueness) give a 5% floor rate.
+      - Enough for HiFi (< 0.5%) and ONT R10 Q20+ (~1–3%) with a margin that grows with length. Example: 10 kb ONT at 2% has M = 500 and true cost ≈ 200; any other locus needs ≥ ~500 − (repeat pieces hitting it).
+      - Old ONT (~10%) needs r = 2 (pieces matched with ≤ 1 edit, A*PA-style; k = 15 gives 13%), or longer pieces with t-edit certificates.
+    - **Sparser, smaller k-mers (Rowan):** for exact pieces, the floor rate is 1 / spacing, not 1 / k. Gaps between pieces add 0.
+      - Smaller k allows tighter spacing, but each lookup returns more hits: ~3000 for k = 10, ~180 for k = 12, ~11 for k = 14 (3.1 Gb / 4^k).
+      - Sparse pieces cut lookups, but spacing must stay below 1/ε.
+      - ε ≤ 3% (HiFi, ONT R10): 15-mers every ~30 bp, sparse and cheap.
+      - ε ≈ 10%: spacing ≈ 10, so dense 10–12-mers (many hits, count them per locus bin), or r = 2 inexact pieces.
+      - With a sampled (minimizer) index, pick read pieces the index is guaranteed to contain, as the short-read Mz design already does.
+    - **Cheap:** hits per locus come from the lookups already done. Only a locus with ≥ M − ceiling/r hits can compete. Usually that is X alone, so one chain alignment plus counting proves global uniqueness.
+    - **Repeats:** pieces in Alu / L1 copies hit many loci but only cover part of the read. The unique pieces carry the floor. The true limit is segmental duplications longer than the read, the same as for short reads.
+    - **Near-identical big copies (Rowan):** use a search cap, then pick one copy. Report it as a separate tier ("one of k near-identical copies", MAPQ 0, not proved unique). Focus effort on the "interesting" unique parts.
+      - PARs: the GRCh38 analysis set hard-masks the chrY PARs, so PAR reads map uniquely to chrX. Check that this matches the reference we use.
+    - **Length dispatch (Rowan):** `mapAny r := if len r ≥ Lmin then mapLong r else mapShort r`.
+      - The theorem is a case split over the two proved branches, so any Lmin is sound. Short-mate kernels are already dispatched this way by length.
+      - The output records which spec and tier it meets: the short spec is end-to-end; the long spec is semi-global or split.
+      - Long reads go to their own task queue, so they don't stall short-read batches.
+    - **Limit:** a whole chromosome maps only to itself, as Rowan says. The exception is the near-identical copies (segdups, acrocentric arms, PARs), which need explicit handling.
+  - **Spec:** long reads need local, semi-global or split alignment (clipping, SVs), which is a new spec. Known paths (variant seeds) plug into chaining.
+  - **Related:** the "learned variant diagonals" idea above, which uses the same high-coverage reuse. A two-pass design (build the memo on a subsample, freeze it, then map) avoids the order dependence.
+  - **Measure first:**
+    - The exact duplicate-pair rate on 1M NovaSeq pairs.
+    - On ≥ 1M pairs, the fraction of T2/T3 pairs that share an S part with an earlier T1 pair and pass c < F.
+    - Together these bound the gain before building anything.
+
+### From `archive/150-stage (2026-10-06)`
+
+- **Profile**: gdb stack samples on 200k pairs, 1 thread, share of `tierPair` samples, plus the bench's WG_XPROF TIERSPLIT timers.
+  - mason: RT 57% (cap-16 search `mateKP` 47%, of which stage K is about 45%); the rest (`tierRestS`) 20%; `costP` 10%.
+  - NovaSeq: `pairGQC` 42% (`hitsAtQ` 29%, of which `candsB` 12%, raw lookups 9% and kernel checks 8%; partner scans `pscanC`/`goP` 13%); RT 31%; `heurP` 10%; `costP` 5%.
+  - Gated pairs (WG_XBUD=5000): on NovaSeq the guarantee's tail pays most. At 20k pairs, 156 of 2082 gated pairs take 0.62 of 0.81 s.
+- **Staged search (small cap first, then cap 16): not done.** The cap-16 search is already adaptive.
+  - Seeds are looked up rarest first, both strands interleaved, and it stops after sbound(best) + 1 seeds.
+  - Stage K runs only when gapBound(min(best, P)) > 0.
+  - A small-cap stage therefore repeats work the search already skips. This matches RTL (`mapSpecBoth_mono` hints), which was slower.
+  - `tierPairB` prepares each mate once (`prepMate`) and computes each pass-1 cost once (`costP`). The gate, RT (`tierRTS`) and the rest (`tierRestS`) share them.
+  - Before, the bench gate (`gaveUpR`) recomputed both preps and costs, and RT recomputed them again. The gate took about 12% of `tierPair`.
+  - `TierCfg.gate` now receives the costs.
+  - `tierRTS_eq` proves (by `rfl`) that `tierRTS` with RT's own preps and costs is `tierRT`.
+  - `tierPairB_sound` / `tierPair_sound` keep their statements.
+- **Change 2** (`codecs/PairGuarQ.lean`): `hitsGS` runs `candsC` instead of `candsB`.
+  - A diagonal that an earlier array already holds is skipped before its support is counted.
+  - The support is counted only over the current and later arrays, and stops at `need` (`atLeastD`).
+  - `candsC_eq` proves `candsB need (prev.reverse ++ l) prev l k = candsC need prev l k`, so the lists are identical. `hitsGS_mem` goes through `candsC_nil`. All of this uses standard axioms.
+- **Output**: `RTX_*.tsv` and `tiers_*.tsv` (WG_TIEROUT=1) are byte-identical between change 1 alone and changes 1+2 on all three 200k sets.
+  - Against ecd0669, `RTX_*.tsv` is identical.
+  - `tiers_*.tsv` differs only on T1gm / T1gmz rows, where the old row is a prefix of the new one. These are the `gm` columns added by the speed/final-stats merge (67bbb1a); no other row changes.
+- **Speed**: 200k sets, 4 threads, BIG.lock per run. The shared 4-core box was loaded by other jobs outside the lock, so wall times swung 8–17 s within a binary. Mapping CPU s is the steadier measure.
+  - Interleaved runs (median of 3, WG_TIEROUT=1), ecd0669 → changes 1+2:
+    - mason 32.4 → 30.5 (−6%);
+    - NovaSeq 32.5 → 28.7 (−12%);
+    - HG002 HiSeq 34.5 → 30.2 (−12%).
+  - `bench/final_stats.py --no-dump`, median of 3 per binary, ecd0669 → new:
+    - HiSeq 37.2 → 32.6;
+    - NovaSeq 30.7 → 29.3;
+    - mason 33.5 → 32.5.
+  - minibwa/ours mapping-time ratio for the new binary (same run):
+    - HiSeq 3.19× wall / 3.14× CPU;
+    - NovaSeq 1.76× / 1.68×;
+    - mason 1.47× / 1.44×.
+  - The baseline's own run was too contended to compare (minibwa NovaSeq wall 16.9 vs 13.2 s).
+  - **Net**: about 5–12% less CPU. The 2× target is not reached on NovaSeq or mason.
+- **Next levers (measured, not done)**:
+  - the 3rd-array binary searches in `candsC` (a merge or gallop walk);
+  - the partner scans `pscanC` per X hit;
+  - `hitsAtQ` enumerating every X hit before `goP` can stop (the list is only needed when no pair is settled);
+  - stage K in RT on mason.
+
+### From `archive/150-loops`
+
+- 4c49c5f: `advFG_eqL` (WgPacked) walks the chromosomes per seed lookup with `foldUpN` (`@[specialize]`; unspecialized it costs more than `List.range`), `diags_eqI` reads the slices with `Array.foldr` (`flatD_eq`). Ir per 1000 mason pairs 825M → 794M (−3.8%); dumps identical to 6615716 on all three sets; wall time vs 6615716 within noise (two passes of 3: hiseq 7.55 → 7.37 and 7.26 → 7.30, nova 6.85 → 7.03 and 7.09 → 7.21, mason 7.84 → 7.57 and 7.38 → 7.31 s).
+- Remaining profile (mason, 794M Ir): `scanWF` 10% (its `cnt64` ends in a `% 255`; a multiply form needs a bit-vector proof), `scanAWK` 5%, `dec_ref`/`mi_free` 7.5% (mostly freeing the per-chromosome seed slices at the end of `mapChromsGBFGP`, not the partner scan), `lanesAny` 4%.
+
+### From `speed/lookup`
+
+  Above 16 the cost is stage B (banded DP over all shapes, band grows with P) for every read whose best stays above 16; the word kernels do not help there. Next for depth: exact kernels above 16 (gappedPen3 is exact to 17) or a cheaper stage B; not started.
+- ASK ROWAN after whole-genome testing: 125–149 bp mates now have a proved cap of 19, so length dispatch could run them at T=−16 instead of −12 (pure dispatch change, proof already covers it). Not changed yet.
+
+### From `speed/proto-tune`
+
+- Speed target (Rowan): faster than BWA-MEM3 (Fulcrum fork of bwa-mem2; ~48k reads/s/thread with --fast per its own benchmark) and minibwa (~8× bwa-mem, so likely near URMAP). Some modes accept only proper pairs: that removes most of the both-strand cost (mates on opposite strands within the insert range → seed both mates together, score only anchor pairs that can form a proper pair; exact by the proved pre-filter). Prototype in progress on `speed/proto-tune`.
+
+### From `archive/csr-index (old 2026-10-04 snapshot, superseded; kept for the record)`
+
+Speed work in progress (branches, each must prove `= mapSpec` and pass `scripts/check.sh`)
+- `speed/arrays` — array-backed genome, integer-hash index (collisions allowed; only `LookupComplete` needed). New file `codecs/SeedMapperArray.lean`, theorem `mapReadsArray … = reads.map (mapSpec …)`.
+- `speed/bounds` — fewer seeds and windows using affine gap costs (separate bounds for spoiled seeds and for shift/length). New `pool/mapper/MapperWalk2.lean`, `codecs/SeedMapper2.lean`.
+- `speed/dedup-parallel` — score each window once, drop out-of-bounds windows before scoring; `mapReadsPar` with `Task.spawn`, theorem `= reads.map f`.
+See the branch tips' commit messages for what is finished on each.
+1. Finish and merge the three speed branches; re-measure.
+4. Compare with minibwa.
