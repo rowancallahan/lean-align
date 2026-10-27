@@ -62,7 +62,7 @@ theorem revCompLoopU_eq (R : ByteArray) :
 
 /-- `revCompLoop` for the compiled code (`revCompLoop_eq_revCompLoopF`). -/
 def revCompLoopF (R : ByteArray) (i : Nat) (acc : ByteArray) : ByteArray :=
-  if i < 4294967296 then revCompLoopU R i.toUSize acc else revCompLoopS R i acc
+  if i < 1073741824 then revCompLoopU R i.toUSize acc else revCompLoopS R i acc
 where
   /-- The same as `revCompLoop` (its slow path; not rewritten by `csimp`). -/
   revCompLoopS (R : ByteArray) : (i : Nat) → ByteArray → ByteArray
