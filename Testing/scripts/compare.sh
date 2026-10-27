@@ -12,6 +12,7 @@ set -u   # no -e: a tool that fails (e.g. out of memory) is recorded and the res
 cd "$(dirname "$0")/../.."
 root=$PWD; D=$root/Testing/data/downloads; B=$root/.lake/build/bin
 T="python3 $root/Testing/scripts/timed.py"
+export WG_XH=${WG_XH:-0}   # bench with the tier 2 heuristic off, as alignPairs runs (TierHeur.rtxCfg)
 # map timings repeat REPEAT times (default 3); report the median (this box varies ~30% run to run)
 R=${REPEAT:-3}
 TR() { label=$1; shift; i=0; while [ $i -lt $R ]; do $T "$label run$((i+1))" "$@"; i=$((i+1)); done; }
