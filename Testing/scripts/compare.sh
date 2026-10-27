@@ -4,6 +4,7 @@
 #   bench    .lake/build/bin/whole_genome, mode RTX (the same proved tierPair), 1 and 4 tasks
 #   minibwa  default build and -march=native build, 1 and 4 threads
 # Runs one after another, nothing else on the box.   sh Testing/scripts/compare.sh [genome.fa]
+# Last step: the shim on a tiny genome = its FASTQ/SAM I/O cost alone (subtract it to compare mapping).
 # SETS="hiseq250:hg002_200k" limits the read sets (name:file prefix in Testing/data/downloads).
 # Needs: lake build whole_genome; MINIBWA (default build) and MINIBWA_NATIVE set to the two binaries.
 set -u   # no -e: a tool that fails (e.g. out of memory) is recorded and the rest still run
@@ -27,4 +28,11 @@ for s in $sets; do n=${s%%:*}; r1=$D/${s#*:}_R1.fq; r2=$D/${s#*:}_R2.fq
     $T "$n minibwa t$t" sh -c "'$MINIBWA' map -t $t '$O/mb' '$r1' '$r2' > '$O/$n.mb.sam'"
     $T "$n minibwa-native t$t" sh -c "'$MINIBWA_NATIVE' map -t $t '$O/mb' '$r1' '$r2' > /dev/null"
   done
+done
+
+echo "== shim I/O only (FASTQ in, SAM out; a 20 kb random genome, so mapping costs ~nothing)"
+python3 -c "import random; random.seed(1); print('>tiny'); print(''.join(random.choice('ACGT') for _ in range(20000)))" > "$O/tiny.fa"
+$B/lean-align build "$O/tiny.fa" "$O/tiny.idx"
+for s in $sets; do n=${s%%:*}; r1=$D/${s#*:}_R1.fq; r2=$D/${s#*:}_R2.fq
+  $T "$n shim I/O only" $B/lean-align map "$O/tiny.idx" "$r1" "$r2" "$O/$n.tiny.sam" 100 1000
 done
