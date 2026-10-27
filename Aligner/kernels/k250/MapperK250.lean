@@ -222,6 +222,272 @@ def hamW (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (li
   else acc
 termination_by stop - 32 * j
 
+/-! ### `hamW` on machine words (compiled code only)
+
+`hamW_eq_hamWF` (`@[csimp]`): the compiled `hamW` is `hamWF`, a `USize` loop (`hamWU`) with
+the read word fetched by `Array.uget` (`rwAt`), the genome word's byte offset in `USize`
+(`gwordU`) and the count kept as `UInt64` until the end (`cnt64U`).  Statements about
+`hamW` are unchanged. -/
+
+theorem usz_n (n : Nat) (h : n < 2 ^ 32) : n.toUSize.toNat = n := by
+  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
+
+theorem usz_pow : 2 ^ 32 ≤ 2 ^ System.Platform.numBits := USize.le_size
+
+theorem usz_add' (a b : USize) (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
+  rw [USize.toNat_add, Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+
+theorem usz_mul' (a b : USize) (h : a.toNat * b.toNat < 2 ^ 32) : (a * b).toNat = a.toNat * b.toNat := by
+  rw [USize.toNat_mul, Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+
+theorem usz_lit (n : Nat) (h : n < 2 ^ 32) : (OfNat.ofNat n : USize).toNat = n := by
+  show (USize.ofNat n).toNat = n
+  rw [USize.toNat_ofNat', Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+
+theorem usz_shr5 (a : USize) : (a >>> 5).toNat = a.toNat / 32 := by
+  rw [USize.toNat_shiftRight, usz_lit 5 (by decide), Nat.mod_eq_of_lt (by cases System.Platform.numBits_eq <;> simp_all),
+    Nat.shiftRight_eq_div_pow]
+
+theorem usize_le (a : ByteArray) : a.usize.toNat ≤ a.size := by
+  show a.size.toUSize.toNat ≤ a.size
+  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
+
+theorem ausize_le (a : Array UInt64) : a.usize.toNat ≤ a.size := by
+  show a.size.toUSize.toNat ≤ a.size
+  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
+
+/-- `rw[j]!` with a machine-word index (the `else` branch is unreachable at run time). -/
+@[inline] def rwAt (rw : Array UInt64) (j : USize) : UInt64 :=
+  if h : j < rw.usize then rw.uget j (Nat.lt_of_lt_of_le h (ausize_le rw)) else rw[j.toNat]!
+
+theorem rwAt_eq (rw : Array UInt64) (j : USize) : rwAt rw j = rw[j.toNat]! := by
+  unfold rwAt
+  split
+  · rename_i h
+    rw [getElem!_pos rw j.toNat (Nat.lt_of_lt_of_le h (ausize_le rw))]; rfl
+  · rfl
+
+theorem usz_nowrap (b : USize) (h1 : b < b + (8 : Nat).toUSize) :
+    (b + (8 : Nat).toUSize).toNat = b.toNat + 8 := by
+  have hb : b.toNat < 2 ^ System.Platform.numBits := USize.toNat_lt_size b
+  have h1' : b.toNat < (b + (8 : Nat).toUSize).toNat := h1
+  rw [USize.toNat_add, usz_n 8 (by decide)] at h1' ⊢
+  have hN := usz_pow
+  generalize 2 ^ System.Platform.numBits = N at hb h1' hN ⊢
+  by_cases hc : b.toNat + 8 < N
+  · exact Nat.mod_eq_of_lt hc
+  · exfalso
+    rw [Nat.mod_eq_sub_mod (by omega), Nat.mod_eq_of_lt (by omega)] at h1'
+    omega
+
+theorem uget_ok (w : ByteArray) (b : USize) (h1 : b < b + (8 : Nat).toUSize)
+    (h2 : b + (8 : Nat).toUSize ≤ w.usize) (k : Nat) (hk : k < 8) : (b + k.toUSize).toNat < w.size := by
+  have e := usz_nowrap b h1
+  have h2' : (b + (8 : Nat).toUSize).toNat ≤ w.usize.toNat := h2
+  have := usize_le w
+  have hb : b.toNat < 2 ^ System.Platform.numBits := USize.toNat_lt_size b
+  rw [USize.toNat_add, usz_n k (by omega)]
+  have hN := usz_pow
+  have hw : w.usize.toNat < 2 ^ System.Platform.numBits := USize.toNat_lt_size _
+  generalize 2 ^ System.Platform.numBits = N at hb hN hw ⊢
+  rw [Nat.mod_eq_of_lt (by omega)]
+  omega
+
+/-- `gword` on a machine-word index: byte offset in `USize`, one bounds check
+(`gwordU_eq`); the `else` branch is unreachable for genomes below 2^33 letters. -/
+@[inline] def gwordU (w : ByteArray) (u : USize) : UInt64 :=
+  let b := (17 : USize) * (u >>> (1 : USize)) + 1 + 8 * (u &&& (1 : USize))
+  if h : b < b + (8 : Nat).toUSize ∧ b + (8 : Nat).toUSize ≤ w.usize then
+    (w.uget (b + (0 : Nat).toUSize) (uget_ok w b h.1 h.2 0 (by decide))).toUInt64 |||
+    (w.uget (b + (1 : Nat).toUSize) (uget_ok w b h.1 h.2 1 (by decide))).toUInt64 <<< 8 |||
+    (w.uget (b + (2 : Nat).toUSize) (uget_ok w b h.1 h.2 2 (by decide))).toUInt64 <<< 16 |||
+    (w.uget (b + (3 : Nat).toUSize) (uget_ok w b h.1 h.2 3 (by decide))).toUInt64 <<< 24 |||
+    (w.uget (b + (4 : Nat).toUSize) (uget_ok w b h.1 h.2 4 (by decide))).toUInt64 <<< 32 |||
+    (w.uget (b + (5 : Nat).toUSize) (uget_ok w b h.1 h.2 5 (by decide))).toUInt64 <<< 40 |||
+    (w.uget (b + (6 : Nat).toUSize) (uget_ok w b h.1 h.2 6 (by decide))).toUInt64 <<< 48 |||
+    (w.uget (b + (7 : Nat).toUSize) (uget_ok w b h.1 h.2 7 (by decide))).toUInt64 <<< 56
+  else gwordF.gwordS w u.toNat
+
+theorem usz_and1 (u : USize) : (u &&& (1 : USize)).toNat = u.toNat % 2 := by
+  rw [USize.toNat_and, usz_lit 1 (by decide), Nat.and_one_is_mod]
+
+theorem usz_shr1 (u : USize) : (u >>> (1 : USize)).toNat = u.toNat / 2 := by
+  rw [USize.toNat_shiftRight, usz_lit 1 (by decide), Nat.mod_eq_of_lt (by cases System.Platform.numBits_eq <;> simp_all),
+    Nat.shiftRight_eq_div_pow]
+
+/-- The byte offset of word `u` computed in `USize` is the `Nat` one (`u < 2^28 + 2^16`). -/
+theorem gwordU_off (u : USize) (hu : u.toNat < 2 ^ 28 + 2 ^ 16) :
+    ((17 : USize) * (u >>> (1 : USize)) + 1 + 8 * (u &&& (1 : USize))).toNat = 17 * (u.toNat / 2) + 1 + 8 * (u.toNat % 2) := by
+  have h2 : u.toNat % 2 < 2 := Nat.mod_lt _ (by decide)
+  have e1 : ((17 : USize) * (u >>> (1 : USize))).toNat = 17 * (u.toNat / 2) := by
+    rw [usz_mul' _ _ (by rw [usz_lit 17 (by decide), usz_shr1]; omega), usz_lit 17 (by decide), usz_shr1]
+  have e2 : ((8 : USize) * (u &&& (1 : USize))).toNat = 8 * (u.toNat % 2) := by
+    rw [usz_mul' _ _ (by rw [usz_lit 8 (by decide), usz_and1]; omega), usz_lit 8 (by decide), usz_and1]
+  have e3 : ((17 : USize) * (u >>> (1 : USize)) + 1).toNat = 17 * (u.toNat / 2) + 1 := by
+    rw [usz_add' _ _ (by rw [e1, usz_lit 1 (by decide)]; omega), e1, usz_lit 1 (by decide)]
+  rw [usz_add' _ _ (by rw [e3, e2]; omega), e3, e2]
+
+theorem gwordU_eq (w : ByteArray) (u : USize) (hu : u.toNat < 2 ^ 28 + 2 ^ 16) :
+    gwordU w u = gword w u.toNat := by
+  unfold gwordU
+  simp only []
+  split
+  · rename_i h
+    have e : ∀ k, k < 8 → (((17 : USize) * (u >>> (1 : USize)) + 1 + 8 * (u &&& (1 : USize))) + k.toUSize).toNat =
+        17 * (u.toNat / 2) + 1 + 8 * (u.toNat % 2) + k := fun k hk => by
+      have e8 := usz_nowrap _ h.1
+      have hb := gwordU_off u hu
+      have hN := usz_pow
+      rw [USize.toNat_add, usz_n k (by omega), hb, Nat.mod_eq_of_lt (by omega)]
+    rw [uget_get!, uget_get!, uget_get!, uget_get!, uget_get!, uget_get!, uget_get!, uget_get!,
+      e 0 (by omega), e 1 (by omega), e 2 (by omega), e 3 (by omega), e 4 (by omega), e 5 (by omega),
+      e 6 (by omega), e 7 (by omega)]
+    rfl
+  · rfl
+
+/-- `lowF` with the field count in `USize`. -/
+@[inline] def lowFU (x : UInt64) (c : USize) : UInt64 :=
+  if c < 32 then x &&& ((1 <<< (2 * c).toUInt64) - 1) else x
+
+theorem lowFU_eq (x : UInt64) (c : USize) (hc : c.toNat < 2 ^ 20) : lowFU x c = lowF x c.toNat := by
+  unfold lowFU lowF
+  have e : (c < 32) = (c.toNat < 32) := by
+    rw [show (c < 32) = (c.toNat < (32 : USize).toNat) from rfl, usz_lit 32 (by decide)]
+  have e2 : (2 * c).toUInt64 = (2 * c.toNat).toUInt64 := by
+    apply UInt64.toNat_inj.mp
+    rw [USize.toNat_toUInt64, usz_mul' _ _ (by rw [usz_lit 2 (by decide)]; omega), usz_lit 2 (by decide),
+      Nat.toUInt64_eq, UInt64.toNat_ofNat', Nat.mod_eq_of_lt (by omega)]
+  simp only [e, e2]
+
+/-- `comb` with the test `s = 0` done once (`z`). -/
+@[inline] def combU (cur nxt : UInt64) (z : Bool) (sh sh' : UInt64) : UInt64 :=
+  if z then cur else (cur >>> sh) ||| (nxt <<< sh')
+
+theorem combU_eq (cur nxt : UInt64) (s : Nat) (sh sh' : UInt64) :
+    combU cur nxt (s == 0) sh sh' = comb cur nxt s sh sh' := by
+  unfold combU comb
+  by_cases h : s = 0 <;> simp [h]
+
+/-- `cnt64` before the final `toNat`. -/
+@[inline] def cnt64U (x : UInt64) : UInt64 :=
+  let t := (x ||| x >>> 1) &&& (0x5555555555555555 : UInt64)
+  let a := (t &&& (0x3333333333333333 : UInt64)) + (t >>> 2 &&& (0x3333333333333333 : UInt64))
+  let b := (a &&& (0x0f0f0f0f0f0f0f0f : UInt64)) + (a >>> 4 &&& (0x0f0f0f0f0f0f0f0f : UInt64))
+  b % 255
+
+theorem cnt64U_lt (x : UInt64) : (cnt64U x).toNat < 255 := by
+  unfold cnt64U; simp only []; rw [UInt64.toNat_mod]; exact Nat.mod_lt _ (by decide)
+
+theorem cnt64U_eq (x : UInt64) : (cnt64U x).toUSize.toNat = Packed.cnt64 x := by
+  have h := cnt64U_lt x
+  rw [UInt64.toNat_toUSize, Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+  rfl
+
+/-- `hamW` on machine words: `x = 32 j` letters, `acc`, `lim`, `stop`, `u0` in `USize`
+(`hamWU_eq`; `stop < 2^20` keeps `x + 32` from wrapping). -/
+def hamWU (rw : Array UInt64) (gw : ByteArray) (u0 : USize) (z : Bool) (sh sh' : UInt64) (lim stop : USize)
+    (hs : stop.toNat < 2 ^ 20) (x acc : USize) (cur : UInt64) : USize :=
+  if h : x < stop then
+    let j := x >>> (5 : USize)
+    let nxt := gwordU gw (u0 + j + 1)
+    let acc := acc + (cnt64U (lowFU (fold (rwAt rw j ^^^ combU cur nxt z sh sh')) (stop - x))).toUSize
+    if lim < acc then lim + 1 else hamWU rw gw u0 z sh sh' lim stop hs (x + 32) acc nxt
+  else acc
+termination_by stop.toNat - x.toNat
+decreasing_by
+  have h' : x.toNat < stop.toNat := h
+  rw [usz_add' _ _ (by rw [usz_lit 32 (by decide)]; omega), usz_lit 32 (by decide)]
+  omega
+
+theorem hamWU_eq (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lim stop : Nat)
+    (u0U limU stopU : USize) (hu : u0U.toNat = u0) (hl : limU.toNat = lim) (hsU : stopU.toNat = stop)
+    (hu' : u0 < 2 ^ 28) (hl' : lim < 2 ^ 20) (hs : stopU.toNat < 2 ^ 20) :
+    ∀ n (x accU : USize) (j acc : Nat) (cur : UInt64), stop - 32 * j = n → x.toNat = 32 * j →
+      accU.toNat = acc → acc < 2 ^ 21 →
+      (hamWU rw gw u0U (s == 0) sh sh' limU stopU hs x accU cur).toNat = hamW rw gw u0 s sh sh' lim stop j acc cur := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+  intro x accU j acc cur hn hx ha hacc
+  have hN := usz_pow
+  rw [hamWU, hamW]
+  by_cases hc : 32 * j < stop
+  · have hc' : x < stopU := by show x.toNat < stopU.toNat; omega
+    rw [dif_pos hc', if_pos hc]
+    simp only []
+    have ej : (x >>> (5 : USize)).toNat = j := by rw [usz_shr5, hx]; omega
+    have eu : (u0U + x >>> (5 : USize) + 1).toNat = u0 + j + 1 := by
+      rw [usz_add' _ _ ?_, usz_add' _ _ ?_, ej, hu, usz_lit 1 (by decide)]
+      · rw [ej, hu]; omega
+      · rw [usz_add' _ _ (by rw [ej, hu]; omega), ej, hu, usz_lit 1 (by decide)]; omega
+    have eg : gwordU gw (u0U + x >>> (5 : USize) + 1) = gword gw (u0 + j + 1) := by
+      rw [gwordU_eq _ _ (by rw [eu]; omega), eu]
+    have esx : (stopU - x).toNat = stop - 32 * j := by
+      rw [USize.toNat_sub_of_le _ _ (by show x.toNat ≤ stopU.toNat; omega), hsU, hx]
+    rw [eg, rwAt_eq, ej, combU_eq, lowFU_eq _ _ (by rw [esx]; omega), esx]
+    generalize hk : Packed.cnt64 (lowF (fold (rw[j]! ^^^ comb cur (gword gw (u0 + j + 1)) s sh sh')) (stop - 32 * j)) = c
+    have hk' := cnt64U_eq (lowF (fold (rw[j]! ^^^ comb cur (gword gw (u0 + j + 1)) s sh sh')) (stop - 32 * j))
+    have hc255 : c < 255 := by
+      rw [← hk]; exact cnt64U_lt _
+    have ea : (accU + (cnt64U (lowF (fold (rw[j]! ^^^ comb cur (gword gw (u0 + j + 1)) s sh sh')) (stop - 32 * j))).toUSize).toNat = acc + c := by
+      rw [usz_add' _ _ (by rw [ha, hk', hk]; omega), ha, hk', hk]
+    by_cases hlc : lim < acc + c
+    · have : limU < accU + (cnt64U (lowF (fold (rw[j]! ^^^ comb cur (gword gw (u0 + j + 1)) s sh sh')) (stop - 32 * j))).toUSize := by
+        rw [USize.lt_iff_toNat_lt, ea, hl]; exact hlc
+      rw [if_pos this, if_pos hlc, usz_add' _ _ (by rw [hl, usz_lit 1 (by decide)]; omega), hl, usz_lit 1 (by decide)]
+    · have : ¬ limU < accU + (cnt64U (lowF (fold (rw[j]! ^^^ comb cur (gword gw (u0 + j + 1)) s sh sh')) (stop - 32 * j))).toUSize := by
+        intro h; apply hlc; rw [USize.lt_iff_toNat_lt, ea, hl] at h; exact h
+      rw [if_neg this, if_neg hlc]
+      exact ih (stop - 32 * (j + 1)) (by omega) _ _ (j + 1) (acc + c) _ rfl
+        (by rw [usz_add' _ _ (by rw [usz_lit 32 (by decide)]; omega), usz_lit 32 (by decide), hx]; omega) ea (by omega)
+  · have hc' : ¬ x < stopU := by intro h; have h' : x.toNat < stopU.toNat := h; omega
+    rw [dif_neg hc', if_neg hc, ha]
+
+/-- `hamW` for the compiled code (`hamW_eq_hamWF`): the `USize` loop `hamWU` when the
+genome word index, `lim`, `stop`, `j` and `acc` are small (always, for reads ≤ 256 letters
+on genomes below 2^33 letters), else the `Nat` loop. -/
+def hamWF (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lim stop : Nat)
+    (j acc : Nat) (cur : UInt64) : Nat :=
+  if h : u0 < 268435456 ∧ lim < 1048576 ∧ stop < 1048576 ∧ j < 16384 ∧ acc < 1048576 then
+    (hamWU rw gw u0.toUSize (s == 0) sh sh' lim.toUSize stop.toUSize
+      (by rw [usz_n _ (by omega)]; omega) (32 * j).toUSize acc.toUSize cur).toNat
+  else hamWS rw gw u0 s sh sh' lim stop j acc cur
+where
+  /-- The same as `hamW` (its slow path; not rewritten by `csimp`). -/
+  hamWS (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lim stop : Nat)
+      (j acc : Nat) (cur : UInt64) : Nat :=
+    if 32 * j < stop then
+      let nxt := gword gw (u0 + j + 1)
+      let acc := acc + Packed.cnt64 (lowF (fold (rw[j]! ^^^ comb cur nxt s sh sh')) (stop - 32 * j))
+      if lim < acc then lim + 1 else hamWS rw gw u0 s sh sh' lim stop (j + 1) acc nxt
+    else acc
+  termination_by stop - 32 * j
+
+theorem hamWS_eq (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lim stop : Nat) :
+    ∀ n j acc cur, stop - 32 * j = n →
+      hamWF.hamWS rw gw u0 s sh sh' lim stop j acc cur = hamW rw gw u0 s sh sh' lim stop j acc cur := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+  intro j acc cur hn
+  rw [hamWF.hamWS, hamW]
+  split
+  · simp only []
+    split
+    · rfl
+    · exact ih _ (by omega) _ _ _ rfl
+  · rfl
+
+@[csimp] theorem hamW_eq_hamWF : @hamW = @hamWF := by
+  funext rw gw u0 s sh sh' lim stop j acc cur
+  unfold hamWF
+  split
+  · rename_i h
+    exact (hamWU_eq rw gw u0 s sh sh' lim stop _ _ _ (usz_n _ (by omega)) (usz_n _ (by omega))
+      (usz_n _ (by omega)) (by omega) (by omega) _ _ _ _ j acc cur rfl (usz_n _ (by omega))
+      (usz_n _ (by omega)) (by omega)).symm
+  · exact (hamWS_eq rw gw u0 s sh sh' lim stop _ j acc cur rfl).symm
+
 /-- Position of the `k`-th mismatch (`k ≥ 1`) in `R[32j, stop)`, or `stop`. -/
 def fwdW (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (stop : Nat)
     (j k : Nat) (cur : UInt64) : Nat :=

@@ -4,9 +4,12 @@
 # env: AB_TASKS (1), and any WG_* knob (passed through, e.g. WG_PG=4 WG_XBUD=5000).
 # Checks that A and B write byte-identical RTX and tier dumps; prints wall / CPU medians and B/A.
 set -eu
+# AB_PROD=1: the router settings of the spec's alignPairs (Proofs/Aligner.lean tierCfg): pair guarantee at 4, no gate,
+# no ceilings, no tier-2 heuristic, no exact pair search. Default (unset): the bench's RTX mode (heurP, gate 60000, ...).
+if [ "${AB_PROD:-0}" = 1 ]; then export WG_PG=4 WG_XBUD=0 WG_XCEIL=0 WG_XH=0 WG_XEBUD=0; fi
 A=$1; B=$2; N=${3:-5}; D=${4:-out/bench}; P=${5:-20000}
 T=${AB_TASKS:-1}
-O=$D/ab_pair; mkdir -p "$O/A" "$O/B"
+O=$D/ab_pair${AB_PROD:+_prod}; mkdir -p "$O/A" "$O/B"
 L=$((2 * P))
 head -n $L "$D/g/p150_1.reads.txt" > "$O/r1.txt"; head -n $L "$D/g/p150_2.reads.txt" > "$O/r2.txt"
 : > "$O/times.tsv"
