@@ -141,4 +141,23 @@ def GenomeFile.decode (byteGenome : GenomeFile) : Genome :=
 def decodePair (bytes : Option ByteArray × Option ByteArray) : Option Read × Option Read :=
   (bytes.1.map decodeRead, bytes.2.map decodeRead)
 
+-- the other direction, for stating the end-to-end theorem: letters to bytes, one byte per letter
+def nucleotides : List Char := ['A', 'C', 'G', 'T', 'N']
+
+def ReadIsDNA (read : Read) : Prop := ∀ letter ∈ read, letter ∈ nucleotides
+
+def GenomeIsDNA (genome : Genome) : Prop := ∀ chromosome ∈ genome, ReadIsDNA chromosome.seq
+
+def MatesAreDNA (mates : Option Read × Option Read) : Prop :=
+  (∀ read ∈ mates.1, ReadIsDNA read) ∧ (∀ read ∈ mates.2, ReadIsDNA read)
+
+def encodeRead (read : Read) : ByteArray :=
+  ⟨(read.map fun letter => letter.toNat.toUInt8).toArray⟩
+
+def Genome.encode (genome : Genome) : GenomeFile :=
+  (genome.map fun chromosome => (chromosome.name, encodeRead chromosome.seq)).toArray
+
+def encodePair (mates : Option Read × Option Read) : Option ByteArray × Option ByteArray :=
+  (mates.1.map encodeRead, mates.2.map encodeRead)
+
 end Spec

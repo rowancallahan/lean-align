@@ -140,6 +140,25 @@ def GenomeFile.decode (byteGenome : GenomeFile) : Genome :=
 def decodePair (bytes : Option ByteArray × Option ByteArray) : Option Read × Option Read :=
   (bytes.1.map decodeRead, bytes.2.map decodeRead)
 
+-- the other direction, for stating the end-to-end theorem: letters to bytes, one byte per letter
+def nucleotides : List Char := ['A', 'C', 'G', 'T', 'N']
+
+def ReadIsDNA (read : Read) : Prop := ∀ letter ∈ read, letter ∈ nucleotides
+
+def GenomeIsDNA (genome : Genome) : Prop := ∀ chromosome ∈ genome, ReadIsDNA chromosome.seq
+
+def MatesAreDNA (mates : Option Read × Option Read) : Prop :=
+  (∀ read ∈ mates.1, ReadIsDNA read) ∧ (∀ read ∈ mates.2, ReadIsDNA read)
+
+def encodeRead (read : Read) : ByteArray :=
+  ⟨(read.map fun letter => letter.toNat.toUInt8).toArray⟩
+
+def Genome.encode (genome : Genome) : GenomeFile :=
+  (genome.map fun chromosome => (chromosome.name, encodeRead chromosome.seq)).toArray
+
+def encodePair (mates : Option Read × Option Read) : Option ByteArray × Option ByteArray :=
+  (mates.1.map encodeRead, mates.2.map encodeRead)
+
 /-! ## The index and the aligner: the two definitions the implementation fills in -/
 
 -- the index holds everything the aligner needs, the genome included
@@ -162,6 +181,21 @@ theorem alignPairs_correct (insertSettings : InsertSettings)
     (alignPairs insertSettings index bytePairs).length = trimmedPairs.length ∧
     ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
       (alignPairs insertSettings index bytePairs)[i]? = some result →
+      trimmedPairs[i]? = some mates →
+      PairResult.Correct insertSettings genome mates.1 mates.2 result := by
+  sorry
+
+-- The same, end to end from the pure objects: write the genome and the trimmed mates as bytes,
+-- build the index from the genome's bytes, align the pairs' bytes. Only assumption: every letter
+-- is A, C, G, T or N.
+theorem alignPairs_end_to_end (insertSettings : InsertSettings)
+    (genome : Genome) (trimmedPairs : List (Option Read × Option Read))
+    (hGenome : GenomeIsDNA genome) (hPairs : ∀ mates ∈ trimmedPairs, MatesAreDNA mates) :
+    (alignPairs insertSettings (buildIndex genome.encode) (trimmedPairs.map encodePair)).length =
+      trimmedPairs.length ∧
+    ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
+      (alignPairs insertSettings (buildIndex genome.encode) (trimmedPairs.map encodePair))[i]? =
+        some result →
       trimmedPairs[i]? = some mates →
       PairResult.Correct insertSettings genome mates.1 mates.2 result := by
   sorry
