@@ -143,7 +143,7 @@ def save (pre : String) (ix : Mz.MzIdx) (pb : Nat) : IO Unit := do
   wrU64s (pre ++ ".runs") ix.runs
 
 def load (pre : String) : IO Mz.MzIdx := do
-  let m := ((← IO.FS.readFile (pre ++ ".meta")).trim.splitOn " ").map String.toNat!
+  let m := ((← IO.FS.readFile (pre ++ ".meta")).trimAscii.toString.splitOn " ").map String.toNat!
   let [k, B, c, sw, t, pb, nr] := m | throw (IO.userError "bad meta")
   let runs := rdU64s (← readBin (pre ++ ".runs"))
   assert! runs.size == nr
@@ -3145,7 +3145,7 @@ def main (args : List String) : IO UInt32 := do
         say s!"hash of the checked index written to {hfile}"
       else
         let stored ← if ← System.FilePath.pathExists hfile then IO.FS.readFile hfile else pure ""
-        if stored.trim != hstr then
+        if stored.trimAscii.toString != hstr then
           throw (IO.userError s!"index hash differs from {hfile} (or none stored): run once with WG_CHECK=1")
         say s!"index hash = {hfile} (index checked by check3P when the hash was written)"
         if (← IO.getEnv "WG_PKSAVE").isSome then
