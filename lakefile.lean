@@ -10,7 +10,10 @@ lean-align: proved pairwise alignment, compiled to one command-line tool.
   Spec/                THE specification: Alignment, Mapping, Aligner, Shim (frozen, Spec/FROZEN.sha256);
                        Sam, Fasta, Fastq are trusted plumbing for the shim (not guaranteed)
   old_spec/            the earlier frozen specs the current proofs are built on, and theorems about Cli and Run
-  codecs/<kernel>/    alignment codecs, each proved against old_spec/AlignmentSpec.lean
+  kernels/<group>/     alignment kernels, each proved against old_spec/AlignmentSpec.lean
+  index/<group>/       index kernels (minimizer, packed genome, CSR, ...)
+  mapper/              the main mapping code (tier router, pair search); mapper/lemmas/ supporting lemmas
+  Proofs/              Spec/ with the proofs filled in (comparator solution)
   trimmer/             read-window trimmer (frozen contract + proved implementations)
   checks/, scripts/    executable cross-checks and the full re-check script
 
@@ -27,63 +30,114 @@ lean_lib Spec where                  -- THE specification (statements only; buil
   globs := #[.submodules `Spec]
 
 @[default_target]
+lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
+  globs := #[.submodules `Proofs]
+
+@[default_target]
 lean_lib AlignmentSpecLib where       -- earlier specs, still what the codecs are proved against
   srcDir := "old_spec"
   roots := #[`AlignmentSpec, `AlignmentLexicographic, `MapSpec, `PairSpec, `PairSpecTier, `PairSpecU]
 
--- ──────────────────────────── codecs ────────────────────────────
+-- ──────────────────────────── alignment kernels ────────────────────────────
 
 @[default_target]
-lean_lib PoolGotoh where            -- gotohFusedAlign (full equality with the spec)
-  srcDir := "pool/gotoh"
-  roots := #[`AlignmentAlgorithms]
-
-@[default_target]
-lean_lib PoolBand where             -- bandDoublingAlign (full equality with the spec)
-  srcDir := "pool/band"
+lean_lib KernelsBand where   -- bandDoublingAlign (full equality with the spec)
+  srcDir := "kernels/band"
   roots := #[`AlignmentWavefront]
 
 @[default_target]
-lean_lib PoolWfa where              -- wfaAlign: the proven wavefront (score + sound + total)
-  srcDir := "pool/wfa"
+lean_lib KernelsGapless where   -- gapless and one-indel alignments
+  srcDir := "kernels/gapless"
+  roots := #[`MapperGapless, `MapperOneIndel]
+
+@[default_target]
+lean_lib KernelsGotoh where   -- gotohFusedAlign (full equality with the spec)
+  srcDir := "kernels/gotoh"
+  roots := #[`AlignmentAlgorithms]
+
+@[default_target]
+lean_lib KernelsK250 where   -- word kernels on candidate windows (MapperK250*, FastGenK250)
+  srcDir := "kernels/k250"
+  roots := #[`FastGenK250, `MapperK250, `MapperK250Bits, `MapperK250Chunk, `MapperK250Loops, `MapperK250Seed, `MapperK250Sel, `MapperK250Spec, `MapperK250Words]
+
+@[default_target]
+lean_lib KernelsMapperBand where   -- banded kernel for the mapper (MapperBand*, BandScore)
+  srcDir := "kernels/mapper_band"
+  roots := #[`BandScore, `MapperBandBytes, `MapperBandFast, `MapperBandKernel, `MapperBandProof, `MapperBandPrune, `MapperBandSpec]
+
+@[default_target]
+lean_lib KernelsWfa where   -- wfaAlign: the proven wavefront (score + sound + total)
+  srcDir := "kernels/wfa"
   roots := #[`AlignmentExchange, `AlignmentWfa]
 
 @[default_target]
-lean_lib PoolWfaFast where          -- wfaAlignI/F/L: executed paths proven = wfaAlign
-  srcDir := "pool/wfa_fast"
-  roots := #[`AlignmentWfaFused, `AlignmentWfaLazy, `AlignmentWfaLazyLevel, `AlignmentWfaFast]
+lean_lib KernelsWfaFast where   -- wfaAlignI/F/L: executed paths proven = wfaAlign
+  srcDir := "kernels/wfa_fast"
+  roots := #[`AlignmentWfaFast, `AlignmentWfaFused, `AlignmentWfaLazy, `AlignmentWfaLazyLevel]
 
 @[default_target]
-lean_lib PoolWfaOffsets where       -- wfaAlignC / wfaAlignCA: offsets-only fronts + certified traceback
-  srcDir := "pool/wfa_offsets"
-  roots := #[`AlignmentWfaOff, `AlignmentWfaOffLoop, `AlignmentWfaOffR, `AlignmentWfaView,
-             `AlignmentWfaPoint, `AlignmentWfaDirect, `AlignmentWfaLcp, `AlignmentWfaCertified,
-             `AlignmentWfaArray]
+lean_lib KernelsWfaOffsets where   -- wfaAlignC / wfaAlignCA: offsets-only fronts + certified traceback
+  srcDir := "kernels/wfa_offsets"
+  roots := #[`AlignmentWfaArray, `AlignmentWfaCertified, `AlignmentWfaDirect, `AlignmentWfaLcp, `AlignmentWfaOff, `AlignmentWfaOffLoop, `AlignmentWfaOffR, `AlignmentWfaPoint, `AlignmentWfaView]
 
 @[default_target]
-lean_lib PoolWfaSmallErrors where   -- wfaAlignH / wfaAlignHC: exact ≤2-substitution shortcut + compact output
-  srcDir := "pool/wfa_small_errors"
-  roots := #[`AlignmentSmallErrors, `AlignmentCompact]
-
-@[default_target]
-lean_lib PoolWfaRuns where          -- wfaAlignK: direct run-length traceback with scalar checker
-  srcDir := "pool/wfa_runs"
+lean_lib KernelsWfaRuns where   -- wfaAlignK: direct run-length traceback with scalar checker
+  srcDir := "kernels/wfa_runs"
   roots := #[`AlignmentCigarCheck, `AlignmentCigarCheckFast, `AlignmentTraceRuns, `AlignmentWfaRuns, `AlignmentWfaRunsFast, `AlignmentWfaRunsVsWfa]
 
 @[default_target]
-lean_lib PoolWfaU32 where           -- proved UInt32 kernels U/U2/U3 (U3 is the one the tool runs)
-  srcDir := "pool/wfa_u32"
-  roots := #[`ProbeU32, `AlignmentWfaU32Level, `AlignmentWfaU32Step, `AlignmentWfaU32Loop, `AlignmentWfaU32, `AlignmentWfaU32Fill, `AlignmentWfaU32Run2, `AlignmentWfaU32Ext, `AlignmentWfaU32FillSpec, `AlignmentWfaU32Single, `AlignmentWfaU32Level2, `AlignmentWfaU32Lattice, `AlignmentWfaU32Kernel2, `AlignmentWfaU32FillS, `AlignmentWfaU32FillSSpec, `AlignmentWfaU32LevelS, `AlignmentWfaU32Fill3, `AlignmentWfaU32Run3, `AlignmentWfaU32FillSpec3, `AlignmentWfaU32Loop3, `AlignmentWfaU32Level3, `AlignmentWfaU32Kernel3]
+lean_lib KernelsWfaSmallErrors where   -- wfaAlignH / wfaAlignHC: exact ≤2-substitution shortcut + compact output
+  srcDir := "kernels/wfa_small_errors"
+  roots := #[`AlignmentCompact, `AlignmentSmallErrors]
 
 @[default_target]
-lean_lib PoolMapper where             -- lemmas for the seed-and-index mapper
-  srcDir := "pool/mapper"
-  roots := #[`MapperGRead, `MapperDefs, `MapperWalk, `MapperLists, `MapperWalk2, `MapperEvents, `MapperBandSpec, `MapperBandKernel, `MapperBandProof, `MapperBandFast, `MapperBandPrune, `MapperBandBytes, `MapperBytes, `MapperGapless, `MapperOneIndel, `MapperSeedsAmong, `MapperFastAlgo, `MapperFastScore, `MapperFastBytes, `MapperFastKernel, `MapperFastIndex, `MapperFastMerge, `MapperFastBest, `MapperFastSupport, `MapperFastLoop, `MapperFastLazy, `MapperGenBest, `MapperGenScore, `MapperMzWords, `MapperSketch, `MapperPacked, `MapperGenLook, `MapperInterleave, `MapperGenSearch, `MapperGen16, `MapperGenShare, `MapperPGen, `MapperK250, `MapperK250Bits, `MapperK250Sel, `MapperK250Spec, `MapperK250Chunk, `MapperK250Loops, `MapperK250Words, `MapperK250Seed]
+lean_lib KernelsWfaU32 where   -- proved UInt32 kernels U/U2/U3 (U3 is the one the tool runs)
+  srcDir := "kernels/wfa_u32"
+  roots := #[`AlignmentWfaU32, `AlignmentWfaU32Ext, `AlignmentWfaU32Fill, `AlignmentWfaU32Fill3, `AlignmentWfaU32FillS, `AlignmentWfaU32FillSSpec, `AlignmentWfaU32FillSpec, `AlignmentWfaU32FillSpec3, `AlignmentWfaU32Kernel2, `AlignmentWfaU32Kernel3, `AlignmentWfaU32Lattice, `AlignmentWfaU32Level, `AlignmentWfaU32Level2, `AlignmentWfaU32Level3, `AlignmentWfaU32LevelS, `AlignmentWfaU32Loop, `AlignmentWfaU32Loop3, `AlignmentWfaU32Run2, `AlignmentWfaU32Run3, `AlignmentWfaU32Single, `AlignmentWfaU32Step, `ProbeU32, `WfaU3]
+
+-- ──────────────────────────── index kernels ────────────────────────────
 
 @[default_target]
-lean_lib Codecs where                 -- one file per codec: algorithm + theorem against the spec
-  srcDir := "codecs"
-  roots := #[`WfaU3, `SeedMapper, `SeedMapper2, `BandScore, `CsrIndex, `ParMap, `ParStream, `LowErrorMapper, `EarlyStopMapper, `PreFilterMapper, `RepeatMask, `ParGroup, `PairMapper, `PairJoint, `FastMapper, `FastMapperPar, `FastMapperMz, `FastGenCover, `FastGenCoverL, `FastGenCoverE, `MzCheckFast, `MzIndex, `SketchMapper, `FastGenAlgo, `FastGenProof, `FastGen, `PairInterleave, `MzCheckPar, `FastGenMz, `PairConcat, `FastGenPair, `FastGenShort, `FastGenBatch, `FastGenTier, `FastGenTierK, `MzPacked, `PairPacked, `MzWord, `PairConcatPacked, `FastGenPairPacked, `FastGenTierPacked, `FastGenK250, `PairDispatch, `ReadTrim, `PairUnique, `PairSched, `MzView, `FastGenWordFilt, `WgPacked, `PairRegion, `PairReason, `PairJoin, `PairRouter, `PairBnB, `PairBox, `PairRegionU, `PairHits, `PairHitsKP, `PairLadder, `FastGenSupp, `FastGenBlock, `PairLadderF, `PairHybrid, `PairNear, `MateFloor, `PairGuarantee, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairExact, `TierRouter, `TierOpt]
+lean_lib IndexCsr where   -- CSR index
+  srcDir := "index/csr"
+  roots := #[`CsrIndex]
+
+@[default_target]
+lean_lib IndexKmer where   -- k-mer index
+  srcDir := "index/kmer"
+  roots := #[`MapperFastIndex]
+
+@[default_target]
+lean_lib IndexMinimizer where   -- minimizer index (MzIndex) and its checkers
+  srcDir := "index/minimizer"
+  roots := #[`MapperMzWords, `MzCheckFast, `MzCheckPar, `MzIndex, `MzView, `MzWord]
+
+@[default_target]
+lean_lib IndexPackedGenome where   -- 2-bit packed genome
+  srcDir := "index/packed_genome"
+  roots := #[`MapperPGen, `MapperPacked, `MzPacked, `WgPacked]
+
+@[default_target]
+lean_lib IndexRepeatMask where   -- repeat masking
+  srcDir := "index/repeat_mask"
+  roots := #[`RepeatMask]
+
+@[default_target]
+lean_lib IndexSketch where   -- seed sketches
+  srcDir := "index/sketch"
+  roots := #[`MapperSketch]
+
+-- ──────────────────────────── mapper (main code) ────────────────────────────
+
+@[default_target]
+lean_lib Mapper where   -- tier router, pair search, batching: the code alignPairs runs
+  srcDir := "mapper"
+  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TierOpt, `TierRouter]
+
+@[default_target]
+lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
+  srcDir := "mapper/lemmas"
+  roots := #[`MapperBytes, `MapperDefs, `MapperEvents, `MapperFastAlgo, `MapperFastBest, `MapperFastBytes, `MapperFastKernel, `MapperFastLazy, `MapperFastLoop, `MapperFastMerge, `MapperFastScore, `MapperFastSupport, `MapperGRead, `MapperGen16, `MapperGenBest, `MapperGenLook, `MapperGenScore, `MapperGenSearch, `MapperGenShare, `MapperInterleave, `MapperLists, `MapperSeedsAmong, `MapperWalk, `MapperWalk2]
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
