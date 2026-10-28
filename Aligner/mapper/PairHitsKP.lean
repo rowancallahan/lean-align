@@ -30,6 +30,23 @@ def hitsCK (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Lis
         else none
     else []
 
+/-- `hitsCK` with the shapes from the table, not rebuilt per diagonal (`hitsCK_eqT`). -/
+def hitsCKT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
+    (us : List Nat) (Ls : Nat) : List (Window × Nat) :=
+  (diags acc).flatMap fun D =>
+    if kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
+      (shapesT lim).filterMap fun sh =>
+        if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
+          let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
+          if k ≤ lim then some (⟨c, (dst R.size D sh).toNat, (wlen R.size sh).toNat⟩, k) else none
+        else none
+    else []
+
+/-- Compiled code runs `hitsCKT`. -/
+@[csimp] theorem hitsCK_eqT : @hitsCK = @hitsCKT := by
+  funext K R pgs2 c lim acc us Ls
+  simp only [hitsCK, hitsCKT, shapesT_eq]
+
 /-- `hitsS` on packed chromosomes (the read packed once per strand). -/
 def hitsSK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
     (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) : List (Window × Nat) :=
