@@ -26,7 +26,8 @@ cores() { echo "0-$(($1 - 1))"; }
 
 if [ -n "${PREBUILT:-}" ]; then   # indexes from a release (Testing/data/fetch_release.sh): no index builds
   echo "== index (prebuilt from $PREBUILT)"
-  for f in "$PREBUILT"/shim.idx "$PREBUILT"/shim.idx.chromosomes "$PREBUILT"/mb.*; do ln -sf "$f" "$O/$(basename "$f")"; done
+  P=$(cd "$PREBUILT" && pwd)   # absolute: the links live in $O
+  for f in "$P"/shim.idx "$P"/shim.idx.chromosomes "$P"/mb.*; do ln -sf "$f" "$O/$(basename "$f")"; done
   BENCH=0
 else
   echo "== index"
