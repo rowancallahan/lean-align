@@ -509,14 +509,14 @@ theorem chromKBFG_eqK [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P 
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
   let K1 := packRP R
   let K2 := packRP Rr
-  let b := (List.range n).foldl (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
-  (List.range n).foldl (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
+  let b := foldUpN (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) n 0 x.2.2
+  foldUpN (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) n 0 b
 
 /-- Compiled code runs `mapChromsGBFGK`. -/
 @[csimp] theorem mapChromsGBFG_eqK : @mapChromsGBFG = @mapChromsGBFGK := by
   funext Gt i0 i1 L Pp i2 i3 i4 kf1 kf2 P ix G offs gbs R Rr ps pr
   unfold mapChromsGBFG mapChromsGBFGK
-  simp only [chromKBFG_eqK]
+  simp only [chromKBFG_eqK, foldUpN_eq, List.range_eq_range']
 
 /-- `mapChromsGBK` with the chromosomes `gbs` of any representation. -/
 @[specialize] def mapChromsGBKG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
