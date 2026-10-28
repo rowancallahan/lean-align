@@ -458,6 +458,64 @@ theorem sliceG_eqW (a : Array Nat) (base o len : Nat) : sliceG a base o len = sl
       ilGFG kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
     else (s1, s2, b)
 
+/-- `ilGFG` with the strands' lookup counts `k1 = s1.J.length`, `k2 = s2.J.length` carried
+(`ilGFG_eqN`). -/
+@[specialize] def ilGFGN {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    Nat → GS → GS → Nat → Nat → Best → GS × GS × Best
+  | 0, s1, s2, _, _, b => (s1, s2, b)
+  | f + 1, s1, s2, k1, k2, b =>
+    let sb := sbound (min b.pen P)
+    let l2 := !s2.ord.isEmpty && !decide (sb < k2)
+    if (!s1.ord.isEmpty && !decide (sb < k1)) && (!l2 || decide (k1 ≤ k2)) then
+      let r := s1.advFG kf1 ix G R1 gbs2 offs n 0 P Ls ps1 b
+      ilGFGN kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f r.1 s2 (k1 + 1) k2 r.2
+    else if l2 then
+      let r := s2.advFG kf2 ix G R2 gbs2 offs n n P Ls ps2 b
+      ilGFGN kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 k1 (k2 + 1) r.2
+    else (s1, s2, b)
+
+theorem GS.advFG_J {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf : Ker) (ix : L) (G R : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best)
+    (h : s.ord.isEmpty = false) : (s.advFG kf ix G R gbs2 offs n t P Ls ps b).1.J.length = s.J.length + 1 := by
+  unfold GS.advFG
+  split
+  · next he => rw [he] at h; cases h
+  · rfl
+
+theorem ilGFGN_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) : ∀ (f : Nat) (s1 s2 : GS) (b : Best),
+    ilGFGN kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 s1.J.length s2.J.length b =
+      ilGFG kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b
+  | 0, _, _, _ => rfl
+  | f + 1, s1, s2, b => by
+    unfold ilGFGN ilGFG GS.live
+    simp only []
+    split
+    · next h =>
+      have h1 : s1.ord.isEmpty = false := by
+        cases he : s1.ord.isEmpty <;> simp_all
+      rw [← GS.advFG_J kf1 ix G R1 gbs2 offs n 0 P Ls ps1 s1 b h1]
+      exact ilGFGN_eq kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f _ _ _
+    · split
+      · next h =>
+        have h2 : s2.ord.isEmpty = false := by
+          cases he : s2.ord.isEmpty <;> simp_all
+        rw [← GS.advFG_J kf2 ix G R2 gbs2 offs n n P Ls ps2 s2 b h2]
+        exact ilGFGN_eq kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f _ _ _
+      · rfl
+
+/-- `ilGFGN` from the strands' own counts. -/
+@[inline] def ilGFGW {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) (f : Nat) (s1 s2 : GS) (b : Best) :
+    GS × GS × Best :=
+  ilGFGN kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 s1.J.length s2.J.length b
+
+/-- Compiled code runs `ilGFGW`. -/
+@[csimp] theorem ilGFG_eqN : @ilGFG = @ilGFGW := by
+  funext
+  simp only [ilGFGW, ilGFGN_eq]
+
 @[specialize] def mapChromsGBFG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
   let n := gbs.size
