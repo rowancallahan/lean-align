@@ -1,0 +1,28 @@
+# NovaSeq 2x151 box (session_01MfKuVaUbb1ji7iSfKRneRE): TIME/RESULT lines as reported from ~/cmp.log
+# container restarted ~00:42Z during the first minibwa index; resumed with saved shim/bench indexes
+TIME shim build: wall 1967.9 s, cpu 2382.6 s, peak 13.55 GB, exit 0
+TIME bench build: wall 992.8 s, cpu 982.0 s, peak 7.71 GB, exit 0
+== CONTAINER RESTART
+TIME minibwa index: wall 4059.8 s, cpu 3868.7 s, peak 8.40 GB, exit 0
+TIME novaseq151 shim t2 run1: wall 388.1 s, cpu 88.3 s, peak 5.62 GB, exit 0
+TIME novaseq151 shim t2 run2: wall 40.3 s, cpu 70.3 s, peak 5.64 GB, exit 0
+TIME novaseq151 shim t2 run3: wall 35.8 s, cpu 64.7 s, peak 5.64 GB, exit 0
+RESULT set novaseq151 mode RTX tasks 2 chunk 16: mapped 200000 pairs, kept 165204, 14.753747 s, pairs/s 13555.878101, cpu 29.110000 s, host steal 0.330000 cpu-s; VmHWM:10471160 kB VmRSS: 5364828 kB
+TIME novaseq151 bench t2: wall 316.7 s, cpu 96.2 s, peak 10.47 GB, exit 0
+TIME novaseq151 minibwa t2 run1: wall 45.7 s, cpu 68.6 s, peak 7.66 GB, exit 0
+TIME novaseq151 minibwa-native t2 run1: wall 31.4 s, cpu 52.2 s, peak 7.68 GB, exit 0
+TIME novaseq151 shim t4 run1: wall 29.0 s, cpu 80.8 s, peak 5.60 GB, exit 0
+TIME novaseq151 shim t4 run2: wall 25.6 s, cpu 78.8 s, peak 5.62 GB, exit 0
+TIME novaseq151 shim t4 run3: wall 24.8 s, cpu 80.5 s, peak 5.65 GB, exit 0
+RESULT set novaseq151 mode RTX tasks 4 chunk 16: mapped 200000 pairs, kept 165204, 8.228489 s, pairs/s 24305.798489, cpu 32.130000 s, host steal 0.580000 cpu-s; VmHWM:11754252 kB VmRSS: 5370224 kB
+TIME novaseq151 bench t4: wall 32.6 s, cpu 74.7 s, peak 11.75 GB, exit 0
+TIME novaseq151 minibwa t4 run1: wall 42.4 s, cpu 74.8 s, peak 7.69 GB, exit 0
+TIME novaseq151 minibwa-native t4 run1: wall 17.2 s, cpu 49.9 s, peak 7.69 GB, exit 0
+TIME novaseq151 shim I/O only t2 run1: wall 4.1 s, cpu 6.8 s, peak 0.72 GB, exit 0
+TIME novaseq151 shim I/O only t2 run2: wall 4.4 s, cpu 7.5 s, peak 0.77 GB, exit 0
+TIME novaseq151 shim I/O only t2 run3: wall 5.0 s, cpu 7.9 s, peak 0.72 GB, exit 0
+TIME novaseq151 shim I/O only t4 run1: wall 4.4 s, cpu 10.4 s, peak 0.82 GB, exit 0
+TIME novaseq151 shim I/O only t4 run2: wall 3.4 s, cpu 8.6 s, peak 0.81 GB, exit 0
+TIME novaseq151 shim I/O only t4 run3: wall 2.7 s, cpu 7.6 s, peak 0.79 GB, exit 0
+# minibwa index load: default t2 20.8 s, t4 30.2 s (cold); native t2 7.4 s, t4 5.4 s
+# minibwa mapping with load removed: t2 24.9 default / 23.9 native; t4 12.0 / 11.7

@@ -1,0 +1,46 @@
+# Sims box (session_01MfKuVdCjwTnrPGVPGWVTTg): index phase from ~/cmp.log, map phase from ~/cmp2.log
+# container reclaimed twice while the session was idle; map phase rerun against the saved indexes
+TIME shim build: wall 1868.6 s, cpu 2250.2 s, peak 13.56 GB, exit 0
+TIME bench build: wall 960.8 s, cpu 947.8 s, peak 7.71 GB, exit 0
+TIME minibwa index: wall 3946.6 s, cpu 3898.1 s, peak 8.40 GB, exit 0
+== CONTAINER RESTART (x2)
+TIME mason shim t2 run1: wall 119.0 s, cpu 136.3 s, peak 5.70 GB, exit 0
+TIME mason shim t2 run2: wall 51.3 s, cpu 97.2 s, peak 5.72 GB, exit 0
+TIME mason shim t2 run3: wall 50.2 s, cpu 95.3 s, peak 5.64 GB, exit 0
+RESULT set mason mode RTX tasks 2 chunk 16: mapped 200000 pairs, kept 174419, 29.124532 s, pairs/s 6867.063079, cpu 57.540000 s, host steal 0.690000 cpu-s; VmHWM:10280656 kB VmRSS: 5364984 kB
+TIME mason bench t2: wall 486.2 s, cpu 135.3 s, peak 10.28 GB, exit 0
+TIME mason minibwa t2 run1: wall 447.6 s, cpu 84.3 s, peak 7.86 GB, exit 0
+TIME mason minibwa-native t2 run1: wall 31.8 s, cpu 55.2 s, peak 7.86 GB, exit 0
+TIME mason shim t4 run1: wall 40.3 s, cpu 124.5 s, peak 5.63 GB, exit 0
+TIME mason shim t4 run2: wall 35.7 s, cpu 123.9 s, peak 5.70 GB, exit 0
+TIME mason shim t4 run3: wall 37.3 s, cpu 127.4 s, peak 5.64 GB, exit 0
+RESULT set mason mode RTX tasks 4 chunk 16: mapped 200000 pairs, kept 174419, 15.323023 s, pairs/s 13052.254461, cpu 60.410000 s, host steal 0.490000 cpu-s; VmHWM:11956016 kB VmRSS: 5364320 kB
+TIME mason bench t4: wall 45.1 s, cpu 106.4 s, peak 11.96 GB, exit 0
+TIME mason minibwa t4 run1: wall 47.1 s, cpu 80.6 s, peak 7.87 GB, exit 0
+TIME mason minibwa-native t4 run1: wall 18.7 s, cpu 52.6 s, peak 7.87 GB, exit 0
+TIME low shim t2 run1: wall 35.5 s, cpu 54.2 s, peak 5.69 GB, exit 0
+TIME low shim t2 run2: wall 31.3 s, cpu 55.9 s, peak 5.69 GB, exit 0
+TIME low shim t2 run3: wall 34.4 s, cpu 60.8 s, peak 5.69 GB, exit 0
+RESULT set low mode RTX tasks 2 chunk 16: mapped 200000 pairs, kept 189369, 11.542132 s, pairs/s 17327.821799, cpu 22.780000 s, host steal 0.220000 cpu-s; VmHWM:11753172 kB VmRSS: 5363884 kB
+TIME low bench t2: wall 40.7 s, cpu 65.2 s, peak 11.75 GB, exit 0
+TIME low minibwa t2 run1: wall 55.6 s, cpu 69.8 s, peak 7.57 GB, exit 0
+TIME low minibwa-native t2 run1: wall 25.7 s, cpu 42.5 s, peak 7.57 GB, exit 0
+TIME low shim t4 run1: wall 26.2 s, cpu 74.0 s, peak 5.70 GB, exit 0
+TIME low shim t4 run2: wall 24.2 s, cpu 71.8 s, peak 5.63 GB, exit 0
+TIME low shim t4 run3: wall 20.7 s, cpu 69.3 s, peak 5.65 GB, exit 0
+RESULT set low mode RTX tasks 4 chunk 16: mapped 200000 pairs, kept 189369, 7.367455 s, pairs/s 27146.415886, cpu 28.950000 s, host steal 0.290000 cpu-s; VmHWM:11752032 kB VmRSS: 5359036 kB
+TIME low bench t4: wall 32.4 s, cpu 73.8 s, peak 11.75 GB, exit 0
+TIME low minibwa t4 run1: wall 36.8 s, cpu 59.4 s, peak 7.58 GB, exit 0
+TIME low minibwa-native t4 run1: wall 14.6 s, cpu 36.5 s, peak 7.58 GB, exit 0
+TIME mason shim I/O only t2 run1: wall 4.1 s, cpu 6.8 s, peak 0.72 GB, exit 0
+TIME mason shim I/O only t2 run2: wall 4.2 s, cpu 6.7 s, peak 0.68 GB, exit 0
+TIME mason shim I/O only t2 run3: wall 4.2 s, cpu 6.9 s, peak 0.67 GB, exit 0
+TIME mason shim I/O only t4 run1: wall 3.3 s, cpu 9.1 s, peak 0.79 GB, exit 0
+TIME mason shim I/O only t4 run2: wall 4.3 s, cpu 10.3 s, peak 0.84 GB, exit 0
+TIME mason shim I/O only t4 run3: wall 3.8 s, cpu 9.6 s, peak 0.80 GB, exit 0
+TIME low shim I/O only t2 run1: wall 4.9 s, cpu 8.2 s, peak 0.83 GB, exit 0
+TIME low shim I/O only t2 run2: wall 4.3 s, cpu 6.9 s, peak 0.68 GB, exit 0
+TIME low shim I/O only t2 run3: wall 4.6 s, cpu 7.3 s, peak 0.76 GB, exit 0
+TIME low shim I/O only t4 run1: wall 3.4 s, cpu 9.3 s, peak 0.74 GB, exit 0
+TIME low shim I/O only t4 run2: wall 2.7 s, cpu 7.8 s, peak 0.80 GB, exit 0
+TIME low shim I/O only t4 run3: wall 3.2 s, cpu 8.2 s, peak 0.81 GB, exit 0
