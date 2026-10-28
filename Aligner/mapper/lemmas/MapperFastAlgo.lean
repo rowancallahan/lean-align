@@ -277,6 +277,41 @@ termination_by stop - k
 @[inline] def supNear (as : Array Nat) (i A : Nat) : Nat :=
   supScan as A (i - min i 3) (min as.size (i + 4))
 
+/-! ## Machine-word helpers for the `@[csimp]` loop versions below (and MapperPGen.lean) -/
+
+theorem pgu_usize_le (a : ByteArray) : a.usize.toNat ≤ a.size := by
+  show a.size.toUSize.toNat ≤ a.size
+  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
+
+theorem pgu_uget (w : ByteArray) (i : USize) (h : i.toNat < w.size) : w.uget i h = w.get! i.toNat := by
+  cases w with
+  | mk bs =>
+    simp only [ByteArray.uget, ByteArray.get!]
+    simp only [ByteArray.size] at h
+    rw [getElem!_pos bs i.toNat h]
+    rfl
+
+theorem pgu_pow : 2 ^ 32 ≤ 2 ^ System.Platform.numBits := USize.le_size
+
+theorem pgu_n (n : Nat) (h : n < 2 ^ 32) : n.toUSize.toNat = n := by
+  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
+
+theorem pgu_add (a b : USize) (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
+  rw [USize.toNat_add, Nat.mod_eq_of_lt (by have := pgu_pow; omega)]
+
+theorem pgu_one : (1 : USize).toNat = 1 := by
+  show (USize.ofNat 1).toNat = 1
+  rw [USize.toNat_ofNat', Nat.mod_eq_of_lt (by have := pgu_pow; omega)]
+
+/-- `B.get! p.toNat` with one machine-word bounds check. -/
+@[inline] def pgGet (B : ByteArray) (p : USize) : UInt8 :=
+  if h : p < B.usize then B.uget p (Nat.lt_of_lt_of_le h (pgu_usize_le B)) else B.get! p.toNat
+
+theorem pgGet_eq (B : ByteArray) (p : USize) : pgGet B p = B.get! p.toNat := by
+  unfold pgGet; split
+  · exact pgu_uget B p _
+  · rfl
+
 /-! ## Window penalties -/
 
 /-- Mismatches of `r[i, stop)` against `g[a + i ..]` added to `m`, stopping once above `lim`. -/
@@ -287,6 +322,91 @@ termination_by stop - k
     else hamming r g a lim (i + 1) stop m
   else m
 termination_by stop - i
+
+/-! `hamming` on machine words (compiled code only): `hamming_eq_hammingF` (`@[csimp]`). The loop
+`hammingU` keeps `a`, `lim`, `i`, `stop`, `m` in `USize` and reads the read by `uget`; the genome
+stays behind `GRead.get` (at `(a + i).toNat`). Taken when every index is below 2^32 - 1. -/
+
+@[specialize] def hammingU {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : USize) (i stop m : USize) : USize :=
+  if h : i < stop then
+    if pgGet r i != GRead.get g (a + i).toNat then
+      if lim < m + 1 then m + 1 else hammingU r g a lim (i + 1) stop (m + 1)
+    else hammingU r g a lim (i + 1) stop m
+  else m
+termination_by stop.toNat - i.toNat
+decreasing_by
+  all_goals
+    have h' : i.toNat < stop.toNat := h
+    have := USize.toNat_lt_size stop
+    have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+    rw [USize.toNat_add, pgu_one, Nat.mod_eq_of_lt (by omega)]
+    omega
+
+theorem hammingU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (aU limU stopU : USize) (a lim stop : Nat)
+    (ha : aU.toNat = a) (hl : limU.toNat = lim) (hp : stopU.toNat = stop) (hb : a + stop < 2 ^ 32) :
+    ∀ n (iU mU : USize) (i m : Nat), stop - i = n → iU.toNat = i → mU.toNat = m → i ≤ stop →
+      m + (stop - i) < 2 ^ 32 →
+      (hammingU r g aU limU iU stopU mU).toNat = hamming r g a lim i stop m := by
+  intro n
+  induction n with
+  | zero =>
+    intro iU mU i m hn hi hm hle hmb
+    have h : ¬ iU < stopU := fun h => by have h' : iU.toNat < stopU.toNat := h; omega
+    rw [hammingU, dif_neg h, hamming, if_neg (show ¬ i < stop by omega), hm]
+  | succ n ih =>
+    intro iU mU i m hn hi hm hle hmb
+    have h : iU < stopU := by show iU.toNat < stopU.toNat; omega
+    have ex : (aU + iU).toNat = a + i := by rw [pgu_add _ _ (by omega), ha, hi]
+    have e1 : (iU + 1).toNat = i + 1 := by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, hi]
+    have em : (mU + 1).toNat = m + 1 := by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, hm]
+    rw [hammingU, dif_pos h, hamming, if_pos (show i < stop by omega), pgGet_eq, ex, hi]
+    split
+    · have el : (limU < mU + 1) = (lim < m + 1) := by
+        rw [← hl, ← em]; rfl
+      simp only [el]
+      split
+      · exact em
+      · exact ih _ _ _ _ (by omega) e1 em (by omega) (by omega)
+    · exact ih _ _ _ _ (by omega) e1 hm (by omega) (by omega)
+
+/-- `hamming` (its slow path; not rewritten by `csimp`). -/
+@[specialize] def hammingS {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : Nat) (i stop m : Nat) : Nat :=
+  if i < stop then
+    if r.get! i != GRead.get g (a + i) then
+      if lim < m + 1 then m + 1 else hammingS r g a lim (i + 1) stop (m + 1)
+    else hammingS r g a lim (i + 1) stop m
+  else m
+termination_by stop - i
+
+theorem hammingS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim stop : Nat) :
+    ∀ n i m, stop - i = n → hammingS r g a lim i stop m = hamming r g a lim i stop m := by
+  intro n
+  induction n with
+  | zero =>
+    intro i m hn
+    rw [hammingS, if_neg (show ¬ i < stop by omega), hamming, if_neg (show ¬ i < stop by omega)]
+  | succ n ih =>
+    intro i m hn
+    rw [hammingS, if_pos (show i < stop by omega), hamming, if_pos (show i < stop by omega)]
+    split
+    · split
+      · rfl
+      · exact ih _ _ (by omega)
+    · exact ih _ _ (by omega)
+
+/-- `hamming` for the compiled code (`hamming_eq_hammingF`). -/
+@[specialize] def hammingF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : Nat) (i stop m : Nat) : Nat :=
+  if a + stop < 4294967295 ∧ lim < 4294967295 ∧ i ≤ stop ∧ m + stop < 4294967295 then
+    (hammingU r g a.toUSize lim.toUSize i.toUSize stop.toUSize m.toUSize).toNat
+  else hammingS r g a lim i stop m
+
+@[csimp] theorem hamming_eq_hammingF : @hamming = @hammingF := by
+  funext Gt inst r g a lim i stop m
+  unfold hammingF; split
+  · rename_i h
+    exact (hammingU_eq r g _ _ _ a lim stop (pgu_n _ (by omega)) (pgu_n _ (by omega)) (pgu_n _ (by omega)) (by omega)
+      _ _ _ i m rfl (pgu_n _ (by omega)) (pgu_n _ (by omega)) h.2.2.1 (by omega)).symm
+  · exact (hammingS_eq r g a lim stop _ i m rfl).symm
 
 /-- Continue the count over `r[i, stop)` unless already above `lim` or the seed is clean. -/
 @[inline] def hamStep {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim i stop : Nat) (clean : Bool) (m : Nat) : Nat :=
@@ -318,6 +438,172 @@ diagonal (read letter `x` ↔ `g[st + len + x - n]`), or `lo` when there are few
     else bwdMis r g st len lo (e - 1) k
   else lo
 termination_by e - lo
+
+/-! `fwdMis` / `bwdMis` on machine words (compiled code only): `fwdMis_eq_fwdMisF`,
+`bwdMis_eq_bwdMisF` (`@[csimp]`), as `hamming_eq_hammingF`. -/
+
+@[specialize] def fwdMisU {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (s stop : USize) (i k : USize) : USize :=
+  if h : i < stop then
+    if pgGet r i != GRead.get g (s + i).toNat then
+      (if k ≤ 1 then i else fwdMisU r g s stop (i + 1) (k - 1))
+    else fwdMisU r g s stop (i + 1) k
+  else stop
+termination_by stop.toNat - i.toNat
+decreasing_by
+  all_goals
+    have h' : i.toNat < stop.toNat := h
+    have := USize.toNat_lt_size stop
+    have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+    rw [USize.toNat_add, pgu_one, Nat.mod_eq_of_lt (by omega)]
+    omega
+
+theorem fwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (s stopU : USize) (st stop : Nat)
+    (hs : s.toNat = st) (hp : stopU.toNat = stop) (hb : st + stop < 2 ^ 32) :
+    ∀ m (iU kU : USize) (i k : Nat), stop - i = m → iU.toNat = i → kU.toNat = k → i ≤ stop →
+      (fwdMisU r g s stopU iU kU).toNat = fwdMis r g st stop i k := by
+  intro m
+  induction m with
+  | zero =>
+    intro iU kU i k hm hi hk hle
+    have h : ¬ iU < stopU := fun h => by have h' : iU.toNat < stopU.toNat := h; omega
+    rw [fwdMisU, dif_neg h, fwdMis, if_neg (show ¬ i < stop by omega), hp]
+  | succ m ih =>
+    intro iU kU i k hm hi hk hle
+    have h : iU < stopU := by show iU.toNat < stopU.toNat; omega
+    have ex : (s + iU).toNat = st + i := by rw [pgu_add _ _ (by omega), hs, hi]
+    have e1 : (iU + 1).toNat = i + 1 := by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, hi]
+    rw [fwdMisU, dif_pos h, fwdMis, if_pos (show i < stop by omega), pgGet_eq, ex, hi]
+    split
+    · split
+      · rename_i hk1; rw [if_pos (by have : kU.toNat ≤ (1 : USize).toNat := hk1; rw [pgu_one] at this; omega), hi]
+      · rename_i hk1
+        have hk1' : ¬ k ≤ 1 := by intro c; apply hk1; show kU.toNat ≤ (1 : USize).toNat; rw [pgu_one]; omega
+        rw [if_neg hk1']
+        exact ih _ _ _ _ (by omega) e1
+          (by rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ kU.toNat; rw [pgu_one]; omega), pgu_one, hk])
+          (by omega)
+    · exact ih _ _ _ _ (by omega) e1 hk (by omega)
+
+/-- `fwdMis` (its slow path; not rewritten by `csimp`). -/
+@[specialize] def fwdMisS {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Nat) (i k : Nat) : Nat :=
+  if i < stop then
+    if r.get! i != GRead.get g (st + i) then (if k ≤ 1 then i else fwdMisS r g st stop (i + 1) (k - 1))
+    else fwdMisS r g st stop (i + 1) k
+  else stop
+termination_by stop - i
+
+theorem fwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Nat) :
+    ∀ n i k, stop - i = n → fwdMisS r g st stop i k = fwdMis r g st stop i k := by
+  intro n
+  induction n with
+  | zero =>
+    intro i k hn
+    rw [fwdMisS, if_neg (show ¬ i < stop by omega), fwdMis, if_neg (show ¬ i < stop by omega)]
+  | succ n ih =>
+    intro i k hn
+    rw [fwdMisS, if_pos (show i < stop by omega), fwdMis, if_pos (show i < stop by omega)]
+    split
+    · split
+      · rfl
+      · exact ih _ _ (by omega)
+    · exact ih _ _ (by omega)
+
+/-- `fwdMis` for the compiled code (`fwdMis_eq_fwdMisF`). -/
+@[specialize] def fwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Nat) (i k : Nat) : Nat :=
+  if st + stop < 4294967295 ∧ i ≤ stop ∧ k < 4294967295 then
+    (fwdMisU r g st.toUSize stop.toUSize i.toUSize k.toUSize).toNat
+  else fwdMisS r g st stop i k
+
+@[csimp] theorem fwdMis_eq_fwdMisF : @fwdMis = @fwdMisF := by
+  funext Gt inst r g st stop i k
+  unfold fwdMisF; split
+  · rename_i h
+    exact (fwdMisU_eq r g _ _ st stop (pgu_n _ (by omega)) (pgu_n _ (by omega)) (by omega) _ _ _ i k rfl
+      (pgu_n _ (by omega)) (pgu_n _ (by omega)) h.2.1).symm
+  · exact (fwdMisS_eq r g st stop _ i k rfl).symm
+
+/-- `bwdMis r g st len lo e k` with `b = st + len - r.size` (`st + len ≥ r.size`) (`bwdMisU_eq`). -/
+@[specialize] def bwdMisU {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (b lo : USize) (e k : USize) : USize :=
+  if h : lo < e then
+    if pgGet r (e - 1) != GRead.get g (b + (e - 1)).toNat then
+      (if k ≤ 1 then e else bwdMisU r g b lo (e - 1) (k - 1))
+    else bwdMisU r g b lo (e - 1) k
+  else lo
+termination_by e.toNat
+decreasing_by
+  all_goals
+    have h' : lo.toNat < e.toNat := h
+    rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ e.toNat; rw [pgu_one]; omega), pgu_one]
+    omega
+
+theorem bwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (bU loU : USize) (st len lo : Nat)
+    (hr : r.size ≤ st + len) (hb : bU.toNat = st + len - r.size) (hl : loU.toNat = lo) :
+    ∀ (e : Nat) (eU kU : USize) (k : Nat), st + len + e < 2 ^ 32 → eU.toNat = e → kU.toNat = k →
+      (bwdMisU r g bU loU eU kU).toNat = bwdMis r g st len lo e k := by
+  intro e
+  induction e with
+  | zero =>
+    intro eU kU k hbd he hk
+    have h : ¬ loU < eU := fun h => by have h' : loU.toNat < eU.toNat := h; omega
+    rw [bwdMisU, dif_neg h, bwdMis, if_neg (show ¬ lo < 0 by omega), hl]
+  | succ e ih =>
+    intro eU kU k hbd he hk
+    by_cases hlt : lo < e + 1
+    · have h : loU < eU := by show loU.toNat < eU.toNat; omega
+      have e1 : (eU - 1).toNat = e := by
+        rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ eU.toNat; rw [pgu_one]; omega), pgu_one, he]; rfl
+      have ex : (bU + (eU - 1)).toNat = st + len + e - r.size := by
+        rw [pgu_add _ _ (by omega), hb, e1]; omega
+      rw [bwdMisU, dif_pos h, bwdMis, if_pos hlt, pgGet_eq, ex, e1]
+      simp only [Nat.add_sub_cancel]
+      split
+      · split
+        · rename_i hk1; rw [if_pos (by have : kU.toNat ≤ (1 : USize).toNat := hk1; rw [pgu_one] at this; omega), he]
+        · rename_i hk1
+          have hk1' : ¬ k ≤ 1 := by intro c; apply hk1; show kU.toNat ≤ (1 : USize).toNat; rw [pgu_one]; omega
+          rw [if_neg hk1']
+          exact ih _ _ _ (by omega) e1
+            (by rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ kU.toNat; rw [pgu_one]; omega), pgu_one, hk])
+      · exact ih _ _ _ (by omega) e1 hk
+    · have h : ¬ loU < eU := fun h => by have h' : loU.toNat < eU.toNat := h; omega
+      rw [bwdMisU, dif_neg h, bwdMis, if_neg hlt, hl]
+
+/-- `bwdMis` (its slow path; not rewritten by `csimp`). -/
+@[specialize] def bwdMisS {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : Nat) (e k : Nat) : Nat :=
+  if lo < e then
+    if r.get! (e - 1) != GRead.get g (st + len + (e - 1) - r.size) then
+      (if k ≤ 1 then e else bwdMisS r g st len lo (e - 1) (k - 1))
+    else bwdMisS r g st len lo (e - 1) k
+  else lo
+termination_by e - lo
+
+theorem bwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : Nat) :
+    ∀ e k, bwdMisS r g st len lo e k = bwdMis r g st len lo e k := by
+  intro e
+  induction e with
+  | zero =>
+    intro k
+    rw [bwdMisS, if_neg (show ¬ lo < 0 by omega), bwdMis, if_neg (show ¬ lo < 0 by omega)]
+  | succ e ih =>
+    intro k
+    by_cases hlt : lo < e + 1
+    · rw [bwdMisS, if_pos hlt, bwdMis, if_pos hlt]
+      simp only [Nat.add_sub_cancel, ih]
+    · rw [bwdMisS, if_neg hlt, bwdMis, if_neg hlt]
+
+/-- `bwdMis` for the compiled code (`bwdMis_eq_bwdMisF`). -/
+@[specialize] def bwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : Nat) (e k : Nat) : Nat :=
+  if r.size ≤ st + len ∧ st + len + e < 4294967295 ∧ lo < 4294967295 ∧ k < 4294967295 then
+    (bwdMisU r g (st + len - r.size).toUSize lo.toUSize e.toUSize k.toUSize).toNat
+  else bwdMisS r g st len lo e k
+
+@[csimp] theorem bwdMis_eq_bwdMisF : @bwdMis = @bwdMisF := by
+  funext Gt inst r g st len lo e k
+  unfold bwdMisF; split
+  · rename_i h
+    exact (bwdMisU_eq r g _ _ st len lo h.1 (pgu_n _ (by omega)) (pgu_n _ (by omega)) e _ _ k (by omega)
+      (pgu_n _ (by omega)) (pgu_n _ (by omega))).symm
+  · exact (bwdMisS_eq r g st len lo e k).symm
 
 /-- Penalty of window `(st, len)`, `len ≠ n`, `|len − n| ≤ 3`, if `≤ lim ≤ 12`; else `lim + 1`.
 At most one mismatch fits, so only the first two mismatches of the prefix diagonal
