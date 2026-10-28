@@ -773,6 +773,60 @@ def flagsOk (w : ByteArray) (b stop : Nat) : Bool :=
   if b < stop then w.get! (17 * b) == 1 && flagsOk w (b + 1) stop else true
 termination_by stop - b
 
+/-! `flagsOk` on machine words (compiled code only): `flagsOk_eq_flagsOkF` (`@[csimp]`), the flag
+byte offset `17 b` stepped by 17 in `USize` and read by `getU`. -/
+
+/-- `flagsOk w b stop` with `p = 17 b`, `e = 17 stop` (`flagsOkU_eq`). -/
+def flagsOkU (w : ByteArray) (p e : USize) : Bool :=
+  if h : p < e ∧ e < 4294967278 then getU w p == 1 && flagsOkU w (p + 17) e else true
+termination_by e.toNat - p.toNat
+decreasing_by
+  have h' : p.toNat < e.toNat := h.1
+  have h2 : e.toNat < (4294967278 : USize).toNat := h.2
+  rw [usz_lit 4294967278 (by decide)] at h2
+  rw [usz_add' _ _ (by rw [usz_lit 17 (by decide)]; omega), usz_lit 17 (by decide)]
+  omega
+
+theorem flagsOkU_eq (w : ByteArray) (stop : Nat) (e : USize) (he : e.toNat = 17 * stop) (hb : 17 * stop < 4294967278) :
+    ∀ n (p : USize) b, stop - b = n → p.toNat = 17 * b → flagsOkU w p e = flagsOk w b stop := by
+  intro n
+  induction n with
+  | zero =>
+    intro p b hn hp
+    have h : ¬ (p < e ∧ e < 4294967278) := fun h => by have h' : p.toNat < e.toNat := h.1; omega
+    rw [flagsOkU, dif_neg h, flagsOk, if_neg (show ¬ b < stop by omega)]
+  | succ n ih =>
+    intro p b hn hp
+    have h : p < e ∧ e < 4294967278 := ⟨by show p.toNat < e.toNat; omega,
+      by show e.toNat < (4294967278 : USize).toNat; rw [usz_lit 4294967278 (by decide)]; omega⟩
+    rw [flagsOkU, dif_pos h, flagsOk, if_pos (show b < stop by omega), getU_eq, hp,
+      ih _ (b + 1) (by omega) (by rw [usz_add' _ _ (by rw [usz_lit 17 (by decide)]; omega), usz_lit 17 (by decide), hp]; omega)]
+
+/-- `flagsOk` (its slow path; not rewritten by `csimp`). -/
+def flagsOkS (w : ByteArray) (b stop : Nat) : Bool :=
+  if b < stop then w.get! (17 * b) == 1 && flagsOkS w (b + 1) stop else true
+termination_by stop - b
+
+theorem flagsOkS_eq (w : ByteArray) (stop : Nat) : ∀ n b, stop - b = n → flagsOkS w b stop = flagsOk w b stop := by
+  intro n
+  induction n with
+  | zero => intro b hn; rw [flagsOkS, flagsOk, if_neg (show ¬ b < stop by omega), if_neg (show ¬ b < stop by omega)]
+  | succ n ih =>
+    intro b hn
+    rw [flagsOkS, flagsOk, if_pos (show b < stop by omega), if_pos (show b < stop by omega), ih _ (by omega)]
+
+/-- `flagsOk` for the compiled code (`flagsOk_eq_flagsOkF`). -/
+def flagsOkF (w : ByteArray) (b stop : Nat) : Bool :=
+  if 17 * stop < 4294967278 ∧ b ≤ stop then flagsOkU w (17 * b).toUSize (17 * stop).toUSize
+  else flagsOkS w b stop
+
+@[csimp] theorem flagsOk_eq_flagsOkF : @flagsOk = @flagsOkF := by
+  funext w b stop
+  unfold flagsOkF; split
+  · rename_i h
+    exact (flagsOkU_eq w stop _ (usz_n _ (by omega)) (by omega) _ _ b rfl (usz_n _ (by omega))).symm
+  · exact (flagsOkS_eq w stop _ b rfl).symm
+
 /-- The window `[st, st + len)` of `P` lies in flagged blocks (`len ≥ 1`). -/
 @[inline] def winOk (P : PGen) (st len : Nat) : Bool :=
   decide (st + len ≤ P.n) && flagsOk P.w ((P.o + st) / 64) ((P.o + st + len - 1) / 64 + 1)
