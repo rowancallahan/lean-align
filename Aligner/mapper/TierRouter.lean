@@ -63,6 +63,31 @@ def rescoreRuns (R : ByteArray) (G : PGen) (st len : Nat) (runs : List (Step × 
   let ya : Array Char := (List.range len).toArray.map fun i => Char.ofNat (G.get (st + i)).toNat
   AlignmentSpec.checkRuns sc0 xa ya runs ⟨0, 0, none, 0⟩
 
+/-- `a` with `f i, …, f (i + k - 1)` pushed (`pushF_eq`). -/
+@[specialize] def pushF {α : Type} (f : Nat → α) : Nat → Nat → Array α → Array α
+  | 0, _, a => a
+  | k + 1, i, a => pushF f k (i + 1) (a.push (f i))
+
+theorem pushF_eq {α : Type} (f : Nat → α) : ∀ (k i : Nat) (a : Array α),
+    pushF f k i a = a ++ ((List.range' i k).map f).toArray
+  | 0, _, a => by simp [pushF]
+  | k + 1, i, a => by
+    rw [pushF, pushF_eq f k (i + 1), List.range'_succ, List.map_cons]
+    apply Array.toList_inj.mp
+    simp
+
+/-- `rescoreRuns` with the letter arrays built by a push loop (no lists; `rescoreRuns_eqA`). -/
+def rescoreRunsA (R : ByteArray) (G : PGen) (st len : Nat) (runs : List (Step × Nat)) : Option Int :=
+  let xa : Array Char := pushF (fun i => Char.ofNat (R.get! i).toNat) R.size 0 (Array.mkEmpty R.size)
+  let ya : Array Char := pushF (fun i => Char.ofNat (G.get (st + i)).toNat) len 0 (Array.mkEmpty len)
+  AlignmentSpec.checkRuns sc0 xa ya runs ⟨0, 0, none, 0⟩
+
+/-- Compiled code runs `rescoreRunsA`. -/
+@[csimp] theorem rescoreRuns_eqA : @rescoreRuns = @rescoreRunsA := by
+  funext R G st len runs
+  unfold rescoreRuns rescoreRunsA
+  simp only [pushF_eq, Array.mkEmpty_eq, Array.empty_append, ← List.range_eq_range', List.map_toArray]
+
 /-- An alignment `h` with CIGAR `runs` re-checked: inside its chromosome, score ≤ 0, and `checkRuns`
 gives its score (`R` forward read, `Rr` its reverse complement). -/
 def chkCand (pgs : Array PGen) (R Rr : ByteArray) (h : Placement × Int) (runs : List (Step × Nat)) : Bool :=
