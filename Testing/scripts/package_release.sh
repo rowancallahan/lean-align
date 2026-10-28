@@ -6,8 +6,9 @@
 set -eu
 cd "$(dirname "$0")/../.."
 out=$1; mkdir -p "$out"
+P=${PART_MB:-1900}   # split size in MB (GitHub's asset limit is 2 GB)
 part() {  # file name: copy, or split into name.partaa, name.partab, ...; the hash is of the whole file
-  if [ "$(wc -c < "$1")" -gt 1900000000 ]; then split -b 1900m -a 2 "$1" "$out/$2.part"; else cp "$1" "$out/$2"; fi
+  if [ "$(wc -c < "$1")" -gt $((P * 1048576)) ]; then split -b ${P}m -a 2 "$1" "$out/$2.part"; else cp "$1" "$out/$2"; fi
   shasum -a 256 "$1" | awk -v n="$2" '{print $1 "  " n}' >> "$out/SHA256"
 }
 : > "$out/SHA256"

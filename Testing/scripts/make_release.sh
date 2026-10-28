@@ -15,7 +15,8 @@ MB_COMMIT=c07de5c   # lh3/minibwa, the version benchmarked on 2026-10-27
 mkdir -p "$W" "$out"
 
 sh Testing/data/fetch.sh "$mode"
-if [ "$mode" = full ]; then G=$D/hg38.upper.fa; src=$D/hg38.fa; sims=hg38; else G=$D/chr21.fa; src=$D/chr21.fa; sims=chr21; fi
+if [ "$mode" = full ]; then G=$D/hg38.upper.fa; src=$D/hg38.fa; sims=hg38; else G=$D/chr21.upper.fa; src=$D/chr21.fa; sims=chr21; fi
+[ -s $D/chr21.upper.fa ] || awk '/^>/{print; next}{print toupper($0)}' $D/chr21.fa > $D/chr21.upper.fa   # as hg38.upper.fa
 for r in 1 2; do [ -s $D/hg002_200k_R$r.fq ] || head -n 800000 $D/hg002_1M_R$r.fq > $D/hg002_200k_R$r.fq; done
 # simulated pairs, as on 2026-10-27: one line per chromosome, then sim_pairs.py seed 7
 [ -s $W/$sims.1l.fa ] || awk '/^>/{if(n)print ""; print; n=1; next}{printf "%s", $0} END{print ""}' $src > $W/$sims.1l.fa
