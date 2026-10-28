@@ -1171,3 +1171,17 @@ See the branch tips' commit messages for what is finished on each.
 4. Compare with minibwa.
 - 2026-10-27 (evening): hg38 from iGenomes is soft-masked (repeats lowercase, ~half the genome). Our code treats only ACGT as bases and the packer stores each non-ACGT letter as an exception (3 boxed UInt32 per lowercase letter -> tens of GB): the whole-genome build ran out of memory for that reason. minibwa folds case (kom_nt4_table maps acgt like ACGT). Rowan: uppercase the genome for the benchmarks (fetch.sh writes hg38.upper.fa; names unchanged). Uppercase hg38 build peaks at ~4 GB. Also: FASTA is now streamed (Spec.readFasta), not read whole.
 - TODO (Rowan, later): letter case in the spec (uppercase in readFasta?) and possibly an ACGT-only alphabet for genome and reads (simpler proofs: Read as a 4-letter type; small speed gain; needs a decision for N gaps in hg38 and reads with N).
+
+## Checkpoint 2026-10-28 (08b5166)
+
+- **Speed fix:** `alignOne` routes on the whole packed genome as one sequence (`Proofs/Whole.lean`: an answer
+  about the concatenation holds for each chromosome, via a placement shift). Before, the seed loop paid per
+  chromosome on every lookup: chr21 split into 195 contigs 12.1 s → 3.8 s (1 contig 3.7 s), 200k sim 2×150,
+  4 cores. Spec/Shim unchanged; CI_check passes. hg38 not yet re-measured.
+- **Release pipeline:** `Testing/scripts/make_release.sh` (laptop, Linux or macOS) → GitHub release →
+  `Testing/data/fetch_release.sh` + `PREBUILT=… compare.sh` on a box. Tested end to end on chr21.
+- hg38 results before the fix: `Testing/results/2026-10-27/` (M1: no mapped pairs in our SAM).
+- Speed research branches started from here (cloud boxes, chr21 sims only): `speed/n28-loop-shape`,
+  `speed/n28-seed-loop`, `speed/n28-alloc`. Merge after checking each one's CI_check and identical output.
+- Still open: M2 (found pair + CIGAR) and the tier 2 heuristic; scoring/trimming/insert parameters in the
+  mapping spec; ACGT-only alphabet; the shim index build peaks at 13.6 GB (vs bench 7.7 GB).
