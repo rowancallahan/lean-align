@@ -715,6 +715,30 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
   return pick
 
 
+/-- The sum of the `k` smallest buckets of seeds `0 … n-1` of `pp`. -/
+def smallK (pk : PkMz) (pp : Array MzP) (n k : Nat) : Nat :=
+  (((List.range n).map fun j => LookG.size pk pp[j]!).mergeSort (· ≤ ·)).take k |>.foldl (· + ·) 0
+
+/-- `smallK`'s list of the `k` smallest, seeds `n-1` down to 0, nothing sorted or built per seed. -/
+def smallKGo (pk : PkMz) (pp : Array MzP) (k : Nat) : Nat → List Nat → List Nat
+  | 0, acc => acc
+  | j + 1, acc => smallKGo pk pp k j (kStep k (LookG.size pk pp[j]!) acc)
+
+def smallKF (pk : PkMz) (pp : Array MzP) (n k : Nat) : Nat := (smallKGo pk pp k n []).foldl (· + ·) 0
+
+theorem smallKGo_eq (pk : PkMz) (pp : Array MzP) (k : Nat) : ∀ (n : Nat) (acc : List Nat),
+    (List.range n).foldr (fun j acc => kStep k (LookG.size pk pp[j]!) acc) acc = smallKGo pk pp k n acc
+  | 0, _ => rfl
+  | n + 1, acc => by
+    rw [List.range_succ, List.foldr_append, smallKGo_eq pk pp k n]
+    rfl
+
+/-- Compiled code runs `smallKF`. -/
+@[csimp] theorem smallK_eq : @smallK = @smallKF := by
+  funext pk pp n k
+  unfold smallK smallKF
+  rw [isortN_eq, take_isortN, List.foldr_map, smallKGo_eq]
+
 /-- The router settings `alignPairs` runs with: the bench's mode-RTX defaults (budget gate at 60000, no
 pair guarantee, the rarest-seed ceiling (bucket ≤ 500, ≤ 16 diagonals), the exact pair search on tier 2
 pairs with budget 1500 (c ≤ 16)) except the tier 2 heuristic, which is off (bench: WG_XH=0). While answers
@@ -726,9 +750,7 @@ def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (
       sv := true, seedAll := true, bl := 1000000, ge := 12, kx := true, vf := true, nk := 1 }
   -- the sum of the `k` rarest seed buckets over both strands
   let rare (k : Nat) (R : ByteArray) (s : PrepM MzP) : Nat :=
-    let one := fun (pp : Array MzP) =>
-      (((List.range (R.size / 25)).map fun j => LookG.size pk pp[j]!).mergeSort (· ≤ ·)).take k |>.foldl (· + ·) 0
-    one s.ps + one s.pr
+    smallK pk s.ps (R.size / 25) k + smallK pk s.pr (R.size / 25) k
   let candOf (m : MateX) : Option Cand :=
     if m.pR ≥ 5 && m.pR < 1000000 then m.pl.map fun h => { pl := h, runs := m.runs, src := m.pR } else none
   { rcfg := rcfg
