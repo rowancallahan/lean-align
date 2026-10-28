@@ -503,6 +503,35 @@ def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Opti
 theorem tierRest_eqS (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) :
     tierRest cfg pk offs pgs a b rk c1 c2 = tierRestS cfg pk offs pgs a b (prepMate pk a) (prepMate pk b) rk c1 c2 := rfl
 
+/-- `(l.take k).foldl (· + ·) acc` without the prefix list (`sumTake_eq`). -/
+def sumTake : Nat → List Nat → Nat → Nat
+  | 0, _, acc => acc
+  | _, [], acc => acc
+  | k + 1, x :: xs, acc => sumTake k xs (acc + x)
+
+theorem sumTake_eq : ∀ (k : Nat) (l : List Nat) (acc : Nat), sumTake k l acc = (l.take k).foldl (· + ·) acc
+  | 0, _, _ => rfl
+  | _ + 1, [], _ => rfl
+  | k + 1, x :: xs, acc => by rw [sumTake, sumTake_eq k xs, List.take_succ_cons, List.foldl_cons]
+
+/-- One strand of `costP`: the bucket sizes put in order straight from the array (`costPF_eq`). -/
+@[inline] def costOne {L Pp : Type} [LookG L Pp] (ix : L) (k : Nat) (a : Array Pp) : Nat :=
+  sumTake k (a.foldr (fun p l => insN (LookG.size ix p) l) []) 0
+
+/-- `costP` with no intermediate lists but the sorted one (`costPF_eq`). -/
+@[inline] def costPF {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
+  max (costOne ix (sbound P + 1) s.ps) (costOne ix (sbound P + 1) s.pr)
+
+theorem isortN_map {β : Type} (f : β → Nat) : ∀ l : List β,
+    isortN (l.map f) = l.foldr (fun p r => insN (f p) r) []
+  | [] => rfl
+  | x :: xs => by rw [List.map_cons, isortN, isortN_map f xs, List.foldr_cons]
+
+theorem costPF_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : costP ix P s = costPF ix P s := by
+  rw [costP_eqI]
+  unfold costPI costPF costOne
+  simp only [isortN_map, ← Array.foldr_toList, sumTake_eq]
+
 /-- `tierPairB` with each mate prepared once, for the gate, RT's pass 1 and the rest; RT's pass 1 reads the
 packed reads from the preparations (`tierPairB_eqS`). -/
 def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
@@ -512,8 +541,8 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
   | some a, some b =>
     let s1 : PrepM MzP := prepMate pk a
     let s2 : PrepM MzP := prepMate pk b
-    let c1 := costP pk (cfg.rcfg.cap1 a.size) s1
-    let c2 := costP pk (cfg.rcfg.cap1 b.size) s2
+    let c1 := costPF pk (cfg.rcfg.cap1 a.size) s1
+    let c2 := costPF pk (cfg.rcfg.cap1 b.size) s2
     if cfg.gate a b s1 s2 c1 c2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
     let rl := fun x y => ((pk, x, y) : RgMz)
     let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b c1 c2
@@ -546,7 +575,7 @@ end router
           (fun Q => (tierKer cfg pk offs pgs cfg.j1).region Q R) :=
         fun R => funext fun Q => funext fun x =>
           (regionPenKP_eqP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R x).symm
-      simp only [tierPairBS]
+      simp only [tierPairBS, ← costPF_eq]
       rw [hm a, hm b, hr a, hr b]
       rfl
 
