@@ -1,4 +1,5 @@
 import Proofs.Index
+import Proofs.Whole
 import TierHeur
 import ParMap
 
@@ -99,9 +100,12 @@ def alignOne (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
   | some read1, some read2 =>
       match loaded with
       | none => .aligned noIndexAnswer
-      | some (ix, G, offs, ns) =>
-          .aligned (answerOf (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) offs (MapSpec.Fast.cutAll G offs ns)) (ix, G) offs
-            (MapSpec.Fast.cutAll G offs ns) (some read1) (some read2)))
+      | some (ix, G, _, _) =>
+          -- the router searches the packed genome as ONE sequence (offsets `#[0]`, lengths `#[G.n]`):
+          -- its seed loop then does not pay per chromosome; `Proofs/Whole.lean` moves the answer
+          -- back to the chromosomes
+          .aligned (answerOf (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
+            (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2)))
 
 -- a chunk of pairs; the implementation may work across the chunk however it likes
 def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
@@ -156,10 +160,17 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
     | some (ix, G, offs, ns), hLoaded =>
       obtain ⟨hcut, hg, hchk⟩ := indexOk_sound (hLoaded _ rfl)
       rw [hGenome] at hg
-      have hok := MapSpec.Fast.tierPair_sound (tierCfg insertSettings (ix, G) offs (MapSpec.Fast.cutAll G offs ns)) (oldGenome genome)
-        (decodeRead read1) (decodeRead read2) ix G offs ns hcut hg hchk (some read1) (some read2)
+      have h0 : G.o = 0 := by
+        simp only [MapSpec.Fast.cutOk, Bool.and_eq_true, beq_iff_eq] at hcut; exact hcut.1
+      -- the router's answer, for the whole genome as one chromosome
+      have hok := MapSpec.Fast.tierPair_sound
+        (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (oldGenome (Whole.wholeOf G))
+        (decodeRead read1) (decodeRead read2) ix G #[0] #[G.n] (Whole.cutOk_whole h0)
+        (Whole.genomeBytes_whole G) hchk (some read1) (some read2)
         (fun R h => by cases h; exact encodes_decodeRead _) (fun R h => by cases h; exact encodes_decodeRead _)
-      exact answerOf_correct insertSettings genome _ _ read1 read2 _ hok
+      -- moved to the chromosomes: each is a slice of the whole
+      exact Whole.correct_of_whole insertSettings _ _ (Whole.slice_of_cut hcut hg) _ rfl rfl
+        (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok)
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
