@@ -455,7 +455,7 @@ theorem hamWU_eq (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UIn
 /-- `hamW` for the compiled code (`hamW_eq_hamWF`): the `USize` loop `hamWU` when the
 genome word index, `lim`, `stop`, `j` and `acc` are small (always, for reads ≤ 256 letters
 on genomes below 2^33 letters), else the `Nat` loop. -/
-def hamWF (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lim stop : Nat)
+@[inline] def hamWF (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lim stop : Nat)
     (j acc : Nat) (cur : UInt64) : Nat :=
   if h : u0 < 268435456 ∧ lim < 1048576 ∧ stop < 1048576 ∧ j < 16384 ∧ acc < 1048576 then
     (hamWU rw gw u0.toUSize (s == 0) sh sh' lim.toUSize stop.toUSize
@@ -570,7 +570,7 @@ theorem fwdWU_eq (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UIn
 
 /-- `fwdW` for the compiled code (`fwdW_eq_fwdWF`): `fwdWU` when the arguments are small,
 else the `Nat` loop. -/
-def fwdWF (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (stop : Nat)
+@[inline] def fwdWF (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (stop : Nat)
     (j k : Nat) (cur : UInt64) : Nat :=
   if h : u0 < 268435456 ∧ stop < 1048576 ∧ j < 16384 ∧ k < 1048576 then
     fwdWU rw gw u0.toUSize (s == 0) sh sh' stop.toUSize (by rw [usz_n _ (by omega)]; omega)
@@ -729,7 +729,7 @@ theorem bwdWU_eq (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UIn
 
 /-- `bwdW` for the compiled code (`bwdW_eq_bwdWF`): `bwdWU` when the arguments are small,
 else the `Nat` recursion. -/
-def bwdWF (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lo e : Nat)
+@[inline] def bwdWF (rw : Array UInt64) (gw : ByteArray) (u0 s : Nat) (sh sh' : UInt64) (lo e : Nat)
     (j k : Nat) (nxt : UInt64) : Nat :=
   if u0 < 268435456 ∧ lo < 1048576 ∧ e < 1048576 ∧ j < 65536 ∧ k < 1048576 then
     bwdWU rw gw u0.toUSize (s == 0) sh sh' lo.toUSize e.toUSize j.toUSize k.toUSize nxt
@@ -816,7 +816,7 @@ theorem flagsOkS_eq (w : ByteArray) (stop : Nat) : ∀ n b, stop - b = n → fla
     rw [flagsOkS, flagsOk, if_pos (show b < stop by omega), if_pos (show b < stop by omega), ih _ (by omega)]
 
 /-- `flagsOk` for the compiled code (`flagsOk_eq_flagsOkF`). -/
-def flagsOkF (w : ByteArray) (b stop : Nat) : Bool :=
+@[inline] def flagsOkF (w : ByteArray) (b stop : Nat) : Bool :=
   if 17 * stop < 4294967278 ∧ b ≤ stop then flagsOkU w (17 * b).toUSize (17 * stop).toUSize
   else flagsOkS w b stop
 

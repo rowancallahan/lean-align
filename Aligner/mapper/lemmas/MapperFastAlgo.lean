@@ -395,7 +395,7 @@ theorem hammingS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim stop 
     · exact ih _ _ (by omega)
 
 /-- `hamming` for the compiled code (`hamming_eq_hammingF`). -/
-@[specialize] def hammingF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : Nat) (i stop m : Nat) : Nat :=
+@[inline] def hammingF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : Nat) (i stop m : Nat) : Nat :=
   if a + stop < 4294967295 ∧ lim < 4294967295 ∧ i ≤ stop ∧ m + stop < 4294967295 then
     (hammingU r g a.toUSize lim.toUSize i.toUSize stop.toUSize m.toUSize).toNat
   else hammingS r g a lim i stop m
@@ -509,7 +509,7 @@ theorem fwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Na
     · exact ih _ _ (by omega)
 
 /-- `fwdMis` for the compiled code (`fwdMis_eq_fwdMisF`). -/
-@[specialize] def fwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Nat) (i k : Nat) : Nat :=
+@[inline] def fwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Nat) (i k : Nat) : Nat :=
   if st + stop < 4294967295 ∧ i ≤ stop ∧ k < 4294967295 then
     (fwdMisU r g st.toUSize stop.toUSize i.toUSize k.toUSize).toNat
   else fwdMisS r g st stop i k
@@ -592,7 +592,7 @@ theorem bwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : 
     · rw [bwdMisS, if_neg hlt, bwdMis, if_neg hlt]
 
 /-- `bwdMis` for the compiled code (`bwdMis_eq_bwdMisF`). -/
-@[specialize] def bwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : Nat) (e k : Nat) : Nat :=
+@[inline] def bwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : Nat) (e k : Nat) : Nat :=
   if r.size ≤ st + len ∧ st + len + e < 4294967295 ∧ lo < 4294967295 ∧ k < 4294967295 then
     (bwdMisU r g (st + len - r.size).toUSize lo.toUSize e.toUSize k.toUSize).toNat
   else bwdMisS r g st len lo e k

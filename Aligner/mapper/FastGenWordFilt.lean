@@ -182,7 +182,7 @@ theorem svAnyS_eq (gs : GW) (sv : UInt64) : ∀ k t, svAnyS gs sv t k = svAny gs
   | succ k ih => intro t; simp only [svAnyS, svAny, ih]
 
 /-- `svAny` for the compiled code (`svAny_eq_svAnyF`). -/
-def svAnyF (gs : GW) (sv : UInt64) (t k : Nat) : Bool :=
+@[inline] def svAnyF (gs : GW) (sv : UInt64) (t k : Nat) : Bool :=
   if t + k < 2147483648 then svAnyU gs sv t.toUSize k else svAnyS gs sv t k
 
 @[csimp] theorem svAny_eq_svAnyF : @svAny = @svAnyF := by
@@ -280,7 +280,7 @@ theorem lanesAnyS_eq (K : RP) (gs : GW) (n j : Nat) (full : UInt64) :
   | succ k ih => intro t F; simp only [lanesAnyS, lanesAny, ih]
 
 /-- `lanesAny` for the compiled code (`lanesAny_eq_lanesAnyF`). -/
-def lanesAnyF (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t k : Nat) : UInt64 :=
+@[inline] def lanesAnyF (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t k : Nat) : UInt64 :=
   if t + k + 32 * j < 2147483648 then
     lanesAnyU gs (K.w.getD j 0) (n - 32 * j) j.toUSize full F t.toUSize k
   else lanesAnyS K gs n j full F t k

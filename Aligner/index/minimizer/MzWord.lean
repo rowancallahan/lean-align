@@ -77,7 +77,7 @@ theorem seedLEU_eq (R : ByteArray) (j k : Nat) (jU kU : USize) (hj : jU.toNat = 
       (by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide), hi]) (by omega)
 
 /-- `seedLE` for the compiled code (`seedLE_eq_seedLEF`). -/
-def seedLEF (R : ByteArray) (j k i : Nat) (w : UInt64) (ok : Bool) : UInt64 × Bool :=
+@[inline] def seedLEF (R : ByteArray) (j k i : Nat) (w : UInt64) (ok : Bool) : UInt64 × Bool :=
   if j < 2147483648 ∧ k < 1048576 ∧ i < 1048576 then
     seedLEU R j.toUSize k.toUSize i.toUSize w ok
   else seedLES R j k i w ok
