@@ -125,12 +125,20 @@ theorem mzLookSP_size0 (ix : Mz.MzIdx) (G : PGen) (R : ByteArray) (s base : Nat)
 
 /-- `emptyCnt` without the lookups (`emptyCnt_eqS`: an empty bucket's lookup is empty). -/
 def emptyCntS (pk : PkMz) (n : Nat) (_ : ByteArray) (pp : Array MzP) : Nat :=
-  ((List.range (n / 25)).filter fun j => (pp[j]!).ok && LookG.size pk pp[j]! == 0).length
+  foldUpN (fun c j => if (pp[j]!).ok && LookG.size pk pp[j]! == 0 then c + 1 else c) (n / 25) 0 0
+
+theorem foldl_count (p : Nat → Bool) : ∀ (l : List Nat) (c : Nat),
+    l.foldl (fun c j => if p j then c + 1 else c) c = c + (l.filter p).length
+  | [], c => by simp
+  | x :: xs, c => by
+    rw [List.foldl_cons, foldl_count p xs, List.filter_cons]
+    cases p x <;> simp <;> omega
 
 /-- Compiled code runs `emptyCntS`. -/
 @[csimp] theorem emptyCnt_eqS : @emptyCnt = @emptyCntS := by
   funext pk n Rx pp
   unfold emptyCnt emptyCntS
+  rw [foldUpN_eq, foldl_count, ← List.range_eq_range', Nat.zero_add]
   congr 1
   apply List.filter_congr
   intro j _
