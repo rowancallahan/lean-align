@@ -189,17 +189,99 @@ def costP {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
     (((a.toList.map (LookG.size ix)).mergeSort (· ≤ ·)).take (sbound P + 1)).foldl (· + ·) 0
   max (one s.ps) (one s.pr)
 
-/-- `costP` with the insertion sort (`costP_eqI`). -/
+/-- `costP` with the insertion sort (`costP_eqI`; compiled code runs `costPK`). -/
 def costPI {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
   let one := fun (a : Array Pp) =>
     ((isortN (a.toList.map (LookG.size ix))).take (sbound P + 1)).foldl (· + ·) 0
   max (one s.ps) (one s.pr)
 
-/-- Compiled code runs `costPI`. -/
-@[csimp] theorem costP_eqI : @costP = @costPI := by
+theorem costP_eqI : @costP = @costPI := by
   funext L Pp i ix P s
   unfold costP costPI
   simp only [isortN_eq]
+
+/-- `l.take k`, structurally (`tkG_eq`; the compiled `List.take` builds an array). -/
+def tkG : Nat → List Nat → List Nat
+  | 0, _ => []
+  | _ + 1, [] => []
+  | k + 1, y :: ys => y :: tkG k ys
+
+/-- `l.take k`: `l` itself (nothing copied) when it is short enough. -/
+@[inline] def tkS (k : Nat) (l : List Nat) : List Nat := if l.length ≤ k then l else tkG k l
+
+/-- `(insN x l).take k` in one pass (`insK_eq`). -/
+def insK : Nat → Nat → List Nat → List Nat
+  | 0, _, _ => []
+  | _ + 1, x, [] => [x]
+  | k + 1, x, y :: ys => if x ≤ y then x :: tkS k (y :: ys) else y :: insK k x ys
+
+/-- One step of "the `k` smallest, sorted": `x` inserted, cut to `k`; the list itself (nothing
+allocated) when it is full and `x` is above all of it (`kStep_eq`). -/
+@[inline] def kStep (k x : Nat) (acc : List Nat) : List Nat :=
+  if acc.length == k && acc.all (· < x) then acc else insK k x acc
+
+theorem tkG_eq : ∀ (k : Nat) (l : List Nat), tkG k l = l.take k
+  | 0, _ => by simp [tkG]
+  | _ + 1, [] => by simp [tkG]
+  | k + 1, y :: ys => by simp [tkG, tkG_eq k ys]
+
+theorem tkS_eq (k : Nat) (l : List Nat) : tkS k l = l.take k := by
+  unfold tkS
+  split
+  · next h => rw [List.take_of_length_le h]
+  · exact tkG_eq k l
+
+theorem insK_eq : ∀ (k x : Nat) (l : List Nat), insK k x l = (insN x l).take k
+  | 0, _, _ => by simp [insK]
+  | _ + 1, x, [] => by simp [insK, insN]
+  | k + 1, x, y :: ys => by
+    by_cases hxy : x ≤ y
+    · simp [insK, insN, hxy, tkS_eq]
+    · simp [insK, insN, hxy, insK_eq k x ys]
+
+theorem insN_of_lt (x : Nat) : ∀ l : List Nat, (∀ y ∈ l, y < x) → insN x l = l ++ [x]
+  | [], _ => rfl
+  | y :: ys, h => by
+    have hy := h y (by simp)
+    have ih := insN_of_lt x ys (fun z hz => h z (by simp [hz]))
+    simp only [insN, if_neg (show ¬ x ≤ y by omega), ih, List.cons_append]
+
+theorem kStep_eq (k x : Nat) (acc : List Nat) : kStep k x acc = (insN x acc).take k := by
+  unfold kStep
+  split
+  · next h =>
+    simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, decide_eq_true_eq] at h
+    rw [insN_of_lt x acc h.2, List.take_append_of_le_length (by omega), List.take_of_length_le (by omega)]
+  · exact insK_eq k x acc
+
+theorem take_insN (x : Nat) : ∀ (k : Nat) (l : List Nat), (insN x l).take k = (insN x (l.take k)).take k
+  | 0, _ => by simp
+  | _+1, [] => by simp
+  | n+1, y :: ys => by
+    by_cases hxy : x ≤ y
+    · cases n with
+      | zero => simp [insN, hxy]
+      | succ m => simp [insN, hxy, List.take_take]
+    · simp only [List.take_succ_cons, insN, if_neg hxy]
+      rw [take_insN x n ys]
+
+theorem take_isortN (k : Nat) : ∀ l : List Nat, (isortN l).take k = l.foldr (kStep k) []
+  | [] => by simp [isortN]
+  | x :: xs => by
+    rw [List.foldr_cons, kStep_eq, ← take_isortN k xs, isortN, take_insN]
+
+/-- `costP` without sorting: the `sbound P + 1` smallest buckets kept while scanning the array. -/
+def costPK {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
+  let k := sbound P + 1
+  let one := fun (a : Array Pp) => (a.foldr (fun p acc => kStep k (LookG.size ix p) acc) []).foldl (· + ·) 0
+  max (one s.ps) (one s.pr)
+
+/-- Compiled code runs `costPK`. -/
+@[csimp] theorem costP_eqK : @costP = @costPK := by
+  rw [costP_eqI]
+  funext L Pp i ix P s
+  unfold costPI costPK
+  simp only [take_isortN, List.foldr_map, Array.foldr_toList]
 
 /-- `mapFastGBKP` from a prepared read. -/
 def mapFastGBKPp {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
