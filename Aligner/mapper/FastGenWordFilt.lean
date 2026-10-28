@@ -128,6 +128,129 @@ def lanesAny (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t : Nat) : Nat �
     let F := F ||| laneZ (lowF (mAt K gs t j) (n - 32 * j))
     if F &&& full == full then F else lanesAny K gs n j full F (t + 1) k
 
+/-! `lanesAny` on machine words (compiled code only): `lanesAny_eq_lanesAnyF` (`@[csimp]`). The loop
+`lanesAnyU` keeps the field offset `t` in `USize` (word `t >>> 5 + j`, shift `t &&& 31`), reads the
+window words through `GW.getU` (`USize` compares) and hoists the read word `K.w.getD j 0` and the
+field count `n - 32 j` out of the loop. -/
+
+/-- `GW.get` at a machine-word index (`GW.getU_eq`). -/
+@[inline] def GW.getU (g : GW) (i : USize) : UInt64 :=
+  if i < 8 then
+    if i < 4 then (if i < 2 then (if i = 0 then g.w0 else g.w1) else (if i = 2 then g.w2 else g.w3))
+    else (if i < 6 then (if i = 4 then g.w4 else g.w5) else (if i = 6 then g.w6 else g.w7))
+  else if i < 16 then
+    if i < 12 then (if i < 10 then (if i = 8 then g.w8 else g.w9) else (if i = 10 then g.w10 else g.w11))
+    else (if i < 14 then (if i = 12 then g.w12 else g.w13) else (if i = 14 then g.w14 else g.w15))
+  else g.rest.getD (i - 16).toNat 0
+
+theorem usz_lt_iff (i : USize) (c : Nat) (hc : c < 2 ^ 32) : (i < (OfNat.ofNat c : USize)) ↔ i.toNat < c := by
+  show i.toNat < (OfNat.ofNat c : USize).toNat ↔ _
+  rw [usz_lit c hc]
+
+theorem usz_eq_iff (i : USize) (c : Nat) (hc : c < 2 ^ 32) : (i = (OfNat.ofNat c : USize)) ↔ i.toNat = c := by
+  constructor
+  · intro h; rw [h, usz_lit c hc]
+  · intro h; apply USize.toNat_inj.mp; rw [h, usz_lit c hc]
+
+theorem GW.getU_eq (g : GW) (i : USize) : g.getU i = g.get i.toNat := by
+  unfold GW.getU GW.get
+  simp only [usz_lt_iff i 8 (by decide), usz_lt_iff i 4 (by decide), usz_lt_iff i 2 (by decide),
+    usz_lt_iff i 6 (by decide), usz_lt_iff i 16 (by decide), usz_lt_iff i 12 (by decide),
+    usz_lt_iff i 10 (by decide), usz_lt_iff i 14 (by decide), usz_eq_iff i 0 (by decide),
+    usz_eq_iff i 2 (by decide), usz_eq_iff i 4 (by decide), usz_eq_iff i 6 (by decide),
+    usz_eq_iff i 8 (by decide), usz_eq_iff i 10 (by decide), usz_eq_iff i 12 (by decide),
+    usz_eq_iff i 14 (by decide)]
+  split
+  · rfl
+  · split
+    · rfl
+    · rename_i h1 h2
+      rw [USize.toNat_sub_of_le _ _ (by show (16 : USize).toNat ≤ i.toNat; rw [usz_lit 16 (by decide)]; omega),
+        usz_lit 16 (by decide)]
+
+/-- `lanesAny K gs n j full F t k` with `wj = K.w.getD j 0`, `c = n - 32 j`, `jU = j` and `t` in
+`USize` (`lanesAnyU_eq`). -/
+def lanesAnyU (gs : GW) (wj : UInt64) (c : Nat) (jU : USize) (full F : UInt64) (t : USize) : Nat → UInt64
+  | 0 => F
+  | k + 1 =>
+    let u := (t >>> 5) + jU
+    let s := t &&& 31
+    let g := comb (gs.getU u) (gs.getU (u + 1)) s.toNat (2 * s).toUInt64 (64 - 2 * s).toUInt64
+    let F := F ||| laneZ (lowF (fold (wj ^^^ g)) c)
+    if F &&& full == full then F else lanesAnyU gs wj c jU full F (t + 1) k
+
+theorem gAtWU_eq (gs : GW) (tU jU : USize) (t j : Nat) (ht : tU.toNat = t) (hj : jU.toNat = j)
+    (hb : t + 32 * j < 2 ^ 31) :
+    comb (gs.getU ((tU >>> 5) + jU)) (gs.getU ((tU >>> 5) + jU + 1)) (tU &&& 31).toNat
+      (2 * (tU &&& 31)).toUInt64 (64 - 2 * (tU &&& 31)).toUInt64 = gAtW gs (t + 32 * j) := by
+  have hs : (tU &&& 31).toNat = (t + 32 * j) % 32 := by
+    rw [USize.toNat_and, usz_lit 31 (by decide), ht, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+      Nat.and_two_pow_sub_one_eq_mod]; omega
+  have hu : ((tU >>> 5) + jU).toNat = (t + 32 * j) / 32 := by
+    rw [usz_add' _ _ (by rw [usz_shr5]; omega), usz_shr5, ht, hj]; omega
+  have hu1 : ((tU >>> 5) + jU + 1).toNat = (t + 32 * j) / 32 + 1 := by
+    rw [usz_add' _ _ (by rw [hu, usz_lit 1 (by decide)]; omega), hu, usz_lit 1 (by decide)]
+  have hlt : (tU &&& 31).toNat < 32 := by rw [hs]; omega
+  have h2 : (2 * (tU &&& 31)).toNat = 2 * ((t + 32 * j) % 32) := by
+    rw [usz_mul' _ _ (by rw [usz_lit 2 (by decide)]; omega), usz_lit 2 (by decide), hs]
+  have h64le : (2 * (tU &&& 31)).toNat ≤ (64 : USize).toNat := by rw [h2, usz_lit 64 (by decide)]; omega
+  have h64 : (64 - 2 * (tU &&& 31)).toNat = 64 - 2 * ((t + 32 * j) % 32) := by
+    rw [USize.toNat_sub_of_le _ _ h64le, h2, usz_lit 64 (by decide)]
+  have c1 : (2 * (tU &&& 31)).toUInt64 = (2 * ((t + 32 * j) % 32)).toUInt64 := by
+    apply UInt64.toNat_inj.mp
+    rw [USize.toNat_toUInt64, h2, Nat.toUInt64_eq, UInt64.toNat_ofNat']
+    exact (Nat.mod_eq_of_lt (by omega)).symm
+  have c2 : (64 - 2 * (tU &&& 31)).toUInt64 = (64 - 2 * ((t + 32 * j) % 32)).toUInt64 := by
+    apply UInt64.toNat_inj.mp
+    rw [USize.toNat_toUInt64, h64, Nat.toUInt64_eq, UInt64.toNat_ofNat']
+    exact (Nat.mod_eq_of_lt (by omega)).symm
+  unfold gAtW
+  rw [GW.getU_eq, GW.getU_eq, hu, hu1, hs, c1, c2]
+
+theorem lanesAnyU_eq (K : RP) (gs : GW) (n j : Nat) (jU : USize) (hj : jU.toNat = j) (full : UInt64) :
+    ∀ k (tU : USize) t F, tU.toNat = t → t + k + 32 * j < 2 ^ 31 →
+      lanesAnyU gs (K.w.getD j 0) (n - 32 * j) jU full F tU k = lanesAny K gs n j full F t k := by
+  intro k
+  induction k with
+  | zero => intro tU t F _ _; rfl
+  | succ k ih =>
+    intro tU t F ht hb
+    simp only [lanesAnyU, lanesAny, mAt]
+    rw [gAtWU_eq gs tU jU t j ht hj (by omega)]
+    split
+    · rename_i hc; simp only [hc, ↓reduceIte]
+    · rename_i hc; simp only [hc, ↓reduceIte, Bool.false_eq_true]
+      exact ih _ _ _ (by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide), ht])
+          (by omega)
+
+/-- `lanesAny` (its slow path; not rewritten by `csimp`). -/
+def lanesAnyS (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t : Nat) : Nat → UInt64
+  | 0 => F
+  | k + 1 =>
+    let F := F ||| laneZ (lowF (mAt K gs t j) (n - 32 * j))
+    if F &&& full == full then F else lanesAnyS K gs n j full F (t + 1) k
+
+theorem lanesAnyS_eq (K : RP) (gs : GW) (n j : Nat) (full : UInt64) :
+    ∀ k t F, lanesAnyS K gs n j full F t k = lanesAny K gs n j full F t k := by
+  intro k
+  induction k with
+  | zero => intro t F; rfl
+  | succ k ih => intro t F; simp only [lanesAnyS, lanesAny, ih]
+
+/-- `lanesAny` for the compiled code (`lanesAny_eq_lanesAnyF`). -/
+def lanesAnyF (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t k : Nat) : UInt64 :=
+  if t + k + 32 * j < 2147483648 then
+    lanesAnyU gs (K.w.getD j 0) (n - 32 * j) j.toUSize full F t.toUSize k
+  else lanesAnyS K gs n j full F t k
+
+@[csimp] theorem lanesAny_eq_lanesAnyF : @lanesAny = @lanesAnyF := by
+  funext K gs n j full F t k
+  unfold lanesAnyF; split
+  · rename_i h
+    exact (lanesAnyU_eq K gs n j _ (usz_n _ (by omega)) full k _ t F (usz_n _ (by omega)) (by omega)).symm
+  · exact (lanesAnyS_eq K gs n j full k t F).symm
+
+
 /-- Number of lanes `0 … 3` flagged (bit `16i`). -/
 @[inline] def lc (F : UInt64) : Nat :=
   (F &&& 1).toNat + (F >>> 16 &&& 1).toNat + (F >>> 32 &&& 1).toNat + (F >>> 48 &&& 1).toNat
