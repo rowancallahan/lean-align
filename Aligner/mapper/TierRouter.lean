@@ -115,6 +115,34 @@ def emptyCnt (pk : PkMz) (n : Nat) (Rx : ByteArray) (pp : Array MzP) : Nat :=
   ((List.range (n / 25)).filter fun j => (pp[j]!).ok && LookG.size pk pp[j]! == 0 &&
     (LookG.look pk ByteArray.empty Rx (j * (n / (n / 25))) (n - j * (n / (n / 25))) pp[j]!).isEmpty).length
 
+/-- An empty bucket's lookup is empty: the scan runs over `[loB, hiB)`. -/
+theorem mzLookSP_size0 (ix : Mz.MzIdx) (G : PGen) (R : ByteArray) (s base : Nat) (p : MzP) (hok : p.ok = true)
+    (h0 : mzSize ix p = 0) : mzLookSP ix G R s base p = #[] := by
+  unfold mzSize at h0
+  rw [if_pos hok] at h0
+  unfold mzLookSP lookupPW
+  rw [if_pos hok, scanAW, if_neg (by omega)]
+
+/-- `emptyCnt` without the lookups (`emptyCnt_eqS`: an empty bucket's lookup is empty). -/
+def emptyCntS (pk : PkMz) (n : Nat) (_ : ByteArray) (pp : Array MzP) : Nat :=
+  ((List.range (n / 25)).filter fun j => (pp[j]!).ok && LookG.size pk pp[j]! == 0).length
+
+/-- Compiled code runs `emptyCntS`. -/
+@[csimp] theorem emptyCnt_eqS : @emptyCnt = @emptyCntS := by
+  funext pk n Rx pp
+  unfold emptyCnt emptyCntS
+  congr 1
+  apply List.filter_congr
+  intro j _
+  cases hok : (pp[j]!).ok
+  · rfl
+  · cases h0 : (LookG.size pk pp[j]! == 0)
+    · rfl
+    · have e : LookG.size pk pp[j]! = 0 := beq_iff_eq.mp h0
+      show (true && true && (mzLookSP pk.1 pk.2 Rx _ _ pp[j]!).isEmpty) = (true && true)
+      rw [mzLookSP_size0 pk.1 pk.2 Rx _ _ _ hok e]
+      rfl
+
 /-- A gapless alignment at virtual chromosome `v` (`< nc`: forward), start `st`, `mm` mismatches, and
 whether it passes `chkCand`. -/
 def alnC (pgs : Array PGen) (R Rr : ByteArray) (v st mm : Nat) : (Placement × Int) × Bool :=
