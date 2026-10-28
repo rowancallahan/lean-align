@@ -260,7 +260,7 @@ Tried, not kept:
   the generic csimp on `fwdMis` covers all callers.
 - `scanAWK` on USize (`slotWU`, `rd4U`): net +3 M Ir on chr21. Buckets are short (≈600 Ir per call), so the
   wrapper (bound test, 18 arguments re-passed) costs more than the loop saves. May differ on hg38 (longer
-  buckets); the code is in this branch's history only as a note, not committed.
+  buckets); not committed.
 - Left alone: `kerGKG` self cost (WgPacked, other box), `TierHeur.hamD` (`for … in [0:n]` with early return;
   shared file), Spec's SAM writing / FASTQ parsing (`samLines`, `findNewline`, UTF-8 validation: ≈ 15%),
   allocation / refcount (≈ 13%), `packLoopU` / `seedLEU` (already USize; cost is per letter table lookups).
