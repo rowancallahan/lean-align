@@ -417,6 +417,53 @@ theorem regionPenKPS_eq (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Arra
     regionPenKPP P lo hi (fun x y => ((pk, x, y) : RgMz)) G offs pgs R (prepMate pk R : PrepM MzP).Rr
       (prepMate pk R : PrepM MzP).K1 (prepMate pk R : PrepM MzP).K2 b := rfl
 
+/-- `mapChromsGBFGP` with both strands' seed orders `o1`, `o2` given (`mapChromsGBFGPO_eq`: a mate's order is
+the same in every search of it, so it is computed once per pair). -/
+@[specialize] def mapChromsGBFGPO {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) (o1 o2 : List Nat) : Best :=
+  let n := gbs.size
+  let gbs2 := gbs ++ gbs
+  let m := R.size / 25
+  let Ls := R.size / m
+  let x := ilGFG kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+    ⟨o1, [], Array.replicate n []⟩ ⟨o2, [], Array.replicate n []⟩ (initP P)
+  let b := foldUpN (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) n 0 x.2.2
+  foldUpN (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) n 0 b
+
+theorem mapChromsGBFGPO_eq {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) :
+    mapChromsGBFGPO kf1 kf2 K1 K2 P ix G offs gbs R Rr ps pr (ordG (ps.map (LookG.size ix)) (R.size / 25))
+      (ordG (pr.map (LookG.size ix)) (R.size / 25)) = mapChromsGBFGP kf1 kf2 K1 K2 P ix G offs gbs R Rr ps pr := rfl
+
+/-- `mateKPP` with the seed orders given (`mateKPPO_eq`). -/
+def mateKPPO {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) (o1 o2 : List Nat) : MateR :=
+  let b := mapChromsGBFGPO (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+    (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) s.K1 s.K2 P ix G offs pgs R s.Rr s.ps s.pr o1 o2
+  (decodeP pgs.size P b, decide (b.pen ≤ P))
+
+/-- `regionPenKPS` with the seed orders given (`regionPenKPSO_eq`). -/
+def regionPenKPSO (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen)
+    (R Rr : ByteArray) (K1 K2 : RP) (ps pr : Array MzP) (o1 o2 : List Nat) (b : Placement) : Nat :=
+  let c := b.1.chr
+  if c < pgs.size && fastT P R then
+    let x := regionB P lo hi R.size b
+    let x1 := min x.2 pgs[c]!.n
+    if x.1 < x1 then
+      let v := view pgs[c]! x.1 (x1 - x.1)
+      let gbs2 := #[v] ++ #[v]
+      (mapChromsGBFGPO (kerHKG R K1 gbs2 gbs2) (kerHKG Rr K2 gbs2 gbs2) K1 K2 P
+        ((pk, offs[c]! + x.1, offs[c]! + x1) : RgMz) G #[0] #[v] R Rr ps pr o1 o2).pen
+    else P
+  else P
+
+theorem regionPenKPSO_eq (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen)
+    (R Rr : ByteArray) (K1 K2 : RP) (ps pr : Array MzP) (b : Placement) :
+    regionPenKPSO P lo hi pk G offs pgs R Rr K1 K2 ps pr (ordG (ps.map (LookG.size pk)) (R.size / 25))
+      (ordG (pr.map (LookG.size pk)) (R.size / 25)) b = regionPenKPS P lo hi pk G offs pgs R Rr K1 K2 ps pr b := rfl
+
 /-- `mateKP` reading the packed reads from the preparation (`mateKP_eqP`: the same for `prepMate`). -/
 def mateKPP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : MateR :=
@@ -430,6 +477,11 @@ theorem mateKP_eqP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) 
   unfold mateKP mateKPP
   simp only [mapChromsGBFG_eqP]
   rfl
+
+theorem mateKPPO_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) :
+    mateKPPO P ix G offs pgs R s (ordG (s.ps.map (LookG.size ix)) (R.size / 25)) (ordG (s.pr.map (LookG.size ix)) (R.size / 25)) =
+      mateKPP P ix G offs pgs R s := rfl
 
 /-- `mateH` on a mate's search function `mt` (`mateH K P R s = mateHF K.hint R (K.mate · R s) P`). -/
 @[inline] def mateHF (hint : Bool) (R : ByteArray) (mt : Nat → MateR) (P h : Nat) : MateR :=
@@ -555,6 +607,16 @@ theorem costPF_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
   unfold costPI costPF costOne
   simp only [isortN_map, ← Array.foldr_toList, sumTake_eq]
 
+/-- `costPF` from both strands' bucket sizes (`costZ_eq`). -/
+@[inline] def costZ (P : Nat) (z1 z2 : Array Nat) : Nat :=
+  max (sumTake (sbound P + 1) (z1.foldr insN []) 0) (sumTake (sbound P + 1) (z2.foldr insN []) 0)
+
+theorem costZ_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
+    costZ P (s.ps.map (LookG.size ix)) (s.pr.map (LookG.size ix)) = costP ix P s := by
+  rw [costPF_eq]
+  unfold costZ costPF costOne
+  simp only [Array.foldr_map]
+
 /-- `tierPairB` with each mate prepared once, for the gate, RT's pass 1 and the rest; RT's pass 1 reads the
 packed reads from the preparations (`tierPairB_eqS`). -/
 def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
@@ -564,14 +626,22 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
   | some a, some b =>
     let s1 : PrepM MzP := prepMate pk a
     let s2 : PrepM MzP := prepMate pk b
-    let c1 := costPF pk (cfg.rcfg.cap1 a.size) s1
-    let c2 := costPF pk (cfg.rcfg.cap1 b.size) s2
+    -- each strand's bucket sizes, read once: the pass-1 costs and the seed order of all its searches
+    let za1 := s1.ps.map (LookG.size pk)
+    let za2 := s1.pr.map (LookG.size pk)
+    let zb1 := s2.ps.map (LookG.size pk)
+    let zb2 := s2.pr.map (LookG.size pk)
+    let c1 := costZ (cfg.rcfg.cap1 a.size) za1 za2
+    let c2 := costZ (cfg.rcfg.cap1 b.size) zb1 zb2
     if cfg.gate a b s1 s2 c1 c2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
-    let rl := fun x y => ((pk, x, y) : RgMz)
+    let oa1 := ordG za1 (a.size / 25)
+    let oa2 := ordG za2 (a.size / 25)
+    let ob1 := ordG zb1 (b.size / 25)
+    let ob2 := ordG zb2 (b.size / 25)
     let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b c1 c2
-      (fun Q => mateKPP Q pk ByteArray.empty offs pgs a s1) (fun Q => mateKPP Q pk ByteArray.empty offs pgs b s2)
-      (fun Q => regionPenKPS Q cfg.lo cfg.hi pk ByteArray.empty offs pgs a s1.Rr s1.K1 s1.K2 s1.ps s1.pr)
-      (fun Q => regionPenKPS Q cfg.lo cfg.hi pk ByteArray.empty offs pgs b s2.Rr s2.K1 s2.K2 s2.ps s2.pr)
+      (fun Q => mateKPPO Q pk ByteArray.empty offs pgs a s1 oa1 oa2) (fun Q => mateKPPO Q pk ByteArray.empty offs pgs b s2 ob1 ob2)
+      (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs a s1.Rr s1.K1 s1.K2 s1.ps s1.pr oa1 oa2)
+      (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs b s2.Rr s2.K1 s2.K2 s2.ps s2.pr ob1 ob2)
     match r.out with
     | .mapped (x, y) =>
       { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
@@ -590,17 +660,23 @@ end router
     cases O2 with
     | none => rfl
     | some b =>
-      have hm : ∀ R, (fun Q => mateKPP Q pk ByteArray.empty offs pgs R (prepMate pk R : PrepM MzP)) =
+      have hm : ∀ R, (fun Q => mateKPPO Q pk ByteArray.empty offs pgs R (prepMate pk R : PrepM MzP)
+            (ordG ((prepMate pk R : PrepM MzP).ps.map (LookG.size pk)) (R.size / 25))
+            (ordG ((prepMate pk R : PrepM MzP).pr.map (LookG.size pk)) (R.size / 25))) =
           (fun Q => (tierKer cfg pk offs pgs cfg.j1).mate Q R (prepMate pk R : PrepM MzP)) :=
-        fun R => funext fun Q => (mateKP_eqP Q pk ByteArray.empty offs pgs R).symm
-      have hr : ∀ R, (fun Q => regionPenKPS Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R
+        fun R => funext fun Q => (mateKPPO_eq Q pk ByteArray.empty offs pgs R _).trans
+          (mateKP_eqP Q pk ByteArray.empty offs pgs R).symm
+      have hr : ∀ R, (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R
             (prepMate pk R : PrepM MzP).Rr (prepMate pk R : PrepM MzP).K1 (prepMate pk R : PrepM MzP).K2
-            (prepMate pk R : PrepM MzP).ps (prepMate pk R : PrepM MzP).pr) =
+            (prepMate pk R : PrepM MzP).ps (prepMate pk R : PrepM MzP).pr
+            (ordG ((prepMate pk R : PrepM MzP).ps.map (LookG.size pk)) (R.size / 25))
+            (ordG ((prepMate pk R : PrepM MzP).pr.map (LookG.size pk)) (R.size / 25))) =
           (fun Q => (tierKer cfg pk offs pgs cfg.j1).region Q R) :=
         fun R => funext fun Q => funext fun x =>
+          (regionPenKPSO_eq Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R _ _ _ _ _ x).trans <|
           (regionPenKPS_eq Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R x).trans
             (regionPenKP_eqP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R x).symm
-      simp only [tierPairBS, ← costPF_eq]
+      simp only [tierPairBS, costZ_eq]
       rw [hm a, hm b, hr a, hr b]
       rfl
 
