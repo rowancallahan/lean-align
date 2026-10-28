@@ -232,3 +232,35 @@ fwdW 6.6 M → 4.3 M. The remaining GMP string parsing (0.25 M) is `pscanD`'s li
 Wall/CPU (20k pairs, 7 alternated runs, medians; `scripts/ab_pair.sh`): prod 0.835 → 0.746 s wall (−10.6%),
 0.820 → 0.750 s CPU (−8.5%); RTX 1.612 → 1.517 s wall (−5.9%), 1.600 → 1.500 s CPU (−6.2%).
 Not measured here: chr21 / hg38 (the box has no reference genome), `-march` / LTO, multi-thread runs.
+
+## 6. chr21 continuation (branch speed/n28-loop-shape, 2026-10-28)
+
+Ported §1 onto 6a5ab23 (scripts now in Testing/scripts/, notes in Testing/notes/), then profiled the Spec shim
+(`lean-align map x.idx R1 R2 out.sam 100 1000`, chr21 index, 2000 sim mason pairs, callgrind, whole run) and
+applied the same template to the next loops. Each is a fast definition + equality proof + `@[csimp]`, with a
+verbatim slow copy above the bounds; SAM byte-identical to 6a5ab23 on sim mason / sim low / novaseq_200k /
+hg002_200k after every step; CI_check passes.
+
+| step | where | whole-run Ir, 2000 pairs |
+|---|---|---|
+| base 6a5ab23 | | 831.6 M |
+| §1 port (hamW, fwdW, bwdW, seedLE, revCompLoop, miniGo) | | 780.5 M |
+| `PGen.raw` (`raw_eq_rawF`: no `i < USize.size` bignum test per letter, `uget`) | MapperPGen | |
+| generic `fwdMis` / `bwdMis` / `hamming` (`GRead`; reaches WgPacked's callers unedited) | MapperFastAlgo | 757.4 M |
+| `lanesAny` (USize field offset, `GW.getU`, hoisted read word) | FastGenWordFilt | 750.9 M |
+| `flagsOk` (offset 17 b stepped in USize), `svAny` (same word read as lanesAny) | MapperK250, FastGenWordFilt | 746.7 M |
+| `@[inline]` on all the wrappers (the bound test ran as its own call, ~90 Ir) | | 733.7 M |
+
+Per 1000 pairs ((4000-pair run − 2000-pair run) / 2, removes the ~48 M index load): base 391.6 M, port 365.6 M
+(−6.6%), now 344.0 M (−12.2%). Wall time on this 4-core box is ±10% between runs (see the commit messages).
+
+Tried, not kept:
+- PGen-specific `fwdMis`/`bwdMis` loops (`getPU`, USize genome offset) behind csimps on `gappedPen2Pk` and
+  `hitsCK`: the hot calls come through `kerGKG` from `ilGFG` (WgPacked), so they fired for <0.2% of the work;
+  the generic csimp on `fwdMis` covers all callers.
+- `scanAWK` on USize (`slotWU`, `rd4U`): net +3 M Ir on chr21. Buckets are short (≈600 Ir per call), so the
+  wrapper (bound test, 18 arguments re-passed) costs more than the loop saves. May differ on hg38 (longer
+  buckets); the code is in this branch's history only as a note, not committed.
+- Left alone: `kerGKG` self cost (WgPacked, other box), `TierHeur.hamD` (`for … in [0:n]` with early return;
+  shared file), Spec's SAM writing / FASTQ parsing (`samLines`, `findNewline`, UTF-8 validation: ≈ 15%),
+  allocation / refcount (≈ 13%), `packLoopU` / `seedLEU` (already USize; cost is per letter table lookups).
