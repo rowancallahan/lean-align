@@ -1185,3 +1185,11 @@ See the branch tips' commit messages for what is finished on each.
   `speed/n28-seed-loop`, `speed/n28-alloc`. Merge after checking each one's CI_check and identical output.
 - Still open: M2 (found pair + CIGAR) and the tier 2 heuristic; scoring/trimming/insert parameters in the
   mapping spec; ACGT-only alphabet; the shim index build peaks at 13.6 GB (vs bench 7.7 GB).
+
+### TODO (Rowan, 2026-10-28): full-genome test of the n28 speed branches together with the M2 heuristic
+- Overnight branches `speed/n28-seed-loop`, `speed/n28-alloc`, `speed/n28-loop-shape` (chr21 only so far).
+  Combined locally as `n28-combined` (8aaf4ed, not pushed): seed-loop, then alloc's ed01f23 b2f1447 e656342
+  (skip 1cbd851, a duplicate of seed-loop's hitsCK change), then loop-shape. CI_check passes; SAM
+  byte-identical to 6a5ab23 on chr21 sim mason/low, NovaSeq 200k, HiSeq 200k; CPU −8% to −25%.
+- Next: run this combination on whole hg38 (from Rowan's release) **with the M2 heuristic turned back on**,
+  against minibwa default and native. Nothing merged or started yet.
