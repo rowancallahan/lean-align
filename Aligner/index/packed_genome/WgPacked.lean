@@ -301,16 +301,31 @@ theorem isortN_eq (l : List Nat) : l.mergeSort (fun a b => decide (a ≤ b)) = i
   · exact isortN_sorted l
   · exact (List.mergeSort_perm l _).trans (isortN_perm l).symm
 
-/-- `diags` sorting a short list by insertion (`diags_eqI`). -/
+/-- The diagonals `x / 16` of the slices, read off each array by `foldr` (`flatD_eq`). -/
+def flatD : List (Array Nat) → List Nat
+  | [] => []
+  | arr :: rest => arr.foldr (fun x r => x / 16 :: r) (flatD rest)
+
+theorem foldr_div16 (init : List Nat) : ∀ l : List Nat,
+    l.foldr (fun x r => x / 16 :: r) init = l.map (· / 16) ++ init
+  | [] => rfl
+  | x :: xs => by simp only [List.foldr_cons, List.map_cons, List.cons_append, foldr_div16 init xs]
+
+theorem flatD_eq : ∀ acc : List (Array Nat), flatD acc = acc.flatMap fun arr => arr.toList.map (· / 16)
+  | [] => rfl
+  | arr :: rest => by
+    rw [flatD, List.flatMap_cons, ← flatD_eq rest, ← Array.foldr_toList, foldr_div16]
+
+/-- `diags` sorting a short list by insertion, the slices read without intermediate lists (`diags_eqI`). -/
 def diagsI (acc : List (Array Nat)) : List Nat :=
-  let l := acc.flatMap fun arr => arr.toList.map (· / 16)
+  let l := flatD acc
   dedupAdj (if l.length ≤ 16 then isortN l else l.mergeSort fun a b => decide (a ≤ b))
 
 /-- Compiled code runs `diagsI`. -/
 @[csimp] theorem diags_eqI : @diags = @diagsI := by
   funext acc
   unfold diags diagsI
-  simp only [isortN_eq, ite_self]
+  simp only [flatD_eq, isortN_eq, ite_self]
 
 /-- Stages K and B of one chromosome, the letter filter (`chromKBFG_eq`: the same). -/
 def chromKBFG0 (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
@@ -366,6 +381,68 @@ def chromKBFG [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (
     let r := (List.range n).foldl (advCFG kf R.size gbs2 offs t P (R.size - j * Ls)
       (LookG.look ix G R (j * Ls) (R.size - j * Ls) ps[j]!)) (s.acc, b)
     (⟨rest, j :: s.J, r.1⟩, r.2)
+
+/-- `(List.range' i k).foldl f b` without the list (`foldUpN_eq`). -/
+@[specialize] def foldUpN {β : Type} (f : β → Nat → β) : Nat → Nat → β → β
+  | 0, _, b => b
+  | k + 1, i, b => foldUpN f k (i + 1) (f b i)
+
+theorem foldUpN_eq {β : Type} (f : β → Nat → β) : ∀ (k i : Nat) (b : β),
+    foldUpN f k i b = (List.range' i k).foldl f b
+  | 0, _, _ => rfl
+  | k + 1, i, b => by rw [foldUpN, List.range'_succ, List.foldl_cons, foldUpN_eq f k (i + 1)]
+
+/-- `sliceG` returning the lookup itself when the chromosome is at 0 and holds every anchor
+(the whole genome as one sequence), else without the shift when it is at 0 (`sliceG_eqW`). -/
+@[inline] def sliceW (a : Array Nat) (base o len : Nat) : Array Nat :=
+  let i := lbA a (16 * (o + base)) 0 a.size
+  let j := lbA a (16 * (o + len + 1 + base - q)) 0 a.size
+  if j ≤ i then #[]
+  else if o = 0 then (if i = 0 && j == a.size then a else a.extract i j)
+  else (a.extract i j).map (· - 16 * o)
+
+theorem sliceG_eqW (a : Array Nat) (base o len : Nat) : sliceG a base o len = sliceW a base o len := by
+  rw [sliceG_eqE]
+  unfold sliceGE sliceW
+  simp only []
+  split
+  · rfl
+  · split
+    · next ho =>
+      subst ho
+      have hm : (fun x => x - 16 * 0) = id := funext fun x => by simp
+      rw [hm, Array.map_id]
+      split
+      · next h =>
+        simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
+        rw [h.1, h.2, Array.extract_size]
+      · rfl
+    · rfl
+
+/-- `advCFG` with `sliceW` (`sliceG_eqW`). -/
+@[inline] def advCFGW (kf : Ker) (n : Nat) (gbs2 : Array Gt) (offs : Array Nat) (t P bs : Nat) (a : Array Nat)
+    (r : Array (List (Array Nat)) × Best) (c : Nat) : Array (List (Array Nat)) × Best :=
+  let sl := sliceW a bs offs[c]! (GRead.size gbs2[t + c]!)
+  (r.1.set! c (sl :: r.1[c]!),
+    sl.foldl (fun b e => addKF kf (t + c) (min P 16) ((e / 16 : Nat) - (n : Int)) n b) r.2)
+
+/-- `GS.advFG` with the chromosomes visited by `foldUpN` and sliced by `sliceW` (`advFG_eqL`). -/
+@[inline] def GS.advFGL {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf : Ker) (ix : L) (G R : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n t P Ls : Nat) (ps : Array Pp) (s : GS) (b : Best) : GS × Best :=
+  match s.ord with
+  | [] => (s, b)
+  | j :: rest =>
+    let r := foldUpN (advCFGW kf R.size gbs2 offs t P (R.size - j * Ls)
+      (LookG.look ix G R (j * Ls) (R.size - j * Ls) ps[j]!)) n 0 (s.acc, b)
+    (⟨rest, j :: s.J, r.1⟩, r.2)
+
+/-- Compiled code runs `GS.advFGL`. -/
+@[csimp] theorem advFG_eqL : @GS.advFG = @GS.advFGL := by
+  funext
+  unfold GS.advFG GS.advFGL
+  have e : @advCFG = @advCFGW := by
+    funext; unfold advCFG advCFGW; rw [sliceG_eqW]
+  split <;> simp only [foldUpN_eq, List.range_eq_range', e]
 
 @[specialize] def ilGFG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
     (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
