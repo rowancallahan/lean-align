@@ -1193,3 +1193,14 @@ See the branch tips' commit messages for what is finished on each.
   byte-identical to 6a5ab23 on chr21 sim mason/low, NovaSeq 200k, HiSeq 200k; CPU −8% to −25%.
 - Next: run this combination on whole hg38 (from Rowan's release) **with the M2 heuristic turned back on**,
   against minibwa default and native. Nothing merged or started yet.
+
+### Rollback point before the n29 experiments (2026-10-29)
+- **Proved, pushed:** `claude/festive-fermi-mf9mo6` at 17136eb (= checkpoint 6a5ab23 + notes).
+- **This version's speed** (all three n28 branches merged; tree `f8b83feab0e9c1afe7a839605760c71aecbcafd6`):
+  merge `origin/speed/n28-seed-loop`, cherry-pick `ed01f23 b2f1447 e656342` from `origin/speed/n28-alloc` (not
+  1cbd851), merge `origin/speed/n28-loop-shape`. The n29 boxes push this as their first commit on `speed/n29-base`.
+  Numbers (chr21, 4 cores, CPU s, baseline → this): sim mason 20.7→17.5, low 16.8→15.4, NovaSeq 17.3→14.2,
+  HiSeq 19.4→14.5. Heuristic check (bench, chr21 sims): WG_XH=1 maps +0.8% pairs for +11–14% CPU; heurP time is
+  chkAln 38%, banded DP 27%, hamD 17%, nearY 13%. Unmapped sims: ~6.7% genuine repeats (ties), mason ~5% with
+  5–7 spread mismatches (just over the cap).
+- n29 experiments (branches `speed/n29-prep`, `speed/n29-heur`, `speed/n29-danger`), each starting from the tree above.
