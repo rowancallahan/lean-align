@@ -1,0 +1,131 @@
+Generated C scan + profile of the router path (2026-10-27, speed/loop-shape, Lean 4.33.0, x86-64 Xeon 2.8 GHz cloud box).
+Rescan of the 2026-10-25 review (notes/GENERATED_C_REVIEW_2026-10-25.txt) with a script, plus a callgrind profile
+restricted to tierPair, which the 10-25 review did not have.
+
+Tools (both committed):
+  python3 scripts/cscan.py [root=tierPair] [top=60]     static counts per C function, call graph from *tierPair*
+  sh scripts/ab_ir.sh <wgA> <wgB> out/bench 2000 30     callgrind Ir inside tierPair only (index load and IO excluded)
+Data: scripts/bench_data.sh (synthetic 8 Mb genome with repeat families, 2x150 pairs, 0.5% errors); NOT hg38.
+Real repeat structure changes the weights (repeat-heavy reads are ~84% of time on real data), so re-rank on chr21 /
+whole genome before committing to a campaign order.
+
+======================================================================================================
+A. Static scan (scripts/cscan.py tierPair 400), base = 3f8ca20
+======================================================================================================
+6966 C functions; 352 reachable from *tierPair*. Columns: nat = lean_nat_* calls; big = lean_nat_big_* /
+usize_to_nat / uint64_to_nat (bignum or boxing paths); chk = checked Nat-index access (a[i]! → lean_array_get_borrowed,
+ByteArray.get! → lean_byte_array_get, Array size as Nat); rc = lean_inc/lean_dec; clo = closure alloc/apply;
+alc = ctor / array allocation; box = lean_box_uint64 / lean_unbox_uint64. Score = nat + 3big + 2chk + rc + 4clo +
+4alc + 2box, x4 if the function is a loop (`goto _start`). Counts are per function body (one iteration for loops).
+
+Per module (reachable functions only):
+  score   nat  big  chk    rc  clo alloc box loops  module
+  15223  1392  102  127  3266   67   210  16    25  TierRouter        (specialised copies of FastGen*/WgPacked code)
+   4768   913   44   29  1444    0    19   0     2  PairHitsKP
+   4732   396   28   23   643    0     3   1     3  MzWord            (scanAW / scanAWK / okAtW / seedLE)
+   4584   453   15   74   885    0    20   3    21  FastGenPairPacked
+   3385   305   22   27   583    0     5   1     3  PairRegion        (scanAWR, lbSlot, mzLookRP)
+   3376   468   32   16   707    2    10   0     1  PairNear
+   2357   189   10   32   384    9    22   0    14  PairGuarQ         (rawScan, rawScanU)
+   2155   202   16   36   315    0     3   0     7  PairPacked        (byte fwdMis / bwdMis on the packed genome)
+   1884   240    5   12   162    0     1  13     6  FastGenWordFilt   (fineE, unlookV, lanesAny, svAny, loadW)
+   1059    95    9   13   119    0     5   8     7  MapperK250        (hamW / fwdW / bwdW / gwordF / selLow / selHigh)
+    702    37    0   10   329    3    16   0     4  TierOpt
+    457    10    0    0   239   23    29   0     0  PairRouter        (passG: 9 closure ops, 14 allocations)
+
+Loops ranked by score (one iteration):
+  score  nat big chk  rc clo alc box  function [module]
+   2704  241  16   9 349   0   5   0  stageKSP (specialised in tierKer; kfiltVF + kerGK inlined)   [TierRouter]
+   2688  187  14   9 421   0   1   0  scanAWR                                                       [PairRegion]
+   2672  234  16   8 350   0   5   0  flatMapTR.go in hitsCK (kerGKG inlined)                       [PairHitsKP]
+   2616  234  16   8 336   0   5   0  List.foldl in stageKSV                                        [TierRouter]
+   2480  210  14  12 340   0   1   0  scanAWK                                                       [MzWord]
+   2180  182  14   9 299   0   1   0  scanAW                                                        [MzWord]
+    796   77   8   6  82   0   1   0  rawScan                                                       [PairGuarQ]
+    604   70   4   3  57   0   0   3  fineE                                                         [FastGenWordFilt]
+    592   44   9   2  45   0   5   4  Array.mapM in kpKer (4 specialisations)                       [TierRouter]
+    576   15   0   4  81   0  10   0  ilGFG                                                         [TierRouter]
+    428   58   0   4  33   0   0   4  unlookV                                                       [FastGenWordFilt]
+    380   36   4   3  41   0   0   0  lbSlot                                                        [PairRegion]
+    376   52   0   3  30   0   0   3  lanesAny                                                      [FastGenWordFilt]
+    344   34   2   3  36   0   1   0  rawScanU                                                      [PairGuarQ]
+    308   45   0   2  24   0   0   2  svAny                                                         [FastGenWordFilt]
+    308   27   2   1  38   0   0   2  bwdW                                                          [MapperK250]
+    256   22   2   1  30   0   0   2  fwdW                                                          [MapperK250]
+    232   21   2   1  25   0   0   2  hamW                                                          [MapperK250]
+    228   16   2   5  25   0   0   0  bwdMis (gappedPen2Pk)                                         [PairPacked]
+    212   15   2   5  22   0   0   0  fwdMis (gappedPen2Pk)                                         [PairPacked]
+Non-loop heavy bodies: kerGKG (240 nat, 356 rc), ker16KG (88 nat, 153 rc), ker16KWG (75 nat), mzLookRP (62 nat,
+14 chk), mzLookSP (53 nat, 20 chk), passGSF (124 rc, 15 closure ops, 18 allocations), tierRest/tierRestS
+(96 rc, 14-16 allocations), tierPairBS (86 rc, 8 closure ops, 9 allocations).
+
+What the counts mean in practice (read from the C):
+  * Every Nat add/compare in the loops is `lean_nat_*` (inline scalar test + call on overflow) with a lean_dec on
+    the old value; positions, counters and limits are Nat in every loop above.
+  * a[i]! on `Array UInt64` → lean_array_get_borrowed (bounds test + panic default) + lean_unbox_uint64 (pointer
+    chase to a boxed UInt64). ByteArray.get! → lean_byte_array_get (bounds test on a Nat index).
+  * cnt64 ends in `% 255` (lean_uint64_mod): one 64-bit division by a constant per word (clang turns it into a
+    multiply-high + shifts), and the SWAR form is not the idiom clang rewrites to popcnt.
+  * No lean_nat_big_* calls inside loop bodies on the hot path; the "big" column is usize/uint64 → Nat conversions
+    (lean_usize_to_nat etc.), mostly at loop exits.
+
+======================================================================================================
+B. Runtime profile inside tierPair (callgrind, scripts/ab_ir.sh; 2000 synthetic pairs, mode RTX, 1 task)
+======================================================================================================
+Total 1,247.9 M Ir (base 3f8ca20). Self cost:
+   6.9%  bandCells                      bench/WholeGenome.lean (tier-2 heuristic heurP, UNTRUSTED bench code)
+   4.8%  mi_free                        \
+   4.4%  lean_dec_ref_cold               |  allocation + freeing: 13.5% in total
+   2.2%  mi_malloc_small                 |  (+ lean_free_object 0.5%, mi_free_size 0.5%, lean_copy_expand_array 0.5%)
+   2.1%  lean_del_core_other            /
+   4.0%  seedLE                         index/minimizer/MzWord.lean (seed word of the read, Nat loop)
+   3.6%  Mz.miniGo                      index/minimizer/MzIndex.lean (minimizer of a window)
+   3.2%  Std.Legacy.Range.forIn' (hamD) bench/WholeGenome.lean (heuristic, `for i in [a:b]` over Nat)
+   3.1%  packLoopU                      kernels/k250 (packRPU called 13,140 times for 4,000 mates = 3.3x per mate)
+   2.7%  bwdMis @ gappedPen2Pk          mapper/PairPacked.lean (byte loop, Nat index)
+   2.2%  fwdMis @ gappedPen2Pk          mapper/PairPacked.lean (byte loop, Nat index)
+   2.5%  Array.mapM @ rescoreRuns       mapper/TierRouter.lean (re-check of heuristic alignments)
+   2.4%  checkRepeatFast                kernels/wfa_runs/AlignmentCigarCheck.lean (on `Array Char`)
+   2.2%  kerGKG @ hitsCK                index/packed_genome/WgPacked.lean
+   1.9%  List.toArrayAux                \
+   1.4%  List.range.loop                 |  list building on the hot path: ~6% in total
+   1.0%  List.lengthTR                   |  (+ properPairs filter 0.8%, mergeSort 1.3%, reverseAux 0.5%,
+   0.5%  lean_array_to_list_impl        /    Array.appendList 0.5%)
+   1.8%  revCompLoop                    kernels/k250/FastGenK250.lean (reverse complement, Nat loop)
+   1.8%  scanAWK                        index/minimizer/MzWord.lean (bucket scan)
+   1.5%  hamming @ ilG                  byte hamming (FastGenPairPacked)
+   1.1%  bwdW, 1.0% hamW, 0.9% fwdW     kernels/k250 word kernels (3.0% together)
+   1.1%  mzLookSP, 1.1% lanesAny, 1.1% properPairU, 0.95% properPair, 0.6% scanAWR, 0.7% flagsOk, 0.7% winLg
+   0.45% Char.ofNat, 0.46% lean_nat_big_lt, 0.36% Int.toNat
+Inclusive: tierPairBS 73%, passGSF 28% (routeGS), tierXE / pairGXE 21.6%, mateKPP 21%, heurP 18.9% (bench heuristic,
+called through tierPair's cfg), rescoreRuns 15.2%, mateT 11.2%, stageKSP 11.0%, kerGKG 10.1%, chkCand 9.8%,
+bandDP 9.2%.
+
+So on this data the k250 word kernels are ~3% self (~10% inclusive under kerGKG with their byte pre-scans),
+allocation/refcount is ~13.5%, list building ~6%, per-read seeding (seedLE + miniGo + packLoopU + revCompLoop) ~12.5%.
+
+======================================================================================================
+C. After the prototypes on this branch (hamW, fwdW, bwdW, seedLE, revCompLoop, miniGo; notes/LOOP_SHAPE_PLAN.md)
+======================================================================================================
+hamWU / fwdWU / bwdWU / seedLEU / revCompLoopU / miniGoU (generated C): `goto _start` loops over size_t /
+uint64_t only; no lean_nat_*, no lean_inc/lean_dec in the loop path; Nat only on exits (selLow / selHigh result)
+and in the cold fallbacks (gwordS, rw[j.toNat]!, B.get! p.toNat).
+Measured inside tierPair (ab_ir, 2000 pairs, dumps identical): production settings 597.5 M → 553.5 M Ir (−7.4%),
+RTX 1,247.9 M → 1,187.0 M (−4.9%). Per function: see LOOP_SHAPE_PLAN.md §5.
+Pitfall found on the way: a Nat literal ≥ 2^32 in compiled code is `lean_cstr_to_nat("…")` (GMP string parse)
+on every evaluation unless it ends up in a closed term; still present per call in pscanD (2^62) and
+checkRunsFast3Go / diagMisFast3 (2^32).
+
+============================================================================================
+hamWU / fwdWU / bwdWU (generated C): `goto _start` loops over size_t / uint64_t only; no lean_nat_*, no
+lean_inc/lean_dec, read word by lean_array_uget_borrowed + one unbox, genome word = 8 lean_byte_array_uget
+from one size_t offset. The cold fallbacks (gwordS, rw[j.toNat]!) are outside the loop path.
+Measured (ab_ir, 2000 pairs): hamW 12.88 M Ir → hamWU 5.01 M + hamWF wrapper 1.53 M (−49%); tierPair total
+−0.51%; RTX dump byte-identical. fwdW / bwdW numbers: see notes/LOOP_SHAPE_PLAN.md.
+
+======================================================================================================
+D. Outside tierPair (whole run, same 2000 pairs, 8.56 G Ir)
+======================================================================================================
+72.5% of the whole run is hashRange (bench/WholeGenome.lean, `for i in [lo:hi]` + get! over the 280 MB index at
+load) — bench-only IO, ~1 s of every pmap run; a USize/uget loop would cut load time, not mapping time.
+hasNL / allAcgt / codes64 (read parsing) 3.4 / 3.1 / 2.6% of the whole run.

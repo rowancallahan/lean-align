@@ -33,6 +33,82 @@ def seedLE (R : ByteArray) (j k i : Nat) (w : UInt64) (ok : Bool) : UInt64 × Bo
   else (w, ok)
 termination_by k - i
 
+/-! ### `seedLE` on machine words (compiled code only): `seedLE_eq_seedLEF`, as `hamW_eq_hamWF`
+(kernels/k250/MapperK250.lean) -/
+
+/-- `seedLE` with `j`, `k`, `i` in `USize` (`seedLEU_eq`). -/
+def seedLEU (R : ByteArray) (j k i : USize) (w : UInt64) (ok : Bool) : UInt64 × Bool :=
+  if _h : i < k then
+    let t := getU codeTab (getU R (j + i)).toUSize
+    seedLEU R j k (i + 1) (w ||| (t &&& 3).toUInt64 <<< (2 * i).toUInt64) (ok && decide (t < 4))
+  else (w, ok)
+termination_by k.toNat - i.toNat
+decreasing_by
+  have h' : i.toNat < k.toNat := _h
+  have := USize.toNat_lt_size k
+  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+  rw [USize.toNat_add, usz_lit 1 (by decide), Nat.mod_eq_of_lt (by omega)]
+  omega
+
+theorem seedLEU_eq (R : ByteArray) (j k : Nat) (jU kU : USize) (hj : jU.toNat = j) (hk : kU.toNat = k)
+    (hj' : j < 2 ^ 31) (hk' : k < 2 ^ 20) :
+    ∀ n (iU : USize) (i : Nat) w ok, k - i = n → iU.toNat = i → i < 2 ^ 20 →
+      seedLEU R jU kU iU w ok = seedLE R j k i w ok := by
+  intro n
+  induction n with
+  | zero =>
+    intro iU i w ok hn hi hi'
+    have h : ¬ iU < kU := fun h => by have h' : iU.toNat < kU.toNat := h; omega
+    rw [seedLEU, seedLE, dif_neg h, if_neg (by omega)]
+  | succ n ih =>
+    intro iU i w ok hn hi hi'
+    have hN := usz_pow
+    have h : iU < kU := by show iU.toNat < kU.toNat; omega
+    rw [seedLEU, seedLE, dif_pos h, if_pos (by omega)]
+    have ep : (jU + iU).toNat = j + i := by rw [usz_add' _ _ (by omega), hj, hi]
+    have e2 : (2 * iU).toUInt64 = (2 * i).toUInt64 := by
+      apply UInt64.toNat_inj.mp
+      rw [USize.toNat_toUInt64, usz_mul' _ _ (by rw [usz_lit 2 (by decide)]; omega), usz_lit 2 (by decide), hi,
+        Nat.toUInt64_eq, UInt64.toNat_ofNat', Nat.mod_eq_of_lt (by omega)]
+    have eb : ∀ b : UInt8, (b.toUSize).toNat = b.toNat := fun b => by
+      rw [UInt8.toNat_toUSize]
+    rw [getU_eq, getU_eq, ep, eb, e2]
+    exact ih _ (i + 1) _ _ (by omega)
+      (by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide), hi]) (by omega)
+
+/-- `seedLE` for the compiled code (`seedLE_eq_seedLEF`). -/
+@[inline] def seedLEF (R : ByteArray) (j k i : Nat) (w : UInt64) (ok : Bool) : UInt64 × Bool :=
+  if j < 2147483648 ∧ k < 1048576 ∧ i < 1048576 then
+    seedLEU R j.toUSize k.toUSize i.toUSize w ok
+  else seedLES R j k i w ok
+where
+  /-- The same as `seedLE` (its slow path; not rewritten by `csimp`). -/
+  seedLES (R : ByteArray) (j k i : Nat) (w : UInt64) (ok : Bool) : UInt64 × Bool :=
+    if i < k then
+      let t := codeTab.get! (R.get! (j + i)).toNat
+      seedLES R j k (i + 1) (w ||| (t &&& 3).toUInt64 <<< (2 * i).toUInt64) (ok && decide (t < 4))
+    else (w, ok)
+  termination_by k - i
+
+theorem seedLES_eq (R : ByteArray) (j k : Nat) :
+    ∀ n i w ok, k - i = n → seedLEF.seedLES R j k i w ok = seedLE R j k i w ok := by
+  intro n
+  induction n with
+  | zero => intro i w ok hn; rw [seedLEF.seedLES, seedLE, if_neg (by omega), if_neg (by omega)]
+  | succ n ih =>
+    intro i w ok hn
+    rw [seedLEF.seedLES, seedLE, if_pos (by omega), if_pos (by omega)]
+    exact ih _ _ _ (by omega)
+
+@[csimp] theorem seedLE_eq_seedLEF : @seedLE = @seedLEF := by
+  funext R j k i w ok
+  unfold seedLEF
+  split
+  · rename_i h
+    exact (seedLEU_eq R j k _ _ (usz_n _ (by omega)) (usz_n _ (by omega)) (by omega) (by omega) _ _ i w ok rfl
+      (usz_n _ (by omega)) (by omega)).symm
+  · exact (seedLES_eq R j k _ i w ok rfl).symm
+
 /-- Genome letters `[p, p+32)` of `P` (field `i` = letter `p + i`; flagged blocks only). -/
 @[inline] def gW (P : PGen) (p : Nat) : UInt64 :=
   let a := P.o + p
