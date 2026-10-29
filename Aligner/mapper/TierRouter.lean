@@ -63,6 +63,31 @@ def rescoreRuns (R : ByteArray) (G : PGen) (st len : Nat) (runs : List (Step × 
   let ya : Array Char := (List.range len).toArray.map fun i => Char.ofNat (G.get (st + i)).toNat
   AlignmentSpec.checkRuns sc0 xa ya runs ⟨0, 0, none, 0⟩
 
+/-- `a` with `f i, …, f (i + k - 1)` pushed (`pushF_eq`). -/
+@[specialize] def pushF {α : Type} (f : Nat → α) : Nat → Nat → Array α → Array α
+  | 0, _, a => a
+  | k + 1, i, a => pushF f k (i + 1) (a.push (f i))
+
+theorem pushF_eq {α : Type} (f : Nat → α) : ∀ (k i : Nat) (a : Array α),
+    pushF f k i a = a ++ ((List.range' i k).map f).toArray
+  | 0, _, a => by simp [pushF]
+  | k + 1, i, a => by
+    rw [pushF, pushF_eq f k (i + 1), List.range'_succ, List.map_cons]
+    apply Array.toList_inj.mp
+    simp
+
+/-- `rescoreRuns` with the letter arrays built by a push loop (no lists; `rescoreRuns_eqA`). -/
+def rescoreRunsA (R : ByteArray) (G : PGen) (st len : Nat) (runs : List (Step × Nat)) : Option Int :=
+  let xa : Array Char := pushF (fun i => Char.ofNat (R.get! i).toNat) R.size 0 (Array.mkEmpty R.size)
+  let ya : Array Char := pushF (fun i => Char.ofNat (G.get (st + i)).toNat) len 0 (Array.mkEmpty len)
+  AlignmentSpec.checkRuns sc0 xa ya runs ⟨0, 0, none, 0⟩
+
+/-- Compiled code runs `rescoreRunsA`. -/
+@[csimp] theorem rescoreRuns_eqA : @rescoreRuns = @rescoreRunsA := by
+  funext R G st len runs
+  unfold rescoreRuns rescoreRunsA
+  simp only [pushF_eq, Array.mkEmpty_eq, Array.empty_append, ← List.range_eq_range', List.map_toArray]
+
 /-- An alignment `h` with CIGAR `runs` re-checked: inside its chromosome, score ≤ 0, and `checkRuns`
 gives its score (`R` forward read, `Rr` its reverse complement). -/
 def chkCand (pgs : Array PGen) (R Rr : ByteArray) (h : Placement × Int) (runs : List (Step × Nat)) : Bool :=
@@ -89,6 +114,42 @@ def applyC (pgs : Array PGen) (R Rr : ByteArray) (m : MateX) : Option Cand → M
 def emptyCnt (pk : PkMz) (n : Nat) (Rx : ByteArray) (pp : Array MzP) : Nat :=
   ((List.range (n / 25)).filter fun j => (pp[j]!).ok && LookG.size pk pp[j]! == 0 &&
     (LookG.look pk ByteArray.empty Rx (j * (n / (n / 25))) (n - j * (n / (n / 25))) pp[j]!).isEmpty).length
+
+/-- An empty bucket's lookup is empty: the scan runs over `[loB, hiB)`. -/
+theorem mzLookSP_size0 (ix : Mz.MzIdx) (G : PGen) (R : ByteArray) (s base : Nat) (p : MzP) (hok : p.ok = true)
+    (h0 : mzSize ix p = 0) : mzLookSP ix G R s base p = #[] := by
+  unfold mzSize at h0
+  rw [if_pos hok] at h0
+  unfold mzLookSP lookupPW
+  rw [if_pos hok, scanAW, if_neg (by omega)]
+
+/-- `emptyCnt` without the lookups (`emptyCnt_eqS`: an empty bucket's lookup is empty). -/
+def emptyCntS (pk : PkMz) (n : Nat) (_ : ByteArray) (pp : Array MzP) : Nat :=
+  foldUpN (fun c j => if (pp[j]!).ok && LookG.size pk pp[j]! == 0 then c + 1 else c) (n / 25) 0 0
+
+theorem foldl_count (p : Nat → Bool) : ∀ (l : List Nat) (c : Nat),
+    l.foldl (fun c j => if p j then c + 1 else c) c = c + (l.filter p).length
+  | [], c => by simp
+  | x :: xs, c => by
+    rw [List.foldl_cons, foldl_count p xs, List.filter_cons]
+    cases p x <;> simp <;> omega
+
+/-- Compiled code runs `emptyCntS`. -/
+@[csimp] theorem emptyCnt_eqS : @emptyCnt = @emptyCntS := by
+  funext pk n Rx pp
+  unfold emptyCnt emptyCntS
+  rw [foldUpN_eq, foldl_count, ← List.range_eq_range', Nat.zero_add]
+  congr 1
+  apply List.filter_congr
+  intro j _
+  cases hok : (pp[j]!).ok
+  · rfl
+  · cases h0 : (LookG.size pk pp[j]! == 0)
+    · rfl
+    · have e : LookG.size pk pp[j]! = 0 := beq_iff_eq.mp h0
+      show (true && true && (mzLookSP pk.1 pk.2 Rx _ _ pp[j]!).isEmpty) = (true && true)
+      rw [mzLookSP_size0 pk.1 pk.2 Rx _ _ _ hok e]
+      rfl
 
 /-- A gapless alignment at virtual chromosome `v` (`< nc`: forward), start `st`, `mm` mismatches, and
 whether it passes `chkCand`. -/
@@ -319,8 +380,8 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
   let x := ilGFG kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
-  let b := (List.range n).foldl (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) x.2.2
-  (List.range n).foldl (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
+  let b := foldUpN (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) n 0 x.2.2
+  foldUpN (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) n 0 b
 
 theorem mapChromsGBFG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
     [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
@@ -328,7 +389,7 @@ theorem mapChromsGBFG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [L
     mapChromsGBFG kf1 kf2 P ix G offs gbs R Rr ps pr =
       mapChromsGBFGP kf1 kf2 (packRP R) (packRP Rr) P ix G offs gbs R Rr ps pr := by
   unfold mapChromsGBFG mapChromsGBFGP
-  simp only [chromKBFG_eqK]
+  simp only [chromKBFG_eqK, foldUpN_eq, List.range_eq_range']
 
 /-- `mapChromsGBKG` with the reverse complement and both packed reads given (`mapChromsGBKG_eqP`). -/
 @[specialize] def mapChromsGBKGP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
@@ -369,6 +430,76 @@ theorem regionPenKP_eqP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat
   unfold regionPenKP regionPenKPP
   simp only [mapChromsGBKG_eqP]
 
+/-- `regionPenKPP` with the prepared seeds `ps`, `pr` of both strands given (`regionPenKPS_eq`: a region
+lookup prepares a seed as its whole index does, so a mate's own preparation serves). -/
+def regionPenKPS (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen)
+    (R Rr : ByteArray) (K1 K2 : RP) (ps pr : Array MzP) (b : Placement) : Nat :=
+  let c := b.1.chr
+  if c < pgs.size && fastT P R then
+    let x := regionB P lo hi R.size b
+    let x1 := min x.2 pgs[c]!.n
+    if x.1 < x1 then
+      let v := view pgs[c]! x.1 (x1 - x.1)
+      let gbs2 := #[v] ++ #[v]
+      (mapChromsGBFGP (kerHKG R K1 gbs2 gbs2) (kerHKG Rr K2 gbs2 gbs2) K1 K2 P
+        ((pk, offs[c]! + x.1, offs[c]! + x1) : RgMz) G #[0] #[v] R Rr ps pr).pen
+    else P
+  else P
+
+theorem regionPenKPS_eq (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen)
+    (R : ByteArray) (b : Placement) :
+    regionPenKPS P lo hi pk G offs pgs R (prepMate pk R : PrepM MzP).Rr (prepMate pk R : PrepM MzP).K1
+      (prepMate pk R : PrepM MzP).K2 (prepMate pk R : PrepM MzP).ps (prepMate pk R : PrepM MzP).pr b =
+    regionPenKPP P lo hi (fun x y => ((pk, x, y) : RgMz)) G offs pgs R (prepMate pk R : PrepM MzP).Rr
+      (prepMate pk R : PrepM MzP).K1 (prepMate pk R : PrepM MzP).K2 b := rfl
+
+/-- `mapChromsGBFGP` with both strands' seed orders `o1`, `o2` given (`mapChromsGBFGPO_eq`: a mate's order is
+the same in every search of it, so it is computed once per pair). -/
+@[specialize] def mapChromsGBFGPO {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) (o1 o2 : List Nat) : Best :=
+  let n := gbs.size
+  let gbs2 := gbs ++ gbs
+  let m := R.size / 25
+  let Ls := R.size / m
+  let x := ilGFG kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+    ⟨o1, [], Array.replicate n []⟩ ⟨o2, [], Array.replicate n []⟩ (initP P)
+  let b := foldUpN (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) n 0 x.2.2
+  foldUpN (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) n 0 b
+
+theorem mapChromsGBFGPO_eq {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) :
+    mapChromsGBFGPO kf1 kf2 K1 K2 P ix G offs gbs R Rr ps pr (ordG (ps.map (LookG.size ix)) (R.size / 25))
+      (ordG (pr.map (LookG.size ix)) (R.size / 25)) = mapChromsGBFGP kf1 kf2 K1 K2 P ix G offs gbs R Rr ps pr := rfl
+
+/-- `mateKPP` with the seed orders given (`mateKPPO_eq`). -/
+def mateKPPO {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) (o1 o2 : List Nat) : MateR :=
+  let b := mapChromsGBFGPO (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+    (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) s.K1 s.K2 P ix G offs pgs R s.Rr s.ps s.pr o1 o2
+  (decodeP pgs.size P b, decide (b.pen ≤ P))
+
+/-- `regionPenKPS` with the seed orders given (`regionPenKPSO_eq`). -/
+def regionPenKPSO (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen)
+    (R Rr : ByteArray) (K1 K2 : RP) (ps pr : Array MzP) (o1 o2 : List Nat) (b : Placement) : Nat :=
+  let c := b.1.chr
+  if c < pgs.size && fastT P R then
+    let x := regionB P lo hi R.size b
+    let x1 := min x.2 pgs[c]!.n
+    if x.1 < x1 then
+      let v := view pgs[c]! x.1 (x1 - x.1)
+      let gbs2 := #[v] ++ #[v]
+      (mapChromsGBFGPO (kerHKG R K1 gbs2 gbs2) (kerHKG Rr K2 gbs2 gbs2) K1 K2 P
+        ((pk, offs[c]! + x.1, offs[c]! + x1) : RgMz) G #[0] #[v] R Rr ps pr o1 o2).pen
+    else P
+  else P
+
+theorem regionPenKPSO_eq (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen)
+    (R Rr : ByteArray) (K1 K2 : RP) (ps pr : Array MzP) (b : Placement) :
+    regionPenKPSO P lo hi pk G offs pgs R Rr K1 K2 ps pr (ordG (ps.map (LookG.size pk)) (R.size / 25))
+      (ordG (pr.map (LookG.size pk)) (R.size / 25)) b = regionPenKPS P lo hi pk G offs pgs R Rr K1 K2 ps pr b := rfl
+
 /-- `mateKP` reading the packed reads from the preparation (`mateKP_eqP`: the same for `prepMate`). -/
 def mateKPP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : MateR :=
@@ -382,6 +513,11 @@ theorem mateKP_eqP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) 
   unfold mateKP mateKPP
   simp only [mapChromsGBFG_eqP]
   rfl
+
+theorem mateKPPO_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) :
+    mateKPPO P ix G offs pgs R s (ordG (s.ps.map (LookG.size ix)) (R.size / 25)) (ordG (s.pr.map (LookG.size ix)) (R.size / 25)) =
+      mateKPP P ix G offs pgs R s := rfl
 
 /-- `mateH` on a mate's search function `mt` (`mateH K P R s = mateHF K.hint R (K.mate · R s) P`). -/
 @[inline] def mateHF (hint : Bool) (R : ByteArray) (mt : Nat → MateR) (P h : Nat) : MateR :=
@@ -478,6 +614,45 @@ def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Opti
 theorem tierRest_eqS (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) :
     tierRest cfg pk offs pgs a b rk c1 c2 = tierRestS cfg pk offs pgs a b (prepMate pk a) (prepMate pk b) rk c1 c2 := rfl
 
+/-- `(l.take k).foldl (· + ·) acc` without the prefix list (`sumTake_eq`). -/
+def sumTake : Nat → List Nat → Nat → Nat
+  | 0, _, acc => acc
+  | _, [], acc => acc
+  | k + 1, x :: xs, acc => sumTake k xs (acc + x)
+
+theorem sumTake_eq : ∀ (k : Nat) (l : List Nat) (acc : Nat), sumTake k l acc = (l.take k).foldl (· + ·) acc
+  | 0, _, _ => rfl
+  | _ + 1, [], _ => rfl
+  | k + 1, x :: xs, acc => by rw [sumTake, sumTake_eq k xs, List.take_succ_cons, List.foldl_cons]
+
+/-- One strand of `costP`: the bucket sizes put in order straight from the array (`costPF_eq`). -/
+@[inline] def costOne {L Pp : Type} [LookG L Pp] (ix : L) (k : Nat) (a : Array Pp) : Nat :=
+  sumTake k (a.foldr (fun p l => insN (LookG.size ix p) l) []) 0
+
+/-- `costP` with no intermediate lists but the sorted one (`costPF_eq`). -/
+@[inline] def costPF {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
+  max (costOne ix (sbound P + 1) s.ps) (costOne ix (sbound P + 1) s.pr)
+
+theorem isortN_map {β : Type} (f : β → Nat) : ∀ l : List β,
+    isortN (l.map f) = l.foldr (fun p r => insN (f p) r) []
+  | [] => rfl
+  | x :: xs => by rw [List.map_cons, isortN, isortN_map f xs, List.foldr_cons]
+
+theorem costPF_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : costP ix P s = costPF ix P s := by
+  rw [costP_eqI]
+  unfold costPI costPF costOne
+  simp only [isortN_map, ← Array.foldr_toList, sumTake_eq]
+
+/-- `costPF` from both strands' bucket sizes (`costZ_eq`). -/
+@[inline] def costZ (P : Nat) (z1 z2 : Array Nat) : Nat :=
+  max (sumTake (sbound P + 1) (z1.foldr insN []) 0) (sumTake (sbound P + 1) (z2.foldr insN []) 0)
+
+theorem costZ_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
+    costZ P (s.ps.map (LookG.size ix)) (s.pr.map (LookG.size ix)) = costP ix P s := by
+  rw [costPF_eq]
+  unfold costZ costPF costOne
+  simp only [Array.foldr_map]
+
 /-- `tierPairB` with each mate prepared once, for the gate, RT's pass 1 and the rest; RT's pass 1 reads the
 packed reads from the preparations (`tierPairB_eqS`). -/
 def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
@@ -487,14 +662,22 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
   | some a, some b =>
     let s1 : PrepM MzP := prepMate pk a
     let s2 : PrepM MzP := prepMate pk b
-    let c1 := costP pk (cfg.rcfg.cap1 a.size) s1
-    let c2 := costP pk (cfg.rcfg.cap1 b.size) s2
+    -- each strand's bucket sizes, read once: the pass-1 costs and the seed order of all its searches
+    let za1 := s1.ps.map (LookG.size pk)
+    let za2 := s1.pr.map (LookG.size pk)
+    let zb1 := s2.ps.map (LookG.size pk)
+    let zb2 := s2.pr.map (LookG.size pk)
+    let c1 := costZ (cfg.rcfg.cap1 a.size) za1 za2
+    let c2 := costZ (cfg.rcfg.cap1 b.size) zb1 zb2
     if cfg.gate a b s1 s2 c1 c2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
-    let rl := fun x y => ((pk, x, y) : RgMz)
+    let oa1 := ordG za1 (a.size / 25)
+    let oa2 := ordG za2 (a.size / 25)
+    let ob1 := ordG zb1 (b.size / 25)
+    let ob2 := ordG zb2 (b.size / 25)
     let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b c1 c2
-      (fun Q => mateKPP Q pk ByteArray.empty offs pgs a s1) (fun Q => mateKPP Q pk ByteArray.empty offs pgs b s2)
-      (fun Q => regionPenKPP Q cfg.lo cfg.hi rl ByteArray.empty offs pgs a s1.Rr s1.K1 s1.K2)
-      (fun Q => regionPenKPP Q cfg.lo cfg.hi rl ByteArray.empty offs pgs b s2.Rr s2.K1 s2.K2)
+      (fun Q => mateKPPO Q pk ByteArray.empty offs pgs a s1 oa1 oa2) (fun Q => mateKPPO Q pk ByteArray.empty offs pgs b s2 ob1 ob2)
+      (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs a s1.Rr s1.K1 s1.K2 s1.ps s1.pr oa1 oa2)
+      (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs b s2.Rr s2.K1 s2.K2 s2.ps s2.pr ob1 ob2)
     match r.out with
     | .mapped (x, y) =>
       { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
@@ -513,15 +696,23 @@ end router
     cases O2 with
     | none => rfl
     | some b =>
-      have hm : ∀ R, (fun Q => mateKPP Q pk ByteArray.empty offs pgs R (prepMate pk R : PrepM MzP)) =
+      have hm : ∀ R, (fun Q => mateKPPO Q pk ByteArray.empty offs pgs R (prepMate pk R : PrepM MzP)
+            (ordG ((prepMate pk R : PrepM MzP).ps.map (LookG.size pk)) (R.size / 25))
+            (ordG ((prepMate pk R : PrepM MzP).pr.map (LookG.size pk)) (R.size / 25))) =
           (fun Q => (tierKer cfg pk offs pgs cfg.j1).mate Q R (prepMate pk R : PrepM MzP)) :=
-        fun R => funext fun Q => (mateKP_eqP Q pk ByteArray.empty offs pgs R).symm
-      have hr : ∀ R, (fun Q => regionPenKPP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R
-            (prepMate pk R : PrepM MzP).Rr (prepMate pk R : PrepM MzP).K1 (prepMate pk R : PrepM MzP).K2) =
+        fun R => funext fun Q => (mateKPPO_eq Q pk ByteArray.empty offs pgs R _).trans
+          (mateKP_eqP Q pk ByteArray.empty offs pgs R).symm
+      have hr : ∀ R, (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R
+            (prepMate pk R : PrepM MzP).Rr (prepMate pk R : PrepM MzP).K1 (prepMate pk R : PrepM MzP).K2
+            (prepMate pk R : PrepM MzP).ps (prepMate pk R : PrepM MzP).pr
+            (ordG ((prepMate pk R : PrepM MzP).ps.map (LookG.size pk)) (R.size / 25))
+            (ordG ((prepMate pk R : PrepM MzP).pr.map (LookG.size pk)) (R.size / 25))) =
           (fun Q => (tierKer cfg pk offs pgs cfg.j1).region Q R) :=
         fun R => funext fun Q => funext fun x =>
-          (regionPenKP_eqP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R x).symm
-      simp only [tierPairBS]
+          (regionPenKPSO_eq Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R _ _ _ _ _ x).trans <|
+          (regionPenKPS_eq Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R x).trans
+            (regionPenKP_eqP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R x).symm
+      simp only [tierPairBS, costZ_eq]
       rw [hm a, hm b, hr a, hr b]
       rfl
 
