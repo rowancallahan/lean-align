@@ -36,6 +36,116 @@ Index files: <prefix>.meta (k B c sw t pb nruns), .offs, .sl, .runs (LE u64).
 -/
 open MapSpec MapSpec.Fast TierHeur
 
+/-- (prototype, WG_TWIN) letters `[s1, s1 + n)` of `pgs[c1]` equal `[s2, s2 + n)` of `pgs[c2]`, both in range. -/
+def twWinEq (pgs : Array PGen) (c1 s1 c2 s2 n : Nat) : Bool := Id.run do
+  let G1 := pgs[c1]!
+  let G2 := pgs[c2]!
+  if !(c1 < pgs.size && c2 < pgs.size && s1 + n ≤ G1.n && s2 + n ≤ G2.n) then return false
+  for i in [0:n] do
+    if G1.get (s1 + i) != G2.get (s2 + i) then return false
+  return true
+
+/-- (prototype, WG_TWIN) a second proper pair with byte-identical windows to `(x, y)`: the other
+occurrences of mate 1's rarest seed on `x`'s strand give shifts; the twin is `(x, y)` shifted. -/
+def twinOf (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (usl lo hi : Nat) (R : ByteArray) (s : PrepM MzP)
+    (x y : Placement × Int) (BK : Nat) : Option PairHit := Id.run do
+  let n := R.size
+  let m := n / 25
+  if m == 0 then return none
+  let Ls := n / m
+  let nc := pgs.size
+  let fw := x.1.2 == Strand.fwd
+  let pp := if fw then s.ps else s.pr
+  let Rx := if fw then R else s.Rr
+  let mut rb : Option (Nat × Nat) := none
+  for j in [0:m] do
+    let p := pp[j]!
+    if p.ok then
+      let z := LookG.size pk p
+      if z != 0 && z ≤ BK && rb.all (fun r => z < r.1) then rb := some (z, j)
+  let some (z, j) := rb | return none
+  if z < 2 then return none
+  let a := LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
+  -- occurrences as (chromosome, diagonal start)
+  let mut occ : Array (Nat × Nat) := #[]
+  for e in a do
+    let p := e / 16 + j * Ls
+    if n ≤ p then
+      let p := p - n
+      let mut lo' := 0
+      let mut hi' := nc
+      while lo' + 1 < hi' do
+        let mid := (lo' + hi') / 2
+        if offs[mid]! ≤ p then lo' := mid else hi' := mid
+      if offs[lo']! ≤ p then occ := occ.push (lo', p - offs[lo']!)
+  let xs := x.1.1
+  let some (_, p0) := occ.find? (fun o => o.1 == xs.chr && xs.start ≤ o.2 + 16 && o.2 ≤ xs.start + 16) | return none
+  for (c', p') in occ do
+    if !(c' == xs.chr && p' == p0) && p0 ≤ p' + xs.start then
+      let st := p' + xs.start - p0
+      let x' : Placement × Int := ((⟨c', st, xs.len⟩, x.1.2), x.2)
+      if twWinEq pgs xs.chr xs.start c' st xs.len then
+        let ys := y.1.1
+        if p0 ≤ p' + ys.start then
+          let yst := p' + ys.start - p0
+          let y' : Placement × Int := ((⟨c', yst, ys.len⟩, y.1.2), y.2)
+          if properPairU usl lo hi x'.1 y'.1 && twWinEq pgs ys.chr ys.start c' yst ys.len then
+            return some (x', y')
+        if c' == ys.chr && properPairU usl lo hi x'.1 y.1 then return some (x', y)
+  return none
+
+/-- (prototype, WG_DANGER) seeds of a mate with at least one occurrence, and those whose every
+occurrence (both strands' seeds) lies at a position marked in `mask` (1 byte per genome letter). -/
+def dangerCnt (pk : PkMz) (mask : ByteArray) (R : ByteArray) (s : PrepM MzP) : Nat × Nat := Id.run do
+  let n := R.size
+  let m := n / 25
+  if m == 0 then return (0, 0)
+  let Ls := n / m
+  let mut hit := 0
+  let mut dang := 0
+  for b in [0:2] do
+    let pp := if b == 0 then s.ps else s.pr
+    let Rx := if b == 0 then R else s.Rr
+    for j in [0:m] do
+      let p := pp[j]!
+      if p.ok && LookG.size pk p != 0 then
+        hit := hit + 1
+        let a := LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
+        let mut all := true
+        for e in a do
+          let q := e / 16 + j * Ls
+          let q := if n ≤ q then q - n + j * Ls else 0
+          if !(q < mask.size && mask.get! q == 1) then all := false
+        if all then dang := dang + 1
+  return (hit, dang)
+
+/-- (prototype, WG_DANGER) per bucket: 1 when the bucket has ≥ 2 entries, all at positions marked in `mask`. -/
+def dangerTab (ix : Mz.MzIdx) (mask : ByteArray) : ByteArray := Id.run do
+  let nb := 2 ^ ix.B
+  let mut out := ByteArray.mk (Array.replicate nb 0)
+  for b in [0:nb] do
+    let lo := ix.loB b
+    let hi := ix.hiB b
+    if lo + 2 ≤ hi then
+      let mut all := true
+      for t in [lo:hi] do
+        let q := ix.posOf (ix.slot t)
+        if !(q < mask.size && mask.get! q == 1) then all := false
+      if all then out := out.set! b 1
+  return out
+
+/-- (prototype) every seed of the mate with a non-empty bucket is in a danger bucket (and one is). -/
+@[inline] def dangerMate (pk : PkMz) (tab : ByteArray) (s : PrepM MzP) (m : Nat) : Bool := Id.run do
+  let mut any := false
+  for b in [0:2] do
+    let pp := if b == 0 then s.ps else s.pr
+    for j in [0:m] do
+      let p := pp[j]!
+      if p.ok && LookG.size pk p != 0 then
+        if tab.get! p.b == 0 then return false
+        any := true
+  return any
+
 def secs (t0 t1 : Nat) : Float := Float.ofNat (t1 - t0) / 1e9
 
 def rss : IO String := do
@@ -2709,7 +2819,58 @@ def main (args : List String) : IO UInt32 := do
             (candOf o.1, candOf o.2)
           else (none, none)
         xe := xeSel }
-      let tierP (a b : ByteArray) : TierOut := tierPair tcfg pk offs pgs (some a) (some b)
+      -- WG_TWIN=1 (prototype): a T2 pair the exact search would run on, whose ceilings are a best pair
+      -- (`t2Opt`) with a byte-identical twin pair (`twinOf`), is answered T1um without the search
+      let dmask ← match (← IO.getEnv "WG_DANGER") with
+        | some f => IO.FS.readBinFile f
+        | none => pure ByteArray.empty
+      let twE := (← IO.getEnv "WG_TWIN").getD "0"
+      let twOn := twE != "0"
+      let twBK ← envN "WG_TWBK" 500
+      -- WG_DSTOP=1 (prototype, needs WG_DANGER): a pair whose mates' hitting seeds all lie in the mask is
+      -- answered T3 with zero floors at once; =2: the same, but only after RT left it unmapped
+      let dStop ← envN "WG_DSTOP" 0
+      let dTabOn := (← IO.getEnv "WG_DTAB").getD "0" == "1"
+      let dtab := if dTabOn && dmask.size != 0 then dangerTab pk.1 dmask else ByteArray.empty
+      if dTabOn then IO.eprintln s!"danger buckets: {(dtab.toList.filter (· == 1)).length} of {dtab.size}"
+      let dFlag (a b : ByteArray) : Bool :=
+        if dTabOn then
+          dangerMate pk dtab (prepMate pk a) (a.size / 25) && dangerMate pk dtab (prepMate pk b) (b.size / 25)
+        else
+        let d1 := dangerCnt pk dmask a (prepMate pk a)
+        let d2 := dangerCnt pk dmask b (prepMate pk b)
+        0 < d1.1 && d1.1 == d1.2 && 0 < d2.1 && d2.1 == d2.2
+      let tierP0 (a b : ByteArray) : TierOut :=
+        if dStop == 1 && dFlag a b then { tag := .t3 } else
+        if dStop == 3 then
+          let t := tierPair tcfg pk offs pgs (some a) (some b)
+          { t with sfx := if dFlag a b then "d" else t.sfx } else
+        if dStop == 2 && !tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (rcfg.cap1 a.size) (prepMate pk a : PrepM MzP))
+            (costP pk (rcfg.cap1 b.size) (prepMate pk b : PrepM MzP)) then
+          let r := tierRT tcfg pk offs pgs a b
+          match r.out with
+          | .mapped (x, y) =>
+            { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
+              m1 := { st := "U", cap := rcfg.cap1 a.size, cd := rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
+              m2 := { st := "U", cap := rcfg.cap1 b.size, cd := rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+          | .unmapped rs k =>
+            if dFlag a b then { tag := .t3, why := some rs } else
+            tierUp tcfg pk offs pgs a b (tierRest tcfg pk offs pgs a b (some (rs, k)) r.c1 r.c2)
+        else tierPair tcfg pk offs pgs (some a) (some b)
+      let tierP (a b : ByteArray) : TierOut :=
+        if !twOn then tierP0 a b else
+        let t := tierPairB tcfg pk offs pgs (some a) (some b)
+        let c := t.m1.pH + t.m2.pH
+        if t.tag = .t2 && c ≤ 16 && (tcfg.xe t a b).isSome && fastT c a && fastT c b then
+          match t2Opt tcfg.usl tcfg.lo tcfg.hi t with
+          | some (x, y) =>
+            match twinOf pk offs pgs usl lo hi a (prepMate pk a) x y twBK with
+            | some _ => { t with tag := .t1um, g0 := c, sfx := if twE == "2" then "w" else t.sfx }
+            | none => let u := tierUp tcfg pk offs pgs a b t
+              { u with sfx := if twE == "2" then "n" else u.sfx }
+          | none => let u := tierUp tcfg pk offs pgs a b t
+            { u with sfx := if twE == "2" then "o" else u.sfx }
+        else tierUp tcfg pk offs pgs a b t
       -- mode RTX reports the proved unique pairs only (T1, T1g, T1u)
       let fRTX : ByteArray → ByteArray → PairOut := fun a b =>
         let t := tierP a b
@@ -2742,7 +2903,13 @@ def main (args : List String) : IO UInt32 := do
               if ov p.1 q.1 && ov p.2 q.2 then "same" else if ov p.1 q.1 || ov p.2 q.2 then "one" else "diff"
             | _ => "-"
           s!"\tgm\t{ps.length}\t{b0}\t{bs.length}\t{b1}\t{loc}\t{String.intercalate "," ((bs.take 2).map shp)}"
-      let xdump : List (String × (ByteArray → ByteArray → String)) :=
+      let xdump0 : List (String × (ByteArray → ByteArray → String)) :=
+        if dmask.size == 0 then [] else
+          [("danger", fun a b =>
+            let d1 := dangerCnt pk dmask a (prepMate pk a)
+            let d2 := dangerCnt pk dmask b (prepMate pk b)
+            s!"{d1.1}\t{d1.2}\t{d2.1}\t{d2.2}")]
+      let xdump : List (String × (ByteArray → ByteArray → String)) := xdump0 ++
         if (← IO.getEnv "WG_TIEROUT").getD "0" == "1" then
           [("tiers", fun a b => let t := tierP a b
             let m (x : Mate) := match x with | .one => "1" | .two => "2"
