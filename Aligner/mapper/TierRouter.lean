@@ -713,11 +713,237 @@ theorem prepLoop_toList (ix : Mz.MzIdx) (shU : UInt64) (wq : Nat) (R : ByteArray
   | zero => intro j acc; simp [prepLoop]
   | succ n ih => intro j acc; simp [prepLoop, ih, List.range'_succ]
 
+/-! ### The packed reverse complement from the packed read (`packRP_rc`) -/
+
+theorem dig_not (x : UInt64) (t : Nat) (ht : t < 32) :
+    dig (x ^^^ 0xFFFFFFFFFFFFFFFF).toNat t = 3 - dig x.toNat t := by
+  rw [dig_eq, dig_eq, UInt64.toNat_xor]
+  simp only [Nat.testBit_xor]
+  have h1 : (0xFFFFFFFFFFFFFFFF : UInt64).toNat.testBit (2 * t + 1) = true := by
+    have : ∀ i, i < 64 → (0xFFFFFFFFFFFFFFFF : UInt64).toNat.testBit i = true := by decide
+    exact this _ (by omega)
+  have h0 : (0xFFFFFFFFFFFFFFFF : UInt64).toNat.testBit (2 * t) = true := by
+    have : ∀ i, i < 64 → (0xFFFFFFFFFFFFFFFF : UInt64).toNat.testBit i = true := by decide
+    exact this _ (by omega)
+  rw [h1, h0]
+  cases x.toNat.testBit (2 * t + 1) <;> cases x.toNat.testBit (2 * t) <;> rfl
+
+/-- The low `e` fields (all 32 when `32 ≤ e`). -/
+@[inline] def maskF (e : Nat) : UInt64 :=
+  if 32 ≤ e then 0xFFFFFFFFFFFFFFFF else ((1 : UInt64) <<< (2 * e).toUInt64) - 1
+
+theorem dig_mask (x : UInt64) (e t : Nat) (ht : t < 32) :
+    dig (x &&& maskF e).toNat t = if t < e then dig x.toNat t else 0 := by
+  unfold maskF
+  rw [dig_eq, dig_eq, UInt64.toNat_and]
+  simp only [Nat.testBit_and]
+  split
+  · have : ∀ i, i < 64 → (0xFFFFFFFFFFFFFFFF : UInt64).toNat.testBit i = true := by decide
+    rw [this _ (by omega), this _ (by omega), if_pos (by omega)]; simp
+  · rename_i he
+    have hm : ((1 : UInt64) <<< (2 * e).toUInt64 - 1).toNat = 2 ^ (2 * e) - 1 := by
+      have h2 : (2 * e).toUInt64.toNat = 2 * e := by rw [Nat.toUInt64_eq, UInt64.toNat_ofNat']; omega
+      have hs : ((1 : UInt64) <<< (2 * e).toUInt64).toNat = 2 ^ (2 * e) := by
+        rw [UInt64.toNat_shiftLeft, h2, Nat.mod_eq_of_lt (show 2 * e < 64 by omega), UInt64.toNat_one,
+          Nat.one_shiftLeft]
+        exact Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by omega) (by omega))
+      rw [UInt64.toNat_sub_of_le, hs, UInt64.toNat_one]
+      rw [UInt64.le_iff_toNat_le, hs, UInt64.toNat_one]
+      exact Nat.one_le_two_pow
+    rw [hm, Nat.testBit_two_pow_sub_one, Nat.testBit_two_pow_sub_one]
+    split
+    · simp [show 2 * t + 1 < 2 * e by omega, show 2 * t < 2 * e by omega]
+    · simp [show ¬ 2 * t + 1 < 2 * e by omega, show ¬ 2 * t < 2 * e by omega]
+
+theorem packLoop_words (R : ByteArray) : ∀ d i sh w acc ok, R.size - i = d → i ≤ R.size →
+    sh.toNat = 2 * (i % 32) → acc.size = i / 32 →
+    (∀ q, q < acc.size → acc[q]!.toNat = wv R (32 * q) 32) →
+    w.toNat = wv R (32 * (i / 32)) (i % 32) →
+    (packLoop R i sh w acc ok).w.size = R.size / 32 + 1 ∧
+    ∀ q, q < R.size / 32 + 1 → (packLoop R i sh w acc ok).w[q]!.toNat = wv R (32 * q) (min 32 (R.size - 32 * q)) := by
+  intro d
+  induction d with
+  | zero =>
+    intro i sh w acc ok hn hi hsh hacc hq hw
+    have e : i = R.size := by omega
+    subst e
+    rw [packLoop, if_neg (by omega)]
+    refine ⟨by simp [hacc], fun q hq' => ?_⟩
+    by_cases hkq : q < acc.size
+    · rw [getD_push_lt _ _ _ hkq, hq _ hkq, show min 32 (R.size - 32 * q) = 32 by omega]
+    · have e : q = acc.size := by omega
+      rw [e, getD_push_eq, hw, hacc, show min 32 (R.size - 32 * (R.size / 32)) = R.size % 32 by omega]
+  | succ n ih =>
+    intro i sh w acc ok hn hi hsh hacc hq hw
+    have hiR : i < R.size := by omega
+    rw [packLoop, if_pos hiR]
+    have hstep := step_toNat w sh (i % 32) (R.get! i) (Nat.mod_lt _ (by omega)) hsh
+      (by rw [hw]; exact wv_lt _ _ _)
+    have hw' : (w ||| ((codeTab.get! (R.get! i).toNat) &&& 3).toUInt64 <<< sh).toNat =
+        wv R (32 * (i / 32)) (i % 32 + 1) := by
+      rw [hstep, wv, hw]; congr 4; omega
+    by_cases h62 : i % 32 = 31
+    · have hs : (sh == 62) = true := by
+        simp only [beq_iff_eq]; apply UInt64.toNat_inj.mp; rw [hsh, h62]; rfl
+      simp only [hs, if_true]
+      refine ih (i + 1) 0 0 _ _ (by omega) (by omega) (by simp; omega) (by simp; omega) ?_ ?_
+      · intro q hq'
+        simp only [Array.size_push] at hq'
+        by_cases e : q < acc.size
+        · rw [getD_push_lt _ _ _ e]; exact hq q e
+        · have e' : q = acc.size := by omega
+          rw [e', getD_push_eq, hw', hacc, h62]
+      · rw [show (i + 1) % 32 = 0 by omega]; rfl
+    · have hs : (sh == 62) = false := by
+        simp only [beq_eq_false_iff_ne, ne_eq]; intro e; rw [e] at hsh
+        simp at hsh; omega
+      simp only [hs]
+      refine ih (i + 1) (sh + 2) _ acc _ (by omega) (by omega) ?_ (by omega) hq ?_
+      · rw [UInt64.toNat_add, hsh]; simp; omega
+      · rw [hw', show (i + 1) / 32 = i / 32 by omega, show (i + 1) % 32 = i % 32 + 1 by omega]
+
+theorem packLoop_okI (R : ByteArray) : ∀ d i sh w acc ok, R.size - i = d →
+    ((packLoop R i sh w acc ok).ok = true ↔ (ok = true ∧ ∀ k, i ≤ k → k < R.size → acgt (R.get! k) = true)) := by
+  intro d
+  induction d with
+  | zero =>
+    intro i sh w acc ok hn
+    rw [packLoop, if_neg (by omega)]
+    exact ⟨fun h => ⟨h, fun k h1 h2 => by omega⟩, fun h => h.1⟩
+  | succ n ih =>
+    intro i sh w acc ok hn
+    rw [packLoop, if_pos (by omega)]
+    have key : ∀ sh' w' acc', ((packLoop R (i + 1) sh' w' acc' (ok && decide (codeTab.get! (R.get! i).toNat < 4))).ok = true ↔
+        (ok = true ∧ ∀ k, i ≤ k → k < R.size → acgt (R.get! k) = true)) := by
+      intro sh' w' acc'
+      rw [ih (i + 1) _ _ _ _ (by omega)]
+      simp only [Bool.and_eq_true, decide_eq_true_eq]
+      constructor
+      · rintro ⟨⟨h1, h2⟩, h3⟩
+        refine ⟨h1, fun k hk1 hk2 => ?_⟩
+        by_cases e : k = i
+        · subst e; simpa [acgt] using h2
+        · exact h3 k (by omega) hk2
+      · rintro ⟨h1, h3⟩
+        exact ⟨⟨h1, by simpa [acgt] using h3 i (by omega) (by omega)⟩, fun k hk1 hk2 => h3 k (by omega) hk2⟩
+    split <;> exact key _ _ _
+
+/-- Word `u` of the packed reverse complement of a packed ACGT read `w` of `n` letters
+(`rcWord_dig`): its letters `n-1-32u, n-2-32u, …` complemented, fields past the read zero. -/
+@[inline] def rcWord (w : Array UInt64) (n u : Nat) : UInt64 :=
+  let e := n - 32 * u
+  let X := if 32 ≤ e then
+      let a := e - 32
+      comb w[a / 32]! w[a / 32 + 1]! (a % 32) (2 * (a % 32)).toUInt64 (64 - 2 * (a % 32)).toUInt64
+    else w[0]! <<< (2 * (32 - e)).toUInt64
+  (revF X ^^^ 0xFFFFFFFFFFFFFFFF) &&& maskF e
+
+theorem rcWord_dig (R : ByteArray) (h : (packRP R).ok = true) (u t : Nat) (ht : t < 32) :
+    dig (rcWord (packRP R).w R.size u).toNat t =
+      if t < R.size - 32 * u then 3 - c2N (R.get! (R.size - 1 - 32 * u - t)) else 0 := by
+  have hK := (packRP_ok R h).2
+  unfold rcWord
+  simp only []
+  rw [dig_mask _ _ _ ht]
+  by_cases hte : t < R.size - 32 * u
+  · rw [if_pos hte, if_pos hte, dig_not _ _ ht, revF_dig _ _ ht]
+    congr 1
+    have hk := hK (R.size - 1 - 32 * u - t) (by omega)
+    by_cases he : 32 ≤ R.size - 32 * u
+    · rw [if_pos he]
+      have hs : (R.size - 32 * u - 32) % 32 < 32 := Nat.mod_lt _ (by omega)
+      rw [comb_dig _ _ _ _ hs (by omega)]
+      by_cases hc : (R.size - 32 * u - 32) % 32 + (31 - t) < 32
+      · rw [if_pos hc, ← hk.2, show (R.size - 1 - 32 * u - t) / 32 = (R.size - 32 * u - 32) / 32 by omega,
+          show (R.size - 1 - 32 * u - t) % 32 = (R.size - 32 * u - 32) % 32 + (31 - t) by omega]
+      · rw [if_neg hc, ← hk.2, show (R.size - 1 - 32 * u - t) / 32 = (R.size - 32 * u - 32) / 32 + 1 by omega,
+          show (R.size - 1 - 32 * u - t) % 32 = (R.size - 32 * u - 32) % 32 + (31 - t) - 32 by omega]
+    · rw [if_neg he]
+      have h2 : (2 * (32 - (R.size - 32 * u))).toUInt64.toNat = 2 * (32 - (R.size - 32 * u)) := by
+        rw [Nat.toUInt64_eq, UInt64.toNat_ofNat']; omega
+      rw [shl_dig _ _ _ _ h2 (by omega) (by omega), if_pos (by omega), ← hk.2,
+        show (R.size - 1 - 32 * u - t) / 32 = 0 by omega,
+        show (R.size - 1 - 32 * u - t) % 32 = 31 - t - (32 - (R.size - 32 * u)) by omega]
+  · rw [if_neg hte, if_neg hte]
+
+/-- Words `u, u+1, …` (`m` of them) of `rcWord w n` pushed onto `acc`. -/
+def rcLoop (w : Array UInt64) (n : Nat) : Nat → Nat → Array UInt64 → Array UInt64
+  | _, 0, acc => acc
+  | u, m + 1, acc => rcLoop w n (u + 1) m (acc.push (rcWord w n u))
+
+theorem rcLoop_toList (w : Array UInt64) (n : Nat) : ∀ m u acc,
+    (rcLoop w n u m acc).toList = acc.toList ++ (List.range' u m).map (rcWord w n) := by
+  intro m
+  induction m with
+  | zero => intro u acc; simp [rcLoop]
+  | succ m ih => intro u acc; simp [rcLoop, ih, List.range'_succ]
+
+theorem complB_acgt (b : UInt8) (h : acgt b = true) : acgt (complB b) = true ∧ c2N (complB b) = 3 - c2N b := by
+  rcases acgt_cases b h with e | e | e | e <;> subst e <;> decide +kernel
+
+theorem revCompK_get (R : ByteArray) (k : Nat) (hk : k < R.size) :
+    (revCompK R).get! k = complB (R.get! (R.size - 1 - k)) := by
+  rw [revCompK_eq]
+  simp only [revCompB, ByteArray.get!]
+  rw [getElem!_pos _ _ (by simp; exact hk), getElem!_pos R.data _ (by show _ < R.size; omega)]
+  simp only [Array.getElem_reverse, Array.getElem_map, Array.size_map]
+  congr 2
+
+theorem revCompK_sz (R : ByteArray) : (revCompK R).size = R.size := by
+  rw [revCompK_eq]; simp only [revCompB, ByteArray.size, Array.size_reverse, Array.size_map]
+
+/-- The packed reverse complement of an ACGT read from its packed words. -/
+theorem packRP_rc (R : ByteArray) (h : (packRP R).ok = true) :
+    packRP (revCompK R) = ⟨rcLoop (packRP R).w R.size 0 (R.size / 32 + 1) (Array.emptyWithCapacity 9), true⟩ := by
+  have hn := (packRP_ok R h).1
+  have hK := (packRP_ok R h).2
+  have hs := revCompK_sz R
+  have hr : ∀ k, k < R.size → acgt ((revCompK R).get! k) = true ∧
+      c2N ((revCompK R).get! k) = 3 - c2N (R.get! (R.size - 1 - k)) := fun k hk => by
+    rw [revCompK_get R k hk]; exact complB_acgt _ (hK _ (by omega)).1
+  have eq1 : packRP (revCompK R) = packLoop (revCompK R) 0 0 0 (Array.emptyWithCapacity 9) true := by
+    unfold packRP; rw [if_pos (by omega)]
+  rw [eq1]
+  obtain ⟨hsz, hw⟩ := packLoop_words (revCompK R) _ 0 0 0 (Array.emptyWithCapacity 9) true rfl (by omega) rfl (by simp)
+    (fun q hq => by simp at hq) rfl
+  have hok := (packLoop_okI (revCompK R) _ 0 0 0 (Array.emptyWithCapacity 9) true rfl).2
+    ⟨rfl, fun k _ hk => (hr k (by omega)).1⟩
+  generalize e : packLoop (revCompK R) 0 0 0 (Array.emptyWithCapacity 9) true = P at hsz hw hok
+  rcases P with ⟨Pw, Pok⟩
+  simp only at hsz hw hok
+  subst hok
+  congr 1
+  have hL : (rcLoop (packRP R).w R.size 0 (R.size / 32 + 1) (Array.emptyWithCapacity 9)).toList =
+      (List.range' 0 (R.size / 32 + 1)).map (rcWord (packRP R).w R.size) := by
+    rw [rcLoop_toList]; rfl
+  apply Array.toList_inj.mp
+  rw [hL]
+  apply List.ext_getElem
+  · simp [hsz, hs]
+  · intro q h1 h2
+    simp only [List.getElem_map, List.getElem_range', Nat.zero_add, Nat.one_mul, Array.getElem_toList]
+    have hq : q < R.size / 32 + 1 := by simpa using h2
+    have e1 := hw q (by rw [hs]; exact hq)
+    rw [show Pw[q] = Pw[q]! from (getElem!_pos Pw q _).symm]
+    apply UInt64.toNat_inj.mp
+    rw [e1]
+    apply eq_of_dig 32 _ _ (Nat.lt_of_lt_of_le (wv_lt _ _ _) (Nat.pow_le_pow_right (by omega) (by omega)))
+      (by have := UInt64.toNat_lt (rcWord (packRP R).w R.size q); simpa using this)
+    intro t ht
+    rw [rcWord_dig R h q t ht, hs]
+    by_cases htq : t < min 32 (R.size - 32 * q)
+    · rw [wv_dig _ _ _ _ htq, if_pos (by omega), (hr _ (by omega)).2]
+      congr 3; omega
+    · rw [if_neg (by omega)]
+      have hlt := wv_lt (revCompK R) (32 * q) (min 32 (R.size - 32 * q))
+      unfold dig
+      rw [Nat.div_eq_of_lt (Nat.lt_of_lt_of_le hlt (Nat.pow_le_pow_right (by omega) (by omega)))]
+
 /-- `prepMate` for the minimizer index (`prepMz_eq`). -/
 @[inline] def prepMz (pk : PkMz) (R : ByteArray) : PrepM MzP :=
   let Rr := revCompK R
   let K1 := packRP R
-  let K2 := packRP Rr
+  let K2 := if K1.ok then ⟨rcLoop K1.w R.size 0 (R.size / 32 + 1) (Array.emptyWithCapacity 9), true⟩ else packRP Rr
   let m := R.size / 25
   let Ls := R.size / m
   let shU := (2 * (Mz.q - pk.1.t)).toUInt64
@@ -735,8 +961,14 @@ theorem prepMz_eq (pk : PkMz) (R : ByteArray) : prepMz pk R = prepMate pk R := b
       LookG.prep pk (seedHashK B K (i * Ls)) from fun i => seedP_eq _ _ _ _]
     unfold prepGK
     simp [List.range_eq_range']
+  have e2 : (if (packRP R).ok = true then
+      (⟨rcLoop (packRP R).w R.size 0 (R.size / 32 + 1) (Array.emptyWithCapacity 9), true⟩ : RP)
+      else packRP (revCompK R)) = packRP (revCompK R) := by
+    split
+    · rename_i h; exact (packRP_rc R h).symm
+    · rfl
   unfold prepMz prepMate
-  simp only [e]
+  simp only [e, e2]
 
 /-- `tierPairB` with each mate prepared once (`prepMz`), for the gate, RT's pass 1 and the rest; RT's pass 1 reads the
 packed reads from the preparations (`tierPairB_eqS`). -/
