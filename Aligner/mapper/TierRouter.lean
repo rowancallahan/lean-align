@@ -653,15 +653,67 @@ theorem costZ_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
   unfold costZ costPF costOne
   simp only [Array.foldr_map]
 
-/-- `tierPairB` with each mate prepared once, for the gate, RT's pass 1 and the rest; RT's pass 1 reads the
+/-- `mzPrep ix (some (mix c))` without the hash round trip (`mzPrepV_eq`). -/
+@[inline] def mzPrepV (ix : Mz.MzIdx) (c : UInt64) : MzP :=
+  let v := c.toNat
+  let o := ix.mini v
+  let h := ix.hsh (ix.sub v o)
+  ⟨true, v, o, h, h >>> ix.kb⟩
+
+theorem mzPrepV_eq (ix : Mz.MzIdx) (c : UInt64) (hc : c.toNat < 2 ^ 50) : mzPrep ix (some (mix c)) = mzPrepV ix c := by
+  unfold mzPrep mzPrepV; dsimp only; rw [unmix_mix c hc]
+
+/-- Seed at `s` of a read prepared for the minimizer index, from the packed read when it applies. -/
+@[inline] def seedP (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (s : Nat) : MzP :=
+  if K.ok && decide (s + q ≤ R.size) then mzPrepV ix (beCode K.w s) else mzPrep ix (seedHashAt R s)
+
+theorem seedP_eq (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (s : Nat) : seedP ix R K s = mzPrep ix (seedHashK R K s) := by
+  unfold seedP seedHashK
+  split
+  · rw [mzPrepV_eq _ _ (Nat.lt_of_lt_of_le (beCode_lt _ _) (by decide))]
+  · rfl
+
+/-- Seeds `j, j+1, …` (`n` of them) pushed onto `acc` (`prepLoop_toList`). -/
+def prepLoop (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (Ls : Nat) : Nat → Nat → Array MzP → Array MzP
+  | _, 0, acc => acc
+  | j, n + 1, acc => prepLoop ix R K Ls (j + 1) n (acc.push (seedP ix R K (j * Ls)))
+
+theorem prepLoop_toList (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (Ls : Nat) : ∀ n j acc,
+    (prepLoop ix R K Ls j n acc).toList = acc.toList ++ (List.range' j n).map fun i => seedP ix R K (i * Ls) := by
+  intro n
+  induction n with
+  | zero => intro j acc; simp [prepLoop]
+  | succ n ih => intro j acc; simp [prepLoop, ih, List.range'_succ]
+
+/-- `prepMate` for the minimizer index (`prepMz_eq`). -/
+@[inline] def prepMz (pk : PkMz) (R : ByteArray) : PrepM MzP :=
+  let Rr := revCompK R
+  let K1 := packRP R
+  let K2 := packRP Rr
+  let m := R.size / 25
+  let Ls := R.size / m
+  ⟨Rr, K1, K2, prepLoop pk.1 R K1 Ls 0 m (Array.emptyWithCapacity m), prepLoop pk.1 Rr K2 Ls 0 m (Array.emptyWithCapacity m)⟩
+
+theorem prepMz_eq (pk : PkMz) (R : ByteArray) : prepMz pk R = prepMate pk R := by
+  have e : ∀ (B : ByteArray) (K : RP) (m Ls : Nat),
+      prepLoop pk.1 B K Ls 0 m (Array.emptyWithCapacity m) = prepGK pk B K m Ls := fun B K m Ls => by
+    apply Array.toList_inj.mp
+    rw [prepLoop_toList]
+    unfold prepGK
+    simp [List.range_eq_range', seedP_eq]
+    intro _ _; rfl
+  unfold prepMz prepMate
+  simp only [e]
+
+/-- `tierPairB` with each mate prepared once (`prepMz`), for the gate, RT's pass 1 and the rest; RT's pass 1 reads the
 packed reads from the preparations (`tierPairB_eqS`). -/
 def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
   match O1, O2 with
   | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
   | _, none => { tag := .t0, why := some (.trimmedAway .two) }
   | some a, some b =>
-    let s1 : PrepM MzP := prepMate pk a
-    let s2 : PrepM MzP := prepMate pk b
+    let s1 : PrepM MzP := prepMz pk a
+    let s2 : PrepM MzP := prepMz pk b
     -- each strand's bucket sizes, read once: the pass-1 costs and the seed order of all its searches
     let za1 := s1.ps.map (LookG.size pk)
     let za2 := s1.pr.map (LookG.size pk)
@@ -712,7 +764,7 @@ end router
           (regionPenKPSO_eq Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R _ _ _ _ _ x).trans <|
           (regionPenKPS_eq Q cfg.lo cfg.hi pk ByteArray.empty offs pgs R x).trans
             (regionPenKP_eqP Q cfg.lo cfg.hi (fun x y => ((pk, x, y) : RgMz)) ByteArray.empty offs pgs R x).symm
-      simp only [tierPairBS, costZ_eq]
+      simp only [tierPairBS, prepMz_eq, costZ_eq]
       rw [hm a, hm b, hr a, hr b]
       rfl
 
