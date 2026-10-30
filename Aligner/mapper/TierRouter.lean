@@ -663,23 +663,51 @@ theorem costZ_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
 theorem mzPrepV_eq (ix : Mz.MzIdx) (c : UInt64) (hc : c.toNat < 2 ^ 50) : mzPrep ix (some (mix c)) = mzPrepV ix c := by
   unfold mzPrep mzPrepV; dsimp only; rw [unmix_mix c hc]
 
-/-- Seed at `s` of a read prepared for the minimizer index, from the packed read when it applies. -/
-@[inline] def seedP (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (s : Nat) : MzP :=
-  if K.ok && decide (s + q ≤ R.size) then mzPrepV ix (beCode K.w s) else mzPrep ix (seedHashAt R s)
+/-- `mzPrepV` with `ix`'s minimizer shift `shU` and word count `wq` given (`mzPrepC_eq`), the k-word in `UInt64`. -/
+@[inline] def mzPrepC (ix : Mz.MzIdx) (shU : UInt64) (wq : Nat) (c : UInt64) : MzP :=
+  let x := Mz.miniGo c ix.tmU wq 1 0 (shU - 2) (((c >>> shU) &&& ix.tmU) * Mz.HC &&& ix.tmU)
+  let o := if x < ix.w then x else x % ix.w
+  let h := ((((c >>> (2 * (Mz.q - o - ix.k)).toUInt64) &&& ix.kmU) * Mz.HC) &&& ix.kmU).toNat
+  ⟨true, c.toNat, o, h, h >>> ix.kb⟩
 
-theorem seedP_eq (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (s : Nat) : seedP ix R K s = mzPrep ix (seedHashK R K s) := by
+theorem mzPrepC_eq (ix : Mz.MzIdx) (c : UInt64) :
+    mzPrepC ix (2 * (Mz.q - ix.t)).toUInt64 (Mz.q + 1 - ix.t) c = mzPrepV ix c := by
+  unfold mzPrepC mzPrepV Mz.MzIdx.mini Mz.MzIdx.hsh Mz.MzIdx.sub Mz.hashU
+  simp only [UInt64.ofNat_toNat]
+  generalize Mz.miniGo c ix.tmU (Mz.q + 1 - ix.t) 1 0 ((2 * (Mz.q - ix.t)).toUInt64 - 2)
+    (((c >>> (2 * (Mz.q - ix.t)).toUInt64) &&& ix.tmU) * Mz.HC &&& ix.tmU) = x
+  generalize (if x < ix.w then x else x % ix.w) = o
+  have hs : 2 * (Mz.q - o - ix.k) < 64 := by have : Mz.q = 25 := rfl; omega
+  have e : ((c.toNat >>> (2 * (Mz.q - o - ix.k))) &&& ix.kmU.toNat).toUInt64 =
+      (c >>> (2 * (Mz.q - o - ix.k)).toUInt64) &&& ix.kmU := by
+    apply UInt64.toNat_inj.mp
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight, Nat.toUInt64_eq, UInt64.toNat_ofNat']
+    have h1 : (2 * (Mz.q - o - ix.k)).toUInt64.toNat % 64 = 2 * (Mz.q - o - ix.k) := by
+      rw [Nat.toUInt64_eq, UInt64.toNat_ofNat']; omega
+    rw [h1]
+    exact Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt Nat.and_le_right (UInt64.toNat_lt _))
+  rw [e]
+
+/-- Seed at `s` of a read prepared for the minimizer index, from the packed read when it applies. -/
+@[inline] def seedP (ix : Mz.MzIdx) (shU : UInt64) (wq : Nat) (R : ByteArray) (K : RP) (s : Nat) : MzP :=
+  if K.ok && decide (s + q ≤ R.size) then mzPrepC ix shU wq (beCode K.w s) else mzPrep ix (seedHashAt R s)
+
+theorem seedP_eq (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (s : Nat) :
+    seedP ix (2 * (Mz.q - ix.t)).toUInt64 (Mz.q + 1 - ix.t) R K s = mzPrep ix (seedHashK R K s) := by
   unfold seedP seedHashK
   split
-  · rw [mzPrepV_eq _ _ (Nat.lt_of_lt_of_le (beCode_lt _ _) (by decide))]
+  · rw [mzPrepC_eq, mzPrepV_eq _ _ (Nat.lt_of_lt_of_le (beCode_lt _ _) (by decide))]
   · rfl
 
 /-- Seeds `j, j+1, …` (`n` of them) pushed onto `acc` (`prepLoop_toList`). -/
-def prepLoop (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (Ls : Nat) : Nat → Nat → Array MzP → Array MzP
+def prepLoop (ix : Mz.MzIdx) (shU : UInt64) (wq : Nat) (R : ByteArray) (K : RP) (Ls : Nat) :
+    Nat → Nat → Array MzP → Array MzP
   | _, 0, acc => acc
-  | j, n + 1, acc => prepLoop ix R K Ls (j + 1) n (acc.push (seedP ix R K (j * Ls)))
+  | j, n + 1, acc => prepLoop ix shU wq R K Ls (j + 1) n (acc.push (seedP ix shU wq R K (j * Ls)))
 
-theorem prepLoop_toList (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (Ls : Nat) : ∀ n j acc,
-    (prepLoop ix R K Ls j n acc).toList = acc.toList ++ (List.range' j n).map fun i => seedP ix R K (i * Ls) := by
+theorem prepLoop_toList (ix : Mz.MzIdx) (shU : UInt64) (wq : Nat) (R : ByteArray) (K : RP) (Ls : Nat) : ∀ n j acc,
+    (prepLoop ix shU wq R K Ls j n acc).toList =
+      acc.toList ++ (List.range' j n).map fun i => seedP ix shU wq R K (i * Ls) := by
   intro n
   induction n with
   | zero => intro j acc; simp [prepLoop]
@@ -692,16 +720,21 @@ theorem prepLoop_toList (ix : Mz.MzIdx) (R : ByteArray) (K : RP) (Ls : Nat) : �
   let K2 := packRP Rr
   let m := R.size / 25
   let Ls := R.size / m
-  ⟨Rr, K1, K2, prepLoop pk.1 R K1 Ls 0 m (Array.emptyWithCapacity m), prepLoop pk.1 Rr K2 Ls 0 m (Array.emptyWithCapacity m)⟩
+  let shU := (2 * (Mz.q - pk.1.t)).toUInt64
+  let wq := Mz.q + 1 - pk.1.t
+  ⟨Rr, K1, K2, prepLoop pk.1 shU wq R K1 Ls 0 m (Array.emptyWithCapacity m),
+    prepLoop pk.1 shU wq Rr K2 Ls 0 m (Array.emptyWithCapacity m)⟩
 
 theorem prepMz_eq (pk : PkMz) (R : ByteArray) : prepMz pk R = prepMate pk R := by
   have e : ∀ (B : ByteArray) (K : RP) (m Ls : Nat),
-      prepLoop pk.1 B K Ls 0 m (Array.emptyWithCapacity m) = prepGK pk B K m Ls := fun B K m Ls => by
+      prepLoop pk.1 (2 * (Mz.q - pk.1.t)).toUInt64 (Mz.q + 1 - pk.1.t) B K Ls 0 m (Array.emptyWithCapacity m) =
+        prepGK pk B K m Ls := fun B K m Ls => by
     apply Array.toList_inj.mp
     rw [prepLoop_toList]
+    simp only [show ∀ i, seedP pk.1 (2 * (Mz.q - pk.1.t)).toUInt64 (Mz.q + 1 - pk.1.t) B K (i * Ls) =
+      LookG.prep pk (seedHashK B K (i * Ls)) from fun i => seedP_eq _ _ _ _]
     unfold prepGK
-    simp [List.range_eq_range', seedP_eq]
-    intro _ _; rfl
+    simp [List.range_eq_range']
   unfold prepMz prepMate
   simp only [e]
 
