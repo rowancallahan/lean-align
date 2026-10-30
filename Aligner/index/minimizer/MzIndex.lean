@@ -513,6 +513,53 @@ def buildC (G : ByteArray) (k B c : Nat) : MzIdx := buildW G k B c 8 k
 key fits. -/
 def build (G : ByteArray) (k B : Nat) : MzIdx := buildC G k B (q - k)
 
+/-! ### `miniGo` for `t = 6` straight-line (compiled code only, `mzPrepC`) -/
+
+/-- `miniGo`'s best offset after offset `o` (shift `sh`). -/
+@[inline] def stepO (v kmU : UInt64) (o : Nat) (sh : UInt64) (bo : Nat) (bh : UInt64) : Nat :=
+  if ((v >>> sh) &&& kmU) * HC &&& kmU < bh then o else bo
+
+/-- `miniGo`'s best hash after shift `sh`. -/
+@[inline] def stepH (v kmU : UInt64) (sh : UInt64) (bh : UInt64) : UInt64 :=
+  let h := ((v >>> sh) &&& kmU) * HC &&& kmU
+  if h < bh then h else bh
+
+theorem miniGo_stepS (v kmU : UInt64) (w o bo : Nat) (sh bh : UInt64) (h : o < w) :
+    miniGo v kmU w o bo sh bh = miniGo v kmU w (o + 1) (stepO v kmU o sh bo bh) (sh - 2) (stepH v kmU sh bh) := by
+  rw [miniGo, if_pos h]
+  unfold stepO stepH
+  simp only []
+  split <;> rfl
+
+/-- `miniGo` over 20 t-words (`t = 6`) from offset 1, straight-line (`mini20_eq`). -/
+@[inline] def mini20 (v kmU : UInt64) (bh : UInt64) : Nat :=
+  let bo : Nat := 0
+  let bo := stepO v kmU (1) (36) bo bh; let bh := stepH v kmU (36) bh
+  let bo := stepO v kmU (1 + 1) (36 - 2) bo bh; let bh := stepH v kmU (36 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1) (36 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1) (36 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh; let bh := stepH v kmU (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bh
+  let bo := stepO v kmU (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (36 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2 - 2) bo bh
+  bo
+
+theorem mini20_eq (v kmU bh : UInt64) : mini20 v kmU bh = miniGo v kmU 20 1 0 36 bh := by
+  repeat rw [miniGo_stepS v kmU 20 _ _ _ _ (by omega)]
+  rw [miniGo, if_neg (by omega)]
+  rfl
+
 end MapSpec.Mz
 
 /-! ## Proof -/

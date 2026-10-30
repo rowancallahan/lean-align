@@ -663,16 +663,25 @@ theorem costZ_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
 theorem mzPrepV_eq (ix : Mz.MzIdx) (c : UInt64) (hc : c.toNat < 2 ^ 50) : mzPrep ix (some (mix c)) = mzPrepV ix c := by
   unfold mzPrep mzPrepV; dsimp only; rw [unmix_mix c hc]
 
-/-- `mzPrepV` with `ix`'s minimizer shift `shU` and word count `wq` given (`mzPrepC_eq`), the k-word in `UInt64`. -/
+/-- `mzPrepV` with `ix`'s minimizer shift `shU` and word count `wq` given (`mzPrepC_eq`), the k-word in `UInt64`;
+the index's `t = 6` runs the straight-line `mini20`. -/
 @[inline] def mzPrepC (ix : Mz.MzIdx) (shU : UInt64) (wq : Nat) (c : UInt64) : MzP :=
-  let x := Mz.miniGo c ix.tmU wq 1 0 (shU - 2) (((c >>> shU) &&& ix.tmU) * Mz.HC &&& ix.tmU)
+  let bh := ((c >>> shU) &&& ix.tmU) * Mz.HC &&& ix.tmU
+  let x := if wq = 20 ∧ shU = 38 then Mz.mini20 c ix.tmU bh else Mz.miniGo c ix.tmU wq 1 0 (shU - 2) bh
   let o := if x < ix.w then x else x % ix.w
   let h := ((((c >>> (2 * (Mz.q - o - ix.k)).toUInt64) &&& ix.kmU) * Mz.HC) &&& ix.kmU).toNat
   ⟨true, c.toNat, o, h, h >>> ix.kb⟩
 
 theorem mzPrepC_eq (ix : Mz.MzIdx) (c : UInt64) :
     mzPrepC ix (2 * (Mz.q - ix.t)).toUInt64 (Mz.q + 1 - ix.t) c = mzPrepV ix c := by
-  unfold mzPrepC mzPrepV Mz.MzIdx.mini Mz.MzIdx.hsh Mz.MzIdx.sub Mz.hashU
+  have em : ∀ (wq : Nat) (shU bh : UInt64), (if wq = 20 ∧ shU = 38 then Mz.mini20 c ix.tmU bh
+      else Mz.miniGo c ix.tmU wq 1 0 (shU - 2) bh) = Mz.miniGo c ix.tmU wq 1 0 (shU - 2) bh := fun wq shU bh => by
+    split
+    · rename_i h; obtain ⟨rfl, rfl⟩ := h; rw [Mz.mini20_eq]; rfl
+    · rfl
+  unfold mzPrepC
+  simp only [em]
+  unfold mzPrepV Mz.MzIdx.mini Mz.MzIdx.hsh Mz.MzIdx.sub Mz.hashU
   simp only [UInt64.ofNat_toNat]
   generalize Mz.miniGo c ix.tmU (Mz.q + 1 - ix.t) 1 0 ((2 * (Mz.q - ix.t)).toUInt64 - 2)
     (((c >>> (2 * (Mz.q - ix.t)).toUInt64) &&& ix.tmU) * Mz.HC &&& ix.tmU) = x
