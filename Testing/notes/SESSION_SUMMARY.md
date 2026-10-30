@@ -1204,3 +1204,15 @@ See the branch tips' commit messages for what is finished on each.
   chkAln 38%, banded DP 27%, hamD 17%, nearY 13%. Unmapped sims: ~6.7% genuine repeats (ties), mason ~5% with
   5–7 spread mismatches (just over the cap).
 - n29 experiments (branches `speed/n29-prep`, `speed/n29-heur`, `speed/n29-danger`), each starting from the tree above.
+
+### hg38, previous speed vs n29-base (2026-10-30, parent session box, 4 cores, median of 3, SAM identical)
+| set | wall s (prev → n29-base) | CPU s (prev → n29-base) |
+|---|---|---|
+| HiSeq 2×250 200k | 14.9 → 12.2 | 36.2 → 34.3 (−5%) |
+| NovaSeq 2×151 200k | 18.5 → 19.3 | 60.6 → 59.5 (−2%) |
+| sim mason 200k | 32.9 → 32.7 | 116.9 → 103.3 (−12%) |
+| sim low 200k | 15.8 → 15.3 | 48.5 → 43.9 (−9%) |
+- The n28 gains are smaller on hg38 than on chr21 (−8 to −25%): something genome-size-dependent dominates
+  (NovaSeq 60 CPU-s vs HiSeq 34). Next: profile NovaSeq and mason on hg38. Goal (Rowan): faster across everything.
+- **Rule (Rowan): compare like to like.** Speed comparisons only between runs on the same machine; minibwa
+  numbers from another box (different CPU) do not count.
