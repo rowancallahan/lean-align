@@ -291,6 +291,98 @@ theorem revCompK_eq (R : ByteArray) : revCompK R = revCompB R := by
     rw [getElem!_pos R.data _ (by show _ < R.size; omega)]
     simp only [Array.getElem_toList, List.length_map, hs]
 
+/-! ### `revCompK` in place (compiled code only): `revCompK_eqF` -/
+
+theorem uset_get (D : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < D.size) (k : Nat) :
+    (D.uset i v h).get! k = if k = i.toNat then v else D.get! k := by
+  cases D with
+  | mk bs =>
+    simp only [ByteArray.uset, ByteArray.get!, Array.uset]
+    split
+    · subst_vars; simp [ByteArray.size] at h; simp [h]
+    · rename_i hk
+      by_cases hb : k < bs.size
+      · rw [getElem!_pos (bs.set i.toNat v _) k (by simpa using hb), getElem!_pos bs k hb,
+          Array.getElem_set_ne _ _ (Ne.symm hk)]
+      · rw [getElem!_neg (bs.set i.toNat v _) k (by simpa using hb), getElem!_neg bs k hb]
+
+theorem uset_size (D : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < D.size) : (D.uset i v h).size = D.size := by
+  cases D; simp [ByteArray.uset, ByteArray.size]
+
+theorem rc_idx (n i : USize) (h : i < n) : (n - 1 - i).toNat = n.toNat - 1 - i.toNat := by
+  have h' : i.toNat < n.toNat := h
+  have h1 : (1 : USize) ≤ n := by rw [USize.le_iff_toNat_le, usz_lit 1 (by decide)]; omega
+  have h2 : i ≤ n - 1 := by
+    rw [USize.le_iff_toNat_le, USize.toNat_sub_of_le _ _ h1, usz_lit 1 (by decide)]; omega
+  rw [USize.toNat_sub_of_le _ _ h2, USize.toNat_sub_of_le _ _ h1, usz_lit 1 (by decide)]
+
+/-- Letters `[i, n)` of `D` set to the reverse complement of `R` (`n = R.size`; `rcSetU_spec`). -/
+def rcSetU (R : ByteArray) (n : USize) (hn : n.toNat = R.size) (i : USize) (D : ByteArray) : ByteArray :=
+  if h : i < n then
+    if h2 : i < D.usize then
+      rcSetU R n hn (i + 1)
+        (D.uset i (complU (R.uget (n - 1 - i) (by rw [rc_idx n i h, ← hn]; have : i.toNat < n.toNat := h; omega)))
+          (Nat.lt_of_lt_of_le h2 (usize_le D)))
+    else D
+  else D
+termination_by n.toNat - i.toNat
+decreasing_by
+  have h1 : i.toNat < n.toNat := h
+  rw [usz_succ i n h1]; omega
+
+theorem rcSetU_spec (R : ByteArray) (n : USize) (hn : n.toNat = R.size) (hR : R.size < 2 ^ 32) :
+    ∀ d (i : USize) (D : ByteArray), n.toNat - i.toNat = d → D.size = R.size → i.toNat ≤ R.size →
+      (∀ k, k < i.toNat → D.get! k = complB (R.get! (R.size - 1 - k))) →
+      (rcSetU R n hn i D).size = R.size ∧
+        ∀ k, k < R.size → (rcSetU R n hn i D).get! k = complB (R.get! (R.size - 1 - k)) := by
+  intro d
+  induction d with
+  | zero =>
+    intro i D hd hD hi hk
+    have h : ¬ i < n := fun h => by have : i.toNat < n.toNat := h; omega
+    rw [rcSetU, dif_neg h]
+    exact ⟨hD, fun k hk' => hk k (by omega)⟩
+  | succ d ih =>
+    intro i D hd hD hi hk
+    have h : i < n := by show i.toNat < n.toNat; omega
+    have hDs : D.usize.toNat = D.size := by
+      show D.size.toUSize.toNat = D.size; exact usz_n _ (by omega)
+    have h2 : i < D.usize := by show i.toNat < D.usize.toNat; rw [hDs]; omega
+    rw [rcSetU, dif_pos h, dif_pos h2]
+    have hs := usz_succ i n h
+    refine ih (i + 1) _ (by omega) (by rw [uset_size, hD]) (by omega) ?_
+    intro k hk'
+    rw [uset_get]
+    split
+    · rename_i e; subst e
+      rw [complU_eq, uget_get!, rc_idx n i h, hn, complTab_get]
+    · rename_i e; exact hk k (by omega)
+
+/-- `revCompK` with each letter written in place into a copy of `R` (`revCompK_eqF`). -/
+@[inline] def revCompKF (R : ByteArray) : ByteArray :=
+  if h : R.size < 1073741824 then rcSetU R R.size.toUSize (usz_n _ (by omega)) 0 R else revCompLoop R R.size (ByteArray.emptyWithCapacity R.size)
+
+@[csimp] theorem revCompK_eqF : @revCompK = @revCompKF := by
+  funext R
+  unfold revCompKF
+  split
+  · rename_i hR
+    obtain ⟨hs, hg⟩ := rcSetU_spec R _ (usz_n _ (by omega)) (by omega) _ 0 R rfl rfl (by rw [usz_lit 0 (by decide)]; omega)
+      (fun k hk => by rw [usz_lit 0 (by decide)] at hk; omega)
+    rw [revCompK_eq]
+    apply ByteArray.ext_getElem
+    · rw [hs]; simp only [revCompB, ByteArray.size, Array.size_reverse, Array.size_map]
+    · intro k h1 h2
+      have hk : k < R.size := by rw [hs] at h2; exact h2
+      have eg : ∀ (a : ByteArray) (j : Nat) (h : j < a.size), a[j]'h = a.get! j := fun a j h => by
+        simp only [ByteArray.get!]; rw [getElem!_pos a.data j h]; rfl
+      rw [eg, eg, hg k hk]
+      simp only [revCompB, ByteArray.get!]
+      rw [getElem!_pos _ _ (by simp; omega), getElem!_pos R.data _ (by show _ < R.size; omega)]
+      simp only [Array.getElem_reverse, Array.getElem_map, Array.size_map]
+      congr 2
+  · rfl
+
 /-- The packed chromosomes spell the byte chromosomes. -/
 def RepAllK (pvs : Array PGen) (gbs : Array ByteArray) : Prop := ∀ c : Nat, Rep pvs[c]! gbs[c]!
 
