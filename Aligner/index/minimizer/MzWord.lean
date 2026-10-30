@@ -98,7 +98,7 @@ theorem seedLES_eq (R : ByteArray) (j k : Nat) :
     rw [seedLEF.seedLES, seedLE, if_pos (by omega), if_pos (by omega)]
     exact ih _ _ _ (by omega)
 
-@[csimp] theorem seedLE_eq_seedLEF : @seedLE = @seedLEF := by
+theorem seedLE_eq_seedLEF : @seedLE = @seedLEF := by
   funext R j k i w ok
   unfold seedLEF
   split
@@ -106,6 +106,77 @@ theorem seedLES_eq (R : ByteArray) (j k : Nat) :
     exact (seedLEU_eq R j k _ _ (usz_n _ (by omega)) (usz_n _ (by omega)) (by omega) (by omega) _ _ i w ok rfl
       (usz_n _ (by omega)) (by omega)).symm
   · exact (seedLES_eq R j k _ i w ok rfl).symm
+
+/-! ### A 25-letter seed straight-line (compiled code only): `seedLE_eqF2` -/
+
+theorem cU_lt (R : ByteArray) (j : USize) (k : Nat) (h : j.toNat + 25 ≤ R.size) (hj : j.toNat < 2 ^ 31) (hk : k < 25) :
+    (j + k.toUSize).toNat < R.size := by
+  rw [USize.toNat_add, usz_n k (by omega), Nat.mod_eq_of_lt (by have := usz_pow; omega)]; omega
+
+/-- Letter `k` of the seed at `j`, coded (one bounds test per seed: `h`). -/
+@[inline] def cU (R : ByteArray) (j : USize) (k : Nat) (h : j.toNat + 25 ≤ R.size) (hj : j.toNat < 2 ^ 31)
+    (hk : k < 25) : UInt8 :=
+  codeU (R.uget (j + k.toUSize) (cU_lt R j k h hj hk))
+
+theorem cU_eq (R : ByteArray) (j : USize) (k : Nat) (h : j.toNat + 25 ≤ R.size) (hj : j.toNat < 2 ^ 31) (hk : k < 25) :
+    cU R j k h hj hk = codeTab.get! (R.get! (j.toNat + k)).toNat := by
+  unfold cU
+  rw [codeU_eq, uget_get!, USize.toNat_add, usz_n k (by omega), Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+
+/-- `seedLE R j 25 0 w ok`, straight-line (`seed25_eq`). -/
+@[inline] def seed25 (R : ByteArray) (j : USize) (h : j.toNat + 25 ≤ R.size) (hj : j.toNat < 2 ^ 31) (w : UInt64)
+    (ok : Bool) : UInt64 × Bool :=
+  let t := cU R j 0 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (0 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 1 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (2 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 2 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (4 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 3 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (6 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 4 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (8 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 5 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (10 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 6 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (12 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 7 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (14 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 8 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (16 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 9 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (18 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 10 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (20 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 11 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (22 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 12 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (24 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 13 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (26 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 14 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (28 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 15 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (30 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 16 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (32 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 17 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (34 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 18 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (36 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 19 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (38 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 20 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (40 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 21 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (42 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 22 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (44 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 23 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (46 : UInt64); let ok := ok && decide (t < 4)
+  let t := cU R j 24 h hj (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (48 : UInt64); let ok := ok && decide (t < 4)
+  (w, ok)
+
+theorem seed25_eq (R : ByteArray) (j : USize) (h : j.toNat + 25 ≤ R.size) (hj : j.toNat < 2 ^ 31) (w : UInt64)
+    (ok : Bool) : seed25 R j h hj w ok = seedLE R j.toNat 25 0 w ok := by
+  unfold seed25
+  simp only [cU_eq]
+  repeat (rw [seedLE, if_pos (by omega)]; simp only [])
+  rw [seedLE, if_neg (by omega)]
+  rfl
+
+/-- `seedLE` for the compiled code: a 25-letter seed from letter 0 straight-line, else `seedLEF`. -/
+@[inline] def seedLEF2 (R : ByteArray) (j k i : Nat) (w : UInt64) (ok : Bool) : UInt64 × Bool :=
+  if h : k = 25 ∧ i = 0 ∧ j < 2147483648 ∧ j + 25 ≤ R.size then
+    seed25 R j.toUSize (by rw [usz_n j (by omega)]; omega) (by rw [usz_n j (by omega)]; omega) w ok
+  else seedLEF R j k i w ok
+
+/-- Compiled code runs `seedLEF2`. -/
+@[csimp] theorem seedLE_eqF2 : @seedLE = @seedLEF2 := by
+  funext R j k i w ok
+  unfold seedLEF2
+  split
+  · rename_i h
+    obtain ⟨hk, hi, hj, -⟩ := h
+    subst hk hi
+    rw [seed25_eq, usz_n j (by omega)]
+  · exact seedLE_eq_seedLEF ▸ rfl
 
 /-- Genome letters `[p, p+32)` of `P` (field `i` = letter `p + i`; flagged blocks only). -/
 @[inline] def gW (P : PGen) (p : Nat) : UInt64 :=
