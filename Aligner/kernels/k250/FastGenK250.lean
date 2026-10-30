@@ -33,10 +33,19 @@ def revCompLoop (R : ByteArray) : (i : Nat) → ByteArray → ByteArray
 /-! ### `revCompLoop` on machine words (compiled code only): `revCompLoop_eq_revCompLoopF`, as
 `hamW_eq_hamWF` (MapperK250.lean); before `revCompK`, which is inlined into its callers -/
 
+theorem complTab_size : complTab.size = 256 := by unfold complTab; simp [ByteArray.size]
+
+/-- `complTab.get! b.toNat` with no bounds test (`complU_eq`). -/
+@[inline] def complU (b : UInt8) : UInt8 :=
+  complTab.uget b.toUSize (by rw [complTab_size, UInt8.toNat_toUSize]; exact UInt8.toNat_lt b)
+
+theorem complU_eq (b : UInt8) : complU b = complTab.get! b.toNat := by
+  unfold complU; rw [uget_get!, UInt8.toNat_toUSize]
+
 /-- `revCompLoop` with `i` in `USize` (`revCompLoopU_eq`). -/
 def revCompLoopU (R : ByteArray) (i : USize) (acc : ByteArray) : ByteArray :=
   if _h : i = 0 then acc
-  else revCompLoopU R (i - 1) (acc.push (getU complTab (getU R (i - 1)).toUSize))
+  else revCompLoopU R (i - 1) (acc.push (complU (getU R (i - 1))))
 termination_by i.toNat
 decreasing_by
   have : i.toNat ≠ 0 := fun h' => _h (USize.toNat_inj.mp (by rw [h']; rfl))
@@ -57,7 +66,7 @@ theorem revCompLoopU_eq (R : ByteArray) :
     have e : (iU - 1).toNat = i := by
       rw [USize.toNat_sub_of_le _ _ (by rw [USize.le_iff_toNat_le, usz_lit 1 (by decide)]; omega),
         usz_lit 1 (by decide), hi]; omega
-    rw [revCompLoopU, dif_neg h, revCompLoop, getU_eq, getU_eq, e, UInt8.toNat_toUSize]
+    rw [revCompLoopU, dif_neg h, revCompLoop, complU_eq, getU_eq, e]
     exact ih _ _ e
 
 /-- `revCompLoop` for the compiled code (`revCompLoop_eq_revCompLoopF`). -/

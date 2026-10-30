@@ -95,6 +95,16 @@ theorem uget_get! (w : ByteArray) (i : USize) (h : i.toNat < w.size) : w.uget i 
     rw [getElem!_pos bs i.toNat h]
     rfl
 
+set_option maxRecDepth 10000 in
+theorem codeTab_size : codeTab.size = 256 := by unfold codeTab; rfl
+
+/-- `codeTab.get! b.toNat` with no bounds test (`codeU_eq`). -/
+@[inline] def codeU (b : UInt8) : UInt8 :=
+  codeTab.uget b.toUSize (by rw [codeTab_size, UInt8.toNat_toUSize]; exact UInt8.toNat_lt b)
+
+theorem codeU_eq (b : UInt8) : codeU b = codeTab.get! b.toNat := by
+  unfold codeU; rw [uget_get!, UInt8.toNat_toUSize]
+
 theorem usz_succ (i n : USize) (h : i.toNat < n.toNat) : (i + 1).toNat = i.toNat + 1 := by
   have hs : USize.size = 2 ^ System.Platform.numBits := rfl
   have := USize.toNat_lt_size n
@@ -110,7 +120,7 @@ theorem usz_small (m : Nat) (h : m ≤ 256) : m.toUSize.toNat = m := by
 def packLoopU (R : ByteArray) (n : USize) (hn : n.toNat = R.size) (i : USize) (sh w : UInt64)
     (acc : Array UInt64) (ok : Bool) : RP :=
   if h : i < n then
-    let t := codeTab.get! (R.uget i (by rw [← hn]; exact h)).toNat
+    let t := codeU (R.uget i (by rw [← hn]; exact h))
     let w := w ||| (t &&& 3).toUInt64 <<< sh
     if sh == 62 then packLoopU R n hn (i + 1) 0 0 (acc.push w) (ok && decide (t < 4))
     else packLoopU R n hn (i + 1) (sh + 2) w acc (ok && decide (t < 4))
@@ -137,7 +147,7 @@ theorem packLoopU_eq (R : ByteArray) (n : USize) (hn : n.toNat = R.size) :
     have hlt : i.toNat < R.size := by omega
     have h' : i < n := by show i.toNat < n.toNat; omega
     have h2 : (i + 1).toNat = i.toNat + 1 := usz_succ i n (by omega)
-    rw [packLoopU, packLoop, dif_pos h', if_pos hlt, uget_get!]
+    rw [packLoopU, packLoop, dif_pos h', if_pos hlt, codeU_eq, uget_get!]
     simp only []
     split
     · rw [ih (i + 1) _ _ _ _ (by omega), h2]

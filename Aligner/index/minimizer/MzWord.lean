@@ -39,7 +39,7 @@ termination_by k - i
 /-- `seedLE` with `j`, `k`, `i` in `USize` (`seedLEU_eq`). -/
 def seedLEU (R : ByteArray) (j k i : USize) (w : UInt64) (ok : Bool) : UInt64 × Bool :=
   if _h : i < k then
-    let t := getU codeTab (getU R (j + i)).toUSize
+    let t := codeU (getU R (j + i))
     seedLEU R j k (i + 1) (w ||| (t &&& 3).toUInt64 <<< (2 * i).toUInt64) (ok && decide (t < 4))
   else (w, ok)
 termination_by k.toNat - i.toNat
@@ -70,9 +70,7 @@ theorem seedLEU_eq (R : ByteArray) (j k : Nat) (jU kU : USize) (hj : jU.toNat = 
       apply UInt64.toNat_inj.mp
       rw [USize.toNat_toUInt64, usz_mul' _ _ (by rw [usz_lit 2 (by decide)]; omega), usz_lit 2 (by decide), hi,
         Nat.toUInt64_eq, UInt64.toNat_ofNat', Nat.mod_eq_of_lt (by omega)]
-    have eb : ∀ b : UInt8, (b.toUSize).toNat = b.toNat := fun b => by
-      rw [UInt8.toNat_toUSize]
-    rw [getU_eq, getU_eq, ep, eb, e2]
+    rw [codeU_eq, getU_eq, ep, e2]
     exact ih _ (i + 1) _ _ (by omega)
       (by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide), hi]) (by omega)
 
