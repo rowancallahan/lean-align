@@ -753,11 +753,17 @@ theorem smallKGo_eq (pk : PkMz) (pp : Array MzP) (k : Nat) : ∀ (n : Nat) (acc 
 pair guarantee, the rarest-seed ceiling (bucket ≤ 500, ≤ 16 diagonals), the exact pair search on tier 2
 pairs with budget 1500 (c ≤ 16)) except the tier 2 heuristic, which is off (bench: WG_XH=0). While answers
 are bounds only (M1) the heuristic's ceilings never reach the output, and it costs over half the mapping
-time on easy reads (chr21 mason 200k, 4 cores: 12.4 s → 5.2 s). Turn it back on for M2 (`heur` below). -/
-def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (lo hi usl : Nat) : TierCfg :=
+time on easy reads (chr21 mason 200k, 4 cores: 12.4 s → 5.2 s). Turn it back on for M2 (`heur` below).
+`heur` (proposal, off by default; Rowan's call): the heuristic with `cmax := 16` (only what the exact pair
+search can use), `chk := false` (the router re-checks its picks) and bucket limit 100 (n29, synthetic genome:
+the heuristic's pairs at XH=0's cost on easy reads; to be confirmed on chr21 and hg38). With `cmax := 16`
+a pair whose summed ceiling stays over 16 is T3, not T2: it keeps no found pair. -/
+def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (lo hi usl : Nat)
+    (heur : Bool := false) : TierCfg :=
   let hcfg : HCfg :=
-    { w := 8, r := 2, ck := 2000, np := 8, dl := 16, seeds := true, near := true, band := true
-      sv := true, seedAll := true, bl := 1000000, ge := 12, kx := true, vf := true, nk := 1 }
+    { w := 8, r := 2, ck := 100, np := 8, dl := 16, seeds := true, near := true, band := true
+      sv := true, seedAll := true, bl := 1000000, ge := 12, kx := true, vf := true, nk := 1
+      cmax := 16, chk := false }
   -- the sum of the `k` rarest seed buckets over both strands
   let rare (k : Nat) (R : ByteArray) (s : PrepM MzP) : Nat :=
     smallK pk s.ps (R.size / 25) k + smallK pk s.pr (R.size / 25) k
@@ -771,6 +777,11 @@ def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (
     gate := fun _ _ _ _ c1 c2 => 60000 < c1 || 60000 < c2
     pref := fun G0 a b s1 s2 => decide (rare (sbound G0 + 2) b s2 < rare (sbound G0 + 2) a s1)
     ceil := fun R s => ceilX pk offs pgs R s 500 16
+    heur := fun a b s1 s2 m1 m2 =>
+      if heur then
+        let o := heurP hcfg pk offs pgs usl lo hi a b s1 s2 m1 m2
+        (candOf o.1, candOf o.2)
+      else (none, none)
     xe := fun t a b =>
       let c := t.m1.pH + t.m2.pH
       if 16 < c then none else
