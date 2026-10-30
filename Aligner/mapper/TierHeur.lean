@@ -590,6 +590,8 @@ structure HCfg where
   kx : Bool := true       -- keep an exact mate (RT's unique best) in place
   ge : Nat := 12          -- the banded DP only where `gapHint` (ends of `ge` letters) flags an indel (0: always)
   nk : Nat := 1           -- near the partner: up to `nk` seed diagonals (`seedVoteK`), the best alignment kept
+  cmax : Nat := 1000000   -- only pairs with summed ceiling ≤ `cmax` count (the exact pair search's 16); 1000000: off
+  chk : Bool := true      -- re-score each candidate with `chkAln` (false: trust it; the router re-checks the picks)
 
 /-- Re-score `(vc, start, len, pen, runs)` of a read (`R` forward, `Rr` reverse) with `checkRuns`:
 the placement when the score is `pen`. -/
@@ -608,11 +610,19 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
     (s1 s2 : PrepM MzP) (m1 m2 : MateX) : MateX × MateX := Id.run do
   let nc := pgs.size
   let INF := 1000000
+  -- `cmax`: nothing to gain when the floors already sum over it; each mate's search limit (`< L1`, `< L2`)
+  -- leaves room for the other mate's floor
+  if cfg.cmax < INF && cfg.cmax < m1.cd + m2.cd then return (m1, m2)
+  let L1 := if cfg.cmax < INF then cfg.cmax + 1 - m2.cd else INF
+  let L2 := if cfg.cmax < INF then cfg.cmax + 1 - m1.cd else INF
+  let chkAln := fun (pgs : Array PGen) (R Rr : ByteArray) (v st len pen : Nat) (runs : List (AlignmentSpec.Step × Nat)) =>
+    if cfg.chk then chkAln pgs R Rr v st len pen runs
+    else some ((decB nc ⟨v, st, len⟩, -(pen : Int)), runs)
   let ok := fun (m : MateX) => m.pH < INF && m.rs
   let exact := fun (m : MateX) => m.st == "U"
   let keep := fun (m : MateX) => cfg.kx && exact m
   -- 1. gapless ceilings over 8: banded re-alignment around their diagonal
-  let refine := fun (R Rr : ByteArray) (m : MateX) => Id.run do
+  let refine := fun (R Rr : ByteArray) (m : MateX) (L : Nat) => Id.run do
     if !cfg.band || exact m || !ok m || m.pH ≤ 8 then return m
     let some (p, _) := m.pl | return m
     let v := if p.2 == Strand.rev then nc + p.1.chr else p.1.chr
@@ -621,14 +631,14 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
     let ws := p.1.start - min p.1.start cfg.w
     let W := winL G ws (p.1.start + p.1.len + cfg.w)
     if cfg.ge != 0 && !gapHint Rx W ((p.1.start - ws : Nat) : Int) cfg.w cfg.ge then return m
-    match bandDP Rx W ((p.1.start - ws : Nat) : Int) cfg.w (min m.pH cfg.bl) with
+    match bandDP Rx W ((p.1.start - ws : Nat) : Int) cfg.w (min (min m.pH L) cfg.bl) with
     | some (cs, len, pen, runs) =>
       match chkAln pgs R Rr v (ws + cs) len pen runs with
       | some h => return m.withC h.1 5 h.2
       | none => return m
     | none => return m
-  let m1 := refine a s1.Rr m1
-  let m2 := refine b s2.Rr m2
+  let m1 := refine a s1.Rr m1 L1
+  let m2 := refine b s2.Rr m2 L2
   let prop := fun (o : MateX × MateX) => match o.1.pl, o.2.pl with
     | some x, some y => properPairU sl lo hi x.1 y.1
     | _, _ => false
@@ -693,11 +703,11 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
       if prop (x1, x2) then continue
       if let some (p, _) := x1.pl then
         if !keep x2 then
-          if let some y := near b s2.Rr s2 p (if ok x2 then x2.pH + cfg.dl + 1 else INF) then
+          if let some y := near b s2.Rr s2 p (min (if ok x2 then x2.pH + cfg.dl + 1 else INF) L2) then
             opts := opts.push (x1, x2.withC y.1 6 y.2)
       if let some (p, _) := x2.pl then
         if !keep x1 then
-          if let some y := near a s1.Rr s1 p (if ok x1 then x1.pH + cfg.dl + 1 else INF) then
+          if let some y := near a s1.Rr s1 p (min (if ok x1 then x1.pH + cfg.dl + 1 else INF) L1) then
             opts := opts.push (x1.withC y.1 6 y.2, x2)
   -- the smallest summed ceiling; a proper pair within `dl` of it preferred
   let sum := fun (o : MateX × MateX) => if ok o.1 && ok o.2 then o.1.pH + o.2.pH else INF
