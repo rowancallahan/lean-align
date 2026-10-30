@@ -1216,3 +1216,5 @@ See the branch tips' commit messages for what is finished on each.
   (NovaSeq 60 CPU-s vs HiSeq 34). Next: profile NovaSeq and mason on hg38. Goal (Rowan): faster across everything.
 - **Rule (Rowan): compare like to like.** Speed comparisons only between runs on the same machine; minibwa
   numbers from another box (different CPU) do not count.
+
+### Pause 2026-10-30 — see Testing/notes/PAUSE_2026-10-30.md (what worked, rollback points, hg38 profile, next steps)
