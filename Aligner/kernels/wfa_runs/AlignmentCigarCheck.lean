@@ -74,6 +74,38 @@ theorem checkRepeatFast_eq (sc : Scoring) (xa ya : Array Char) (s : Step) (n : N
     cases s <;> cases hx : xa[i]? <;> cases hy : ya[j]? <;>
       simp [checkRepeatFast, checkRepeat, stepCursor, hx, hy, ih]
 
+/-- `checkRepeatFast` with bounds tests, not `xa[i]?` (an `Option` per step), and the step's
+`some s` built once (`ns`), not per step (`checkRepeatFast_eqI`). -/
+def checkRepeatGo (sc : Scoring) (xa ya : Array Char) (s : Step) (ns : Option Step) :
+    Nat → Nat → Nat → Option Step → Int → Option WalkCursor
+  | 0, i, j, prev, acc => some ⟨i,j,prev,acc⟩
+  | n+1, i, j, prev, acc =>
+    match s with
+    | .diag =>
+      if h : i < xa.size ∧ j < ya.size then
+        checkRepeatGo sc xa ya s ns n (i+1) (j+1) ns (acc + diagCost sc xa[i] ya[j])
+      else none
+    | .gapX => if j < ya.size then checkRepeatGo sc xa ya s ns n i (j+1) ns (acc + gapXCost sc prev) else none
+    | .gapY => if i < xa.size then checkRepeatGo sc xa ya s ns n (i+1) j ns (acc + gapYCost sc prev) else none
+
+def checkRepeatFastI (sc : Scoring) (xa ya : Array Char) (s : Step) (n i j : Nat) (prev : Option Step)
+    (acc : Int) : Option WalkCursor :=
+  checkRepeatGo sc xa ya s (some s) n i j prev acc
+
+theorem checkRepeatGo_eq (sc : Scoring) (xa ya : Array Char) (s : Step) (n : Nat) :
+    ∀ i j prev acc, checkRepeatGo sc xa ya s (some s) n i j prev acc = checkRepeatFast sc xa ya s n i j prev acc := by
+  induction n with
+  | zero => intros; rfl
+  | succ n ih =>
+    intro i j prev acc
+    cases s <;> by_cases hi : i < xa.size <;> by_cases hj : j < ya.size <;>
+      simp [checkRepeatFast, checkRepeatGo, hi, hj, ih]
+
+/-- Compiled code runs `checkRepeatFastI`. -/
+@[csimp] theorem checkRepeatFast_eqI : @checkRepeatFast = @checkRepeatFastI := by
+  funext sc xa ya s n i j prev acc
+  exact (checkRepeatGo_eq sc xa ya s n i j prev acc).symm
+
 def checkRuns (sc : Scoring) (xa ya : Array Char) : List (Step × Nat) → WalkCursor → Option Int
   | [], c => walkCheckA sc xa ya [] c.i c.j c.prev c.score
   | (s,n) :: rest, c =>

@@ -114,6 +114,39 @@ def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
   -- 16 batches, one task each (ParMap.parMap_eq_map: the same as a plain map)
   (ParMap.parMap 16 (fun (bytes1, bytes2) => alignOne insertSettings loaded bytes1 bytes2) pairs.toArray).toList
 
+-- the router's settings and genome view, computed once per chunk (`alignPairs_eqC`)
+def chunkSetup (insertSettings : InsertSettings) (loaded : Option LoadedIndex) :
+    Option (MapSpec.Fast.TierCfg × MapSpec.Fast.PkMz × Array MapSpec.Fast.PGen) :=
+  loaded.map fun (ix, G, _, _) =>
+    let pgs := MapSpec.Fast.cutAll G #[0] #[G.n]
+    (tierCfg insertSettings (ix, G) #[0] pgs, (ix, G), pgs)
+
+-- `alignOne` from `chunkSetup`
+def alignOneC (setup : Option (MapSpec.Fast.TierCfg × MapSpec.Fast.PkMz × Array MapSpec.Fast.PGen))
+    (bytes1 bytes2 : Option ByteArray) : PairResult :=
+  match bytes1, bytes2 with
+  | none, _ => .trimmedAway .one
+  | some _, none => .trimmedAway .two
+  | some read1, some read2 =>
+      match setup with
+      | none => .aligned noIndexAnswer
+      | some (cfg, pk, pgs) => .aligned (answerOf (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2)))
+
+def alignPairsC (insertSettings : InsertSettings) (index : ByteArray)
+    (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
+  let setup := chunkSetup insertSettings (loadIndex index)
+  (ParMap.parMap 16 (fun (bytes1, bytes2) => alignOneC setup bytes1 bytes2) pairs.toArray).toList
+
+theorem alignOneC_eq (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
+    (bytes1 bytes2 : Option ByteArray) :
+    alignOneC (chunkSetup insertSettings loaded) bytes1 bytes2 = alignOne insertSettings loaded bytes1 bytes2 := by
+  rcases bytes1 with _ | _ <;> rcases bytes2 with _ | _ <;> rcases loaded with _ | ⟨ix, G, _, _⟩ <;> rfl
+
+-- compiled code runs `alignPairsC`
+@[csimp] theorem alignPairs_eqC : @alignPairs = @alignPairsC := by
+  funext insertSettings index pairs
+  simp only [alignPairs, alignPairsC, alignOneC_eq]
+
 /-! ## The proof -/
 
 theorem alignPairs_eq_map (insertSettings : InsertSettings) (index : ByteArray)

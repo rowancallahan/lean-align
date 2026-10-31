@@ -60,6 +60,43 @@ def PGen.slow (P : PGen) (i : Nat) : UInt8 :=
     else P.slow i
   else if P.w.get! (17 * (i >>> 6)) == 1 then letter (P.code i) else P.slow i
 
+/-! `PGen.raw` on machine words (compiled code only): `raw_eq_rawF` (`@[csimp]`) replaces the
+`i < USize.size` test (a big-number comparison per letter) by `i < 2^32 - 1` and reads the two
+bytes with `uget` (`rawU`); placed before every reader of `PGen.raw`. -/
+
+/-- `PGen.raw` at a machine-word place. -/
+@[inline] def rawU (P : PGen) (u : USize) : UInt8 :=
+  let b : USize := (u >>> (6 : USize)) * (17 : USize)
+  let k : USize := b + (1 : USize) + ((u >>> (2 : USize)) &&& (15 : USize))
+  if pgGet P.w b == 1 then letter ((pgGet P.w k >>> ((u.toUInt8 &&& 3) <<< 1)) &&& 3) else P.slow u.toNat
+
+theorem rawU_eq (P : PGen) (u : USize) : rawU P u = P.raw u.toNat := by
+  unfold rawU PGen.raw
+  have e : u.toNat.toUSize = u := USize.ofNat_toNat
+  rw [if_pos (USize.toNat_lt_size u)]
+  simp only [e, pgGet_eq]
+
+/-- `PGen.raw` (its slow path; not rewritten by `csimp`). -/
+def rawS (P : PGen) (i : Nat) : UInt8 :=
+  if i < USize.size then
+    let u : USize := i.toUSize
+    let b : USize := (u >>> (6 : USize)) * (17 : USize)
+    let k : USize := b + (1 : USize) + ((u >>> (2 : USize)) &&& (15 : USize))
+    if P.w.get! b.toNat == 1 then
+      letter ((P.w.get! k.toNat >>> ((u.toUInt8 &&& 3) <<< 1)) &&& 3)
+    else P.slow i
+  else if P.w.get! (17 * (i >>> 6)) == 1 then letter (P.code i) else P.slow i
+
+/-- `PGen.raw` for the compiled code (`raw_eq_rawF`). -/
+@[inline] def rawF (P : PGen) (i : Nat) : UInt8 :=
+  if i < 4294967295 then rawU P i.toUSize else rawS P i
+
+@[csimp] theorem raw_eq_rawF : @PGen.raw = @rawF := by
+  funext P i
+  unfold rawF; split
+  · rw [rawU_eq, pgu_n i (by omega)]
+  · rfl
+
 @[inline] def PGen.get (P : PGen) (i : Nat) : UInt8 := if i < P.n then P.raw (P.o + i) else 0
 
 /-- Letters `[o, o + n)` of `P` (shares its arrays). -/

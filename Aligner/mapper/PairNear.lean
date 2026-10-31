@@ -200,6 +200,25 @@ def hitsCKN (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Li
         else none
     else []
 
+/-- `hitsCKN` with the shapes taken once from the table (`hitsCKN_eqT`). -/
+def hitsCKNT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
+    (us : List Nat) (Ls : Nat) (sel : Nat → Bool) : List (Window × Nat) :=
+  let shs := shapesT lim
+  (diags acc).flatMap fun D =>
+    if sel D && kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
+      shs.filterMap fun sh =>
+        if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
+          let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
+          if k ≤ lim then some (⟨c, (dst R.size D sh).toNat, (wlen R.size sh).toNat⟩, k) else none
+        else none
+    else []
+
+/-- Compiled code runs `hitsCKNT`. -/
+@[csimp] theorem hitsCKN_eqT : @hitsCKN = @hitsCKNT := by
+  funext
+  unfold hitsCKN hitsCKNT
+  simp only [shapesT_eq]
+
 theorem hitsCKN_sub (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) (sel : Nat → Bool) (x : Window × Nat)
     (h : x ∈ hitsCKN K R pgs2 c lim acc us Ls sel) : x ∈ hitsCK K R pgs2 c lim acc us Ls := by

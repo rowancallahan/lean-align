@@ -30,6 +30,59 @@ def revCompLoop (R : ByteArray) : (i : Nat) → ByteArray → ByteArray
   | 0, acc => acc
   | i + 1, acc => revCompLoop R i (acc.push (complTab.get! (R.get! i).toNat))
 
+/-! ### `revCompLoop` on machine words (compiled code only): `revCompLoop_eq_revCompLoopF`, as
+`hamW_eq_hamWF` (MapperK250.lean); before `revCompK`, which is inlined into its callers -/
+
+/-- `revCompLoop` with `i` in `USize` (`revCompLoopU_eq`). -/
+def revCompLoopU (R : ByteArray) (i : USize) (acc : ByteArray) : ByteArray :=
+  if _h : i = 0 then acc
+  else revCompLoopU R (i - 1) (acc.push (getU complTab (getU R (i - 1)).toUSize))
+termination_by i.toNat
+decreasing_by
+  have : i.toNat ≠ 0 := fun h' => _h (USize.toNat_inj.mp (by rw [h']; rfl))
+  rw [USize.toNat_sub_of_le _ _ (by rw [USize.le_iff_toNat_le, usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide)]
+  omega
+
+theorem revCompLoopU_eq (R : ByteArray) :
+    ∀ i (iU : USize) acc, iU.toNat = i → revCompLoopU R iU acc = revCompLoop R i acc := by
+  intro i
+  induction i with
+  | zero =>
+    intro iU acc hi
+    have : iU = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
+    rw [revCompLoopU, dif_pos this, revCompLoop]
+  | succ i ih =>
+    intro iU acc hi
+    have h : ¬ iU = 0 := fun h' => by rw [h'] at hi; exact absurd hi (by simp)
+    have e : (iU - 1).toNat = i := by
+      rw [USize.toNat_sub_of_le _ _ (by rw [USize.le_iff_toNat_le, usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide), hi]; omega
+    rw [revCompLoopU, dif_neg h, revCompLoop, getU_eq, getU_eq, e, UInt8.toNat_toUSize]
+    exact ih _ _ e
+
+/-- `revCompLoop` for the compiled code (`revCompLoop_eq_revCompLoopF`). -/
+def revCompLoopF (R : ByteArray) (i : Nat) (acc : ByteArray) : ByteArray :=
+  if i < 1073741824 then revCompLoopU R i.toUSize acc else revCompLoopS R i acc
+where
+  /-- The same as `revCompLoop` (its slow path; not rewritten by `csimp`). -/
+  revCompLoopS (R : ByteArray) : (i : Nat) → ByteArray → ByteArray
+    | 0, acc => acc
+    | i + 1, acc => revCompLoopS R i (acc.push (complTab.get! (R.get! i).toNat))
+
+theorem revCompLoopS_eq (R : ByteArray) :
+    ∀ i acc, revCompLoopF.revCompLoopS R i acc = revCompLoop R i acc := by
+  intro i
+  induction i with
+  | zero => intro acc; rfl
+  | succ i ih => intro acc; rw [revCompLoopF.revCompLoopS, revCompLoop, ih]
+
+@[csimp] theorem revCompLoop_eq_revCompLoopF : @revCompLoop = @revCompLoopF := by
+  funext R i acc
+  unfold revCompLoopF
+  split
+  · rename_i h; exact (revCompLoopU_eq R i _ acc (usz_n _ (by omega))).symm
+  · exact (revCompLoopS_eq R i acc).symm
+
 @[inline] def revCompK (R : ByteArray) : ByteArray := revCompLoop R R.size (ByteArray.emptyWithCapacity R.size)
 
 /-- The two-gap candidates (necessary for an exact two-gap walk). -/
