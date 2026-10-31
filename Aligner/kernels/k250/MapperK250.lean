@@ -95,6 +95,16 @@ theorem uget_get! (w : ByteArray) (i : USize) (h : i.toNat < w.size) : w.uget i 
     rw [getElem!_pos bs i.toNat h]
     rfl
 
+set_option maxRecDepth 10000 in
+theorem codeTab_size : codeTab.size = 256 := by unfold codeTab; rfl
+
+/-- `codeTab.get! b.toNat` with no bounds test (`codeU_eq`). -/
+@[inline] def codeU (b : UInt8) : UInt8 :=
+  codeTab.uget b.toUSize (by rw [codeTab_size, UInt8.toNat_toUSize]; exact UInt8.toNat_lt b)
+
+theorem codeU_eq (b : UInt8) : codeU b = codeTab.get! b.toNat := by
+  unfold codeU; rw [uget_get!, UInt8.toNat_toUSize]
+
 theorem usz_succ (i n : USize) (h : i.toNat < n.toNat) : (i + 1).toNat = i.toNat + 1 := by
   have hs : USize.size = 2 ^ System.Platform.numBits := rfl
   have := USize.toNat_lt_size n
@@ -110,7 +120,7 @@ theorem usz_small (m : Nat) (h : m ≤ 256) : m.toUSize.toNat = m := by
 def packLoopU (R : ByteArray) (n : USize) (hn : n.toNat = R.size) (i : USize) (sh w : UInt64)
     (acc : Array UInt64) (ok : Bool) : RP :=
   if h : i < n then
-    let t := codeTab.get! (R.uget i (by rw [← hn]; exact h)).toNat
+    let t := codeU (R.uget i (by rw [← hn]; exact h))
     let w := w ||| (t &&& 3).toUInt64 <<< sh
     if sh == 62 then packLoopU R n hn (i + 1) 0 0 (acc.push w) (ok && decide (t < 4))
     else packLoopU R n hn (i + 1) (sh + 2) w acc (ok && decide (t < 4))
@@ -137,24 +147,11 @@ theorem packLoopU_eq (R : ByteArray) (n : USize) (hn : n.toNat = R.size) :
     have hlt : i.toNat < R.size := by omega
     have h' : i < n := by show i.toNat < n.toNat; omega
     have h2 : (i + 1).toNat = i.toNat + 1 := usz_succ i n (by omega)
-    rw [packLoopU, packLoop, dif_pos h', if_pos hlt, uget_get!]
+    rw [packLoopU, packLoop, dif_pos h', if_pos hlt, codeU_eq, uget_get!]
     simp only []
     split
     · rw [ih (i + 1) _ _ _ _ (by omega), h2]
     · rw [ih (i + 1) _ _ _ _ (by omega), h2]
-
-/-- `packRP` on machine-word indices (`packRP_eqU`). -/
-def packRPU (R : ByteArray) : RP :=
-  if h : R.size ≤ 256 then packLoopU R R.size.toUSize (usz_small _ h) 0 0 0 (Array.emptyWithCapacity 9) true
-  else ⟨#[], false⟩
-
-/-- Compiled code runs `packRPU`. -/
-@[csimp] theorem packRP_eqU : @packRP = @packRPU := by
-  funext R
-  unfold packRP packRPU
-  split
-  · next h => rw [packLoopU_eq R _ _ _ 0 _ _ _ _ rfl]; rfl
-  · rfl
 
 @[csimp] theorem gword_eq_gwordF : @gword = @gwordF := by
   funext w u
@@ -935,5 +932,119 @@ def kerGK (R : ByteArray) (K : RP) (G : ByteArray) (P : PGen) (st len lim : Nat)
     else kerG3 R G st len lim
   else if st + len ≤ P.n then gappedL R G K P st len lim
   else lim + 1
+
+/-! ### `packRP` a word at a time (compiled code only): `packRP_eqU` -/
+
+theorem cP_lt (R : ByteArray) (i : USize) (k : Nat) (h : i.toNat + 32 ≤ R.size) (hi : i.toNat < 2 ^ 31) (hk : k < 32) :
+    (i + k.toUSize).toNat < R.size := by
+  rw [USize.toNat_add, usz_n k (by omega), Nat.mod_eq_of_lt (by have := usz_pow; omega)]; omega
+
+/-- Letter `k` of the 32 at `i`, coded (one bounds test per word: `h`). -/
+@[inline] def cP (R : ByteArray) (i : USize) (k : Nat) (h : i.toNat + 32 ≤ R.size) (hi : i.toNat < 2 ^ 31)
+    (hk : k < 32) : UInt8 :=
+  codeU (R.uget (i + k.toUSize) (cP_lt R i k h hi hk))
+
+theorem cP_eq (R : ByteArray) (i : USize) (k : Nat) (h : i.toNat + 32 ≤ R.size) (hi : i.toNat < 2 ^ 31) (hk : k < 32) :
+    cP R i k h hi hk = codeTab.get! (R.get! (i.toNat + k)).toNat := by
+  unfold cP
+  rw [codeU_eq, uget_get!, USize.toNat_add, usz_n k (by omega), Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+
+/-- 32 letters from `i` packed into one word, straight-line (`packW32_eq`). -/
+@[inline] def packW32 (R : ByteArray) (i : USize) (h : i.toNat + 32 ≤ R.size) (hi : i.toNat < 2 ^ 31)
+    (ok : Bool) : UInt64 × Bool :=
+  let w : UInt64 := 0
+  let t := cP R i 0 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (0 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 1 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (2 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 2 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (4 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 3 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (6 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 4 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (8 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 5 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (10 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 6 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (12 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 7 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (14 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 8 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (16 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 9 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (18 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 10 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (20 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 11 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (22 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 12 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (24 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 13 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (26 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 14 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (28 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 15 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (30 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 16 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (32 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 17 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (34 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 18 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (36 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 19 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (38 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 20 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (40 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 21 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (42 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 22 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (44 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 23 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (46 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 24 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (48 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 25 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (50 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 26 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (52 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 27 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (54 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 28 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (56 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 29 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (58 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 30 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (60 : UInt64); let ok := ok && decide (t < 4)
+  let t := cP R i 31 h hi (by decide); let w := w ||| (t &&& 3).toUInt64 <<< (62 : UInt64); let ok := ok && decide (t < 4)
+  (w, ok)
+
+theorem packLoop_stepA (R : ByteArray) (i : Nat) (sh w : UInt64) (acc : Array UInt64) (ok : Bool) (hi : i < R.size)
+    (hs : (sh == 62) = false) : packLoop R i sh w acc ok =
+      packLoop R (i + 1) (sh + 2) (w ||| (codeTab.get! (R.get! i).toNat &&& 3).toUInt64 <<< sh) acc
+        (ok && decide (codeTab.get! (R.get! i).toNat < 4)) := by
+  rw [packLoop, if_pos hi]; simp only [hs]; rfl
+
+theorem packLoop_stepB (R : ByteArray) (i : Nat) (sh w : UInt64) (acc : Array UInt64) (ok : Bool) (hi : i < R.size)
+    (hs : (sh == 62) = true) : packLoop R i sh w acc ok =
+      packLoop R (i + 1) 0 0 (acc.push (w ||| (codeTab.get! (R.get! i).toNat &&& 3).toUInt64 <<< sh))
+        (ok && decide (codeTab.get! (R.get! i).toNat < 4)) := by
+  rw [packLoop, if_pos hi]; simp only [hs]; rfl
+
+theorem packW32_eq (R : ByteArray) (i : USize) (h : i.toNat + 32 ≤ R.size) (hi : i.toNat < 2 ^ 31) (acc : Array UInt64)
+    (ok : Bool) : packLoop R i.toNat 0 0 acc ok =
+      packLoop R (i.toNat + 32) 0 0 (acc.push (packW32 R i h hi ok).1) (packW32 R i h hi ok).2 := by
+  unfold packW32
+  simp only [cP_eq]
+  repeat rw [packLoop_stepA R _ _ _ _ _ (by omega) (by decide)]
+  rw [packLoop_stepB R _ _ _ _ _ (by omega) (by decide)]
+  rfl
+
+/-- `packLoop` from a word boundary: whole words with `packW32`, the rest with `packLoopU` (`packWU_eq`). -/
+def packWU (R : ByteArray) (n : USize) (hn : n.toNat = R.size) (hb : R.size ≤ 256) (i : USize) (acc : Array UInt64)
+    (ok : Bool) : RP :=
+  if h : i.toNat + 32 ≤ n.toNat then
+    let r := packW32 R i (by omega) (by omega) ok
+    packWU R n hn hb (i + 32) (acc.push r.1) r.2
+  else packLoopU R n hn i 0 0 acc ok
+termination_by n.toNat - i.toNat
+decreasing_by
+  rw [USize.toNat_add, usz_lit 32 (by decide), Nat.mod_eq_of_lt (by have := usz_pow; omega)]; omega
+
+theorem packWU_eq (R : ByteArray) (n : USize) (hn : n.toNat = R.size) (hb : R.size ≤ 256) :
+    ∀ d (i : USize) acc ok, n.toNat - i.toNat = d → packWU R n hn hb i acc ok = packLoop R i.toNat 0 0 acc ok := by
+  intro d
+  induction d using Nat.strongRecOn with
+  | _ d ih =>
+    intro i acc ok hd
+    rw [packWU]
+    split
+    · rename_i h
+      have e : (i + 32).toNat = i.toNat + 32 := by
+        rw [USize.toNat_add, usz_lit 32 (by decide), Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+      rw [ih _ (by omega) _ _ _ rfl, e, ← packW32_eq]
+    · exact packLoopU_eq R n hn _ i 0 0 acc ok rfl
+
+/-- `packRP` on machine-word indices, whole words straight-line (`packRP_eqU`). -/
+def packRPU (R : ByteArray) : RP :=
+  if h : R.size ≤ 256 then packWU R R.size.toUSize (usz_small _ h) h 0 (Array.emptyWithCapacity 9) true
+  else ⟨#[], false⟩
+
+/-- Compiled code runs `packRPU`. -/
+@[csimp] theorem packRP_eqU : @packRP = @packRPU := by
+  funext R
+  unfold packRP packRPU
+  split
+  · next h => rw [packWU_eq R _ _ h _ 0 _ _ rfl]; rfl
+  · rfl
+
 
 end MapSpec.Fast

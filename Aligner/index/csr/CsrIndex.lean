@@ -32,6 +32,50 @@ namespace MapSpec
   ((B.get! j).toUInt32 ||| ((B.get! (j + 1)).toUInt32 <<< 8) |||
     ((B.get! (j + 2)).toUInt32 <<< 16) ||| ((B.get! (j + 3)).toUInt32 <<< 24)).toNat
 
+/-! ### `getU32` on machine words (compiled code only): `getU32_eqF` -/
+
+theorem uget_get32 (w : ByteArray) (i : USize) (h : i.toNat < w.size) : w.uget i h = w.get! i.toNat := by
+  cases w with
+  | mk bs =>
+    simp only [ByteArray.uget, ByteArray.get!]
+    simp only [ByteArray.size] at h
+    rw [getElem!_pos bs i.toNat h]
+    rfl
+
+theorem u32_idx (i : Nat) (k : Nat) (hi : i < 2 ^ 29) (hk : k < 4) :
+    ((4 * i).toUSize + k.toUSize).toNat = 4 * i + k := by
+  have hs : 2 ^ 32 ≤ USize.size := USize.le_size
+  have hN : USize.size = 2 ^ System.Platform.numBits := rfl
+  rw [USize.toNat_add, Nat.toUSize_eq, Nat.toUSize_eq, USize.toNat_ofNat', USize.toNat_ofNat',
+    Nat.mod_eq_of_lt (by omega : 4 * i < USize.size), Nat.mod_eq_of_lt (by omega : k < USize.size),
+    Nat.mod_eq_of_lt (by omega)]
+
+/-- `getU32` with one bounds test and machine-word indices (`getU32_eqF`). -/
+@[inline] def getU32F (B : ByteArray) (i : Nat) : Nat :=
+  if h : i < 536870912 ∧ 4 * i + 4 ≤ B.size then
+    let j := (4 * i).toUSize
+    ((B.uget (j + (0 : Nat).toUSize) (by rw [u32_idx i 0 h.1 (by decide)]; omega)).toUInt32 |||
+      ((B.uget (j + (1 : Nat).toUSize) (by rw [u32_idx i 1 h.1 (by decide)]; omega)).toUInt32 <<< 8) |||
+      ((B.uget (j + (2 : Nat).toUSize) (by rw [u32_idx i 2 h.1 (by decide)]; omega)).toUInt32 <<< 16) |||
+      ((B.uget (j + (3 : Nat).toUSize) (by rw [u32_idx i 3 h.1 (by decide)]; omega)).toUInt32 <<< 24)).toNat
+  else getU32S B i
+where
+  /-- The same as `getU32` (its slow path; not rewritten by `csimp`). -/
+  getU32S (B : ByteArray) (i : Nat) : Nat :=
+    let j := 4 * i
+    ((B.get! j).toUInt32 ||| ((B.get! (j + 1)).toUInt32 <<< 8) |||
+      ((B.get! (j + 2)).toUInt32 <<< 16) ||| ((B.get! (j + 3)).toUInt32 <<< 24)).toNat
+
+/-- Compiled code runs `getU32F`. -/
+@[csimp] theorem getU32_eqF : @getU32 = @getU32F := by
+  funext B i
+  unfold getU32F getU32F.getU32S getU32
+  split
+  · rename_i h
+    simp only [uget_get32, u32_idx i 0 h.1 (by decide), u32_idx i 1 h.1 (by decide), u32_idx i 2 h.1 (by decide),
+      u32_idx i 3 h.1 (by decide), Nat.add_zero]
+  · rfl
+
 @[inline] def setU32 (B : ByteArray) (i v : Nat) : ByteArray :=
   let j := 4 * i
   let v := v.toUInt32
