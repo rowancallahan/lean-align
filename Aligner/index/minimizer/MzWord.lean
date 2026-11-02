@@ -234,7 +234,7 @@ section MzWU
 open Mz
 
 /-- Slot `t` before its `toNat` (`slot_eqW`). -/
-@[inline] def slotW (B : ByteArray) (sw t : Nat) : UInt64 :=
+@[noinline] def slotW (B : @& ByteArray) (sw t : Nat) : UInt64 :=
   let j := sw * t
   if sw = 4 then rd4 B j
   else if sw = 5 then rd4 B j ||| byteAt B (j + 4) 32
