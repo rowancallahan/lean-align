@@ -1,3 +1,5 @@
+import ReadTrim
+
 /-!
 # Adapter trimming
 
@@ -16,7 +18,9 @@ Theorems (`cut_*` below), for `cutPos adapter minLen maxErr read`:
   4. if it does not cut (`cutPos = |read|`), no position matches.
 
 `cutPos` is a scan over the bytes with no allocation; `fastMatchesAt_eq` proves its per-position
-test equal to `matchesAt`.
+test equal to `matchesAt`. The compiled code runs `cutPosF` instead (`@[csimp] cutPos_eq_cutPosF`): the same
+scan with machine-word (`USize`) counters and one-compare byte reads, proved equal for reads and adapters
+shorter than 2^30.
 -/
 
 namespace AdapterTrim
@@ -59,6 +63,152 @@ def scan (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) : (k i :
 /-- Where the read is cut: the first matching position, or `read.size` (no cut). -/
 def cutPos (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) : Nat :=
   scan adapter minLen maxErr read read.size 0
+
+/-! ## Machine-word scan (compiled code only, `cutPos_eq_cutPosF`) -/
+
+open ReadTrim (rtGet rtGet_eq rt_n rt_add rt_one rt_sub1)
+
+theorem u_ne0 (k : USize) (h : k ≠ 0) : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+
+/-- `mmLoop` with `USize` counters. -/
+def mmU (adapter read : ByteArray) (i lim k j c : USize) : Bool :=
+  if h : k = 0 then c ≤ lim
+  else
+    let c' := if rtGet read (i + j) != rtGet adapter j then c + 1 else c
+    if lim < c' then false else mmU adapter read i lim (k - 1) (j + 1) c'
+termination_by k.toNat
+decreasing_by have := u_ne0 k h; rw [rt_sub1 k h]; omega
+
+/-- `fastMatchesAt` with `USize` counters (`aSize` = adapter size, `n` = read size). -/
+@[inline] def matchU (adapter read : ByteArray) (minLen maxErr aSize n i : USize) : Bool :=
+  let len := if aSize ≤ n - i then aSize else n - i
+  let lim := if len = aSize then maxErr else 0
+  -- skip: with at most 1 mismatch allowed, one of the first two letters must match (`mmLoop_two`)
+  i < n && minLen ≤ len &&
+    !(lim ≤ 1 && 2 ≤ len && rtGet read i != rtGet adapter 0 && rtGet read (i + 1) != rtGet adapter 1) &&
+    mmU adapter read i lim len 0 0
+
+/-- `scan` with `USize` counters. -/
+def scanU (adapter read : ByteArray) (minLen maxErr aSize n k i : USize) : USize :=
+  if h : k = 0 then i
+  else if matchU adapter read minLen maxErr aSize n i then i
+  else scanU adapter read minLen maxErr aSize n (k - 1) (i + 1)
+termination_by k.toNat
+decreasing_by have := u_ne0 k h; rw [rt_sub1 k h]; omega
+
+theorem mmLoop_two (adapter read : ByteArray) (i lim k : Nat) (hl : lim ≤ 1)
+    (h0 : (read[i]! != adapter[0]!) = true) (h1 : (read[i + 1]! != adapter[1]!) = true) :
+    mmLoop adapter read i lim (k + 2) 0 0 = false := by
+  simp only [mmLoop, Nat.add_zero, Nat.zero_add, h0, h1, ↓reduceIte]
+  split
+  · rfl
+  · split
+    · rfl
+    · omega
+
+theorem mmU_eq (adapter read : ByteArray) : ∀ (k : Nat) (kU i lim j c : USize), kU.toNat = k →
+    i.toNat + j.toNat + k < 2 ^ 30 → c.toNat + k < 2 ^ 30 → lim.toNat < 2 ^ 30 →
+    mmU adapter read i lim kU j c = mmLoop adapter read i.toNat lim.toNat k j.toNat c.toNat
+  | 0, kU, i, lim, j, c, hk, _, _, _ => by
+    have : kU = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [mmU]; simp [this, mmLoop, USize.le_iff_toNat_le]
+  | k + 1, kU, i, lim, j, c, hk, hij, hc, hl => by
+    have h0 : kU ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    have ek : (kU - 1).toNat = k := by rw [rt_sub1 kU h0, hk]; rfl
+    have eij : (i + j).toNat = i.toNat + j.toNat := rt_add _ _ (by omega)
+    have ej : (j + 1).toNat = j.toNat + 1 := by rw [rt_add _ _ (by rw [rt_one]; omega), rt_one]
+    have ec : (c + 1).toNat = c.toNat + 1 := by rw [rt_add _ _ (by rw [rt_one]; omega), rt_one]
+    rw [mmU]; simp only [h0, ↓reduceDIte]
+    simp only [mmLoop, rtGet_eq, eij]
+    by_cases hm : (read[i.toNat + j.toNat]! != adapter[j.toNat]!) = true
+    · simp only [hm, ↓reduceIte, USize.lt_iff_toNat_lt, ec]
+      split
+      · rfl
+      · rw [mmU_eq adapter read k _ i lim _ _ ek (by rw [ej]; omega) (by rw [ec]; omega) hl, ej, ec]
+    · simp only [hm, Bool.false_eq_true, ↓reduceIte, USize.lt_iff_toNat_lt]
+      split
+      · rfl
+      · rw [mmU_eq adapter read k _ i lim _ _ ek (by rw [ej]; omega) (by omega) hl, ej]
+
+theorem matchU_eq (adapter read : ByteArray) (minLen maxErr aSize n i : USize) (ha : aSize.toNat = adapter.size)
+    (hn : n.toNat = read.size) (hnb : read.size < 2 ^ 30) (hab : adapter.size < 2 ^ 30) (hm : maxErr.toNat < 2 ^ 30) :
+    matchU adapter read minLen maxErr aSize n i = fastMatchesAt adapter minLen.toNat maxErr.toNat read i.toNat := by
+  unfold matchU fastMatchesAt
+  by_cases hi : i < n
+  · have hi' : i.toNat < read.size := by rw [← hn]; exact USize.lt_iff_toNat_lt.mp hi
+    have esub : (n - i).toNat = read.size - i.toNat := by
+      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by omega)), hn]
+    have elen : (if aSize ≤ n - i then aSize else n - i).toNat = min adapter.size (read.size - i.toNat) := by
+      split
+      · rename_i h; rw [USize.le_iff_toNat_le, esub, ha] at h; rw [ha]; omega
+      · rename_i h; rw [USize.le_iff_toNat_le, esub, ha] at h; rw [esub]; omega
+    have eeq : ((if aSize ≤ n - i then aSize else n - i) = aSize) ↔ (min adapter.size (read.size - i.toNat) = adapter.size) := by
+      rw [← USize.toNat_inj, elen, ha]
+    have elim : (if (if aSize ≤ n - i then aSize else n - i) = aSize then maxErr else 0).toNat =
+        (if min adapter.size (read.size - i.toNat) = adapter.size then maxErr.toNat else 0) := by
+      by_cases h : min adapter.size (read.size - i.toNat) = adapter.size
+      · simp only [eeq.mpr h, h, ↓reduceIte]
+      · simp only [show ¬ _ from fun e => h (eeq.mp e), h, ↓reduceIte]; rfl
+    dsimp only
+    generalize hL : (if aSize ≤ n - i then aSize else n - i) = L at elen eeq elim
+    have e0 : (0 : USize).toNat = 0 := rfl
+    have hmm := mmU_eq adapter read _ L i _ 0 0 elen (by rw [e0]; omega) (by rw [e0]; omega)
+      (by rw [elim]; split <;> omega)
+    rw [hmm, elim, e0]
+    have e1 : (i + 1).toNat = i.toNat + 1 := by rw [rt_add _ _ (by rw [rt_one]; omega), rt_one]
+    simp only [rtGet_eq, e1, e0, hi, hi', USize.le_iff_toNat_le, elen, elim, decide_true, Bool.true_and]
+    rw [show (1 : USize).toNat = 1 from rt_one, show (2 : USize).toNat = 2 from rt_n 2 (by decide)]
+    generalize hM : min adapter.size (read.size - i.toNat) = M at *
+    generalize hLim : (if M = adapter.size then maxErr.toNat else 0) = lim at *
+    by_cases hpre : (lim ≤ 1 ∧ 2 ≤ M ∧ (read[i.toNat]! != adapter[0]!) = true ∧
+        (read[i.toNat + 1]! != adapter[1]!) = true)
+    · obtain ⟨p1, p2, p3, p4⟩ := hpre
+      obtain ⟨k, rfl⟩ : ∃ k, M = k + 2 := ⟨M - 2, by omega⟩
+      rw [mmLoop_two adapter read i.toNat lim k p1 p3 p4]
+      simp [p1, p2, p3, p4]
+    · have : (decide (lim ≤ 1) && decide (2 ≤ M) && (read[i.toNat]! != adapter[0]!) &&
+          (read[i.toNat + 1]! != adapter[1]!)) = false := by
+        simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not]
+        by_cases a : lim ≤ 1 <;> by_cases b : 2 ≤ M <;> simp_all
+        exact Classical.or_iff_not_imp_left.mpr hpre
+      rw [this]; simp
+  · have hi' : ¬ i.toNat < read.size := by rw [← hn]; exact fun h => hi (USize.lt_iff_toNat_lt.mpr h)
+    simp [hi, hi']
+
+theorem scanU_eq (adapter read : ByteArray) (minLen maxErr aSize n : USize) (ha : aSize.toNat = adapter.size)
+    (hn : n.toNat = read.size) (hnb : read.size < 2 ^ 30) (hab : adapter.size < 2 ^ 30) (hm : maxErr.toNat < 2 ^ 30) :
+    ∀ (k : Nat) (kU i : USize), kU.toNat = k → i.toNat + k < 2 ^ 30 →
+    (scanU adapter read minLen maxErr aSize n kU i).toNat = scan adapter minLen.toNat maxErr.toNat read k i.toNat
+  | 0, kU, i, hk, _ => by
+    have : kU = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [scanU]; simp [this, scan]
+  | k + 1, kU, i, hk, hi => by
+    have h0 : kU ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    have ek : (kU - 1).toNat = k := by rw [rt_sub1 kU h0, hk]; rfl
+    have ei : (i + 1).toNat = i.toNat + 1 := by rw [rt_add _ _ (by rw [rt_one]; omega), rt_one]
+    rw [scanU]; simp only [h0, ↓reduceDIte]; rw [scan, matchU_eq adapter read minLen maxErr aSize n i ha hn hnb hab hm]
+    split
+    · rfl
+    · rw [scanU_eq adapter read minLen maxErr aSize n ha hn hnb hab hm k _ _ ek (by rw [ei]; omega), ei]
+
+/-- What the compiled code runs for `cutPos`. -/
+def cutPosF (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) : Nat :=
+  if read.size < 2 ^ 30 ∧ adapter.size < 2 ^ 30 ∧ minLen < 2 ^ 30 ∧ maxErr < 2 ^ 30 then
+    (scanU adapter read minLen.toUSize maxErr.toUSize adapter.size.toUSize read.size.toUSize
+      read.size.toUSize 0).toNat
+  else scan adapter minLen maxErr read read.size 0
+
+@[csimp] theorem cutPos_eq_cutPosF : @cutPos = @cutPosF := by
+  funext adapter minLen maxErr read
+  unfold cutPos cutPosF
+  split
+  · rename_i h
+    obtain ⟨hn, ha, hl, hm⟩ := h
+    have := scanU_eq adapter read minLen.toUSize maxErr.toUSize adapter.size.toUSize read.size.toUSize
+      (rt_n _ (by omega)) (rt_n _ (by omega)) hn ha (by rw [rt_n _ (by omega)]; omega) read.size
+      read.size.toUSize 0 (rt_n _ (by omega)) (by show 0 + _ < _; omega)
+    rw [this, rt_n _ (by omega), rt_n _ (by omega)]; rfl
+  · rfl
 
 /-- Letters and qualities `[0, cutPos)`. -/
 def cutAdapter (adapter : ByteArray) (minLen maxErr : Nat) (letters qual : ByteArray) : ByteArray × ByteArray :=
@@ -151,6 +301,7 @@ theorem dropShort_size (minLength : Nat) (letters qual : ByteArray) :
   · exact Or.inl rfl
   · exact Or.inr (Nat.le_of_not_lt ‹_›)
 
+
 -- examples: full adapter with 1 mismatch mid-read; a 6-letter tail; a 5-letter tail is too short
 #guard cutPos truSeq 6 1 "ACGTACGTAGATCGGTAGAGCTTTT".toUTF8 = 8
 #guard cutPos truSeq 6 1 "ACGTACGTACGTAGATCG".toUTF8 = 12
@@ -163,5 +314,6 @@ theorem dropShort_size (minLength : Nat) (letters qual : ByteArray) :
 #print axioms cut_none
 #print axioms fastMatchesAt_eq
 #print axioms dropShort_size
+#print axioms cutPos_eq_cutPosF
 
 end AdapterTrim

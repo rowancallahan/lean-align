@@ -14,7 +14,7 @@
 `import AdapterTrim`; new `def minLength : Nat := 25`; `trimRecord` becomes adapter cut → `ReadTrim.trimRead`
 → `AdapterTrim.dropShort minLength` → record (doc comment updated). Order: adapter first, because adapter letters
 are usually high quality, so the quality window would keep them. Spec/FROZEN.sha256 does not list Spec/Fastq, so it
-regenerates unchanged. CI_check passes.
+regenerates unchanged. CI_check passes (PATH=$HOME/.elan/bin:$PATH, elan + lean 4.35.0 release linked).
 
 ## Data (200k reads per mate file)
 | | TruSeq 13-mer | Nextera | cut reads R1 / R2 | bases removed R1 / R2 |
@@ -47,4 +47,21 @@ pairs drop 14% (NovaSeq) and 33% (HiSeq). minLength 50 cuts low scores further b
 250-bp reads (≈ 25 ns per read position), i.e. ≈ 1.4 s (NovaSeq) / 2.5 s (HiSeq) per 200k pairs; it runs inside the
 chunk workers. Shim end to end (min CPU of 3 runs): NovaSeq 22.0 → 23.3 s, HiSeq 28.0 → 28.2 s; run-to-run noise on this
 box is larger than that (load times 1.7–12.8 s, wall times bimodal), so the end-to-end cost is not resolved.
-A USize/`uget` version of the scan (as done for ReadTrim) would cut the scan cost if needed.
+
+### Machine-word scan + skip (second round)
+The compiled code runs `cutPosF` (`@[csimp] cutPos_eq_cutPosF`, standard axioms): `scanU` / `matchU` / `mmU`, the same
+scan with `USize` counters and one-compare byte reads (`ReadTrim.rtGet`), for reads and adapters shorter than 2^30
+(else the Nat scan). Skip: when at most 1 mismatch is allowed and ≥ 2 letters are compared, a position whose first two
+letters both differ cannot match (`mmLoop_two`), so the mismatch loop is not called (about 56% of positions on random
+sequence). The fast section sits before `cutAdapter` so the shim's `cutTruSeq` also compiles to it (a `csimp` lemma
+only rewrites code compiled after it).
+
+Scan only, one core, best of 7 per 200k reads (checksums of all cut positions identical):
+| | Nat scan | USize | USize + skip |
+|---|---|---|---|
+| NovaSeq R1 / R2 | 681 / 687 ms | 426 / 413 ms | 373 / 375 ms |
+| HiSeq R1 / R2 | 1142 / 1171 ms | 690 / 724 ms | 622 / 632 ms |
+callgrind (20k NovaSeq reads, 3.02M positions, scan only): 803M → 358M → 310M Ir (266 → 119 → 103 Ir per position).
+So ≈ 0.75 s (NovaSeq) / 1.25 s (HiSeq) of one thread per 200k pairs, down from 1.37 / 2.31 s. ~12 ns per position for ~103 Ir suggests
+branch mispredictions on random letters (not measured); a 4-letter skip (3 of the first 4 must match) would cut the mismatch-loop
+calls from ~44% to ~19% of positions.
