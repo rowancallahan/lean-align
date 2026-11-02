@@ -209,6 +209,35 @@ def diagPen (X : ByteArray) (G : PGen) (st : Nat) : Nat → Nat → Int → Int
   | 0, _, acc => acc
   | k + 1, i, acc => diagPen X G st k (i + 1) (acc + if X.get! i == G.get (st + i) then 0 else -4)
 
+-- `diagPen` as −4 × the mismatch count `hamming` (bound `k`: no early stop), so the compiled code runs
+-- `hamming`'s machine-word loop (`diagPen_eqH`)
+theorem diagPen_ham (X : ByteArray) (G : PGen) (st L : Nat) : ∀ k i (acc : Int) m, m + k ≤ L →
+    diagPen X G st k i acc = acc + 4 * (m : Int) - 4 * (MapSpec.Fast.hamming X G st L i (i + k) m : Nat)
+  | 0, i, acc, m, _ => by
+    rw [diagPen, MapSpec.Fast.hamming, if_neg (show ¬ i < i + 0 by omega)]; omega
+  | k + 1, i, acc, m, hm => by
+    have e : i + (k + 1) = i + 1 + k := by omega
+    rw [diagPen, MapSpec.Fast.hamming, if_pos (show i < i + (k + 1) by omega), e]
+    show _ = acc + 4 * (m : Int) - 4 * ((if (X.get! i != G.get (st + i)) = true then
+      (if L < m + 1 then m + 1 else MapSpec.Fast.hamming X G st L (i + 1) (i + 1 + k) (m + 1))
+      else MapSpec.Fast.hamming X G st L (i + 1) (i + 1 + k) m : Nat) : Int)
+    by_cases h : X.get! i = G.get (st + i)
+    · have h1 : (X.get! i == G.get (st + i)) = true := by simpa using h
+      have h2 : ¬ (X.get! i != G.get (st + i)) = true := by simpa using h
+      rw [if_pos h1, if_neg h2, diagPen_ham X G st L k (i + 1) _ m (by omega)]; omega
+    · have h1 : ¬ (X.get! i == G.get (st + i)) = true := by simpa using h
+      have h2 : (X.get! i != G.get (st + i)) = true := by simpa using h
+      rw [if_neg h1, if_pos h2, if_neg (show ¬ L < m + 1 by omega),
+        diagPen_ham X G st L k (i + 1) _ (m + 1) (by omega)]
+      push_cast; omega
+
+@[inline] def diagPenH (X : ByteArray) (G : PGen) (st k i : Nat) (acc : Int) : Int :=
+  acc - 4 * (MapSpec.Fast.hamming X G st k i (i + k) 0 : Nat)
+
+@[csimp] theorem diagPen_eqH : @diagPen = @diagPenH := by
+  funext X G st k i acc
+  rw [diagPenH, diagPen_ham X G st k k i acc 0 (by omega)]; omega
+
 def chkCandD (pgs : Array PGen) (R Rr : ByteArray) (h : MapSpec.Placement × Int) : Bool :=
   let X := if h.1.2 = .fwd then R else Rr
   decide (h.1.1.chr < pgs.size) && decide (h.1.1.start + h.1.1.len ≤ pgs[h.1.1.chr]!.n) && decide (h.2 ≤ 0) &&
