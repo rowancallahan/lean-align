@@ -103,8 +103,8 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
   (∀ report, answer.found = some report →
     ∃ pair : PairAlignment genome mate1 mate2,
       pair.report = report ∧
-      (pair.IsProper insertSettings.range insertSettings.dovetailSlack) ^
-      pair.score >= junkScore
+      (pair.IsProper insertSettings.range insertSettings.dovetailSlack) ∧
+      pair.score >= insertSettings.junkScore
       ) ∧
   -- the bound holds for every proper pair
   (∀ pair : PairAlignment genome mate1 mate2,
