@@ -83,25 +83,26 @@ def provedBound (a : PairAnswer) : Int :=
 
 -- no pair, bound `b`: below `requiredMapBound`, or `requiredMapBound - 1` when no proper pair exists;
 -- otherwise the bound stays `b` (a leftover)
-def boundOnly (insertSettings : InsertSettings) (fit : Nat → Option Nat) (b : Int) (a : PairAnswer) : PairAnswer :=
+def boundOnly (insertSettings : InsertSettings) (fit : Nat → Option Nat) (req b : Int) (a : PairAnswer) : PairAnswer :=
   { a with found := none, uniqueness := .unknown,
            bestPossibleScore :=
-             if b < insertSettings.requiredMapBound then b
-             else if noPair insertSettings fit then insertSettings.requiredMapBound - 1 else b }
+             if b < req then b
+             else if noPair insertSettings fit then req - 1 else b }
 
--- `fit lo`: a chromosome with at least `lo` letters (none: no chromosome has `lo` letters)
-def finalize (insertSettings : InsertSettings) (fit : Nat → Option Nat) (a : PairAnswer) : PairAnswer :=
+-- `fit lo`: a chromosome with at least `lo` letters (none: no chromosome has `lo` letters);
+-- `req`: the mates' `requiredMapBound`
+def finalize (insertSettings : InsertSettings) (fit : Nat → Option Nat) (req : Int) (a : PairAnswer) : PairAnswer :=
   match a.found with
   | some rep =>
     if insertSettings.junkScore ≤ repScore rep then a
-    else boundOnly insertSettings fit (provedBound a) a
-  | none => boundOnly insertSettings fit a.bestPossibleScore a
+    else boundOnly insertSettings fit req (provedBound a) a
+  | none => boundOnly insertSettings fit req a.bestPossibleScore a
 
--- THE LEFTOVER: no pair and no proved bound below `requiredMapBound` (no correct answer in hand).
-def Leftover (insertSettings : InsertSettings) (a : PairAnswer) : Prop :=
-  a.found = none ∧ insertSettings.requiredMapBound ≤ a.bestPossibleScore
+-- THE LEFTOVER: no pair and no proved bound below `req` (no correct answer in hand).
+def Leftover (req : Int) (a : PairAnswer) : Prop :=
+  a.found = none ∧ req ≤ a.bestPossibleScore
 
-instance (insertSettings : InsertSettings) (a : PairAnswer) : Decidable (Leftover insertSettings a) :=
+instance (req : Int) (a : PairAnswer) : Decidable (Leftover req a) :=
   inferInstanceAs (Decidable (_ ∧ _))
 
 theorem provedBound_ok {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read} {a : PairAnswer}
@@ -137,9 +138,9 @@ theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m
     (a : PairAnswer) (b : Int)
     (hb : ∀ pair : PairAlignment genome m1 m2,
       pair.IsProper insertSettings.range insertSettings.dovetailSlack → pair.score ≤ b) :
-    (boundOnly insertSettings fit b a).Correct insertSettings genome m1 m2 ∨
-      (Leftover insertSettings (boundOnly insertSettings fit b a) ∧
-        CorrectU insertSettings genome m1 m2 (boundOnly insertSettings fit b a)) := by
+    (boundOnly insertSettings fit (insertSettings.requiredMapBound m1 m2) b a).Correct insertSettings genome m1 m2 ∨
+      (Leftover (insertSettings.requiredMapBound m1 m2) (boundOnly insertSettings fit (insertSettings.requiredMapBound m1 m2) b a) ∧
+        CorrectU insertSettings genome m1 m2 (boundOnly insertSettings fit (insertSettings.requiredMapBound m1 m2) b a)) := by
   have hno : noPair insertSettings fit = true →
       ∀ pair : PairAlignment genome m1 m2, ¬ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
     intro h
@@ -150,7 +151,7 @@ theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m
     · exact .inl (by omega)
     · exact .inr (hnone h)
   unfold boundOnly
-  by_cases h1 : b < insertSettings.requiredMapBound
+  by_cases h1 : b < insertSettings.requiredMapBound m1 m2
   · left
     rw [if_pos h1]
     exact ⟨fun _ h => by simp at h, hb, fun _ => h1⟩
@@ -159,10 +160,10 @@ theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m
     · left
       rw [if_pos h2]
       exact ⟨fun _ h => by simp at h, fun pair hp => absurd hp (hno h2 pair),
-        fun _ => show insertSettings.requiredMapBound - 1 < insertSettings.requiredMapBound by omega⟩
+        fun _ => show insertSettings.requiredMapBound m1 m2 - 1 < insertSettings.requiredMapBound m1 m2 by omega⟩
     · right
       rw [if_neg h2]
-      exact ⟨⟨rfl, show insertSettings.requiredMapBound ≤ b by omega⟩, fun _ h => by simp at h, hb, trivial⟩
+      exact ⟨⟨rfl, show insertSettings.requiredMapBound m1 m2 ≤ b by omega⟩, fun _ h => by simp at h, hb, trivial⟩
 
 -- the answer is correct, or it is a leftover whose pair-free bound is still true
 theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read} {a : PairAnswer}
@@ -170,9 +171,9 @@ theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1
     (hnone : fit insertSettings.range.1 = none →
       ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr → chr.seq.length < insertSettings.range.1)
     (ha : CorrectU insertSettings genome m1 m2 a) :
-    (finalize insertSettings fit a).Correct insertSettings genome m1 m2 ∨
-      (Leftover insertSettings (finalize insertSettings fit a) ∧
-        CorrectU insertSettings genome m1 m2 (finalize insertSettings fit a)) := by
+    (finalize insertSettings fit (insertSettings.requiredMapBound m1 m2) a).Correct insertSettings genome m1 m2 ∨
+      (Leftover (insertSettings.requiredMapBound m1 m2) (finalize insertSettings fit (insertSettings.requiredMapBound m1 m2) a) ∧
+        CorrectU insertSettings genome m1 m2 (finalize insertSettings fit (insertSettings.requiredMapBound m1 m2) a)) := by
   unfold finalize
   cases hf : a.found with
   | none => exact boundOnly_correct fit hnone a _ ha.2.1
@@ -220,8 +221,8 @@ theorem correct_transfer {insertSettings : InsertSettings} {g g' : Genome} (h : 
   · exact h2 (transferP h.symm pair) hp
   · rw [hu] at h3 ⊢; exact h3
 
-theorem finalize_unknown {insertSettings : InsertSettings} {fit : Nat → Option Nat} {a : PairAnswer}
-    (hu : a.uniqueness = .unknown) : (finalize insertSettings fit a).uniqueness = .unknown := by
+theorem finalize_unknown {insertSettings : InsertSettings} {fit : Nat → Option Nat} {req : Int} {a : PairAnswer}
+    (hu : a.uniqueness = .unknown) : (finalize insertSettings fit req a).uniqueness = .unknown := by
   unfold finalize
   split
   · split
@@ -388,11 +389,11 @@ theorem lookAnswer_correct (insertSettings : InsertSettings) (genome : Genome) (
       omega
 
 -- what keeps `finalize` from a leftover: a pair `≥ junkScore` in hand, or a proved bound `< requiredMapBound`
-theorem finalize_not_leftover {insertSettings : InsertSettings} {fit : Nat → Option Nat} {a : PairAnswer}
+theorem finalize_not_leftover {insertSettings : InsertSettings} {fit : Nat → Option Nat} {req : Int} {a : PairAnswer}
     (h : (∃ rep, a.found = some rep ∧ insertSettings.junkScore ≤ repScore rep) ∨
-      provedBound a < insertSettings.requiredMapBound) :
-    ¬ Leftover insertSettings (finalize insertSettings fit a) := by
-  have hbo : ∀ b, b < insertSettings.requiredMapBound → ¬ Leftover insertSettings (boundOnly insertSettings fit b a) := by
+      provedBound a < req) :
+    ¬ Leftover req (finalize insertSettings fit req a) := by
+  have hbo : ∀ b, b < req → ¬ Leftover req (boundOnly insertSettings fit req b a) := by
     intro b hb hl
     have := hl.2
     simp only [boundOnly, if_pos hb] at this
@@ -415,11 +416,11 @@ theorem finalize_not_leftover {insertSettings : InsertSettings} {fit : Nat → O
       · exact hbo _ h
 
 -- the second look leaves no leftover when its cap reaches `requiredMapBound` and `junkScore ≤ requiredMapBound`
-theorem look_not_leftover {insertSettings : InsertSettings} {fit : Nat → Option Nat} {c : Nat}
+theorem look_not_leftover {insertSettings : InsertSettings} {fit : Nat → Option Nat} {req : Int} {c : Nat}
     {runs1 runs2 : MapSpec.Placement × Int → List (AlignmentSpec.Step × Nat)} {ps : List PairHit}
-    (hc : -((c : Int) + 1) < insertSettings.requiredMapBound)
-    (hj : insertSettings.junkScore ≤ insertSettings.requiredMapBound) :
-    ¬ Leftover insertSettings (finalize insertSettings fit (lookAnswer c runs1 runs2 ps)) := by
+    (hc : -((c : Int) + 1) < req)
+    (hj : insertSettings.junkScore ≤ req) :
+    ¬ Leftover req (finalize insertSettings fit req (lookAnswer c runs1 runs2 ps)) := by
   apply finalize_not_leftover
   unfold lookAnswer
   cases topW dcost0 ps with

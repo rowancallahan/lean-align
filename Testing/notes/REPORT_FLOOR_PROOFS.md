@@ -4,6 +4,43 @@ Spec (Rowan): `requiredMapBound := -16` (an answer without a pair needs `bestPos
 `junkScore := -50` (every printed pair, any label, has `pair.score >= junkScore`). `Proofs/Answer.lean` mirrors it
 (CI checks the mirror).
 
+## Status (round 3: Spec with `junkScore := -100` and the field `requiredMapBound : Read → Read → Int`)
+
+`lake build` and CI pass, with standard axioms only and no sorry outside Spec/. `Proofs/Answer.lean` mirrors the
+new Spec. `hNoLeftover` is gone.
+
+`alignPairs_correct` and `alignPairs_end_to_end` are Spec's statements plus ONE hypothesis, on the settings only:
+
+    def SettingsOk (s : InsertSettings) : Prop :=
+      ∀ m1 m2 : Read, -16 ≤ s.requiredMapBound m1 m2 ∧ s.junkScore ≤ s.requiredMapBound m1 m2
+
+- `settingsOk_default`: when `requiredMapBound` is Spec's default formula (`defaultBound`), `SettingsOk` is just
+  `junkScore ≤ -16`. The default `-100` satisfies it.
+- `junkScore ≤ requiredMapBound` is truly necessary. Without it some reads have no correct Spec answer. Example:
+  best proper pair -12, junk -10, required -16. The pair cannot be printed, and no bound below -16 is true.
+- `-16 ≤ requiredMapBound` is a limit of the method, not of the Spec. The complete hit lists (`hitsKPF_mem`) are
+  proved only for caps ≤ 16, so a smaller bound cannot be reached.
+- No upper bound (`requiredMapBound ≤ default`) is needed.
+- The field form costs nothing compared with a top-level def. With the def, the first conjunct would become a lemma,
+  and the hypothesis would be the same `junkScore ≤ -16`.
+
+How each answer closes:
+- Every answer without a pair at `junkScore` or better, and without a proved bound below the mates'
+  `requiredMapBound`, gets the second look (`lookAt`/`lookSpec`). Its cap is `lookCap (requiredMapBound m1 m2)` =
+  `min 16 (-req)`. For the default bound this is `capOfLens` (`lookCap_default`).
+- The second look always ends with a correct answer (`look_not_leftover`).
+- The second look no longer has a seed gate. A mate with too few seeds (under 25 letters for the default) is
+  searched window by window through `hitsKPF`'s fallback. That is total and proved, but extremely slow. The
+  trimmer's 25-letter minimum keeps such mates from reaching the aligner.
+- The no-index path (a genome that does not fit the index format) is searched window by window. It is total and slow.
+
+chr21 (all mates 150 letters, so required -16):
+- mason: 197,771 reported / 2,229 none (bound < -16), 13 s
+- low: 199,480 reported / 520 none, 7 s
+
+There are more reported pairs than in round 2 because junkScore is now -100. The search on repeat pairs is not
+tuned for speed.
+
 ## Status (round 2: Rowan: no `gaveUp`, close the leftover in code)
 
 `lake build` and CI pass (standard axioms, no sorry outside Spec/). Proved:

@@ -126,15 +126,15 @@ def deepCaps : Bool := false
 -- ties (T1gm / T1um): print one pair in hand, uniqueness unknown (false: unmapped, as M1)
 def reportTies : Bool := true
 
--- (stage 5) no proper pair from the router and the bound not below `insertSettings.requiredMapBound`: a fallback
+-- (stage 5) no proper pair from the router and the bound not below the mates' `requiredMapBound`: a fallback
 -- pair (anchor + mate aligned near it, re-checked); false: straight to the last resort (`LastResort.finalize`)
 def fallbackOn : Bool := true
 
 -- mate rescue: the fallback also runs on junk answers where a mate has a placement in hand
 def mateRescue : Bool := true
 
-def fallbackFrom (insertSettings : InsertSettings) : Option Int :=
-  if fallbackOn then some insertSettings.requiredMapBound else none
+def fallbackFrom (req : Int) : Option Int :=
+  if fallbackOn then some req else none
 
 -- the router's lookup budget per mate: a pair over it is given up at once (T3, bound 0) and, with the
 -- fallback, printed as a pair in hand (uniqueness unknown); lower = less time on repeats and ties
@@ -183,10 +183,13 @@ def pairCfg (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArr
     rcfg := { cfg.rcfg with cap1 := fun R => if R == a then ca else if R == b then cb else capFor pk (cfg.rcfg.cap1 R) R }
     gate := (fun a b _ _ c1 c2 => budOf a.size < c1 || budOf b.size < c2) }
 
--- the cap of the second look: `-requiredMapBound`, at most 16 (`LastResort.pairsAt_mem`). Kept a function of the
--- mates for a length-scaled `requiredMapBound`.
-def lookCap (insertSettings : InsertSettings) (_read1 _read2 : ByteArray) : Nat :=
-  min 16 (-insertSettings.requiredMapBound).toNat
+-- the mates' `requiredMapBound` (Spec's `.unknown` arm), on their letters. THE ONE PLACE that reads it.
+def reqOf (insertSettings : InsertSettings) (read1 read2 : ByteArray) : Int :=
+  insertSettings.requiredMapBound (decodeRead read1) (decodeRead read2)
+
+-- the cap of the second look: `-requiredMapBound`, at most 16 (`LastResort.pairsAt_mem`); for Spec's default
+-- `requiredMapBound` it is `LastResort.capOfLens` (`4 * errorsChecked` of the shorter mate)
+def lookCap (req : Int) : Nat := min 16 (-req).toNat
 
 -- the genome from its chromosomes' letters (names are not kept: `LastResort.correct_transfer`)
 def chromGenome (chroms : List (List Nat)) : Genome := chroms.map fun l => ⟨"", l.map Char.ofNat⟩
@@ -195,38 +198,39 @@ def chromGenome (chroms : List (List Nat)) : Genome := chroms.map fun l => ⟨""
 -- window by window over the whole genome (`LastResort.pairsSpec`; total, slow)
 def lookSpec (insertSettings : InsertSettings) (chroms : List (List Nat)) (read1 read2 : ByteArray) : PairAnswer :=
   let g := oldGenome (chromGenome chroms)
-  let c := lookCap insertSettings read1 read2
-  LastResort.finalize insertSettings (LastResort.fitNs (chroms.map (·.length)).toArray)
+  let req := reqOf insertSettings read1 read2
+  let c := lookCap req
+  LastResort.finalize insertSettings (LastResort.fitNs (chroms.map (·.length)).toArray) req
     (LastResort.lookAnswer c (LastResort.runsSp g (decodeRead read1)) (LastResort.runsSp g (decodeRead read2))
       (LastResort.pairsSpec insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c g
         (decodeRead read1) (decodeRead read2)))
 
 -- the answer from the router's output `t`: the found pair re-checked (`Report`), then the report floor
 -- (`LastResort.finalize`)
-def answerWith (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (pgs : Array MapSpec.Fast.PGen)
+def answerWith (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (pgs : Array MapSpec.Fast.PGen)
     (offs ns : Array Nat) (read1 read2 : ByteArray) (t : MapSpec.Fast.TierOut) : PairAnswer :=
-  LastResort.finalize insertSettings (LastResort.fitNs ns)
-    (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2 t)
+  LastResort.finalize insertSettings (LastResort.fitNs ns) req
+    (Report.answerOfPair reportTies (fallbackFrom req) mateRescue pk insertSettings pgs offs ns read1 read2 t)
 
--- the second look at a leftover: every proper pair within the cap, on the chromosomes (`LastResort.lookAnswer`);
--- only when both mates have the seeds for the cap (`fastT`; else the hits would be searched window by window)
-def lookAt (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (read1 read2 : ByteArray)
-    (a : PairAnswer) : PairAnswer :=
-  let c := lookCap insertSettings read1 read2
-  if MapSpec.Fast.fastT c read1 && MapSpec.Fast.fastT c read2 then
-    let pgs := MapSpec.Fast.cutAll pk.2 offs ns
-    LastResort.finalize insertSettings (LastResort.fitNs ns)
-      (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
-        (LastResort.pairsAt insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
-          read1 read2))
-  else a
+-- the second look at a leftover: every proper pair within the cap, on the chromosomes (`LastResort.lookAnswer`).
+-- A mate without the seeds for the cap (`fastT`; under 25 letters for Spec's default) is searched window by
+-- window (`hitsKPF`'s fallback; total, slow)
+def lookAt (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat)
+    (read1 read2 : ByteArray) : PairAnswer :=
+  let c := lookCap req
+  let pgs := MapSpec.Fast.cutAll pk.2 offs ns
+  LastResort.finalize insertSettings (LastResort.fitNs ns) req
+    (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
+      (LastResort.pairsAt insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
+        read1 read2))
 
 -- the router with the per-pair settings; a leftover (`LastResort.Leftover`) gets the second look (`lookAt`)
 def answerOfReads (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
     (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (read1 read2 : ByteArray) : PairAnswer :=
+  let req := reqOf insertSettings read1 read2
   let t := MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
-  let a := answerWith insertSettings pk pgs offs ns read1 read2 t
-  if LastResort.Leftover insertSettings a then lookAt insertSettings pk offs ns read1 read2 a else a
+  let a := answerWith insertSettings req pk pgs offs ns read1 read2 t
+  if LastResort.Leftover req a then lookAt insertSettings req pk offs ns read1 read2 else a
 
 def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
@@ -344,26 +348,44 @@ theorem chromGenome_lens (chroms : List (List Nat)) :
   rw [getElem!_pos _ c hc]
   simp [chromGenome]
 
--- THE LEFTOVER (`LastResort.Leftover`): an answer with no pair and no proved bound below `requiredMapBound`.
--- After the second look it is left only for a mate without the seeds for the cap (`fastT`; under 125 letters at
--- cap 16), or settings with `requiredMapBound < -16` or `junkScore > requiredMapBound` (`alignOne_not_leftover`).
-def PairResult.IsLeftover (insertSettings : InsertSettings) : PairResult → Prop
-  | .aligned a => LastResort.Leftover insertSettings a
-  | .trimmedAway _ => False
+-- THE ONE SETTING CONDITION: the second look's cap (at most 16) reaches `requiredMapBound`, and a pair below
+-- `junkScore` is below `requiredMapBound`. (Without the second part Spec has no correct answer for some reads:
+-- best proper pair at -12, `junkScore` -10, `requiredMapBound` -16.)
+def SettingsOk (insertSettings : InsertSettings) : Prop :=
+  ∀ m1 m2 : Read, -16 ≤ insertSettings.requiredMapBound m1 m2 ∧
+    insertSettings.junkScore ≤ insertSettings.requiredMapBound m1 m2
 
-theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
+-- Spec's default `requiredMapBound`: `SettingsOk` is `junkScore ≤ -16`, and the cap is `LastResort.capOfLens`
+def defaultBound (m1 m2 : Read) : Int := -4 * ((min 4 ((min m1.length m2.length) / 25 - 1) : Nat) : Int)
+
+theorem settingsOk_default (insertSettings : InsertSettings) (hf : insertSettings.requiredMapBound = defaultBound)
+    (hj : insertSettings.junkScore ≤ -16) : SettingsOk insertSettings := by
+  intro m1 m2
+  rw [hf]; unfold defaultBound
+  constructor <;> omega
+
+theorem lookCap_default (m1 m2 : Read) :
+    lookCap (defaultBound m1 m2) = LastResort.capOfLens m1.length m2.length := by
+  unfold lookCap defaultBound LastResort.capOfLens LastResort.errorsChecked
+  omega
+
+theorem lookCap_ok {req : Int} (h : -16 ≤ req) : -((lookCap req : Int) + 1) < req := by
+  unfold lookCap; omega
+
+theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk insertSettings) (genome : Genome)
     (byteGenome : GenomeFile) (hGenome : byteGenome.decode = genome)
     (chroms : List (List Nat)) (loaded : Option LoadedIndex)
     (hcase : (loaded = none ∧ chroms = genomeChroms byteGenome) ∨
       ∃ l, loaded = some l ∧ indexOk byteGenome l = true)
     (bytes1 bytes2 : Option ByteArray) :
     PairResult.Correct insertSettings genome (bytes1.map decodeRead) (bytes2.map decodeRead)
-      (alignOne insertSettings chroms loaded bytes1 bytes2) ∨
-    (alignOne insertSettings chroms loaded bytes1 bytes2).IsLeftover insertSettings := by
+      (alignOne insertSettings chroms loaded bytes1 bytes2) := by
   match bytes1, bytes2 with
-  | none, _ => left; simp [alignOne, PairResult.Correct]
-  | some _, none => left; simp [alignOne, PairResult.Correct]
+  | none, _ => simp [alignOne, PairResult.Correct]
+  | some _, none => simp [alignOne, PairResult.Correct]
   | some read1, some read2 =>
+    obtain ⟨hreq, hj⟩ := hS (decodeRead read1) (decodeRead read2)
+    have hc := lookCap_ok hreq
     match loaded, hcase with
     | none, hcase =>
       have hl : chroms = genomeChroms byteGenome := by
@@ -374,19 +396,19 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
         rw [hl, chromGenome_seqs, hGenome]
       obtain ⟨hlen, hchr⟩ := chromGenome_lens chroms
       obtain ⟨-, hnone⟩ := LastResort.fitNs_ok insertSettings.range.1 hlen hchr
-      have hu : (LastResort.lookAnswer (lookCap insertSettings read1 read2)
+      have hu : (LastResort.lookAnswer (lookCap (reqOf insertSettings read1 read2))
           (LastResort.runsSp (oldGenome (chromGenome chroms)) (decodeRead read1))
           (LastResort.runsSp (oldGenome (chromGenome chroms)) (decodeRead read2))
           (LastResort.pairsSpec insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
-            (lookCap insertSettings read1 read2) (oldGenome (chromGenome chroms))
+            (lookCap (reqOf insertSettings read1 read2)) (oldGenome (chromGenome chroms))
             (decodeRead read1) (decodeRead read2))).uniqueness = .unknown := by
         unfold LastResort.lookAnswer; split <;> rfl
       rcases LastResort.finalize_correct (LastResort.fitNs (chroms.map (·.length)).toArray) hnone
           (LastResort.lookAnswer_correct insertSettings (chromGenome chroms) (decodeRead read1) (decodeRead read2)
             _ _ _ _ (LastResort.pairsSpec_mem _ _ _ _ _ _ _)
             (fun _ hx => LastResort.runsSp_ok hx) (fun _ hx => LastResort.runsSp_ok hx)) with h | h
-      · exact .inl (LastResort.correct_transfer hseq (LastResort.finalize_unknown hu) h)
-      · exact .inr h.1
+      · exact LastResort.correct_transfer hseq (LastResort.finalize_unknown hu) h
+      · exact absurd h.1 (LastResort.look_not_leftover hc hj)
     | some (ix, G, offs, ns), hcase =>
       have hLoaded : indexOk byteGenome (ix, G, offs, ns) = true := by
         rcases hcase with ⟨h, -⟩ | ⟨_, h, hok⟩
@@ -425,43 +447,47 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
       -- an answer without a pair is junk or gets one (`LastResort`)
       have key : ∀ t, MapSpec.Fast.TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
           (oldGenome (Whole.wholeOf G)) (decodeRead read1) (decodeRead read2) (some read1) (some read2) t →
-          (answerWith insertSettings (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t).Correct
-          insertSettings genome (decodeRead read1) (decodeRead read2) ∨
-          LastResort.Leftover insertSettings (answerWith insertSettings (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t) :=
+          (answerWith insertSettings (reqOf insertSettings read1 read2) (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n])
+            offs ns read1 read2 t).Correct insertSettings genome (decodeRead read1) (decodeRead read2) ∨
+          LastResort.Leftover (reqOf insertSettings read1 read2) (answerWith insertSettings (reqOf insertSettings read1 read2)
+            (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t) :=
         fun t hok' => (LastResort.finalize_correct (LastResort.fitNs ns) hnone
-          (Report.answerOfPair_correct hslice hchr hlen reportTies (fallbackFrom insertSettings) mateRescue (ix, G) insertSettings read1 read2 _ hok'
+          (Report.answerOfPair_correct hslice hchr hlen reportTies (fallbackFrom _) mateRescue (ix, G) insertSettings read1 read2 _ hok'
             (Whole.correct_of_whole insertSettings _ _ hslice _ rfl rfl
               (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok')))).imp id And.left
       have hok0 := hok (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
-      show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _) ∨ LastResort.Leftover _ (answerOfReads _ _ _ _ _ _ _ _)
+      show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _)
       unfold answerOfReads
       dsimp only
       split
-      · rename_i hleft
-        unfold lookAt
+      · unfold lookAt
         dsimp only
-        split
-        · have hc : lookCap insertSettings read1 read2 ≤ 16 := Nat.min_le_left _ _
-          exact (LastResort.finalize_correct (LastResort.fitNs ns) hnone
+        have hc16 : lookCap (reqOf insertSettings read1 read2) ≤ 16 := Nat.min_le_left _ _
+        rcases LastResort.finalize_correct (LastResort.fitNs ns) hnone
             (LastResort.lookAnswer_correct insertSettings genome _ _ _ _ _ _
-              (LastResort.pairsAt_mem hc hcut hg hchk (encodes_decodeRead _) (encodes_decodeRead _))
+              (LastResort.pairsAt_mem hc16 hcut hg hchk (encodes_decodeRead _) (encodes_decodeRead _))
               (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)
-              (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx))).imp id And.left
-        · exact .inr hleft
-      · exact key _ hok0
+              (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)) with h | h
+        · exact h
+        · exact absurd h.1 (LastResort.look_not_leftover hc hj)
+      · rename_i hnot
+        exact (key _ hok0).resolve_right hnot
 
--- Proved with no hypothesis: each result is correct, or it is a leftover (`PairResult.IsLeftover`).
-theorem alignPairs_correct_or_leftover (insertSettings : InsertSettings)
+-- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
+-- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
+-- `hSettings` (`SettingsOk`) is the ONE assumption beyond Spec's statement, on the settings only.
+theorem alignPairs_correct (insertSettings : InsertSettings)
     (genome : Genome) (trimmedPairs : List (Option Read × Option Read))
     (byteGenome : GenomeFile) (hGenome : byteGenome.decode = genome)
     (index : ByteArray) (hIndex : index = buildIndex byteGenome)
     (bytePairs : List (Option ByteArray × Option ByteArray))
-    (hMates : bytePairs.map decodePair = trimmedPairs) :
+    (hMates : bytePairs.map decodePair = trimmedPairs)
+    (hSettings : SettingsOk insertSettings) :
     (alignPairs insertSettings index bytePairs).length = trimmedPairs.length ∧
     ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
       (alignPairs insertSettings index bytePairs)[i]? = some result →
       trimmedPairs[i]? = some mates →
-      PairResult.Correct insertSettings genome mates.1 mates.2 result ∨ result.IsLeftover insertSettings := by
+      PairResult.Correct insertSettings genome mates.1 mates.2 result := by
   subst hMates index
   have hcase : ((readIndex (buildIndex byteGenome)).2 = none ∧
       (readIndex (buildIndex byteGenome)).1.getD [] = genomeChroms byteGenome) ∨
@@ -477,107 +503,7 @@ theorem alignPairs_correct_or_leftover (insertSettings : InsertSettings)
   | some bytes =>
     simp only [hAt, Option.map_some, Option.some.injEq] at hResult hMatesAt
     subst hResult hMatesAt
-    exact alignOne_correct insertSettings genome byteGenome hGenome _ _ hcase bytes.1 bytes.2
-
-/-! ## When there is no leftover
-
-The second look (`lookAt`, `lookSpec`) always ends the leftover when its cap reaches `requiredMapBound`
-(`-16 ≤ requiredMapBound`), `junkScore ≤ requiredMapBound`, and both mates have the seeds for the cap
-(`fastT`; at cap 16 that is 125 letters, at Rowan's length-scaled cap `LastResort.capOfLens` every mate of 25). -/
-
-theorem lookCap_ok (insertSettings : InsertSettings) (read1 read2 : ByteArray)
-    (h : -16 ≤ insertSettings.requiredMapBound) :
-    -((lookCap insertSettings read1 read2 : Int) + 1) < insertSettings.requiredMapBound := by
-  unfold lookCap
-  omega
-
-theorem fastT_long {c : Nat} (hc : c ≤ 16) {R : ByteArray} (h : 125 ≤ R.size) : MapSpec.Fast.fastT c R = true := by
-  unfold MapSpec.Fast.fastT
-  simp only [MapSpec.Fast.sbound_eq, Bool.and_eq_true, decide_eq_true_eq]
-  have : 5 ≤ R.size / 25 := (Nat.le_div_iff_mul_le (by decide)).2 (by omega)
-  omega
-
-theorem alignOne_not_leftover {insertSettings : InsertSettings} (hreq : -16 ≤ insertSettings.requiredMapBound)
-    (hj : insertSettings.junkScore ≤ insertSettings.requiredMapBound) (chroms : List (List Nat))
-    (loaded : Option LoadedIndex) (bytes1 bytes2 : Option ByteArray)
-    (h1 : ∀ R, bytes1 = some R → 125 ≤ R.size) (h2 : ∀ R, bytes2 = some R → 125 ≤ R.size) :
-    ¬ (alignOne insertSettings chroms loaded bytes1 bytes2).IsLeftover insertSettings := by
-  match bytes1, bytes2 with
-  | none, _ => simp [alignOne, PairResult.IsLeftover]
-  | some _, none => simp [alignOne, PairResult.IsLeftover]
-  | some read1, some read2 =>
-    have hc := lookCap_ok insertSettings read1 read2 hreq
-    match loaded with
-    | none => exact LastResort.look_not_leftover hc hj
-    | some (ix, G, offs, ns) =>
-      show ¬ LastResort.Leftover _ (answerOfReads _ _ _ _ _ _ _ _)
-      unfold answerOfReads
-      dsimp only
-      split
-      · unfold lookAt
-        dsimp only
-        rw [if_pos (by
-          rw [Bool.and_eq_true]
-          exact ⟨fastT_long (Nat.min_le_left _ _) (h1 _ rfl), fastT_long (Nat.min_le_left _ _) (h2 _ rfl)⟩)]
-        exact LastResort.look_not_leftover hc hj
-      · assumption
-
--- Spec's statement, with no leftover hypothesis, for settings with `-16 ≤ requiredMapBound`,
--- `junkScore ≤ requiredMapBound` (Spec's defaults) and mates of at least 125 letters
-theorem alignPairs_correct_of_long (insertSettings : InsertSettings)
-    (genome : Genome) (trimmedPairs : List (Option Read × Option Read))
-    (byteGenome : GenomeFile) (hGenome : byteGenome.decode = genome)
-    (index : ByteArray) (hIndex : index = buildIndex byteGenome)
-    (bytePairs : List (Option ByteArray × Option ByteArray))
-    (hMates : bytePairs.map decodePair = trimmedPairs)
-    (hreq : -16 ≤ insertSettings.requiredMapBound)
-    (hj : insertSettings.junkScore ≤ insertSettings.requiredMapBound)
-    (hlong : ∀ mates ∈ trimmedPairs, (∀ m ∈ mates.1, 125 ≤ m.length) ∧ (∀ m ∈ mates.2, 125 ≤ m.length)) :
-    (alignPairs insertSettings index bytePairs).length = trimmedPairs.length ∧
-    ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
-      (alignPairs insertSettings index bytePairs)[i]? = some result →
-      trimmedPairs[i]? = some mates →
-      PairResult.Correct insertSettings genome mates.1 mates.2 result := by
-  obtain ⟨hl, h⟩ := alignPairs_correct_or_leftover insertSettings genome trimmedPairs byteGenome hGenome index hIndex
-    bytePairs hMates
-  refine ⟨hl, fun i result mates hr hm => (h i result mates hr hm).resolve_right ?_⟩
-  have hmem := List.mem_of_getElem? hm
-  obtain ⟨hl1, hl2⟩ := hlong mates hmem
-  subst hMates
-  rw [alignPairs_eq_map, List.getElem?_map] at hr
-  rw [List.getElem?_map] at hm
-  cases hAt : bytePairs[i]? with
-  | none => rw [hAt] at hr; cases hr
-  | some bytes =>
-    rw [hAt] at hr hm
-    simp only [Option.map_some, Option.some.injEq] at hr hm
-    subst hr hm
-    have hsz : ∀ R : ByteArray, (decodeRead R).length = R.size := fun R => (encodes_decodeRead R).1.symm
-    refine alignOne_not_leftover hreq hj _ _ bytes.1 bytes.2 (fun R hR => ?_) (fun R hR => ?_)
-    · rw [← hsz]; exact hl1 _ (by simp [decodePair, hR])
-    · rw [← hsz]; exact hl2 _ (by simp [decodePair, hR])
-
--- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
--- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
--- `hNoLeftover` is the ONE assumption beyond Spec's statement: no result is a leftover (`PairResult.IsLeftover`).
--- `alignPairs_correct_of_long` discharges it for `-16 ≤ requiredMapBound`, `junkScore ≤ requiredMapBound` and
--- mates of at least 125 letters (Testing/notes/REPORT_FLOOR_PROOFS.md).
-theorem alignPairs_correct (insertSettings : InsertSettings)
-    (genome : Genome) (trimmedPairs : List (Option Read × Option Read))
-    (byteGenome : GenomeFile) (hGenome : byteGenome.decode = genome)
-    (index : ByteArray) (hIndex : index = buildIndex byteGenome)
-    (bytePairs : List (Option ByteArray × Option ByteArray))
-    (hMates : bytePairs.map decodePair = trimmedPairs)
-    (hNoLeftover : ∀ (i : Nat) (result : PairResult),
-      (alignPairs insertSettings index bytePairs)[i]? = some result → ¬ result.IsLeftover insertSettings) :
-    (alignPairs insertSettings index bytePairs).length = trimmedPairs.length ∧
-    ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
-      (alignPairs insertSettings index bytePairs)[i]? = some result →
-      trimmedPairs[i]? = some mates →
-      PairResult.Correct insertSettings genome mates.1 mates.2 result := by
-  obtain ⟨hl, h⟩ := alignPairs_correct_or_leftover insertSettings genome trimmedPairs byteGenome hGenome index hIndex
-    bytePairs hMates
-  exact ⟨hl, fun i result mates hr hm => (h i result mates hr hm).resolve_right (hNoLeftover i result hr)⟩
+    exact alignOne_correct insertSettings hSettings genome byteGenome hGenome _ _ hcase bytes.1 bytes.2
 
 /-! ## End to end from the pure objects: the byte round trip for A, C, G, T, N -/
 
@@ -609,13 +535,11 @@ theorem decodePair_encodePair {mates : Option Read × Option Read} (h : MatesAre
 
 -- The same, end to end from the pure objects: write the genome and the trimmed mates as bytes,
 -- build the index from the genome's bytes, align the pairs' bytes. Only assumption: every letter
--- is A, C, G, T or N. `hNoLeftover`: as in `alignPairs_correct`.
+-- is A, C, G, T or N. `hSettings`: as in `alignPairs_correct`.
 theorem alignPairs_end_to_end (insertSettings : InsertSettings)
     (genome : Genome) (trimmedPairs : List (Option Read × Option Read))
     (hGenome : GenomeIsDNA genome) (hPairs : ∀ mates ∈ trimmedPairs, MatesAreDNA mates)
-    (hNoLeftover : ∀ (i : Nat) (result : PairResult),
-      (alignPairs insertSettings (buildIndex genome.encode) (trimmedPairs.map encodePair))[i]? = some result →
-      ¬ result.IsLeftover insertSettings) :
+    (hSettings : SettingsOk insertSettings) :
     (alignPairs insertSettings (buildIndex genome.encode) (trimmedPairs.map encodePair)).length =
       trimmedPairs.length ∧
     ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
@@ -628,6 +552,6 @@ theorem alignPairs_end_to_end (insertSettings : InsertSettings)
     conv => rhs; rw [← List.map_id trimmedPairs]
     exact List.map_congr_left fun mates hm => decodePair_encodePair (hPairs mates hm)
   exact alignPairs_correct insertSettings genome trimmedPairs genome.encode
-    (Genome.decode_encode hGenome) _ rfl _ hMates hNoLeftover
+    (Genome.decode_encode hGenome) _ rfl _ hMates hSettings
 
 end Spec
