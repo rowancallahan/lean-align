@@ -74,7 +74,35 @@ No pair lost, every gained pair at truth (4 kept-not-at-truth pairs in every run
 Real reads, one run each: HiSeq 2×250 (T2=250:28,150:20, gate 3000) kept 166,490 → 168,345 (+1,855, +1.1%);
 250:36 gives 168,274 (deeper cap: more ties). NovaSeq 2×151 (150:20, gate 3000) 167,819 → 168,656 (+837).
 
-## 3. Timing vs minibwa (median of 3, interleaved, 4 threads on cores 0–3, mapping only)
+## 3a. Headline: shim vs minibwa, index load subtracted (I/O kept in)
+
+Shim `lean-align map` (release `shim.idx`, SAM to a file) wall/CPU minus the load measured on empty FASTQ files
+(median of 3, warm: an untimed empty-FASTQ load runs right before each timed run; off 2.4 s, on 3.4 s);
+minibwa wall/CPU minus its "index loaded" time (its files `cat`ed to /dev/null first; the two indexes do not
+both fit in the page cache on this 15 GB box), SAM to a file. 3 interleaved rounds, 4 cores (taskset 0–3).
+off = default shim, on = built with `deepCaps := true`. Multiple = minibwa ÷ ours (> 1: we are faster).
+
+| set | shim | no-load wall / CPU s | × mb default wall / CPU | × mb native wall / CPU | end-to-end × default wall / CPU | × native |
+|---|---|---|---|---|---|---|
+| mason 2×150 | off | 32.3 / 103.2 | 0.41 / 0.48 | 0.44 / 0.49 | 0.82 / 0.61 | 0.88 / 0.63 |
+| | on | 27.6 / 101.6 | 0.48 / 0.49 | 0.52 / 0.50 | 0.92 / 0.61 | 0.99 / 0.63 |
+| HiSeq 2×250 | off | 12.2 / 34.2 | 2.11 / 2.88 | 2.14 / 2.85 | 2.50 / 2.91 | 2.99 / 3.09 |
+| | on | 18.1 / 62.7 | 1.42 / 1.57 | 1.44 / 1.56 | 1.70 / 1.61 | 2.03 / 1.71 |
+| NovaSeq 2×151 | off | 20.9 / 61.6 | 0.64 / 0.79 | 0.64 / 0.76 | 1.07 / 0.94 | 1.11 / 0.94 |
+| | on | 15.9 / 57.3 | 0.84 / 0.85 | 0.84 / 0.82 | 1.30 / 0.99 | 1.34 / 0.99 |
+
+minibwa no-load: mason 13.2 / 49.4 s (default), 14.2 / 50.4 (native); HiSeq 25.7 / 98.7, 26.1 / 97.6; NovaSeq
+13.4 / 48.9, 13.4 / 47.1. Peak RSS: shim 5.6–5.9 GB, minibwa 7.7–8.0 GB.
+
+- The shim is ~2× slower than the bench's `RESULT` (I/O: FASTQ parsing, trimming, SAM formatting; plus the shim's
+  own setup), so bench multiples overstate the shipped speed by about that factor on 150 bp sets.
+- mason and NovaSeq runs are noisy (shim CPU 96–132 s on mason); on vs off there is within noise.
+- **Open issue:** on HiSeq, `deepCaps` costs +75–100% CPU in every shim run (34 → 63 s), but only +19–29% in the
+  bench's RTX mode (with or without the tier-2 heuristic: WG_XH=0 31.0 → 36.9 s). The shim's `tierCfg` and the
+  bench's RTX `tcfg` differ in more than pass 2 (e.g. the exact pair search budget `xe`, `pg`); not found yet which
+  part makes pass-2 pairs dearer in the shim. Until then the HiSeq cost of turning `deepCaps` on is +83% CPU.
+
+## 3. Bench timing vs minibwa (median of 3, interleaved, 4 threads on cores 0–3, mapping only, no I/O)
 
 Ours: bench RTX `RESULT` (index load excluded). minibwa c07de5c (default `make` and `-march=native`), prebuilt
 release index: Real time − "index loaded" time; CPU − load time × its CPU ratio. Multiple = minibwa ÷ ours
@@ -114,9 +142,10 @@ Default output byte-identical (pass2 false: `routeG` never evaluates cap2/gate2)
 the 2,563 chr21 mason pairs, SAM of this branch = SAM of 5c309c3 (`cmp`); built with `deepCaps := true` the same
 run gives `XT:Z:eachMateUnique` 2,198 → 2,313 pairs, `boundsOnly` 171 → 96. CI_check passes.
 
-**Recommendation:** turn `deepCaps` on (Rowan's call: it changes output). On mason +3.5 points of pairs at
-truth for +0.6% CPU (median); on real reads +1.1% (HiSeq) / +0.5% (NovaSeq) pairs for +29% / +10% CPU — a gate of
-1000 roughly halves the HiSeq cost (+1,746 pairs at +20%). Do the 24/28 index (section 5) only after that.
+**Recommendation:** turning `deepCaps` on is Rowan's call (it changes output). Bench: mason +3.5 points of pairs
+at truth for +0.6% CPU; real reads +1.1% (HiSeq) / +0.5% (NovaSeq) pairs for +29% / +10% CPU. In the shim (3a) the
+HiSeq cost is +83% CPU — find the cause first (open issue in 3a), or use cap 20 / gate 1000 for 250 bp mates.
+Do the 24/28 index (section 5) only after that.
 
 ## 5. What the proved 24/28 caps at 150 bp need
 
