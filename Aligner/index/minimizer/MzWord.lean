@@ -292,6 +292,79 @@ theorem scanAWK_eq (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : 
     · next hk => rw [okAtW_key ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t hkb hkey hk]; rfl
     · rfl
 
+/-- First `t' ∈ [t, hi)` whose slot has key bits `keyU` (`max t hi` if none): the key test
+alone, with few arguments (`scanAWK_nextK`). -/
+def nextK (B : ByteArray) (sw : Nat) (kb keyU : UInt64) (hi t : Nat) : Nat :=
+  if t < hi then
+    if (slotW B sw t &&& kb) != keyU then nextK B sw kb keyU hi (t + 1) else t
+  else t
+termination_by hi - t
+
+theorem nextK_spec (B : ByteArray) (sw : Nat) (kb keyU : UInt64) (hi : Nat) :
+    ∀ n t, hi - t = n → t ≤ nextK B sw kb keyU hi t ∧
+      (nextK B sw kb keyU hi t < hi → (slotW B sw (nextK B sw kb keyU hi t) &&& kb) = keyU) ∧
+      (¬ nextK B sw kb keyU hi t < hi → hi ≤ nextK B sw kb keyU hi t) := by
+  intro n
+  induction n with
+  | zero => intro t hn; rw [nextK, if_neg (by omega)]; omega
+  | succ n ih =>
+    intro t hn
+    rw [nextK, if_pos (by omega)]
+    split
+    · obtain ⟨h1, h2, h3⟩ := ih (t + 1) (by omega); exact ⟨by omega, h2, h3⟩
+    · next h => simp only [bne_iff_ne, ne_eq, Classical.not_not] at h; exact ⟨Nat.le_refl _, fun _ => h, by omega⟩
+
+/-- `scanAWK` skipping to the next key match with `nextK` (`scanAWK_eq2`). -/
+def scanAWK2 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
+  let t' := nextK ix.sl ix.sw kb keyU hi t
+  if h : t' < hi then
+    have : t ≤ t' := (nextK_spec ix.sl ix.sw kb keyU hi _ t rfl).1
+    scanAWK2 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit (t' + 1)
+      (if okAtW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t' then
+        acc.push (anc base bit (ix.posOf (ix.slot t') - o)) else acc)
+  else acc
+termination_by hi - t
+
+/-- Slots before `nextK` add nothing. -/
+theorem scanAWK_skip (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) :
+    ∀ n t acc, hi - t = n →
+      scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =
+        scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit (nextK ix.sl ix.sw kb keyU hi t) acc := by
+  intro n
+  induction n with
+  | zero => intro t acc hn; rw [nextK, if_neg (by omega)]
+  | succ n ih =>
+    intro t acc hn
+    rw [nextK, if_pos (by omega)]
+    split
+    · next h => rw [scanAWK, if_pos (by omega), if_pos h]; exact ih (t + 1) acc (by omega)
+    · rfl
+
+theorem scanAWK_eq2 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) :
+    ∀ n t acc, hi - t = n →
+      scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =
+        scanAWK2 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro t acc hn
+    rw [scanAWK_skip ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit _ t acc rfl, scanAWK2]
+    have hs := nextK_spec ix.sl ix.sw kb keyU hi _ t rfl
+    simp only []
+    split
+    · next h =>
+      rw [scanAWK, if_pos h, if_neg (by simp [hs.2.1 h])]
+      exact ih _ (by omega) _ _ rfl
+    · next h => rw [scanAWK, if_neg (by omega)]
+
+/-- Compiled code runs `scanAWK2`. -/
+@[csimp] theorem scanAWK_eqC : @scanAWK = @scanAWK2 := by
+  funext ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc
+  exact scanAWK_eq2 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit _ t acc rfl
+
 /-- `lookupPW` through `scanAWK` when the key mask fits a `UInt64` (`lookupPW_eqK`). -/
 @[inline] def lookupPWK (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base bit : Nat) : Array Nat :=
   let o := p.o

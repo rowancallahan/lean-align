@@ -321,8 +321,8 @@ def diagsI (acc : List (Array Nat)) : List Nat :=
   let l := flatD acc
   dedupAdj (if l.length ≤ 16 then isortN l else l.mergeSort fun a b => decide (a ≤ b))
 
-/-- Compiled code runs `diagsI`. -/
-@[csimp] theorem diags_eqI : @diags = @diagsI := by
+/-- `diags` by insertion sort (compiled code runs `diagsM`). -/
+theorem diags_eqI : @diags = @diagsI := by
   funext acc
   unfold diags diagsI
   simp only [flatD_eq, isortN_eq, ite_self]
