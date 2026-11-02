@@ -4,11 +4,41 @@ Spec (Rowan): `requiredMapBound := -16` (an answer without a pair needs `bestPos
 `junkScore := -50` (every printed pair, any label, has `pair.score >= junkScore`). `Proofs/Answer.lean` mirrors it
 (CI checks the mirror).
 
-## Status
+## Status (round 2: Rowan: no `gaveUp`, close the leftover in code)
 
-`lake build` and `sh Testing/scripts/CI_check.sh` pass (standard axioms only, no sorry outside Spec/).
-`alignPairs_correct` is proved for every result except a LEFTOVER, which Spec has no answer for yet. The leftover
-is one named predicate, `Spec.LastResort.Leftover`, and one hypothesis, `hNoLeftover`. On chr21 no read is a leftover.
+`lake build` and CI pass (standard axioms, no sorry outside Spec/). Proved:
+- `alignPairs_correct_or_leftover`: every result is `Correct` or `IsLeftover`. It has no hypothesis.
+- `alignPairs_correct_of_long`: Spec's exact statement, with NO leftover hypothesis, for `-16 ≤ requiredMapBound`,
+  `junkScore ≤ requiredMapBound` (the defaults) and mates of at least 125 letters.
+- `alignPairs_correct`: Spec's statement plus `hNoLeftover`, for any settings and lengths.
+
+The second look at a leftover (`lookAt` / `lookSpec`, `LastResort.lookAnswer`) lists every proper pair within the
+cap `c` that scores at least `-c` (`pairsAt_mem`, any `c ≤ 16`). If the list is empty, the bound is `-(c+1)`. If not,
+the top pair is printed. Its CIGAR comes from the proved optimal aligner (`bandDoublingAlign = getBestAlignment`,
+`cigarOk_of_hit`), so there is no re-check that could fail. Its score is a proved bound, through a `t2b`-style
+`TierOk`. Uniqueness is `.unknown`.
+1. Seen pair, CIGAR re-check failed: closed (no re-check).
+2. Index check failed: the record now holds the genome (`chromsNats`/`ungen`, `ungen_chromsNats`). `lookSpec`
+   searches every window with `hitsF = hitsBoth` (total; slow; only for genomes that do not `Fit`). The answer is
+   proved on the record's genome and moved to the named genome (`correct_transfer`, same letters).
+3. Short mates: `lookCap s R1 R2` (now `min 16 (-requiredMapBound)`) is a parameter. `errorsChecked`, `capOfLens`,
+   `capOfLens_le`, and `fastT_capOfLens` are ready: every mate of 25 letters or more has the seeds for
+   `4 * errorsChecked (shorter)`. When the Spec lands, set `lookCap := capOfLens R1.size R2.size`.
+   `alignOne_not_leftover` then needs only the 25-letter minimum in place of 125.
+
+The leftover now remains only for:
+(a) a mate without the seeds for the cap, i.e. under 125 letters at cap 16 (case 3, until the Spec lands);
+(b) settings with `requiredMapBound < -16`, or `junkScore > requiredMapBound`.
+
+For (b) with `junkScore > requiredMapBound`, the Spec itself has no correct answer. Example: junk -10, required
+-16, best proper pair -12. No pair can be printed, and the bound cannot go below -12. So the Spec needs
+`junkScore ≤ requiredMapBound`, as a constraint on `InsertSettings` or by clamping. With the length-scaled bound,
+that means `junkScore ≤ -16`.
+
+Measured on chr21 after round 2: mason 197,434 reported / 2,566 none (bound < -16) / 0 leftover;
+low 199,318 / 682 / 0. Same counts as round 1.
+
+## Round 1
 
 ## Where the build broke (confirmed with Lean)
 
@@ -37,23 +67,7 @@ Only `LastResort.finalize_correct` (5 errors: the degenerate pair is below junkS
 - `alignPairs_correct` / `alignPairs_end_to_end`: Spec's statements plus ONE hypothesis
   `hNoLeftover : ∀ i result, (alignPairs …)[i]? = some result → ¬ result.IsLeftover insertSettings`.
 
-## The leftover: what Spec needs
-
-`Leftover s a := a.found = none ∧ s.requiredMapBound ≤ a.bestPossibleScore`. This means no pair `>= junkScore`
-in hand, and no proof that every proper pair is `< requiredMapBound`, even after `search16`. It can still happen
-when:
-- `pairGXE` returns `none`: a mate is too short for the pigeonhole at 16 (`fastT 16`);
-- a pair `>= -16` was seen but its CIGAR did not re-check (the unproved banded DP failed) and the fallback found nothing;
-- the index check failed at build time, so `noIndexAnswer` has bound 0.
-
-The answer printed for a leftover is unmapped with its true bound (`XB >= -16`, `XU:unknown`). What Spec would
-need to close the theorem is a new answer form whose `Correct` clause is only the bound (clause 2), with no
-`< requiredMapBound` claim, e.g. a `Uniqueness`/result `.gaveUp` ("too many candidate places"):
-
-    | .gaveUp => answer.found = none   -- bound clause (2) still holds; nothing else claimed
-
-With that, `finalize` would label leftovers `.gaveUp`, and `alignPairs_correct` would follow from
-`alignPairs_correct_or_leftover` with no `hNoLeftover`.
+(Round 1 proposed a `.gaveUp` answer for the leftover. Rowan declined it, and round 2 closes the leftover in code.)
 
 ## Measurements (chr21, index c21m2.idx, `lean-align map … 100 1000`, 200,000 pairs each)
 
