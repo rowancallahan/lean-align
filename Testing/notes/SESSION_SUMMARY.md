@@ -1300,7 +1300,19 @@ SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not
 - A pair-agnostic "two pairs close to each other" claim is vacuous (any read has many terrible pairs with near-equal
   scores); a near-tie claim must be anchored to the bound: both pairs ≥ bestPossibleScore − x.
 
+### Spec change Rowan is adding (2026-11-02)
+`InsertSettings.junkScore : Int := -17`; `.unknown` branch: `answer.found = none → answer.bestPossibleScore <
+insertSettings.junkScore`. With a pair, clause 1 makes it real; without, it is proved junk. A junk pair (bound <
+junkScore) may still be reported or tossed.
+
+### Read-quality facts (O4, minibwa NM on hg38, 200k each)
+Mates within our −16 cap: NovaSeq 94.8%, HiSeq 88.6% (≤2 mismatches: 91.2% / 81.1%). Soft-clipped mates: HiSeq 13.2%,
+NovaSeq 4.3% (our alignment is end-to-end and the shim doesn't trim). This matches our ~82% kept vs minibwa ~98%: the
+gap is the cap and read ends, not the router. At junkScore −17, ~1 in 6 HiSeq pairs minibwa maps would be "junk".
+
 ### Later (Rowan)
+- **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
+  maybe force reporting it whenever one exists.
 - **Junk score as a setting:** define it at the top of Spec/Aligner.lean; likely a field of `InsertSettings` (a run
   setting that flows through alignPairs_correct), maybe per read length (the free value follows the router's cap,
   −(cap+1): −17 at ≥150 bp). Alternatively route it through the tiers, so a smaller set of options leads to "junk".
