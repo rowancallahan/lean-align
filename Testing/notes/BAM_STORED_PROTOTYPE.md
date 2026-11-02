@@ -10,14 +10,29 @@ one task per block, + write), 3 repetitions each, same results for both, 4 cores
 Box: 4 cores shared (timings vary ~30% run to run; the median of the 3 repetitions is listed, the raw runs are in
 the table below).
 
-## Validation (no samtools: apt has no network here, pip finds no pysam)
+## Validation
+
+### samtools 1.24 / htslib 1.24 (built from the tagged GitHub releases, Rowan allowed it)
+
+On the same six outputs (3 sets x real M1 + synthetic mapped, 200 000 pairs, 400 000 records each; files regenerated for
+this run, one repetition):
+
+- `samtools quickcheck -v X.bam`: exit 0 on all six (header and BGZF EOF block fine).
+- `samtools view -c X.bam`: 400000 on all six, equal to the SAM record count.
+- `samtools flagstat`: 400000 in total, 200000 read1 + 200000 read2, all paired; real M1: 0 mapped, 0 properly paired;
+  synthetic: 400000 mapped (100.00 %), 400000 properly paired, 0 singletons.
+- Round trip: `samtools view -h X.bam` compared with the SAM of the same run with `cmp`/`diff`: the ONLY difference on all six is the
+  one `@PG ID:samtools ...` line that `samtools view -h` appends to the header. All other header lines and all 400 000
+  records are byte-identical (so samtools decodes SEQ, QUAL, CIGAR, flags, mate fields, TLEN and the tags `AS XB XU XT` to
+  exactly the text our SAM writer prints).
+
+### Python checker (independent of samtools; run first, before samtools was available)
 
 `bam_check.py` parses every BGZF block independently (gzip header, BC subfield, zlib inflate, CRC32 and ISIZE of
 each block, EOF block last), the BAM header (text equals the SAM header, n_ref list equals the `@SQ` lines), and every
 record against the SAM line of the same run: QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, all tags
 with their BAM types, bin == reg2bin, block_size/l_read_name/n_cigar_op consistent. Run on all six outputs below
 (400 000 records each): OK. The checker was shown to fail on a flipped payload byte and on a changed tag.
-**Not run: samtools quickcheck / view -c / flagstat** (not installable here).
 
 ## Results, 200 000 pairs (raw seconds; M1 = today's results, every pair unmapped)
 
