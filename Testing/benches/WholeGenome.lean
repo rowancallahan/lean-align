@@ -2155,8 +2155,10 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
   for st in sets do
     let [name, rest] := st.splitOn "=" | throw (IO.userError "WG_READS: name=r1:r2:limit;...")
     let [p1, p2, lim] := rest.splitOn ":" | throw (IO.userError "WG_READS: name=r1:r2:limit;...")
+    let tM0 ← IO.monoNanosNow
     let m1 ← readMates p1
     let m2 ← readMates p2
+    say s!"mates read (FASTQ: and trimmed; one thread): {secs tM0 (← IO.monoNanosNow)} s"
     if m1.size != m2.size then throw (IO.userError s!"{p1}: {m1.size} records, {p2}: {m2.size}")
     -- WG_TRIMOUT=prefix: write the trimmed mates once (prefix_R1.txt / _R2.txt) for later runs
     if let some pre ← IO.getEnv "WG_TRIMOUT" then

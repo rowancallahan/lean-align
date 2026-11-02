@@ -37,7 +37,7 @@ has ≥ 2 equally good candidates, at most one of which is the simulated locus, 
 of them (≤ 50% for k = 2, the common case). Flagged non-tie pairs (the unique T1 column above) have one candidate and keep their placement.
 
 ## Result
-- The precise flag (min) saves ≤ 0.7–5% of bench CPU (novaseq min ≥ 50: 1.1 of 22.2 s) and catches ≤ 15% of ties; the broad flag
+- The precise flag (min) saves ≤ 0.3–5% of bench CPU (novaseq min ≥ 50: 1.1 of 22.2 s) and catches ≤ 15% of ties; the broad flag
   (median ≥ 200) catches 35–38% of ties but flags 3.2–3.8k unique T1 pairs per 200k (precision 37–50%).
 - The median ≥ 200 group is where O3's `gateBudget` early stop already saves CPU (mason −30% at gate 15000), so the hint is not needed there.
 - Ties with two copies have ordinary-looking bucket counts; a useful flag needs exact per-key occurrence counts (index change), not bucket sizes.
