@@ -205,12 +205,20 @@ def lookSpec (insertSettings : InsertSettings) (chroms : List (List Nat)) (read1
       (LastResort.pairsSpec insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c g
         (decodeRead read1) (decodeRead read2)))
 
--- the answer from the router's output `t`: the found pair re-checked (`Report`), then the report floor
--- (`LastResort.finalize`)
-def answerWith (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (pgs : Array MapSpec.Fast.PGen)
-    (offs ns : Array Nat) (read1 read2 : ByteArray) (t : MapSpec.Fast.TierOut) : PairAnswer :=
+-- (stage 2) the walk: up to `walkK` anchors per strand, keeping the first pair at `junkScore` or better
+def walkK : Nat := 3
+
+def keepOf (insertSettings : InsertSettings) (p : PairReport) : Bool :=
+  decide (insertSettings.junkScore ≤ LastResort.repScore p)
+
+-- the answer from a router output `t`: the found pair re-checked (`Report`), the walk when `fb` allows it, then
+-- the report floor (`LastResort.finalize`)
+def answerWith (insertSettings : InsertSettings) (req : Int) (fb : Option Int) (pk : MapSpec.Fast.PkMz)
+    (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (read1 read2 : ByteArray) (t : MapSpec.Fast.TierOut) :
+    PairAnswer :=
   LastResort.finalize insertSettings (LastResort.fitNs ns) req
-    (Report.answerOfPair reportTies (fallbackFrom req) mateRescue pk insertSettings pgs offs ns read1 read2 t)
+    (Report.answerOfPair reportTies fb mateRescue (keepOf insertSettings) walkK pk insertSettings pgs offs ns
+      read1 read2 t)
 
 -- the second look at a leftover: every proper pair within the cap, on the chromosomes (`LastResort.lookAnswer`).
 -- A mate without the seeds for the cap (`fastT`; under 25 letters for Spec's default) is searched window by
@@ -224,13 +232,66 @@ def lookAt (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz
       (LastResort.pairsAt insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
         read1 read2))
 
--- the router with the per-pair settings; a leftover (`LastResort.Leftover`) gets the second look (`lookAt`)
+-- the sum of the `k` rarest seed buckets of a mate, over both strands (what a lookup of those seeds costs)
+def rareCost (pk : MapSpec.Fast.PkMz) (R : ByteArray) (k : Nat) : Nat :=
+  let s : MapSpec.Fast.PrepM MapSpec.Fast.MzP := MapSpec.Fast.prepMate pk R
+  TierHeur.smallK pk s.ps (R.size / 25) k + TierHeur.smallK pk s.pr (R.size / 25) k
+
+-- (stage 3) the rarest-seed join (`tierNo`, join only) at cap `c`, skipped when its seeds hold more than
+-- `joinBudget` places
+def joinBudget : Nat := 20000
+
+def joinAt (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (pgs : Array MapSpec.Fast.PGen) (c : Nat)
+    (read1 read2 : ByteArray) : Option MapSpec.Fast.TierOut :=
+  if rareCost pk read1 (MapSpec.Fast.sbound c + 1) + rareCost pk read2 (MapSpec.Fast.sbound c + 1) ≤ joinBudget then
+    MapSpec.Fast.tierNo cfg pk #[0] pgs c false false read1 read2
+  else none
+
+-- (stage 4) the second look early, for short mates (< 125 letters) whose rarest `c / 4 + 1` buckets per strand
+-- hold at most `shortBudget` places
+def shortBudget : Nat := 1000
+
+def shortOk (pk : MapSpec.Fast.PkMz) (c : Nat) (read1 read2 : ByteArray) : Bool :=
+  decide (min read1.size read2.size < 125) &&
+    decide (rareCost pk read1 (c / 4 + 1) + rareCost pk read2 (c / 4 + 1) ≤ shortBudget)
+
+-- (stage 5, HOOK) the gave-up answer. A no-op for now: the proved repeat bound (proof/gaveup) plugs in here,
+-- with its proof in `alignOne_correct` (the `gaveUp` arm)
+def gaveUp (_insertSettings : InsertSettings) (_req : Int) (_pk : MapSpec.Fast.PkMz) (_offs _ns : Array Nat)
+    (_read1 _read2 : ByteArray) : Option PairAnswer := none
+
+-- the stage's answer if it is not a leftover, else the next stage
+def orElse (req : Int) (o : Option PairAnswer) (next : Unit → PairAnswer) : PairAnswer :=
+  match o with
+  | some a => if LastResort.Leftover req a then next () else a
+  | none => next ()
+
+theorem orElse_ok {P : PairAnswer → Prop} (req : Int) (o : Option PairAnswer) (next : Unit → PairAnswer)
+    (ho : ∀ a, o = some a → P a ∨ LastResort.Leftover req a) (hn : P (next ())) : P (orElse req o next) := by
+  unfold orElse
+  cases o with
+  | none => exact hn
+  | some a =>
+    simp only
+    split
+    · exact hn
+    · rename_i hl; exact (ho a rfl).resolve_right hl
+
+-- the pipeline: (1) the router with the per-pair settings, its pair re-checked; (2) the walk; (3) the
+-- rarest-seed join; (4) short mates: the second look; (5) the gave-up hook; (6) the second look (`lookAt`).
+-- Each stage's answer is taken unless it is a leftover (`LastResort.Leftover`)
 def answerOfReads (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
     (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (read1 read2 : ByteArray) : PairAnswer :=
   let req := reqOf insertSettings read1 read2
+  let c := lookCap req
   let t := MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
-  let a := answerWith insertSettings req pk pgs offs ns read1 read2 t
-  if LastResort.Leftover req a then lookAt insertSettings req pk offs ns read1 read2 else a
+  orElse req (some (answerWith insertSettings req (fallbackFrom req) pk pgs offs ns read1 read2 t)) fun _ =>
+  orElse req ((joinAt cfg pk pgs c read1 read2).map (answerWith insertSettings req none pk pgs offs ns read1 read2))
+    fun _ =>
+  orElse req (if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
+    fun _ =>
+  orElse req (gaveUp insertSettings req pk offs ns read1 read2) fun _ =>
+  lookAt insertSettings req pk offs ns read1 read2
 
 def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
@@ -445,22 +506,20 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
       obtain ⟨-, hnone⟩ := LastResort.fitNs_ok insertSettings.range.1 hlen hchr
       -- moved to the chromosomes: each is a slice of the whole; the found pair re-checked (`Report`);
       -- an answer without a pair is junk or gets one (`LastResort`)
-      have key : ∀ t, MapSpec.Fast.TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+      have key : ∀ fb t, MapSpec.Fast.TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
           (oldGenome (Whole.wholeOf G)) (decodeRead read1) (decodeRead read2) (some read1) (some read2) t →
-          (answerWith insertSettings (reqOf insertSettings read1 read2) (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n])
+          (answerWith insertSettings (reqOf insertSettings read1 read2) fb (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n])
             offs ns read1 read2 t).Correct insertSettings genome (decodeRead read1) (decodeRead read2) ∨
           LastResort.Leftover (reqOf insertSettings read1 read2) (answerWith insertSettings (reqOf insertSettings read1 read2)
-            (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t) :=
-        fun t hok' => (LastResort.finalize_correct (LastResort.fitNs ns) hnone
-          (Report.answerOfPair_correct hslice hchr hlen reportTies (fallbackFrom _) mateRescue (ix, G) insertSettings read1 read2 _ hok'
+            fb (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t) :=
+        fun fb t hok' => (LastResort.finalize_correct (LastResort.fitNs ns) hnone
+          (Report.answerOfPair_correct hslice hchr hlen reportTies fb mateRescue _ _ (ix, G) insertSettings read1 read2 _ hok'
             (Whole.correct_of_whole insertSettings _ _ hslice _ rfl rfl
               (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok')))).imp id And.left
-      have hok0 := hok (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
-      show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _)
-      unfold answerOfReads
-      dsimp only
-      split
-      · unfold lookAt
+      -- the second look
+      have hlook : (lookAt insertSettings (reqOf insertSettings read1 read2) (ix, G) offs ns read1 read2).Correct
+          insertSettings genome (decodeRead read1) (decodeRead read2) := by
+        unfold lookAt
         dsimp only
         have hc16 : lookCap (reqOf insertSettings read1 read2) ≤ 16 := Nat.min_le_left _ _
         rcases LastResort.finalize_correct (LastResort.fitNs ns) hnone
@@ -470,8 +529,31 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
               (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)) with h | h
         · exact h
         · exact absurd h.1 (LastResort.look_not_leftover hc hj)
-      · rename_i hnot
-        exact (key _ hok0).resolve_right hnot
+      have hok0 := hok (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
+      show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _)
+      unfold answerOfReads
+      dsimp only
+      -- (1, 2) the router and the walk
+      refine orElse_ok _ _ _ (fun a ha => by cases ha; exact key _ _ hok0) ?_
+      -- (3) the join
+      refine orElse_ok _ _ _ (fun a ha => ?_) ?_
+      · unfold joinAt at ha
+        split at ha
+        · obtain ⟨t, ht, rfl⟩ := Option.map_eq_some_iff.mp ha
+          exact key _ _ (MapSpec.Fast.tierNo_ok (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
+            (oldGenome (Whole.wholeOf G)) (decodeRead read1) (decodeRead read2) ix G #[0] #[G.n]
+            (Whole.cutOk_whole h0) (Whole.genomeBytes_whole G) hchk
+            (encodes_decodeRead _) (encodes_decodeRead _) _ false false ht)
+        · cases ha
+      -- (4) short mates: the second look
+      refine orElse_ok _ _ _ (fun a ha => ?_) ?_
+      · split at ha
+        · cases ha; exact .inl hlook
+        · cases ha
+      -- (5) the gave-up hook (a no-op for now)
+      refine orElse_ok _ _ _ (fun a ha => by simp [gaveUp] at ha) ?_
+      -- (6) the second look
+      exact hlook
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
