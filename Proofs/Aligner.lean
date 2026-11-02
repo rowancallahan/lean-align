@@ -141,7 +141,7 @@ def tierCfg (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (offs : A
 -- (two fewer); the gate then skips RT when even cap 11 is over `capBudget`. A lower cap only weakens what
 -- RT claims (any `TierCfg` is sound): a unique best within 15 is still the unique best. Reads ≥ 200 letters
 -- keep `cap1` and the gate as before.
-def capBudget : Nat := 10000
+def capBudget : Nat := 5000
 
 -- the gate's budget by mate length
 def budOf (n : Nat) : Nat := if n < 200 then capBudget else gateBudget
