@@ -170,6 +170,63 @@ abbrev Ker := Nat → Nat → Nat → Nat → Nat
 def stageKF (kf : Ker) (n c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
   ds.foldl (fun b D => shs.foldl (fun b sh => addKF kf c lim (dst n D sh) (wlen n sh) b) b) b
 
+/-! ### `addKF` on genome positions in `Nat`
+
+An `Int` above `2^31` is a bignum in the runtime (a GMP allocation per operation), and whole-genome
+positions reach `3.1·10^9`: these take the window start in `Nat` (the shape shifts stay small `Int`s). -/
+
+/-- `addKF` for the anchor window `(E − n, n)` (`addKFA_eq`). -/
+@[inline] def addKFA (kf : Ker) (c lim E n : Nat) (b : Best) : Best :=
+  if n ≤ E then
+    if b.pen ≤ lim ∧ b.chr = c ∧ b.st = E - n ∧ b.len = n then b else
+    let l := min lim b.pen
+    let r := kf c (E - n) n l
+    if r ≤ l then b.add c (E - n) n r else b
+  else b
+
+theorem addKFA_eq (kf : Ker) (c lim E n : Nat) (b : Best) :
+    addKFA kf c lim E n b = addKF kf c lim ((E : Int) - (n : Int)) n b := by
+  unfold addKFA addKF
+  have hs : ((E : Int) - (n : Int)).toNat = E - n := by omega
+  have hl : ((n : Nat) : Int).toNat = n := by omega
+  have hc : (0 ≤ (E : Int) - (n : Int) ∧ 0 ≤ ((n : Nat) : Int)) ↔ n ≤ E := by omega
+  simp only [hs, hl, hc]
+
+/-- `addKF` for the window of diagonal `D` and shape `sh` (`addKFS_eq`). -/
+@[inline] def addKFS (kf : Ker) (c lim n D : Nat) (sh : Int × Int) (b : Best) : Best :=
+  let pa := sh.1.toNat
+  let na := (-sh.1).toNat
+  let pb := sh.2.toNat
+  let nb := (-sh.2).toNat
+  if n + pa ≤ D + na ∧ na + nb ≤ n + pa + pb then
+    let st := D + na - (n + pa)
+    let len := n + pa + pb - (na + nb)
+    if b.pen ≤ lim ∧ b.chr = c ∧ b.st = st ∧ b.len = len then b else
+    let l := min lim b.pen
+    let r := kf c st len l
+    if r ≤ l then b.add c st len r else b
+  else b
+
+theorem addKFS_eq (kf : Ker) (c lim n D : Nat) (sh : Int × Int) (b : Best) :
+    addKFS kf c lim n D sh b = addKF kf c lim (dst n D sh) (wlen n sh) b := by
+  obtain ⟨x, y⟩ := sh
+  unfold addKFS addKF dst wlen
+  simp only []
+  have hs : ((D : Int) - n - x).toNat = D + (-x).toNat - (n + x.toNat) := by omega
+  have hl : ((n : Int) + x + y).toNat = n + x.toNat + y.toNat - ((-x).toNat + (-y).toNat) := by omega
+  have hc : (0 ≤ (D : Int) - n - x ∧ 0 ≤ (n : Int) + x + y) ↔
+      (n + x.toNat ≤ D + (-x).toNat ∧ (-x).toNat + (-y).toNat ≤ n + x.toNat + y.toNat) := by omega
+  simp only [hs, hl, hc]
+
+/-- `stageKF` with `addKFS` (`stageKF_eqN`). -/
+def stageKFN (kf : Ker) (n c lim : Nat) (shs : List (Int × Int)) (ds : List Nat) (b : Best) : Best :=
+  ds.foldl (fun b D => shs.foldl (fun b sh => addKFS kf c lim n D sh b) b) b
+
+/-- Compiled code runs `stageKFN`. -/
+@[csimp] theorem stageKF_eqN : @stageKF = @stageKFN := by
+  funext kf n c lim shs ds b
+  simp only [stageKF, stageKFN, addKFS_eq]
+
 def chromKBF (kf : Ker) (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat))
     (J : List Nat) (b1 : Best) : Best :=
   let lim := min P 16

@@ -42,6 +42,9 @@ byte-identical unless the change is meant to add mapped pairs (then count gains 
   Measure pairs gained at truth and the cost (more hits per shorter seed, mostly in repeats). Needs a proved index
   for the new seed shape (or a second index), and the bound proof for the new cap.
 
+- **Done 2026-11-02 (box O3): see Testing/notes/DEEP_CAPS.md** — bounds table, hg38 seed costs, truth penalties,
+  gated pass 2 measured vs minibwa, `deepCaps` (default off) in Proofs/Aligner.lean, design for the 24/28 index.
+
 ## 4. Faster sorting than List.mergeSort (Rowan, 2026-11)
 `List.mergeSort` is 5–6% of hg38 time (mostly `diags`: anchors → diagonals, sorted, duplicates dropped). Sorting
 Nats with duplicates removed has exactly one correct answer, so any faster method is proved equal by the standard
@@ -59,3 +62,14 @@ Measure each against `List.mergeSort` on hg38 (Ir per pair, CPU), output byte-id
 ## Also queued (from PAUSE_2026-10-30.md)
 Multithreading overhead (~40% extra CPU with 4 tasks in one process), danger regions and WFA on full hg38, the
 heuristic's best settings for M2, glibc allocations and the bignum on the hg38 path.
+
+## 5. Output path (Rowan, 2026-11; measure after M2, when lines are mapped)
+- **Format inside the mapping task**: today alignPairs maps the chunk, then samChunk formats it in 16 tasks (a second
+  pass). Mapping + formatting per sub-batch in one task saves that pass; it is a trusted-shim change only
+  (Spec/Shim.lean, Rowan approves) — no theorem changes (alignPairs is a pure function of its input).
+- **Bytes all the way**: keep names/qualities as ByteArray from FASTQ to output (today: String + UTF-8 validation);
+  write records into one byte buffer per batch. Fits Rowan's FASTQ redo.
+- **BAM** (Rowan: he will add a Lean zip implementation later for compression — faster; until then BAM is uncompressed): compressed BAM costs deflate CPU (often more than SAM text); uncompressed BAM (level 0) is cheap and
+  smaller than SAM — time SAM vs BAM-level-0 vs BAM-default. Validate with samtools (quickcheck, view, flagstat vs
+  minibwa; needs samtools on the box). Rowan writes the BAM spec.
+- FASTQ pairing check: done (00b3165) — mate names must match and both files end together, else exit 1.

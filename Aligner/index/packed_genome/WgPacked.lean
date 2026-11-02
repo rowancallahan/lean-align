@@ -321,8 +321,8 @@ def diagsI (acc : List (Array Nat)) : List Nat :=
   let l := flatD acc
   dedupAdj (if l.length ≤ 16 then isortN l else l.mergeSort fun a b => decide (a ≤ b))
 
-/-- Compiled code runs `diagsI`. -/
-@[csimp] theorem diags_eqI : @diags = @diagsI := by
+/-- `diags` by insertion sort (compiled code runs `diagsM`). -/
+theorem diags_eqI : @diags = @diagsI := by
   funext acc
   unfold diags diagsI
   simp only [flatD_eq, isortN_eq, ite_self]
@@ -424,7 +424,7 @@ theorem sliceG_eqW (a : Array Nat) (base o len : Nat) : sliceG a base o len = sl
     (r : Array (List (Array Nat)) × Best) (c : Nat) : Array (List (Array Nat)) × Best :=
   let sl := sliceW a bs offs[c]! (GRead.size gbs2[t + c]!)
   (r.1.set! c (sl :: r.1[c]!),
-    sl.foldl (fun b e => addKF kf (t + c) (min P 16) ((e / 16 : Nat) - (n : Int)) n b) r.2)
+    sl.foldl (fun b e => addKFA kf (t + c) (min P 16) (e / 16) n b) r.2)
 
 /-- `GS.advFG` with the chromosomes visited by `foldUpN` and sliced by `sliceW` (`advFG_eqL`). -/
 @[inline] def GS.advFGL {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf : Ker) (ix : L) (G R : ByteArray)
@@ -441,7 +441,7 @@ theorem sliceG_eqW (a : Array Nat) (base o len : Nat) : sliceG a base o len = sl
   funext
   unfold GS.advFG GS.advFGL
   have e : @advCFG = @advCFGW := by
-    funext; unfold advCFG advCFGW; rw [sliceG_eqW]
+    funext; unfold advCFG advCFGW; rw [sliceG_eqW]; simp only [addKFA_eq]
   split <;> simp only [foldUpN_eq, List.range_eq_range', e]
 
 @[specialize] def ilGFG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)

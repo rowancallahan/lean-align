@@ -52,13 +52,23 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
   return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
                 quality := String.fromUTF8! quality }
 
--- up to `size` pairs, reading the two FASTQ files in step
+-- a read's name without its comment (after the first space) and without a trailing "/1" or "/2"
+def mateName (name : String) : String :=
+  let base := (name.splitOn " ").headD ""
+  if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
+
+-- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
+-- names differ or one file ends before the other (the files are out of step)
 def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecord × FastqRecord)) := do
   let mut chunk := #[]
   for _ in [0:size] do
     match ← readFastqRecord reads1, ← readFastqRecord reads2 with
-    | some record1, some record2 => chunk := chunk.push (record1, record2)
-    | _, _ => break
+    | some record1, some record2 =>
+      if mateName record1.name != mateName record2.name then
+        throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
+      chunk := chunk.push (record1, record2)
+    | none, none => break
+    | _, _ => throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
   return chunk
 
 end Spec
