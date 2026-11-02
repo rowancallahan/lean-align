@@ -58,7 +58,9 @@ def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.
 
 -- SEQ and QUAL as on the forward strand of the reference: reversed (and complemented) on reverse.
 -- Byte for byte the same as decoding to letters and back for the ASCII letters reads are made of.
+-- A mate trimmed away entirely has no letters: SEQ and QUAL are "*".
 def samSequence (record : FastqRecord) (strand : Strand) : String × String :=
+  if record.letters.isEmpty then ("*", "*") else
   match strand with
   | .forward => (String.fromUTF8! record.letters, record.quality)
   | .reverse => (String.fromUTF8! (reverseMapBytes complementByte record.letters),
