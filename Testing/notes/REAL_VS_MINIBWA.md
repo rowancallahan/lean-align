@@ -62,7 +62,7 @@ NovaSeq: 182 462 pairs (we map both mates of 98.7 %); HiSeq 184 996 (95.6 %).
 
 Share of minibwa-confident pairs we map that score < -16 / < -32 / < -50 / < -100: NovaSeq 8.1 / 4.7 / 3.7 / 2.9 %; HiSeq 7.2 / 3.4 / 2.8 / 2.3 %.
 **A -50 floor would unmap 6 635 (NovaSeq) and 5 027 (HiSeq) pairs that minibwa maps confidently**, on top of the 2 386 / 8 155 we already miss.
-Of those, the below -100 bin is mostly degenerate pairs (43-54 % NovaSeq, 31 % HiSeq: these are our "gave up" answers). The -100..-50 and -50..-32
+Of those, the below -100 bin is mostly degenerate pairs (54 % NovaSeq, 31 % HiSeq: our "gave up" answers). The -100..-50 and -50..-32
 bins are real alignments (almost none degenerate); in them minibwa's own alignment, scored in our model, is also < -50 for 354 of 871 (NovaSeq) and
 155 of 366 (HiSeq) unclipped pairs (but over untrimmed reads), and the same place as ours for 59 % / 48 %. Reading: the floor mostly removes
 degenerate pairs, but each set has ~1 400 / ~900 real pairs in -100..-50 that minibwa maps and that are partly genuine high-error pairs, partly trimming/clipping artifacts.
