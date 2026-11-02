@@ -50,5 +50,26 @@ remaining cost is `Nat` glue spread over large functions (`kerGKG`'s gapped path
 `fwdMisU_eq` / `fwdWU_eq` / `bwdWU_eq` / `flagsOkU_eq` is the next step there. SAM text and FASTQ parsing are in
 frozen files.
 
-## 4. Timing
-See §4 table (filled from the timing run).
+## 4. Timing (4 threads `taskset -c 0-3`, FASTQ + SAM included, median of 3)
+minibwa c07de5c (default build, `map -t 4`, release index `mb`), base = 12d1016, head = a3287a1. Per tool and set: one
+warm-up empty-FASTQ run, then 3 × (empty-FASTQ run, full run); map = wall(full) − wall(empty right before),
+CPU = (user + sys)(full) − (user + sys)(empty). Full-set SAM of head = base on all 4 sets (byte-identical).
+| set | minibwa map / CPU s | base map / CPU s | head map / CPU s | minibwa / head (wall, CPU) |
+|---|---|---|---|---|
+| NovaSeq 200k | 17.12 / 63.5 | 11.38 / 43.4 | 5.68 / 32.8 | 3.01x, 1.94x |
+| sim mason 200k | 16.53 / 68.0 | 15.51 / 54.9 | 15.18 / 53.5 | 1.09x, 1.27x |
+| sim low 200k | 12.46 / 46.0 | 7.77 / 28.1 | 7.84 / 28.2 | 1.59x, 1.63x |
+| HiSeq 200k | 29.55 / 133.1 | 16.12 / 45.5 | 19.61 / 47.6 | 1.51x, 2.80x |
+The wall numbers are NOT reliable on this box: the empty-run (index load) wall varies 1.7–17 s run to run even with
+the tool's runs grouped (the shim's 5.3 GB index allocation makes the kernel reclaim page cache, minibwa's index is 7 GB,
+RAM 15.7 GB), so map = full − empty swings by ±5–8 s (NovaSeq head runs: 21.9 / 5.7 / 4.6 s). A first pass with the
+tools interleaved was worse (empty runs up to 500 s, negative differences) and is discarded. User CPU of the map part
+(full − empty) is the steadier measure (±10%), medians of 6 runs (both passes):
+| set | minibwa user s | base user s | head user s | head / base |
+|---|---|---|---|---|
+| NovaSeq | 57.4 | 41.4 | 36.8 | 0.89 |
+| mason | 63.6 | 54.8 | 50.4 | 0.92 |
+| low | 43.7 | 27.5 | 25.3 | 0.92 |
+| HiSeq | 121.2 | 42.6 | 38.0 | 0.89 |
+head / base user CPU matches the Ir changes (−12% NovaSeq, −7% mason). For a wall A/B on this box, run the index load
+outside the timed region (e.g. a bench that loads once) rather than subtracting an empty run.
