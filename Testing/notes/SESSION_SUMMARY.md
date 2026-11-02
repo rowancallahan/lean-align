@@ -1315,6 +1315,23 @@ Mates within our −16 cap: NovaSeq 94.8%, HiSeq 88.6% (≤2 mismatches: 91.2% /
 NovaSeq 4.3% (our alignment is end-to-end and the shim doesn't trim). This matches our ~82% kept vs minibwa ~98%: the
 gap is the cap and read ends, not the router. At junkScore −17, ~1 in 6 HiSeq pairs minibwa maps would be "junk".
 
+### Later in the night (2026-11-02, merged into claude/festive-fermi-mf9mo6 95908f0, CI green)
+- M2 final (O3): mate rescue, chkCand byte compare (−6% Ir HiSeq); −16 counts (shim, 200k): mapped mason 97.4% /
+  low 99.8% / NovaSeq 93.8% / HiSeq 85.5%; degenerate 0.63/0.16/0.97/0.56%; both at truth mason 93.8%, low 96.6%.
+- Index builder fully proved (O5/O6/O4): `buildIndex_eq_saveIndex (g) (hf : Fits g)` — the real index is written for any
+  genome up to ~4.07e9 letters; the LENS lengths record can never be mistaken for a saved index (magic's last byte ≠ 0;
+  keep it that way). Runtime check kept.
+- O4 machine code: boxed Nat ≈ 25–30% of hg38 instructions; lanesAnyV, stageKSPN, loadGU proved rewrites: −8.3% Ir mason,
+  −2.9% HiSeq, SAM identical; -march=native within noise. Next ideas in ASM_COMPARE_2026-11.md.
+- BAM (S1): writer sped up; for mapped output BAM ≤ SAM in format time and CPU, ~20% smaller; samtools checks pass.
+- Output vs minibwa (S3): unique pairs same position+CIGAR 98.2–99.7%; differences mostly minibwa soft-clips; main gap =
+  unmapped pairs with bound < 0 (mates past the cap). Repeat-mask check needs ngi-igenomes.s3.amazonaws.com allowed.
+- Trimming (S2): HiSeq +23k pairs (141k→164k), NovaSeq +1k, for ~5 s/3.5 s single-thread CPU per 200k.
+- Variable seeds (S1): median minimal unique length 18–19; 95–98% of mates have a unique ≤32-mer; up to ~4% pinned to a
+  wrong repeat copy; use only as a hint. Repeat hint (S2): no good threshold. Near-tie coverage (S2): small gaps cover
+  little; biggest leftover class = both mates hit but no proper pair (39–62%).
+- Opus boxes archived after finishing: O3, O4, O5, O6 (Rowan's 3–4 Opus limit).
+
 ### Later (Rowan)
 - **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
   maybe force reporting it whenever one exists.
