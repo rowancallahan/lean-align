@@ -59,7 +59,7 @@ def main (args : List String) : IO Unit := do
     let a := a0.letters
     let b := b0.letters
     if a.isEmpty || b.isEmpty then cnt := cnt.alter "trimmedAway" (fun v => some ((v.getD (0,0)).1 + 1, 0)); continue
-    let ans := match alignOne insertSettings #[] (some (ix, G, offs, ns)) (some a) (some b) with
+    let ans := match alignOne insertSettings [] (some (ix, G, offs, ns)) (some a) (some b) with
       | .aligned x => x | _ => default
     let bad := match ans.found with
       | some r => decide (repScore r < floor)

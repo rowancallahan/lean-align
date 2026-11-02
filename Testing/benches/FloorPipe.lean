@@ -93,7 +93,7 @@ def main (args : List String) : IO Unit := do
     let b := b0.letters
     if a.isEmpty || b.isEmpty then cnt := add cnt "trimmedAway" 1; continue
     let q0 ← IO.monoNanosNow
-    let ans ← (← IO.mkRef (if q0 == 0 then default else match alignOne insertSettings #[] (some (ix, G, offs, ns)) (some a) (some b) with
+    let ans ← (← IO.mkRef (if q0 == 0 then default else match alignOne insertSettings [] (some (ix, G, offs, ns)) (some a) (some b) with
       | .aligned x => x | _ => default)).get
     let q1 ← IO.monoNanosNow
     cnt := add cnt "map [us]" ((q1 - q0) / 1000)
@@ -122,10 +122,30 @@ def main (args : List String) : IO Unit := do
       cnt := add cnt s!"{F} b walk3 [us]" ((w1 - w0) / 1000)
       if w.isSome then cnt := add cnt s!"{F} b walk3" 1; continue
       -- (c) anchor join at caps 4e / 4e
-      let j ← (← IO.mkRef (if w1 == 0 then false else (tierNo cfg pk #[0] pgs cap false false a b).isSome)).get
+      -- the join's lookup cost: the rarest sbound(cap)+1 buckets per strand of both mates
+      let jcost := rareSum pk a (sbound cap + 1) + rareSum pk b (sbound cap + 1)
+      let jb := if jcost ≤ 2000 then "<=2k" else if jcost ≤ 5000 then "<=5k" else if jcost ≤ 20000 then "<=20k" else ">20k"
+      let j ← (← IO.mkRef (if w1 == 0 || 20000 < jcost then false else (tierNo cfg pk #[0] pgs cap false false a b).isSome)).get
       let j1 ← IO.monoNanosNow
       cnt := add cnt s!"{F} c noPairJ [us]" ((j1 - w1) / 1000)
-      if j then cnt := add cnt s!"{F} c noPairJ" 1; continue
+      cnt := add cnt s!"{F} c join cost {jb} [us]" ((j1 - w1) / 1000)
+      cnt := add cnt s!"{F} c join cost {jb} tried" 1
+      if j then cnt := add cnt s!"{F} c join cost {jb} proved" 1
+      if j then
+        cnt := add cnt s!"{F} c noPairJ" 1
+        -- without (c): this pair goes to (d) if short and cheap, else to the witness test / complete search
+        let short := decide (minLen < 125)
+        let budget := rareSum pk a (e + 1) + rareSum pk b (e + 1)
+        if short && budget ≤ 1000 then cnt := add cnt s!"{F} noC d" 1; continue
+        let occ := max (maxOcc pk a) (maxOcc pk b)
+        let wit := if occ ≥ 5000 then ">=5000" else if occ ≥ 1000 then "1000-4999" else if occ ≥ 500 then "500-999" else if occ ≥ 200 then "200-499" else "<200"
+        let g0 ← IO.monoNanosNow
+        let r ← (← IO.mkRef (if g0 == 0 then none else pairGXE dcost0 cfg.usl cfg.lo cfg.hi cap false pk #[0] pgs a b)).get
+        let g1 ← IO.monoNanosNow
+        cnt := add cnt s!"{F} noC occ {wit}" 1
+        cnt := add cnt s!"{F} noC occ {wit} [ms]" ((g1 - g0) / 1000000)
+        if (match r with | some (_, false) => false | _ => true) then cnt := add cnt s!"{F} noC occ {wit} search undecided" 1
+        continue
       -- (d) short mates: pairGXE at 4e under a tiny budget
       let short := decide (minLen < 125)
       let band := if minLen < 50 then "<50" else if minLen < 75 then "50-75" else if minLen < 100 then "75-100" else if minLen < 125 then "100-125" else ">=125"
