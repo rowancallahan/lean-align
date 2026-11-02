@@ -33,13 +33,13 @@ def main (args : List String) : IO UInt32 := do
     for line in Spec.samHeader chromosomes do
       out.putStrLn line
     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
-    let mut next ← IO.asTask (Spec.readChunk reads1 reads2 100000)
+    let mut next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
     let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
     repeat
       let chunk ← IO.ofExcept next.get
       if chunk.isEmpty then
         break
-      next ← IO.asTask (Spec.readChunk reads1 reads2 100000)
+      next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
       -- ╔══════════════════════════════════════════════════════════════════════════════════╗
       -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
       -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
