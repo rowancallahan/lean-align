@@ -138,7 +138,7 @@ lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Trimmer where
   srcDir := "Aligner/trimmer"
-  roots := #[`ReadWindowTrimmer]
+  roots := #[`ReadWindowTrimmer, `AdapterTrim]
 
 -- ───────────────────────────── tool ─────────────────────────────
 
@@ -273,3 +273,7 @@ lean_exe kmer_check where             -- runs the proved checker UniqueGenome.ch
 lean_exe tie_prof where                   -- benchmark only: shim CPU by router stage, tier and reason (unproved IO)
   srcDir := "Testing/benches"
   root := `TieProf
+
+lean_exe adapter_bench where              -- benchmark only: CPU and cut counts of AdapterTrim.cutTruSeq on a FASTQ (unproved IO)
+  srcDir := "Testing/benches"
+  root := `AdapterBench

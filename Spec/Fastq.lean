@@ -1,8 +1,10 @@
 import ReadTrim
+import AdapterTrim
 
 /-! # Paired FASTQ reading. Unproved (trusted) plumbing for the shim: the file is read in 4 MB blocks
 and split into lines on newline bytes; only the read name and qualities become Strings. Each mate is
-quality-trimmed with the proved trimmer (`ReadTrim.trimRead`) as it is read. -/
+cut at the TruSeq adapter (`AdapterTrim.cutTruSeq`, proved) and then quality-trimmed with the proved
+trimmer (`ReadTrim.trimRead`) as it is read. -/
 
 namespace Spec
 
@@ -60,12 +62,13 @@ def mateName (name : String) : String :=
   let base := (name.splitOn " ").headD ""
   if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
 
--- quality trimming with the proved trimmer: keep the best window of letters and qualities; a mate
--- with nothing worth keeping comes back with no letters (trimmed away)
+-- adapter cut, then quality trimming with the proved trimmers: cut letters and qualities at the
+-- first TruSeq adapter, then keep the best window; a mate with nothing worth keeping comes back with
+-- no letters (trimmed away)
 def trimRecord (record : FastqRecord) : FastqRecord :=
-  let qual := record.quality.toUTF8
-  match ReadTrim.trimRead record.letters qual with
-  | some (s, e) => { record with letters := record.letters.extract s e,
+  let (letters, qual) := AdapterTrim.cutTruSeq record.letters record.quality.toUTF8
+  match ReadTrim.trimRead letters qual with
+  | some (s, e) => { record with letters := letters.extract s e,
                                  quality := String.fromUTF8! (qual.extract s e) }
   | none => { record with letters := ByteArray.empty, quality := "" }
 
