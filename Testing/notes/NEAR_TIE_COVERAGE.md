@@ -50,3 +50,24 @@ Classes at the deepest gap reached (≤ 16):
 - (c1): one proper pair exists within 16 but the fallback did not print it (3–14%): a fallback miss, not a tie.
 - Caveats: the enumeration is cut at the guarantee's depth (many pairs never reach g = 16); (a) counts candidate *pairs*
   (one mate's placement differing counts as different); the totals differ from the stage-5 note (above).
+
+## Check with the real shim (`lean-align map`, 95908f0, default settings, junkScore −16; 100 / 1000; `taskset -c 0-3`)
+Shim index built from the same hg38 `genome.fa` (32 min). Counted from the SAM (per pair, both mates):
+| set | pairs | both mates mapped (flags) | of which real alignment | **degenerate** (both CIGAR `^[0-9]+I$`) | unmapped (both flag 4) | XU:Z:unique (both mates) | XU:Z:unknown (real alignments) |
+|---|---|---|---|---|---|---|---|
+| mason | 200,000 | 194,886 (97.44%) | 193,625 (96.81%) | **1,261 (0.63%)** | 5,114 (2.56%) | 176,444 (88.22%) | 17,181 (8.59%) |
+| NovaSeq | 200,000 | 187,675 (93.84%) | 185,737 (92.87%) | **1,938 (0.97%)** | 12,325 (6.16%) | 163,941 (81.97%) | 21,796 (10.90%) |
+| HiSeq | 200,000 | 171,057 (85.53%) | 169,945 (84.97%) | **1,112 (0.56%)** | 28,943 (14.47%) | 141,060 (70.53%) | 28,885 (14.44%) |
+(No pair has exactly one mate flagged unmapped or exactly one all-insertion mate. Every degenerate pair has MAPQ 0 and
+`XU:Z:unknown`; its `XT:Z` is `boundsOnly` for most (mason 1,248 of 1,261; NovaSeq 1,526 of 1,938; HiSeq 758 of 1,112), `stoppedEarly`
+for 13 / 289 / 136 pairs and `eachMateUnique` for 0 / 123 / 218 pairs (mates unique, no proper pair). XU unknown counts only
+pairs whose two records both say unknown.)
+
+- The shim reproduces the stage-5 note's degenerate counts exactly (1,261 / 1,938 / 1,112): **the real rates are 0.56–0.97%**,
+  not the 0.92 / 2.62 / 1.12% of the bench replication above.
+- The bench replication does **not** reproduce the shim pair by pair. Pairs the bench called degenerate, by the shim's SAM:
+  mason 1,841 → 1,130 degenerate, 188 unmapped, 523 real; NovaSeq 5,247 → 1,614 / 3,064 / 569; HiSeq 2,232 → 430 / 1,499 / 303.
+  Shim-degenerate pairs the bench did not call degenerate: 131 / 324 / 682. Same index parameters (k 22, B 26, c 0, w 5, t 6) and
+  the same functions (`tierCfg`, `answerOfPair`); the cause is not found (not read-trimming order or pair order: counts and
+  order match). **So the (a)/(b)/(c) split above describes the bench replication's population and cannot be taken as the split of
+  the shim's degenerate pairs.** Redoing it needs the dump inside the shim path (index in the shim's format).
