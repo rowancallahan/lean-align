@@ -442,7 +442,10 @@ def anchorsOf (pk : PkMz) (pgs : Array PGen) (R : ByteArray) (s : PrepM MzP) (k 
         let z := LookG.size pk p
         if z != 0 && best.all (fun r => z < r.1) then best := some (z, j)
     if let some (_, j) := best then
-      let a := LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
+      -- only the first `k` anchors are used: the bucket scan stops once it has them (`lookupPWk_extract`:
+      -- the same first `k` as the whole lookup, `LookG.look` = `mzLookSP` = `lookupPW` for `p.ok`)
+      let a := if pp[j]!.ok then lookupPWk pk.1 pk.2 Rx (j * Ls) pp[j]! (n - j * Ls) 0 k
+        else LookG.look pk ByteArray.empty Rx (j * Ls) (n - j * Ls) pp[j]!
       for e in a.extract 0 k do
         let D := e / 16
         if n ≤ D && D ≤ G.n then

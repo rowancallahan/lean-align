@@ -144,10 +144,99 @@ theorem wlI_eq (Q : Nat) (hQ : Q ≤ 1000) (seq qual : ByteArray) : ∀ (i ns : 
         · rw [if_pos (c3.mpr h1), if_pos h1, wlI_eq Q hQ seq qual i _ _ _ _ _ _ _ (by omega) bF bF]
         · rw [if_neg (fun c => h1 (c3.mp c)), if_neg h1, wlI_eq Q hQ seq qual i _ _ _ _ _ _ _ (by omega) bF bB]
 
+/-! `wlI` with the counters in `USize` and the bytes read by `uget` (`wlU_eq`; all counters stay below 2^31). -/
+
+theorem rt_usize_le (B : ByteArray) : B.usize.toNat ≤ B.size := by
+  show B.size.toUSize.toNat ≤ B.size
+  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
+
+theorem rt_n (n : Nat) (h : n < 2 ^ 32) : n.toUSize.toNat = n := by
+  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
+
+theorem rt_add (a b : USize) (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
+  rw [USize.toNat_add, Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
+
+theorem rt_one : (1 : USize).toNat = 1 := rt_n 1 (by decide)
+
+theorem rt_sub1 (a : USize) (h : a ≠ 0) : (a - 1).toNat = a.toNat - 1 := by
+  have : a.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+  rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ a.toNat; rw [rt_one]; omega), rt_one]
+
+/-- `B[p.toNat]!` with one machine-word bounds check. -/
+@[inline] def rtGet (B : ByteArray) (p : USize) : UInt8 :=
+  if h : p < B.usize then B.uget p (Nat.lt_of_lt_of_le h (rt_usize_le B)) else B[p.toNat]!
+
+theorem rtGet_eq (B : ByteArray) (p : USize) : rtGet B p = B[p.toNat]! := by
+  unfold rtGet; split
+  · rename_i h
+    have h' : p.toNat < B.size := Nat.lt_of_lt_of_le h (rt_usize_le B)
+    rw [getElem!_pos B p.toNat h']; rfl
+  · rfl
+
+def wlU (Q : Int64) (seq qual : ByteArray) (i ns : USize) (hr : Bool) (pl : USize) (ps : Int64) (bs be : USize)
+    (bsc : Int64) : PackedFoldState :=
+  if h : i = 0 then ⟨ns.toNat, hr, pl.toNat, ps.toInt, bs.toNat, be.toNat, bsc.toInt⟩
+  else
+    let j := i - 1
+    let cs := if ns = 0 then 0 else ns - 1
+    let f := fI Q (rtGet seq j) (rtGet qual j)
+    if hr then
+      if 0 < ps then
+        if bsc ≤ f + ps then wlU Q seq qual j cs true (pl + 1) (f + ps) cs (cs + (pl + 1)) (f + ps)
+        else wlU Q seq qual j cs true (pl + 1) (f + ps) bs be bsc
+      else if bsc ≤ f then wlU Q seq qual j cs true 1 f cs (cs + 1) f
+      else wlU Q seq qual j cs true 1 f bs be bsc
+    else wlU Q seq qual j cs true 1 f cs (cs + 1) f
+termination_by i.toNat
+decreasing_by
+  all_goals
+    have : i.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [rt_sub1 i h]; omega
+
+theorem wlU_eq (Q : Int64) (seq qual : ByteArray) : ∀ (i : Nat) (iU nsU plU bsU beU : USize) (hr : Bool)
+    (ps bsc : Int64), iU.toNat = i → nsU.toNat < 2 ^ 30 → plU.toNat + i < 2 ^ 30 → bsU.toNat < 2 ^ 31 →
+    beU.toNat < 2 ^ 31 →
+    wlU Q seq qual iU nsU hr plU ps bsU beU bsc =
+      wlI Q seq qual i nsU.toNat hr plU.toNat ps bsU.toNat beU.toNat bsc
+  | 0, iU, nsU, plU, bsU, beU, hr, ps, bsc, hi, _, _, _, _ => by
+    have : iU = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
+    rw [wlU, dif_pos this]; rfl
+  | i + 1, iU, nsU, plU, bsU, beU, hr, ps, bsc, hi, hn, hp, hb, he => by
+    have h0 : iU ≠ 0 := fun e => by rw [e] at hi; simp at hi
+    have ej : (iU - 1).toNat = i := by rw [rt_sub1 iU h0, hi]; rfl
+    have ecs : (if nsU = 0 then 0 else nsU - 1 : USize).toNat = nsU.toNat - 1 := by
+      split
+      · rename_i e; rw [e]; rfl
+      · rename_i e; exact rt_sub1 nsU e
+    have epl : (plU + 1).toNat = plU.toNat + 1 := by rw [rt_add _ _ (by rw [rt_one]; omega), rt_one]
+    have ecp : ((if nsU = 0 then 0 else nsU - 1 : USize) + (plU + 1)).toNat = (nsU.toNat - 1) + (plU.toNat + 1) := by
+      rw [rt_add _ _ (by rw [ecs, epl]; omega), ecs, epl]
+    have ec1 : ((if nsU = 0 then 0 else nsU - 1 : USize) + 1).toNat = (nsU.toNat - 1) + 1 := by
+      rw [rt_add _ _ (by rw [ecs, rt_one]; omega), ecs, rt_one]
+    have eo : (1 : USize).toNat = 1 := rt_one
+    rw [wlU, dif_neg h0]
+    simp only [wlI, rtGet_eq, ej]
+    have ih := fun (plU' bsU' beU' : USize) (hr' : Bool) (ps' bsc' : Int64) (hp' : plU'.toNat + i < 2 ^ 30)
+      (hb' : bsU'.toNat < 2 ^ 31) (he' : beU'.toNat < 2 ^ 31) =>
+      wlU_eq Q seq qual i (iU - 1) (if nsU = 0 then 0 else nsU - 1) plU' bsU' beU' hr' ps' bsc' ej
+        (by rw [ecs]; omega) hp' hb' he'
+    split
+    · split
+      · split
+        · rw [ih _ _ _ _ _ _ (by rw [epl]; omega) (by rw [ecs]; omega) (by rw [ecp]; omega), epl, ecs, ecp]
+        · rw [ih _ _ _ _ _ _ (by rw [epl]; omega) hb he, epl, ecs]
+      · split
+        · rw [ih _ _ _ _ _ _ (by rw [eo]; omega) (by rw [ecs]; omega) (by rw [ec1]; omega), eo, ecs, ec1]
+        · rw [ih _ _ _ _ _ _ (by rw [eo]; omega) hb he, eo, ecs]
+    · rw [ih _ _ _ _ _ _ (by rw [eo]; omega) (by rw [ecs]; omega) (by rw [ec1]; omega), eo, ecs, ec1]
+
 /-- `wl` for the compiled code (`wl_eq_wlF`): `wlI` from the start state (scores 0). -/
 @[inline] def wlF (Q : Nat) (seq qual : ByteArray) (i ns : Nat) (hr : Bool) (pl : Nat) (ps : Int) (bs be : Nat)
     (bsc : Int) : PackedFoldState :=
-  if Q ≤ 1000 ∧ i ≤ 10000 ∧ ps = 0 ∧ bsc = 0 then wlI (Int64.ofNat Q) seq qual i ns hr pl 0 bs be 0
+  if Q ≤ 1000 ∧ i ≤ 10000 ∧ ps = 0 ∧ bsc = 0 then
+    if ns < 1073741824 ∧ pl + i < 1073741824 ∧ bs < 2147483648 ∧ be < 2147483648 then
+      wlU (Int64.ofNat Q) seq qual i.toUSize ns.toUSize hr pl.toUSize 0 bs.toUSize be.toUSize 0
+    else wlI (Int64.ofNat Q) seq qual i ns hr pl 0 bs be 0
   else wl Q seq qual i ns hr pl ps bs be bsc
 
 @[csimp] theorem wl_eq_wlF : @wl = @wlF := by
@@ -156,7 +245,14 @@ theorem wlI_eq (Q : Nat) (hQ : Q ≤ 1000) (seq qual : ByteArray) : ∀ (i ns : 
   · rename_i h
     obtain ⟨hQ, hi, rfl, rfl⟩ := h
     have e0 : (0 : Int64).toInt = 0 := rfl
-    rw [wlI_eq Q hQ seq qual i ns hr pl 0 bs be 0 (by omega) (by rw [e0]; omega) (by rw [e0]; omega), e0]
+    have hI := wlI_eq Q hQ seq qual i ns hr pl 0 bs be 0 (by omega) (by rw [e0]; omega) (by rw [e0]; omega)
+    rw [e0] at hI
+    split
+    · rename_i hb
+      rw [wlU_eq _ seq qual i _ _ _ _ _ hr 0 0 (rt_n i (by omega)) (by rw [rt_n ns (by omega)]; omega)
+        (by rw [rt_n pl (by omega)]; omega) (by rw [rt_n bs (by omega)]; omega) (by rw [rt_n be (by omega)]; omega),
+        rt_n ns (by omega), rt_n pl (by omega), rt_n bs (by omega), rt_n be (by omega), hI]
+    · exact hI.symm
   · rfl
 
 /-- The kept window `[s, e)`, or `none` (nothing worth keeping: the best window
