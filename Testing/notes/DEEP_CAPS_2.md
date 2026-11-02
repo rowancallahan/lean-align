@@ -83,3 +83,8 @@ Scaled to 200k pairs (MAXOCC 20): mason +14.9k pairs at truth (+7.5%), low +3.2k
 (+4.6%; ~half need the deeper cap), NovaSeq +11.3k (+5.7%). Cost as measured is far too high (HiSeq 28.9k × 34 ms ≈
 990 s CPU vs ~28 s for the whole shim run): the prototype verifies every entry of a bucket before deciding to skip it
 (1,600–2,150 entries per lookup in these repeat-rich pairs); the DPs are few (60–120 per pair at MAXOCC 20).
+
+K = 18, W = 4 (21-letter clean stretch), same 1000-pair inputs: mason MAXOCC 20 / 100: 864 / 920 proper, 782 / 821 at
+truth, 32.8 / 51.4 ms; low 682 / 763, 508 / 568 at truth, 53.3 / 79.6 ms; HiSeq 382 / 417 proper (325 / 337 unique),
+75.2 / 139.0 ms; NovaSeq 484 / 534 (414 / 435 unique), 53.7 / 75.2 ms. Same gains as K = 21 (±1–2%) at 1.7–2.2× the
+cost (exact hits per lookup 1,731–4,630): the 24-letter guarantee of K = 21 already covers these pairs.
