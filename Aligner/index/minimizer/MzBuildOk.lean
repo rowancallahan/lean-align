@@ -1273,3 +1273,374 @@ theorem checkSound_ixB (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : checkSou
   exact entryOk_ixB G hsz b hb' r (by omega)
 
 end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+def flat : List (Nat × Nat) → List Nat
+  | [] => []
+  | pr :: t => pr.1 :: pr.2 :: flat t
+
+/-- A maximal run `[a, b)` of non-ACGT bytes of `G`. -/
+def GoodPair (G : ByteArray) (pr : Nat × Nat) : Prop :=
+  pr.1 < pr.2 ∧ pr.2 ≤ G.size ∧ (∀ x, pr.1 ≤ x → x < pr.2 → acgt (G.get! x) = false) ∧
+    (pr.1 = 0 ∨ acgt (G.get! (pr.1 - 1)) = true) ∧ (pr.2 = G.size ∨ acgt (G.get! pr.2) = true)
+
+/-- After reading `G[0, m)` a run is open: it does not end at `m`. -/
+def Opn (G : ByteArray) (m : Nat) : Prop :=
+  0 < m ∧ m < G.size ∧ acgt (G.get! (m - 1)) = false ∧ acgt (G.get! m) = false
+
+/-- The runs loop after `G[0, m)`: closed runs `prs`, maybe an open one from `oa`. -/
+def RInv (G : ByteArray) (m : Nat) (R : Array Nat) : Prop :=
+  ∃ prs : List (Nat × Nat), ∃ oa : Option Nat,
+    R.toList = flat prs ++ oa.toList ∧ (oa.isSome ↔ Opn G m) ∧ (∀ pr ∈ prs, GoodPair G pr ∧ pr.2 ≤ m) ∧
+    prs.Pairwise (fun p1 p2 => p1.2 < p2.1) ∧
+    (∀ a ∈ oa, a < m ∧ (∀ x, a ≤ x → x < m → acgt (G.get! x) = false) ∧
+      (a = 0 ∨ acgt (G.get! (a - 1)) = true) ∧ ∀ pr ∈ prs, pr.2 < a) ∧
+    (∀ x < m, acgt (G.get! x) = false → (∃ pr ∈ prs, pr.1 ≤ x ∧ x < pr.2) ∨ (∃ a ∈ oa, a ≤ x))
+
+theorem flat_append (l l' : List (Nat × Nat)) : flat (l ++ l') = flat l ++ flat l' := by
+  induction l with
+  | nil => rfl
+  | cons pr t ih => simp [flat, ih]
+
+theorem RInv_step (G : ByteArray) (m : Nat) (hm : m < G.size) (R : Array Nat) (h : RInv G m R) :
+    RInv G (m + 1) (runStep G R m) := by
+  obtain ⟨prs, oa, hR, hopen, hprs, hsort, hoa, hcov⟩ := h
+  unfold runStep
+  by_cases ha : acgt (G.get! m) = true
+  · -- an ACGT letter: nothing pushed, nothing open
+    have hnone : oa = none := by
+      cases oa with
+      | none => rfl
+      | some a => have := (hopen.1 rfl).2.2.2; rw [ha] at this; cases this
+    subst hnone
+    simp only [ha, Bool.not_true, Bool.false_and, Bool.false_eq_true, if_false]
+    refine ⟨prs, none, hR, ?_, fun pr hp => ⟨(hprs pr hp).1, by have := (hprs pr hp).2; omega⟩, hsort,
+      fun a h => by simp at h, fun x hx hodd => ?_⟩
+    · constructor
+      · intro h; simp at h
+      · intro h; have := h.2.2.1; rw [show m + 1 - 1 = m by omega, ha] at this; cases this
+    have hxm : x ≠ m := fun e => by subst e; rw [ha] at hodd; cases hodd
+    exact hcov x (by omega) hodd
+  · have hodd : acgt (G.get! m) = false := by simpa using ha
+    -- no closed run ends at `m` (the byte at `m` is not ACGT)
+    have hlt : ∀ pr ∈ prs, pr.2 < m := fun pr hp => by
+      obtain ⟨⟨_, _, _, _, h5⟩, h6⟩ := hprs pr hp
+      rcases Nat.lt_or_eq_of_le h6 with h | h
+      · exact h
+      · rcases h5 with h5 | h5
+        · omega
+        · rw [h, hodd] at h5; cases h5
+    simp only [hodd, Bool.not_false, Bool.true_and]
+    by_cases hS : (m == 0 || acgt (G.get! (m - 1))) = true
+    · have hnone : oa = none := by
+        cases oa with
+        | none => rfl
+        | some a =>
+          have h := (hopen.1 rfl)
+          simp only [Bool.or_eq_true, beq_iff_eq] at hS
+          rcases hS with hS | hS
+          · have := h.1; omega
+          · rw [h.2.2.1] at hS; cases hS
+      subst hnone
+      simp only [List.append_nil, Option.toList] at hR
+      have hS' : m = 0 ∨ acgt (G.get! (m - 1)) = true := by simpa using hS
+      rw [if_pos hS]
+      by_cases hE : (m + 1 == G.size || acgt (G.get! (m + 1))) = true
+      · have hE' : m + 1 = G.size ∨ acgt (G.get! (m + 1)) = true := by simpa using hE
+        rw [if_pos hE]
+        refine ⟨prs ++ [(m, m + 1)], none, ?_, ?_, ?_, ?_, fun a h => by simp at h, ?_⟩
+        · simp [hR, flat_append, flat]
+        · simp only [Option.isSome_none, Bool.false_eq_true, false_iff]
+          intro h; rcases hE' with e | e
+          · have := h.2.1; omega
+          · have := h.2.2.2; rw [e] at this; cases this
+        · intro pr hp
+          rcases List.mem_append.mp hp with hp | hp
+          · exact ⟨(hprs pr hp).1, by have := (hprs pr hp).2; omega⟩
+          · simp at hp; subst hp
+            refine ⟨⟨by simp, by simp; omega, fun x h1 h2 => ?_, hS', hE'⟩, Nat.le_refl _⟩
+            simp at h1 h2; rw [show x = m by omega]; exact hodd
+        · refine List.pairwise_append.mpr ⟨hsort, by simp, fun p1 hp1 p2 hp2 => ?_⟩
+          simp at hp2; subst hp2; exact hlt p1 hp1
+        · intro x hx hx'
+          by_cases e : x = m
+          · left; exact ⟨(m, m + 1), by simp, by simp [e], by simp [e]⟩
+          · rcases hcov x (by omega) hx' with ⟨pr, hp, h1, h2⟩ | ⟨a, ha', _⟩
+            · left; exact ⟨pr, List.mem_append_left _ hp, h1, h2⟩
+            · simp at ha'
+      · have hE' : m + 1 ≠ G.size ∧ acgt (G.get! (m + 1)) = false := by simpa using hE
+        rw [if_neg hE]
+        refine ⟨prs, some m, ?_, ?_, fun pr hp => ⟨(hprs pr hp).1, by have := (hprs pr hp).2; omega⟩, hsort,
+          ?_, ?_⟩
+        · simp [hR]
+        · simp only [Option.isSome_some, true_iff]
+          exact ⟨by omega, by omega, by rw [show m + 1 - 1 = m by omega]; exact hodd, hE'.2⟩
+        · intro a ha'; simp at ha'; subst ha'
+          refine ⟨by omega, fun x h1 h2 => by rw [show x = m by omega]; exact hodd, hS', hlt⟩
+        · intro x hx hx'
+          by_cases e : x = m
+          · right; exact ⟨m, by simp, by omega⟩
+          · rcases hcov x (by omega) hx' with h | ⟨a, ha', _⟩
+            · left; exact h
+            · simp at ha'
+    · have hS' : m ≠ 0 ∧ acgt (G.get! (m - 1)) = false := by simpa using hS
+      have hO : Opn G m := ⟨by omega, hm, hS'.2, hodd⟩
+      obtain ⟨a, rfl⟩ : ∃ a, oa = some a := Option.isSome_iff_exists.mp (hopen.2 hO)
+      obtain ⟨ha1, ha2, ha3, ha4⟩ := hoa a rfl
+      rw [if_neg hS]
+      by_cases hE : (m + 1 == G.size || acgt (G.get! (m + 1))) = true
+      · have hE' : m + 1 = G.size ∨ acgt (G.get! (m + 1)) = true := by simpa using hE
+        rw [if_pos hE]
+        refine ⟨prs ++ [(a, m + 1)], none, ?_, ?_, ?_, ?_, fun a h => by simp at h, ?_⟩
+        · simp [hR, flat_append, flat]
+        · simp only [Option.isSome_none, Bool.false_eq_true, false_iff]
+          intro h; rcases hE' with e | e
+          · have := h.2.1; omega
+          · have := h.2.2.2; rw [e] at this; cases this
+        · intro pr hp
+          rcases List.mem_append.mp hp with hp | hp
+          · exact ⟨(hprs pr hp).1, by have := (hprs pr hp).2; omega⟩
+          · simp at hp; subst hp
+            refine ⟨⟨by simp; omega, by simp; omega, fun x h1 h2 => ?_, ha3, hE'⟩, Nat.le_refl _⟩
+            simp at h1 h2
+            by_cases e : x = m
+            · rw [e]; exact hodd
+            · exact ha2 x h1 (by omega)
+        · refine List.pairwise_append.mpr ⟨hsort, by simp, fun p1 hp1 p2 hp2 => ?_⟩
+          simp at hp2; subst hp2; exact ha4 p1 hp1
+        · intro x hx hx'
+          by_cases e : x = m
+          · left; exact ⟨(a, m + 1), by simp, by simp; omega, by simp [e]⟩
+          · rcases hcov x (by omega) hx' with ⟨pr, hp, h1, h2⟩ | ⟨a', ha', h'⟩
+            · left; exact ⟨pr, List.mem_append_left _ hp, h1, h2⟩
+            · simp at ha'; subst ha'
+              left; exact ⟨(a, m + 1), by simp, by simp; omega, by simp; omega⟩
+      · have hE' : m + 1 ≠ G.size ∧ acgt (G.get! (m + 1)) = false := by simpa using hE
+        rw [if_neg hE]
+        refine ⟨prs, some a, hR, ?_, fun pr hp => ⟨(hprs pr hp).1, by have := (hprs pr hp).2; omega⟩, hsort,
+          ?_, ?_⟩
+        · simp only [Option.isSome_some, true_iff]
+          exact ⟨by omega, by omega, by rw [show m + 1 - 1 = m by omega]; exact hodd, hE'.2⟩
+        · intro a' ha'; simp at ha'; subst ha'
+          refine ⟨by omega, fun x h1 h2 => ?_, ha3, ha4⟩
+          by_cases e : x = m
+          · rw [e]; exact hodd
+          · exact ha2 x h1 (by omega)
+        · intro x hx hx'
+          by_cases e : x = m
+          · right; exact ⟨a, by simp, by omega⟩
+          · exact hcov x (by omega) hx'
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+theorem RInv_fold (G : ByteArray) : ∀ m ≤ G.size, RInv G m ((List.range' 0 m).foldl (runStep G) #[]) := by
+  intro m
+  induction m with
+  | zero =>
+    intro _
+    refine ⟨[], none, rfl, ?_, by simp, by simp, by simp, fun x hx => by omega⟩
+    simp only [Option.isSome_none, Bool.false_eq_true, false_iff]
+    intro h; have := h.1; omega
+  | succ m ih =>
+    intro hm
+    rw [List.range'_concat, List.foldl_append]
+    simp only [List.foldl_cons, List.foldl_nil, Nat.zero_add, Nat.one_mul]
+    exact RInv_step G m (by omega) _ (ih (by omega))
+
+theorem flat_length (prs : List (Nat × Nat)) : (flat prs).length = 2 * prs.length := by
+  induction prs with
+  | nil => rfl
+  | cons pr t ih => simp [flat, ih]; omega
+
+theorem flat_get (prs : List (Nat × Nat)) : ∀ i (h : i < prs.length),
+    (flat prs)[2 * i]? = some prs[i].1 ∧ (flat prs)[2 * i + 1]? = some prs[i].2 := by
+  induction prs with
+  | nil => intro i h; simp at h
+  | cons pr t ih =>
+    intro i h
+    cases i with
+    | zero => simp [flat]
+    | succ i =>
+      have := ih i (by simp at h; omega)
+      simp only [flat, show 2 * (i + 1) = 2 * i + 2 by omega, show 2 * i + 2 + 1 = 2 * i + 1 + 2 by omega,
+        List.getElem?_cons_succ, List.getElem_cons_succ]
+      exact this
+
+theorem arr_get! (R : Array Nat) (j v : Nat) (h : R.toList[j]? = some v) : R[j]! = v := by
+  obtain ⟨hj, e⟩ := List.getElem?_eq_some_iff.mp h
+  have hj' : j < R.size := by simpa using hj
+  rw [getElem!_pos R j hj', ← e]; simp
+
+theorem allNot_of (B : ByteArray) (b : Nat) : ∀ d a, b - a = d → (∀ x, a ≤ x → x < b → acgt (B.get! x) = false) →
+    allNot B a b = true := by
+  intro d
+  induction d with
+  | zero => intro a hd _; rw [allNot, if_neg (by omega)]
+  | succ d ih =>
+    intro a hd h
+    rw [allNot, if_pos (by omega), h a (Nat.le_refl _) (by omega)]
+    exact ih (a + 1) (by omega) (fun x h1 h2 => h x (by omega) h2)
+
+theorem advance_spec (ix : MzIdx) (x : Nat) : ∀ fuel c, c ≤ ix.nr → ix.nr ≤ c + fuel →
+    c ≤ advance ix x fuel c ∧ advance ix x fuel c ≤ ix.nr ∧
+      (∀ i, c ≤ i → i < advance ix x fuel c → ix.rb i ≤ x) ∧
+      (advance ix x fuel c < ix.nr → x < ix.rb (advance ix x fuel c)) := by
+  intro fuel
+  induction fuel with
+  | zero => intro c h1 h2; simp only [advance]; exact ⟨Nat.le_refl _, h1, fun i h1 h2 => by omega, fun h => by omega⟩
+  | succ fuel ih =>
+    intro c h1 h2
+    simp only [advance]
+    by_cases hc : (c < ix.nr && ix.rb c ≤ x) = true
+    · rw [if_pos hc]
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+      obtain ⟨i1, i2, i3, i4⟩ := ih (c + 1) (by omega) (by omega)
+      refine ⟨by omega, i2, fun i hi1 hi2 => ?_, i4⟩
+      by_cases e : i = c
+      · rw [e]; exact hc.2
+      · exact i3 i (by omega) hi2
+    · rw [if_neg hc]
+      simp only [Bool.and_eq_true, decide_eq_true_eq, not_and, Nat.not_le] at hc
+      exact ⟨Nat.le_refl _, h1, fun i h1 h2 => by omega, fun h => hc h⟩
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+theorem ra_rb (ix : MzIdx) (prs : List (Nat × Nat)) (hR : ix.runs.toList = flat prs) (i : Nat) (hi : i < prs.length) :
+    ix.ra i = prs[i].1 ∧ ix.rb i = prs[i].2 := by
+  obtain ⟨h1, h2⟩ := flat_get prs i hi
+  rw [← hR] at h1 h2
+  exact ⟨arr_get! _ _ _ h1, arr_get! _ _ _ h2⟩
+
+theorem nr_eq (ix : MzIdx) (prs : List (Nat × Nat)) (hR : ix.runs.toList = flat prs) : ix.nr = prs.length := by
+  have : ix.runs.size = 2 * prs.length := by rw [← Array.length_toList, hR, flat_length]
+  show ix.runs.size / 2 = _
+  omega
+
+theorem checkRuns_of (ix : MzIdx) (G : ByteArray) :
+    ∀ n i, (∀ j, i ≤ j → j < i + n → runOk ix G j = true) → checkRuns ix G n i = true := by
+  intro n
+  induction n with
+  | zero => intro i _; rfl
+  | succ n ih =>
+    intro i h
+    simp only [checkRuns, Bool.and_eq_true]
+    exact ⟨h i (Nat.le_refl _) (by omega), ih (i + 1) (fun j h1 h2 => h j (by omega) (by omega))⟩
+
+/-- `checkRuns` and `checkCover` accept the maximal non-ACGT runs, in order. -/
+theorem runs_ok (ix : MzIdx) (G : ByteArray) (prs : List (Nat × Nat)) (hR : ix.runs.toList = flat prs)
+    (hgood : ∀ pr ∈ prs, GoodPair G pr) (hsort : prs.Pairwise (fun p1 p2 => p1.2 < p2.1))
+    (hcov : ∀ x < G.size, acgt (G.get! x) = false → ∃ pr ∈ prs, pr.1 ≤ x ∧ x < pr.2) :
+    checkRuns ix G ix.nr 0 = true ∧ checkCover ix G 0 G.size 0 = true := by
+  have hnr := nr_eq ix prs hR
+  have hrr := ra_rb ix prs hR
+  have hlt : ∀ i j, i < j → j < prs.length → ix.rb i < ix.ra j := fun i j hij hj => by
+    rw [(hrr i (by omega)).2, (hrr j hj).1]
+    exact List.pairwise_iff_getElem.mp hsort i j (by omega) hj hij
+  have hab : ∀ i < prs.length, ix.ra i < ix.rb i := fun i hi => by
+    rw [(hrr i hi).1, (hrr i hi).2]; exact (hgood _ (List.getElem_mem hi)).1
+  refine ⟨checkRuns_of ix G _ _ (fun j _ hj => ?_), ?_⟩
+  · rw [Nat.zero_add, hnr] at hj
+    obtain ⟨g1, g2, g3, g4, g5⟩ := hgood _ (List.getElem_mem hj)
+    unfold runOk
+    simp only [(hrr j hj).1, (hrr j hj).2, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, hnr]
+    refine ⟨⟨⟨⟨⟨g1, g2⟩, allNot_of G _ _ _ rfl g3⟩, g5⟩, g4⟩, ?_⟩
+    by_cases hj1 : j + 1 < prs.length
+    · right; rw [← (hrr j hj).2]; exact hlt j (j + 1) (by omega) hj1
+    · left; omega
+  · have key : ∀ n x c, x + n = G.size → c ≤ ix.nr → (∀ i < c, ix.rb i ≤ x) → checkCover ix G c n x = true := by
+      intro n
+      induction n with
+      | zero => intro x c _ _ _; rfl
+      | succ n ih =>
+        intro x c hx hc hinv
+        simp only [checkCover]
+        by_cases ha : acgt (G.get! x) = true
+        · rw [if_pos ha]; exact ih (x + 1) c (by omega) hc (fun i hi => by have := hinv i hi; omega)
+        · rw [if_neg ha]
+          have hodd : acgt (G.get! x) = false := by simpa using ha
+          obtain ⟨d1, d2, d3, d4⟩ := advance_spec ix x ix.nr c hc (by omega)
+          generalize advance ix x ix.nr c = c' at d1 d2 d3 d4
+          obtain ⟨pr, hp, hp1, hp2⟩ := hcov x (by omega) hodd
+          obtain ⟨j, hj, rfl⟩ := List.getElem_of_mem hp
+          have ej := hrr j hj
+          have hjc : c' ≤ j := by
+            apply Classical.byContradiction; intro hlt'
+            by_cases hjc : j < c
+            · have := hinv j hjc; omega
+            · have := d3 j (by omega) (by omega); omega
+          have hjeq : j = c' := by
+            apply Classical.byContradiction; intro hne
+            have h1 := d4 (by omega)
+            have h2 := hlt c' j (by omega) hj
+            omega
+          subst hjeq
+          simp only [Bool.and_eq_true, decide_eq_true_eq]
+          refine ⟨⟨⟨by omega, by omega⟩, by omega⟩, ih (x + 1) _ (by omega) d2 (fun i hi => ?_)⟩
+          by_cases hic : i < c
+          · have := hinv i hic; omega
+          · have := d3 i (by omega) hi; omega
+    exact key G.size 0 0 (by omega) (Nat.zero_le _) (fun i hi => by omega)
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+theorem evs_congr (ix ix' : MzIdx) (G : ByteArray) (h : ∀ v, ix.mini v = ix'.mini v) :
+    ∀ n last p, evs ix G last n p = evs ix' G last n p := by
+  intro n
+  induction n with
+  | zero => intro _ _; rfl
+  | succ n ih => intro last p; simp only [evs, pmOf, h, ih]; rfl
+
+theorem runsOf_spec (G : ByteArray) : ∃ prs : List (Nat × Nat), (runsOf G).toList = flat prs ∧
+    (∀ pr ∈ prs, GoodPair G pr) ∧ prs.Pairwise (fun p1 p2 => p1.2 < p2.1) ∧
+    (∀ x < G.size, acgt (G.get! x) = false → ∃ pr ∈ prs, pr.1 ≤ x ∧ x < pr.2) := by
+  obtain ⟨prs, oa, hR, hopen, hprs, hsort, _, hcov⟩ := RInv_fold G G.size (Nat.le_refl _)
+  have hnone : oa = none := by
+    cases oa with
+    | none => rfl
+    | some a => have := (hopen.1 rfl).2.1; omega
+  subst hnone
+  refine ⟨prs, by unfold runsOf; simpa using hR, fun pr hp => (hprs pr hp).1, hsort, fun x hx hodd => ?_⟩
+  rcases hcov x hx hodd with h | ⟨a, ha, _⟩
+  · exact h
+  · simp at ha
+
+theorem ixB_hint (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : (ixB G).hint = cntOf G := by
+  obtain ⟨c1, _⟩ := cntOf_spec G hsz
+  rw [MzIdx.hint, ixB_offs, ixB_ob, ixB_B, Nat.mul_zero, Nat.zero_add, ← c1, ByteArray.extract_zero_size]
+
+/-- **The index the builder makes from the bytes `G` passes the checker.** -/
+theorem check_ixB (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : check (ixB G) G = true := by
+  obtain ⟨c1, c2⟩ := cntOf_spec G hsz
+  obtain ⟨prs, hR, hgood, hsort, hcov⟩ := runsOf_spec G
+  obtain ⟨r1, r2⟩ := runs_ok (ixB G) G prs (by rw [ixB_runs]; exact hR) hgood hsort hcov
+  unfold check
+  rw [ixB_checkParams, checkSound_ixB G hsz, r1, r2, checkComp_eq, ixB_hint G hsz,
+    evs_congr (ixB G) (ix0 G) G (ixB_mini G)]
+  simp only [Bool.true_and, Bool.and_true]
+  exact replay_ok G hsz (EG G) [] (cntOf G) rfl c1 (fun b hb => by rw [c2 _ (by omega)]; rfl)
+
+theorem buildW_ixB (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : buildW G 22 26 0 5 6 = ixB G := by
+  rw [buildW_eq G (pb_le G hsz)]
+  unfold ixB slOf runsOf
+  rfl
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz
+
+/-- **The builder's index passes the checker**: `Mz.buildW G 22 26 0 5 6` (`k = 22`, `2^26` buckets,
+no context letters, 5-byte slots, `t = 6`) is accepted by `Mz.check` whenever the genome has at most
+`2^32 + 23` letters (at most `2^32 - 1` entries: bucket offsets are `UInt32`s). -/
+theorem check_buildW (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : check (buildW G 22 26 0 5 6) G = true := by
+  rw [BO.buildW_ixB G hsz]; exact BO.check_ixB G hsz
+
+end MapSpec.Mz
+
+#print axioms MapSpec.Mz.check_buildW
