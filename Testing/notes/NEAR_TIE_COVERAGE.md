@@ -58,8 +58,10 @@ Shim index built from the same hg38 `genome.fa` (32 min). Counted from the SAM (
 | mason | 200,000 | 194,886 (97.44%) | 193,625 (96.81%) | **1,261 (0.63%)** | 5,114 (2.56%) | 176,444 (88.22%) | 17,181 (8.59%) |
 | NovaSeq | 200,000 | 187,675 (93.84%) | 185,737 (92.87%) | **1,938 (0.97%)** | 12,325 (6.16%) | 163,941 (81.97%) | 21,796 (10.90%) |
 | HiSeq | 200,000 | 171,057 (85.53%) | 169,945 (84.97%) | **1,112 (0.56%)** | 28,943 (14.47%) | 141,060 (70.53%) | 28,885 (14.44%) |
-(No pair has exactly one mate flagged unmapped or exactly one all-insertion mate. Every degenerate pair has `XU:Z:unknown`,
-`XT:Z:boundsOnly`, MAPQ 0. XU unknown counts only pairs whose two records both say unknown.)
+(No pair has exactly one mate flagged unmapped or exactly one all-insertion mate. Every degenerate pair has MAPQ 0 and
+`XU:Z:unknown`; its `XT:Z` is `boundsOnly` for most (mason 1,248 of 1,261; NovaSeq 1,526 of 1,938; HiSeq 758 of 1,112), `stoppedEarly`
+for 13 / 289 / 136 pairs and `eachMateUnique` for 0 / 123 / 218 pairs (mates unique, no proper pair). XU unknown counts only
+pairs whose two records both say unknown.)
 
 - The shim reproduces the stage-5 note's degenerate counts exactly (1,261 / 1,938 / 1,112): **the real rates are 0.56–0.97%**,
   not the 0.92 / 2.62 / 1.12% of the bench replication above.
