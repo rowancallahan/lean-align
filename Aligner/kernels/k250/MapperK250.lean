@@ -828,6 +828,45 @@ theorem flagsOkS_eq (w : ByteArray) (stop : Nat) : ∀ n b, stop - b = n → fla
 @[inline] def winOk (P : PGen) (st len : Nat) : Bool :=
   decide (st + len ≤ P.n) && flagsOk P.w ((P.o + st) / 64) ((P.o + st + len - 1) / 64 + 1)
 
+/-! `winOk` with the block indices from `UInt64` shifts (compiled code only): `winOk_eq_winOkF` (`@[csimp]`). -/
+
+/-- `2^33`, out of line (a literal ≥ `2^32` in a body is rebuilt by GMP at every call). -/
+@[noinline] def wBig : Nat := 8589934592
+
+theorem w64_blk (v : Nat) (h : v < wBig) : (v.toUInt64 >>> 6).toNat = v / 64 := by
+  have hU : UInt64.size = 18446744073709551616 := rfl
+  have h' : v < 8589934592 := h
+  rw [UInt64.toNat_shiftRight, UInt64.toNat_ofNat_of_lt' (by omega)]
+  simp only [show (6 : UInt64).toNat % 64 = 6 from rfl, Nat.shiftRight_eq_div_pow]
+
+theorem w64_p (v : Nat) (h : v < wBig) (c : Nat) (hc : c ≤ 1) :
+    ((17 : UInt64) * ((v.toUInt64 >>> 6) + c.toUInt64)).toUSize.toNat = 17 * (v / 64 + c) := by
+  have hU : UInt64.size = 18446744073709551616 := rfl
+  have h' : v < 8589934592 := h
+  have e : ((17 : UInt64) * ((v.toUInt64 >>> 6) + c.toUInt64)).toNat = 17 * (v / 64 + c) := by
+    rw [UInt64.toNat_mul, UInt64.toNat_add, w64_blk v h, UInt64.toNat_ofNat_of_lt' (by omega),
+      show (17 : UInt64).toNat = 17 from rfl]; omega
+  rw [UInt64.toNat_toUSize, e, Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+
+@[inline] def winOkF (P : PGen) (st len : Nat) : Bool :=
+  decide (st + len ≤ P.n) &&
+    if P.o + st + len < wBig then
+      flagsOkU P.w ((17 : UInt64) * ((P.o + st).toUInt64 >>> 6 + (0 : Nat).toUInt64)).toUSize
+        ((17 : UInt64) * ((P.o + st + len - 1).toUInt64 >>> 6 + (1 : Nat).toUInt64)).toUSize
+    else flagsOk P.w ((P.o + st) / 64) ((P.o + st + len - 1) / 64 + 1)
+
+@[csimp] theorem winOk_eq_winOkF : @winOk = @winOkF := by
+  funext P st len
+  unfold winOkF winOk
+  split
+  · rename_i h
+    have h1 : P.o + st < wBig := Nat.lt_of_le_of_lt (Nat.le_add_right _ _) h
+    have h2 : P.o + st + len - 1 < wBig := Nat.lt_of_le_of_lt (Nat.sub_le _ _) h
+    have hw : P.o + st + len < 8589934592 := h
+    rw [flagsOkU_eq P.w ((P.o + st + len - 1) / 64 + 1) _ (by rw [w64_p _ h2 1 (by decide)])
+      (by omega) _ _ ((P.o + st) / 64) rfl (by rw [w64_p _ h1 0 (by decide), Nat.add_zero])]
+  · rfl
+
 /-- Word scans at absolute genome start `a` (read letter `x` ↦ `a + x`). -/
 @[inline] def hamA (rw : Array UInt64) (gw : ByteArray) (a lim stop : Nat) : Nat :=
   let s := a % 32
