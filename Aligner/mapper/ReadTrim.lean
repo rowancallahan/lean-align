@@ -54,6 +54,111 @@ def wl (Q : Nat) (seq qual : ByteArray) : Nat → Nat → Bool → Nat → Int �
       else wl Q seq qual i cs true 1 f bs be bsc
     else wl Q seq qual i cs true 1 f cs (cs + 1) f
 
+/-! `wl` with the scores in `Int64` (compiled code only): `wl_eq_wlF` (`@[csimp]`). For reads of at
+most 10 000 letters every prefix score is within ±2·10^6 per letter, far inside 64 bits. -/
+
+/-- `perBase Q (enc b qc)` in `Int64` (`fI_eq`). -/
+@[inline] def fI (Q : Int64) (b qc : UInt8) : Int64 :=
+  if isACGT b then Int64.ofNat (min (qc.toNat - 33) 93) - Q else -1000000
+
+theorem i64_ofNat (n : Nat) (h : n < 2 ^ 62) : (Int64.ofNat n).toInt = n := by
+  have e : Int64.size = 18446744073709551616 := rfl
+  rw [Int64.toInt_ofNat', e, Int.bmod_eq_of_le (by omega) (by omega)]
+
+theorem i64_add (a b : Int64) (ha : -2 ^ 61 ≤ a.toInt ∧ a.toInt ≤ 2 ^ 61) (hb : -2 ^ 61 ≤ b.toInt ∧ b.toInt ≤ 2 ^ 61) :
+    (a + b).toInt = a.toInt + b.toInt := by
+  rw [Int64.toInt_add]; exact Int.bmod_eq_of_le (by omega) (by omega)
+
+theorem fI_eq (Q : Nat) (hQ : Q ≤ 1000) (b qc : UInt8) :
+    (fI (Int64.ofNat Q) b qc).toInt = perBase Q (enc b qc) := by
+  have eQ := i64_ofNat Q (by omega)
+  unfold fI perBase enc
+  by_cases h : isACGT b = true
+  · simp only [h, if_true]
+    have hm : min (qc.toNat - 33) 93 ≤ 93 := Nat.min_le_right _ _
+    have em := i64_ofNat (min (qc.toNat - 33) 93) (by omega)
+    rw [if_neg (by omega), Int64.toInt_sub, em, eQ, Int.bmod_eq_of_le (by omega) (by omega)]
+  · simp only [h, Bool.false_eq_true, if_false]
+    rw [if_pos (by omega)]; rfl
+
+theorem fI_bd (Q : Nat) (hQ : Q ≤ 1000) (b qc : UInt8) :
+    -1000000 ≤ (fI (Int64.ofNat Q) b qc).toInt ∧ (fI (Int64.ofNat Q) b qc).toInt ≤ 1000000 := by
+  rw [fI_eq Q hQ]; unfold perBase enc
+  split
+  · omega
+  · split
+    · have : min (qc.toNat - 33) 93 ≤ 93 := Nat.min_le_right _ _
+      omega
+    · omega
+
+/-- `wl` with `Int64` scores (`wlI_eq`). -/
+def wlI (Q : Int64) (seq qual : ByteArray) : Nat → Nat → Bool → Nat → Int64 → Nat → Nat → Int64 → PackedFoldState
+  | 0, ns, hr, pl, ps, bs, be, bsc => ⟨ns, hr, pl, ps.toInt, bs, be, bsc.toInt⟩
+  | i + 1, ns, hr, pl, ps, bs, be, bsc =>
+    let cs := ns - 1
+    let f := fI Q seq[i]! qual[i]!
+    if hr then
+      if 0 < ps then
+        if bsc ≤ f + ps then wlI Q seq qual i cs true (pl + 1) (f + ps) cs (cs + (pl + 1)) (f + ps)
+        else wlI Q seq qual i cs true (pl + 1) (f + ps) bs be bsc
+      else if bsc ≤ f then wlI Q seq qual i cs true 1 f cs (cs + 1) f
+      else wlI Q seq qual i cs true 1 f bs be bsc
+    else wlI Q seq qual i cs true 1 f cs (cs + 1) f
+
+theorem wlI_eq (Q : Nat) (hQ : Q ≤ 1000) (seq qual : ByteArray) : ∀ (i ns : Nat) (hr : Bool) (pl : Nat)
+    (ps : Int64) (bs be : Nat) (bsc : Int64), i ≤ 20000 →
+    -(2000000 * ((20000 - i : Nat) : Int)) ≤ ps.toInt ∧ ps.toInt ≤ 2000000 * ((20000 - i : Nat) : Int) →
+    -(2000000 * ((20000 - i : Nat) : Int)) ≤ bsc.toInt ∧ bsc.toInt ≤ 2000000 * ((20000 - i : Nat) : Int) →
+    wlI (Int64.ofNat Q) seq qual i ns hr pl ps bs be bsc = wl Q seq qual i ns hr pl ps.toInt bs be bsc.toInt
+  | 0, ns, hr, pl, ps, bs, be, bsc, _, _, _ => rfl
+  | i + 1, ns, hr, pl, ps, bs, be, bsc, hi, hp, hb => by
+    have hf := fI_bd Q hQ seq[i]! qual[i]!
+    have ef := fI_eq Q hQ seq[i]! qual[i]!
+    have e2 : ((20000 - i : Nat) : Int) = ((20000 - (i + 1) : Nat) : Int) + 1 := by omega
+    have hsum : (fI (Int64.ofNat Q) seq[i]! qual[i]! + ps).toInt = (fI (Int64.ofNat Q) seq[i]! qual[i]!).toInt + ps.toInt :=
+      i64_add _ _ (by omega) (by omega)
+    have bF : -(2000000 * ((20000 - i : Nat) : Int)) ≤ (fI (Int64.ofNat Q) seq[i]! qual[i]!).toInt ∧
+        (fI (Int64.ofNat Q) seq[i]! qual[i]!).toInt ≤ 2000000 * ((20000 - i : Nat) : Int) := by omega
+    have bS : -(2000000 * ((20000 - i : Nat) : Int)) ≤ (fI (Int64.ofNat Q) seq[i]! qual[i]! + ps).toInt ∧
+        (fI (Int64.ofNat Q) seq[i]! qual[i]! + ps).toInt ≤ 2000000 * ((20000 - i : Nat) : Int) := by omega
+    have bB : -(2000000 * ((20000 - i : Nat) : Int)) ≤ bsc.toInt ∧ bsc.toInt ≤ 2000000 * ((20000 - i : Nat) : Int) := by omega
+    have bP : -(2000000 * ((20000 - i : Nat) : Int)) ≤ ps.toInt ∧ ps.toInt ≤ 2000000 * ((20000 - i : Nat) : Int) := by omega
+    have c1 : (0 < ps) ↔ (0 < ps.toInt) := by rw [Int64.lt_iff_toInt_lt]; simp
+    have c2 : (bsc ≤ fI (Int64.ofNat Q) seq[i]! qual[i]! + ps) ↔
+        (bsc.toInt ≤ (fI (Int64.ofNat Q) seq[i]! qual[i]!).toInt + ps.toInt) := by rw [Int64.le_iff_toInt_le, hsum]
+    have c3 : (bsc ≤ fI (Int64.ofNat Q) seq[i]! qual[i]!) ↔ (bsc.toInt ≤ (fI (Int64.ofNat Q) seq[i]! qual[i]!).toInt) :=
+      Int64.le_iff_toInt_le
+    simp only [wlI, wl]
+    rw [← ef]
+    cases hr
+    · simp only [Bool.false_eq_true, if_false]
+      exact wlI_eq Q hQ seq qual i _ _ _ _ _ _ _ (by omega) bF bF
+    · simp only [if_true]
+      by_cases h0 : 0 < ps.toInt
+      · rw [if_pos (c1.mpr h0), if_pos h0]
+        by_cases h1 : bsc.toInt ≤ (fI (Int64.ofNat Q) seq[i]! qual[i]!).toInt + ps.toInt
+        · rw [if_pos (c2.mpr h1), if_pos h1, wlI_eq Q hQ seq qual i _ _ _ _ _ _ _ (by omega) bS bS, hsum]
+        · rw [if_neg (fun c => h1 (c2.mp c)), if_neg h1, wlI_eq Q hQ seq qual i _ _ _ _ _ _ _ (by omega) bS bB, hsum]
+      · rw [if_neg (fun c => h0 (c1.mp c)), if_neg h0]
+        by_cases h1 : bsc.toInt ≤ (fI (Int64.ofNat Q) seq[i]! qual[i]!).toInt
+        · rw [if_pos (c3.mpr h1), if_pos h1, wlI_eq Q hQ seq qual i _ _ _ _ _ _ _ (by omega) bF bF]
+        · rw [if_neg (fun c => h1 (c3.mp c)), if_neg h1, wlI_eq Q hQ seq qual i _ _ _ _ _ _ _ (by omega) bF bB]
+
+/-- `wl` for the compiled code (`wl_eq_wlF`): `wlI` from the start state (scores 0). -/
+@[inline] def wlF (Q : Nat) (seq qual : ByteArray) (i ns : Nat) (hr : Bool) (pl : Nat) (ps : Int) (bs be : Nat)
+    (bsc : Int) : PackedFoldState :=
+  if Q ≤ 1000 ∧ i ≤ 10000 ∧ ps = 0 ∧ bsc = 0 then wlI (Int64.ofNat Q) seq qual i ns hr pl 0 bs be 0
+  else wl Q seq qual i ns hr pl ps bs be bsc
+
+@[csimp] theorem wl_eq_wlF : @wl = @wlF := by
+  funext Q seq qual i ns hr pl ps bs be bsc
+  unfold wlF; split
+  · rename_i h
+    obtain ⟨hQ, hi, rfl, rfl⟩ := h
+    have e0 : (0 : Int64).toInt = 0 := rfl
+    rw [wlI_eq Q hQ seq qual i ns hr pl 0 bs be 0 (by omega) (by rw [e0]; omega) (by rw [e0]; omega), e0]
+  · rfl
+
 /-- The kept window `[s, e)`, or `none` (nothing worth keeping: the best window
 starts with a non-A/C/G/T letter only when the read has no A/C/G/T at all). -/
 def trimReadQ (Q : Nat) (seq qual : ByteArray) : Option (Nat × Nat) :=
