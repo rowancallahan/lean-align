@@ -132,10 +132,13 @@ def alignOneC (setup : Option (MapSpec.Fast.TierCfg × MapSpec.Fast.PkMz × Arra
       | none => .aligned noIndexAnswer
       | some (cfg, pk, pgs) => .aligned (answerOf (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2)))
 
+-- each task loads the index and builds the setup itself (`ParMap.parMapS`): its structures are
+-- then that task's own, so their reference counts are not shared across threads; only the
+-- index bytes are
 def alignPairsC (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
-  let setup := chunkSetup insertSettings (loadIndex index)
-  (ParMap.parMap 16 (fun (bytes1, bytes2) => alignOneC setup bytes1 bytes2) pairs.toArray).toList
+  (ParMap.parMapS 16 (fun _ => chunkSetup insertSettings (loadIndex index))
+    (fun setup (bytes1, bytes2) => alignOneC setup bytes1 bytes2) pairs.toArray).toList
 
 theorem alignOneC_eq (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) :
@@ -145,7 +148,7 @@ theorem alignOneC_eq (insertSettings : InsertSettings) (loaded : Option LoadedIn
 -- compiled code runs `alignPairsC`
 @[csimp] theorem alignPairs_eqC : @alignPairs = @alignPairsC := by
   funext insertSettings index pairs
-  simp only [alignPairs, alignPairsC, alignOneC_eq]
+  simp only [alignPairs, alignPairsC, ParMap.parMapS_eq, ParMap.parMap_eq_map, alignOneC_eq]
 
 /-! ## The proof -/
 
