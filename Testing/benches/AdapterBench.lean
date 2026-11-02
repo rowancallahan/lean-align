@@ -18,6 +18,21 @@ def main (args : List String) : IO Unit := do
     if l'.size < l.size then cut := cut + 1
     removed := removed + (l.size - l'.size)
   IO.println s!"reads {reads.size} cut {cut} bases_removed {removed}"
+  -- after adapter cut + quality trim: mates already empty, and non-empty mates shorter than 25 / 50
+  let mut empty := 0
+  let mut short25 := 0
+  let mut short50 := 0
+  let mut emptyQ := 0
+  for (l, q) in reads do
+    let (l', q') := AdapterTrim.cutTruSeq l q
+    let n := match ReadTrim.trimRead l' q' with | some (s, e) => e - s | none => 0
+    let n0 := match ReadTrim.trimRead l q with | some (s, e) => e - s | none => 0
+    if n0 == 0 then emptyQ := emptyQ + 1
+    if n == 0 then empty := empty + 1
+    else
+      if n < 25 then short25 := short25 + 1
+      if n < 50 then short50 := short50 + 1
+  IO.println s!"empty_quality_only {emptyQ} empty_after_cut {empty} removed_by_min25 {short25} removed_by_min50 {short50}"
   for _ in [0:rep] do
     let t0 ← IO.monoNanosNow
     let mut s := 0

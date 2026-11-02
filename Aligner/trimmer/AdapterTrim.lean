@@ -69,6 +69,10 @@ def cutAdapter (adapter : ByteArray) (minLen maxErr : Nat) (letters qual : ByteA
 over the whole adapter. -/
 def cutTruSeq (letters qual : ByteArray) : ByteArray × ByteArray := cutAdapter truSeq 6 1 letters qual
 
+/-- Minimum length: a mate with fewer than `minLength` letters becomes empty (trimmed away). -/
+def dropShort (minLength : Nat) (letters qual : ByteArray) : ByteArray × ByteArray :=
+  if letters.size < minLength then (ByteArray.empty, ByteArray.empty) else (letters, qual)
+
 /-! ## Proofs -/
 
 theorem count_cons (p : Nat → Bool) (j k : Nat) :
@@ -140,6 +144,13 @@ theorem cut_none (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) 
   · exact cut_first adapter minLen maxErr read j (by omega)
   · simp [matchesAt, hj]
 
+/-- (5) After `dropShort`, a mate is empty or has at least `minLength` letters. -/
+theorem dropShort_size (minLength : Nat) (letters qual : ByteArray) :
+    (dropShort minLength letters qual).1.size = 0 ∨ minLength ≤ (dropShort minLength letters qual).1.size := by
+  unfold dropShort; split
+  · exact Or.inl rfl
+  · exact Or.inr (Nat.le_of_not_lt ‹_›)
+
 -- examples: full adapter with 1 mismatch mid-read; a 6-letter tail; a 5-letter tail is too short
 #guard cutPos truSeq 6 1 "ACGTACGTAGATCGGTAGAGCTTTT".toUTF8 = 8
 #guard cutPos truSeq 6 1 "ACGTACGTACGTAGATCG".toUTF8 = 12
@@ -151,5 +162,6 @@ theorem cut_none (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) 
 #print axioms cut_first
 #print axioms cut_none
 #print axioms fastMatchesAt_eq
+#print axioms dropShort_size
 
 end AdapterTrim

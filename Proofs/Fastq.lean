@@ -3,8 +3,8 @@ import AdapterTrim
 
 /-! # Paired FASTQ reading. Unproved (trusted) plumbing for the shim: the file is read in 4 MB blocks
 and split into lines on newline bytes; only the read name and qualities become Strings. Each mate is
-cut at the TruSeq adapter (`AdapterTrim.cutTruSeq`, proved) and then quality-trimmed with the proved
-trimmer (`ReadTrim.trimRead`) as it is read. -/
+cut at the TruSeq adapter (`AdapterTrim.cutTruSeq`, proved) then quality-trimmed with the proved
+trimmer (`ReadTrim.trimRead`), then dropped if shorter than `minLength` (`AdapterTrim.dropShort`). -/
 
 namespace Spec
 
@@ -62,15 +62,19 @@ def mateName (name : String) : String :=
   let base := (name.splitOn " ").headD ""
   if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
 
--- adapter cut, then quality trimming with the proved trimmers: cut letters and qualities at the
--- first TruSeq adapter, then keep the best window; a mate with nothing worth keeping comes back with
--- no letters (trimmed away)
+-- shortest mate kept after trimming; shorter mates become empty (trimmed away)
+def minLength : Nat := 25
+
+-- adapter cut, then quality trimming, then the minimum length, all with proved functions: cut letters
+-- and qualities at the first TruSeq adapter, keep the best window, and drop a mate shorter than
+-- `minLength`; a mate with nothing worth keeping comes back with no letters (trimmed away)
 def trimRecord (record : FastqRecord) : FastqRecord :=
   let (letters, qual) := AdapterTrim.cutTruSeq record.letters record.quality.toUTF8
-  match ReadTrim.trimRead letters qual with
-  | some (s, e) => { record with letters := letters.extract s e,
-                                 quality := String.fromUTF8! (qual.extract s e) }
-  | none => { record with letters := ByteArray.empty, quality := "" }
+  let (letters, qual) := match ReadTrim.trimRead letters qual with
+    | some (s, e) => (letters.extract s e, qual.extract s e)
+    | none => (ByteArray.empty, ByteArray.empty)
+  let (letters, qual) := AdapterTrim.dropShort minLength letters qual
+  { record with letters, quality := String.fromUTF8! qual }
 
 -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
 -- names differ or one file ends before the other (the files are out of step)
