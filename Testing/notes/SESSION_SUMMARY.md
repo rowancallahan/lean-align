@@ -1332,6 +1332,16 @@ gap is the cap and read ends, not the router. At junkScore −17, ~1 in 6 HiSeq 
   little; biggest leftover class = both mates hit but no proper pair (39–62%).
 - Opus boxes archived after finishing: O3, O4, O5, O6 (Rowan's 3–4 Opus limit).
 
+### HEADLINE (O1, 2026-11-02 12:10 UTC): final proven head 8b99433 vs minibwa (default), hg38, 4 threads, median of 3
+Load subtracted, FASTQ read + SAM write included; minibwa X s / ours Y s:
+- HiSeq 200k 32.4 / 10.4 = 3.12x (CPU 4.47x) · HiSeq 1M 149.8 / 36.4 = 4.12x (CPU 4.35x)
+- NovaSeq 15.5 / 11.8 = 1.31x (CPU 1.71x) · mason 17.8 / 11.2 = 1.59x (CPU 1.47x) · low 11.5 / 9.0 = 1.28x (CPU 1.57x)
+Mapping (ours real both-mapped / degenerate / unmapped / unique; minibwa both-mapped / MAPQ≥30): HiSeq 84.97/0.56/14.47/70.53
+vs 99.57/92.50 · NovaSeq 92.87/0.97/6.16/81.97 vs 99.08/91.23 · mason 96.81/0.63/2.56/88.22 vs 100/96.14 · low
+99.64/0.16/0.19/94.61 vs 100/96.29. Our index load varies 1.6–17 s on the 15 GB box; CPU is the steadier column.
+Gap to minibwa's mapping rate: untrimmed reads (shim doesn't trim; +22.7k HiSeq with trimming) and pairs the mapper
+gives up on (O2's low-repeat short-seed second pass recovers about half of them).
+
 ### Later (Rowan)
 - **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
   maybe force reporting it whenever one exists.
