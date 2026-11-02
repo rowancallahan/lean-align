@@ -1300,7 +1300,7 @@ SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not
 - A pair-agnostic "two pairs close to each other" claim is vacuous (any read has many terrible pairs with near-equal
   scores); a near-tie claim must be anchored to the bound: both pairs ≥ bestPossibleScore − x.
 
-### Spec change Rowan is adding (2026-11-02)
+### Spec change on main (Rowan, f57e195 = 37c21a7 + FROZEN.sha256) — the spec to prove against now; tiers later
 `InsertSettings.junkScore : Int := -17`; `.unknown` branch: `answer.found = none → answer.bestPossibleScore <
 insertSettings.junkScore`. With a pair, clause 1 makes it real; without, it is proved junk. A junk pair (bound <
 junkScore) may still be reported or tossed.
