@@ -42,6 +42,9 @@ byte-identical unless the change is meant to add mapped pairs (then count gains 
   Measure pairs gained at truth and the cost (more hits per shorter seed, mostly in repeats). Needs a proved index
   for the new seed shape (or a second index), and the bound proof for the new cap.
 
+- **Done 2026-11-02 (box O3): see Testing/notes/DEEP_CAPS.md** — bounds table, hg38 seed costs, truth penalties,
+  gated pass 2 measured vs minibwa, `deepCaps` (default off) in Proofs/Aligner.lean, design for the 24/28 index.
+
 ## 4. Faster sorting than List.mergeSort (Rowan, 2026-11)
 `List.mergeSort` is 5–6% of hg38 time (mostly `diags`: anchors → diagonals, sorted, duplicates dropped). Sorting
 Nats with duplicates removed has exactly one correct answer, so any faster method is proved equal by the standard
