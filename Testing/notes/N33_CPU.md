@@ -21,7 +21,8 @@ Per function (inclusive Ir, base → head): `hammingU` self 55.6M → 4.3M (`chk
 8.8M; what is left of both is mostly `packRPU`, the read packing per call); `winL` 33.0M → 25.9M (`push` per letter
 remains); `bandCells` 75.0M → 63.4M.
 
-`bandCellsJ` is not proved equal to `bandCells`. Argument: cells are visited in the same order and the
+`bandCellsJ` = `bandCells` is now PROVED (proof/bandcellsj, `Aligner/mapper/BandCellsJProof.lean`: `bandDPg_jump :
+bandDPg true = bandDPg false`, for all inputs, standard axioms; see the end of this note). Argument: cells are visited in the same order and the
 skipped ones write nothing; a skip for `col < 0` or `k + 1 < pa` can only happen before `rowStart` (the column grows
 with `k`), and after a skip for `col > m` or (`k ≥ pb`, `hl`, `e ≥ lim`) every later cell of the row is skipped too
 (`hl`, `e` become `INF = 2^24 > lim ≤ 2^23`). `bandCells`' fuel `n (K + 1)` is exactly rows `1 … n`, which
@@ -122,3 +123,17 @@ resolve it; Ir is the measure for these changes.
 session's permission policy (external code). With N32 §5's minibwa figure from the same box type and method
 (55.5 s, not this session): **minibwa 55.5 s / ours 22.45 s = 2.47x** (base: 55.5 / 21.55 = 2.58x). The 2x goal
 holds either way; a same-session minibwa run is still owed.
+
+## Proof of `bandDPg true = bandDPg false` (proof/bandcellsj)
+`Aligner/mapper/BandCellsJProof.lean`, standard axioms only:
+- `bandCellsJ_eq` (simulation): from row `i`, diagonal `k`, `bandCellsJ` with fuel ≥ `stepsLeft` = `(n − i)(K + 1) +
+  (K + 1 − k)` returns what `bandCells` returns with fuel `stepsLeft`, under `Bnd` (`K < 2^30`, `c0s ≤ 2^22`,
+  `n, m < 2^20`, `lim ≤ 2^23`: no UInt32 counter overflows). Cases: skip (same step, `bc_skip`); row-end jump
+  (`bc_rest`: the column grows with `k`, and `hl`, `e` become `INF = 2^24 ≥ lim + 8`); computed cell (identical
+  code); end of row (`bc_prefix` + `rowStart_nat`: cells before `rowStart` are skipped; `i == n` is where
+  `bandCells`' fuel ends).
+- `bandDPg` now calls `bandCellsG jump …` (TierHeur.lean), which runs `bandCellsJ` when `jump` and the bounds above
+  hold (they always do for `bandDPg`'s inputs: its guard gives `n, m < 2^20`, `c0s ≤ 2^21`, and it caps `lim` at
+  2^23; `K = 2w + 1 < 2^30` unless `w ≥ 2^29`), else `bandCells`. `bandCellsG_jump : bandCellsG true = bandCellsG
+  false` for all arguments, so `bandDPg_jump` holds for all inputs with no hypothesis. Without the check the
+  argument does not cover huge `w` (`K` would wrap in UInt32; not shown to fail), which no caller uses.
