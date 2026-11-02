@@ -302,6 +302,18 @@ def tierG (G0 : Nat) (a b : ByteArray) (s1 s2 : PrepM MzP) :
   let swap := if f1 && f2 then cfg.pref G0 a b s1 s2 else !f1
   (pairGQC dcost0 cfg.usl cfg.lo cfg.hi G0 swap (pk : PkMzR) offs pgs a b).map fun v => (swap, v)
 
+/-- (report only, no claim) the best pair the guarantee's enumeration (`pairGQC`) kept, also when it
+ties: the same enumeration, run again on the hits `lX` it returned.  Used only to print one tied pair of
+a T1gm answer; the printed pair is re-checked (`Proofs/Report.lean`). -/
+def pairGQCtie (G0 : Nat) (swap : Bool) (a b : ByteArray) (lX : List (Placement × Int)) : Option PairHit :=
+  let RY := if swap then a else b
+  let RYr := revCompK RY
+  let f := pairsQC dcost0 cfg.usl cfg.lo cfg.hi G0 (pgs ++ pgs) RY RYr (packRP RY) (packRP RYr) swap
+  let l0 := lX.filter fun x => decide (x.2 = 0)
+  let l1 := lX.filter fun x => !decide (x.2 = 0)
+  let U1 := l1.foldl (fun m x => max m x.2) (-(G0 : Int))
+  (goP dcost0 f U1 l1 (goP dcost0 f 0 l0 (none, false))).1
+
 /-- Floors and ceilings of both mates, then the heuristic: T2 when both claim a ceiling, else T3. -/
 def tierB (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat)
     (g1 g2 : Option (Nat × Option (Nat × Nat × Nat))) : Tag × MateX × MateX :=
@@ -343,8 +355,10 @@ def tierRest (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int)
           m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
       | none =>
         if seen then
+          let tp := pairGQCtie cfg pgs G0 swap a b lX
           { tag := .t1gm, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
-            m1 := { st := "P", cap := cfg.rcfg.cap1 a.size }, m2 := { st := "P", cap := cfg.rcfg.cap1 b.size } }
+            m1 := { st := "P", cap := cfg.rcfg.cap1 a.size, pl := tp.map (·.1) },
+            m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pl := tp.map (·.2) } }
         else
           let gx := gxOf pgs.size G0 lX
           let t := if swap then tierB cfg pk pgs a b s1 s2 rk c1 c2 none (some gx)
@@ -602,8 +616,10 @@ def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Opti
           m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
       | none =>
         if seen then
+          let tp := pairGQCtie cfg pgs G0 swap a b lX
           { tag := .t1gm, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
-            m1 := { st := "P", cap := cfg.rcfg.cap1 a.size }, m2 := { st := "P", cap := cfg.rcfg.cap1 b.size } }
+            m1 := { st := "P", cap := cfg.rcfg.cap1 a.size, pl := tp.map (·.1) },
+            m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pl := tp.map (·.2) } }
         else
           let gx := gxOf pgs.size G0 lX
           let t := if swap then tierB cfg pk pgs a b s1 s2 rk c1 c2 none (some gx)
