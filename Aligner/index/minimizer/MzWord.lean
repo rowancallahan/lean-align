@@ -824,6 +824,99 @@ def scanAWK3 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) 
     rw [scanAWK_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ h.1 h.2 _ _ _ rfl]
   · rfl
 
+/-! ## The first `k` anchors of a lookup (`lookupPWk_extract`): the bucket is scanned in pieces of 256 slots
+and the scan stops once `k` anchors are in hand.  `scanAWK` only appends, in slot order, so the first `k`
+anchors are the same as the whole lookup's. -/
+
+theorem scanAWK_app (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) : ∀ n t (acc : Array Nat), hi - t = n →
+    scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =
+      acc ++ scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t #[] := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro t acc hn
+    conv => lhs; rw [scanAWK.eq_def]
+    conv => rhs; rw [scanAWK.eq_def]
+    split
+    · rw [ih (hi - (t + 1)) (by omega) (t + 1) _ rfl,
+        ih (hi - (t + 1)) (by omega) (t + 1) (if (slotW ix.sl ix.sw t &&& kb != keyU) = true then #[] else
+          if okAtW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t = true then
+            #[].push (anc base bit (ix.posOf (ix.slot t) - o)) else #[]) rfl]
+      split
+      · simp
+      · split <;> simp [Array.append_assoc]
+    · simp
+
+theorem scanAWK_split (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit m : Nat) (hm : m ≤ hi) : ∀ n t (acc : Array Nat), m - t = n →
+    scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =
+      scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit (max t m)
+        (scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 m base bit t acc) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro t acc hn
+    by_cases ht : t < m
+    · conv => lhs; rw [scanAWK.eq_def, if_pos (show t < hi by omega)]
+      conv => rhs; rw [scanAWK.eq_def (hi := m), if_pos ht]
+      rw [ih (m - (t + 1)) (by omega) (t + 1) _ rfl, show max (t + 1) m = max t m by omega]
+    · conv => rhs; rw [scanAWK.eq_def (hi := m), if_neg ht]
+      rw [show max t m = t by omega]
+
+/-- `scanAWK` from `t` in pieces of `256` slots, stopped once `acc` holds `k` anchors (`scanAWKk_extract`). -/
+def scanAWKk (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit k : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
+  if k ≤ acc.size ∨ hi ≤ t then acc
+  else scanAWKk ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit k (min hi (t + 256))
+    (scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 (min hi (t + 256)) base bit t acc)
+termination_by hi - t
+
+theorem scanAWKk_extract (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit k : Nat) : ∀ n t (acc : Array Nat), hi - t = n →
+    (scanAWKk ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit k t acc).extract 0 k =
+      (scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc).extract 0 k := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro t acc hn
+    rw [scanAWKk]
+    split
+    · rename_i h
+      rcases h with h | h
+      · rw [scanAWK_app _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl,
+          Array.extract_append, show k - acc.size = 0 by omega]
+        simp
+      · rw [scanAWK.eq_def, if_neg (by omega)]
+    · rename_i h
+      rw [ih (hi - min hi (t + 256)) (by omega) _ _ rfl,
+        scanAWK_split ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit (min hi (t + 256))
+          (Nat.min_le_left _ _) _ t acc rfl, show max t (min hi (t + 256)) = min hi (t + 256) by omega]
+
+/-- `lookupPWK` keeping (at least) the first `k` anchors (`lookupPWk_extract`). -/
+def lookupPWk (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base bit k : Nat) : Array Nat :=
+  let o := p.o
+  let v := p.v
+  let m1 := min o ix.c
+  let m2 := min (ix.w - 1 - o) ix.c
+  let r := seedLE R s Mz.q 0 0 true
+  let key := p.h &&& ix.kbM
+  if ix.kbM < 2 ^ 64 && key < 2 ^ 64 then
+    scanAWKk ix G R r.1 r.2 ix.kbM.toUInt64 key.toUInt64 s o key ((v >>> (2 * (Mz.q - o))) &&& ix.pm[m1]!)
+      ((v >>> (2 * (Mz.q - o - ix.k - m2))) &&& ix.pm[m2]!) ix.pm[m1]! (2 * (ix.c - m2))
+      (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
+      (ix.hiB p.b) base bit k (ix.loB p.b) #[]
+  else lookupPW ix G R s p base bit
+
+theorem lookupPWk_extract (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base bit k : Nat) :
+    (lookupPWk ix G R s p base bit k).extract 0 k = (lookupPW ix G R s p base bit).extract 0 k := by
+  rw [lookupPW_eqK]
+  unfold lookupPWk lookupPWK
+  simp only []
+  split
+  · exact scanAWKk_extract _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl
+  · rw [lookupPW_eqK]; unfold lookupPWK; simp only []; rw [if_neg (by assumption)]
+
 end MzWU
 
 
