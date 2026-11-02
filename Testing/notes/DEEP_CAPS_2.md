@@ -49,3 +49,37 @@ so the trimming cannot be done on our side.
 - After O1's thread fix the bench is no longer a proxy for the shim: it uses ~2× the shim's CPU (no per-task index
   copy, contended counts) and 3.8× its Ir in pass 1 (per-chromosome routing; the shim routes on one sequence).
 - Remaining gap with trimmed reads (HiSeq +40% vs bench +16%): not traced yet.
+
+## Short-seed prototype (unproved, measurement only; `Testing/scripts/shortseed/ss.c`)
+`gcc -O2 -march=native -o ss ss.c`; `ss genome.fa K W MAXOCC[,..] CAP r1 r2 ...`. Forward-strand (K, W) minimizer
+index of hg38 in memory (CSR by the hash's top 28 bits); per mate and strand: read minimizers → exact hits (verified
+on the genome; a seed with more than MAXOCC exact hits is skipped, 0 = keep all) → diagonals → banded affine DP
+(mismatch 4, open 6, extend 2; read end to end) → placements ≤ CAP → FR pairs, fragment 100..1000. A clean stretch of
+K + W − 1 letters always yields a hit (K = 21, W = 4: 24 letters).
+hg38, K = 21, W = 4: 1.17 G entries, 5.8 GB, 512 s single-thread build.
+
+Input: the pairs the shim leaves `boundsOnly` today (HiSeq/NovaSeq trimmed as above; mason/low as released):
+HiSeq 28,893, NovaSeq 27,454, mason 18,887, low 6,212 of 200k. First 1000 of each, cap 32, ms = CPU per pair
+(single thread). "worse mate" = the larger mate penalty of the best pair (≤16 = the proved mapper gave up on it for
+another reason: gate / repeats / ties; 17–32 = needs the deeper cap).
+
+| set | MAXOCC | proper pair | unique | at truth | worse mate ≤16 / ≤24 / ≤32 (at truth) | ms/pair |
+|---|---|---|---|---|---|---|
+| mason | 20 | 875 | 776 | 789 | 193 / 615 / 67 (131 / 599 / 59) | 17.5 |
+| mason | 100 | 919 | 809 | 822 | 221 / 631 / 67 (152 / 611 / 59) | 30.6 |
+| mason | 500 | 954 | 824 | 850 | 250 / 639 / 65 (171 / 618 / 61) | 79.5 |
+| low | 20 | 696 | 520 | 519 | 487 / 175 / 34 (352 / 163 / 4) | 29.4 |
+| low | 100 | 766 | 564 | 573 | 555 / 182 / 29 (405 / 164 / 4) | 46.2 |
+| low | 500 | 858 | 610 | 648 | 656 / 180 / 22 (480 / 164 / 4) | 111.8 |
+| HiSeq | 20 | 378 | 320 | – | 181 / 124 / 73 | 34.3 |
+| HiSeq | 100 | 417 | 334 | – | 213 / 124 / 80 | 80.2 |
+| HiSeq | 500 | 459 | 346 | – | 247 / 135 / 77 | 269.2 |
+| NovaSeq | 20 | 485 | 412 | – | 226 / 159 / 100 | 25.1 |
+| NovaSeq | 100 | 530 | 430 | – | 261 / 166 / 103 | 38.9 |
+| NovaSeq | 500 | 563 | 433 | – | 298 / 166 / 99 | 108.5 |
+No occurrence limit (100 low pairs): 99 proper, 69 at truth, 4.1 s/pair (1,900 exact hits per lookup).
+
+Scaled to 200k pairs (MAXOCC 20): mason +14.9k pairs at truth (+7.5%), low +3.2k (+1.6%); HiSeq +9.2k unique pairs
+(+4.6%; ~half need the deeper cap), NovaSeq +11.3k (+5.7%). Cost as measured is far too high (HiSeq 28.9k × 34 ms ≈
+990 s CPU vs ~28 s for the whole shim run): the prototype verifies every entry of a bucket before deciding to skip it
+(1,600–2,150 entries per lookup in these repeat-rich pairs); the DPs are few (60–120 per pair at MAXOCC 20).
