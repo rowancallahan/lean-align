@@ -1,6 +1,7 @@
 import Proofs.Index
 import Proofs.Whole
 import Proofs.LastResort
+import Proofs.GaveUp
 import TierHeur
 import ParMap
 
@@ -224,13 +225,22 @@ def lookAt (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz
       (LastResort.pairsAt insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
         read1 read2))
 
--- the router with the per-pair settings; a leftover (`LastResort.Leftover`) gets the second look (`lookAt`)
+-- (prototype, proposed Spec) a leftover whose mate has a seed repeating at least `gaveUpRepeats` times is
+-- answered `.gaveUp` instead of the second look (`GaveUp.repeatMate`)
+def gaveUpOn : Bool := true
+
+-- the router with the per-pair settings; a leftover (`LastResort.Leftover`) gets the second look (`lookAt`),
+-- or `.gaveUp` when a mate has a repeat seed
 def answerOfReads (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
     (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (read1 read2 : ByteArray) : PairAnswer :=
   let req := reqOf insertSettings read1 read2
   let t := MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
   let a := answerWith insertSettings req pk pgs offs ns read1 read2 t
-  if LastResort.Leftover req a then lookAt insertSettings req pk offs ns read1 read2 else a
+  if LastResort.Leftover req a then
+    if gaveUpOn && (GaveUp.repeatMate pk offs ns read1 || GaveUp.repeatMate pk offs ns read2) then
+      { a with uniqueness := .gaveUp }
+    else lookAt insertSettings req pk offs ns read1 read2
+  else a
 
 def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
@@ -550,18 +560,32 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
           (oldGenome (Whole.wholeOf G)) (decodeRead read1) (decodeRead read2) (some read1) (some read2) t →
           (answerWith insertSettings (reqOf insertSettings read1 read2) (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n])
             offs ns read1 read2 t).Correct insertSettings genome (decodeRead read1) (decodeRead read2) ∨
-          LastResort.Leftover (reqOf insertSettings read1 read2) (answerWith insertSettings (reqOf insertSettings read1 read2)
-            (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t) :=
-        fun t hok' => (LastResort.finalize_correct (LastResort.fitNs ns) hnone
+          (LastResort.Leftover (reqOf insertSettings read1 read2) (answerWith insertSettings (reqOf insertSettings read1 read2)
+            (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t) ∧
+           CorrectU insertSettings genome (decodeRead read1) (decodeRead read2) (answerWith insertSettings
+            (reqOf insertSettings read1 read2) (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t)) :=
+        fun t hok' => LastResort.finalize_correct (LastResort.fitNs ns) hnone
           (Report.answerOfPair_correct hslice hchr hlen reportTies (fallbackFrom _) mateRescue (ix, G) insertSettings read1 read2 _ hok'
             (Whole.correct_of_whole insertSettings _ _ hslice _ rfl rfl
-              (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok')))).imp id And.left
+              (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok')))
       have hok0 := hok (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
       show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _)
       unfold answerOfReads
       dsimp only
       split
-      · unfold lookAt
+      · rename_i hleft
+        split
+        · -- `.gaveUp`: no pair (a leftover), the leftover's bound, and a repeat seed
+          rename_i hrep
+          have hb := (key _ hok0).elim (fun h => h.2.1) (fun h => h.2.2.1)
+          simp only [Bool.and_eq_true, Bool.or_eq_true] at hrep
+          refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
+          have hw : genome.RepeatWitness (decodeRead read1) ∨ genome.RepeatWitness (decodeRead read2) := by
+            rcases hrep.2 with h | h
+            · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
+            · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 h)
+          exact ⟨hleft.1, hw⟩
+        unfold lookAt
         dsimp only
         have hc16 : lookCap (reqOf insertSettings read1 read2) ≤ 16 := Nat.min_le_left _ _
         rcases LastResort.finalize_correct (LastResort.fitNs ns) hnone
@@ -572,7 +596,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
         · exact h
         · exact absurd h.1 (LastResort.look_not_leftover hc hj)
       · rename_i hnot
-        exact (key _ hok0).resolve_right hnot
+        exact (key _ hok0).resolve_right fun h => hnot h.1
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.

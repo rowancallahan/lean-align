@@ -116,6 +116,7 @@ theorem provedBound_ok {insertSettings : InsertSettings} {genome : Genome} {m1 m
   | some rep =>
     cases hq : a.uniqueness with
     | unknown => exact h0
+    | gaveUp => exact h0
     | unique =>
       rw [hq] at hu
       obtain ⟨rep', hr', best, hbr, hbest⟩ := hu
@@ -191,6 +192,7 @@ theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1
         | unique => rw [hq] at h3; exact h3
         | multimapper => rw [hq] at h3; exact h3
         | unknown => intro h; rw [hf] at h; cases h
+        | gaveUp => rw [hq] at h3; rw [hf] at h3; cases h3
     · rw [if_neg hj]
       exact boundOnly_correct fit hnone a _ (provedBound_ok ha)
 
