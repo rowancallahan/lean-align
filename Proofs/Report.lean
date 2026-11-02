@@ -157,15 +157,90 @@ def chromOf (offs ns : Array Nat) (s e : Nat) : Option Nat :=
   | [c] => some c
   | _ => none
 
+/-! ### The gap-free check as a byte compare (`chkCandD_ok`: it implies `chkCand` on `[(diag, n)]`) -/
+
+-- penalty sum of `k` read letters `X[i ..]` against `G[st + i ..]`, mismatch −4
+def diagPen (X : ByteArray) (G : PGen) (st : Nat) : Nat → Nat → Int → Int
+  | 0, _, acc => acc
+  | k + 1, i, acc => diagPen X G st k (i + 1) (acc + if X.get! i == G.get (st + i) then 0 else -4)
+
+def chkCandD (pgs : Array PGen) (R Rr : ByteArray) (h : MapSpec.Placement × Int) : Bool :=
+  let X := if h.1.2 = .fwd then R else Rr
+  decide (h.1.1.chr < pgs.size) && decide (h.1.1.start + h.1.1.len ≤ pgs[h.1.1.chr]!.n) && decide (h.2 ≤ 0) &&
+    X.size == R.size && h.1.1.len == R.size && diagPen X pgs[h.1.1.chr]! h.1.1.start R.size 0 0 == h.2
+
+theorem ofNat_byte_inj (a b : UInt8) : Char.ofNat a.toNat = Char.ofNat b.toNat ↔ a = b := by
+  constructor
+  · intro h
+    have := congrArg Char.toNat h
+    rw [Bridge.toNat_ofNat_lt _ a.toNat_lt, Bridge.toNat_ofNat_lt _ b.toNat_lt] at this
+    exact UInt8.toNat_inj.mp this
+  · intro h; rw [h]
+
+theorem walk_diag (X : ByteArray) (G : PGen) (st n : Nat) (xa ya : Array Char)
+    (hxs : xa.size = n) (hys : ya.size = n)
+    (hx : ∀ t (h : t < xa.size), xa[t] = Char.ofNat (X.get! t).toNat)
+    (hy : ∀ t (h : t < ya.size), ya[t] = Char.ofNat (G.get (st + t)).toNat) :
+    ∀ k i prev acc, i + k = n →
+      AlignmentSpec.walkCheckA MapSpec.sc0 xa ya (List.replicate k .diag) i i prev acc = some (diagPen X G st k i acc)
+  | 0, i, prev, acc, h => by
+    simp only [List.replicate, AlignmentSpec.walkCheckA, diagPen]
+    rw [Array.getElem?_eq_none (by omega), Array.getElem?_eq_none (by omega)]
+  | k + 1, i, prev, acc, h => by
+    simp only [List.replicate, AlignmentSpec.walkCheckA, diagPen]
+    rw [Array.getElem?_eq_getElem (by omega), Array.getElem?_eq_getElem (by omega)]
+    simp only
+    rw [walk_diag X G st n xa ya hxs hys hx hy k (i + 1) _ _ (by omega)]
+    congr 2
+    rw [hx i (by omega), hy i (by omega)]
+    unfold AlignmentSpec.diagCost
+    by_cases e : X.get! i = G.get (st + i)
+    · simp [e, MapSpec.sc0]
+    · have : ¬ Char.ofNat (X.get! i).toNat = Char.ofNat (G.get (st + i)).toNat := fun h => e ((ofNat_byte_inj _ _).1 h)
+      simp [e, this, MapSpec.sc0]
+
+theorem chkCandD_ok (pgs : Array PGen) (R Rr : ByteArray) (h : MapSpec.Placement × Int)
+    (hc : chkCandD pgs R Rr h = true) : chkCand pgs R Rr h [(AlignmentSpec.Step.diag, R.size)] = true := by
+  unfold chkCandD at hc
+  simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hc
+  obtain ⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, hX⟩, hlen⟩, hd⟩ := hc
+  unfold chkCand rescoreRuns
+  simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
+  refine ⟨⟨⟨h1, h2⟩, h3⟩, ?_⟩
+  rw [AlignmentSpec.checkRuns_check]
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil]
+  rw [walk_diag (if h.1.2 = .fwd then R else Rr) pgs[h.1.1.chr]! h.1.1.start R.size _ _
+    (by simp [hX]) (by simp [hlen]) (fun t ht => by simp) (fun t ht => by simp) R.size 0 none 0 (by omega)]
+  exact congrArg some hd
+
 -- the alignment at `x` (whole sequence `pgs`) with CIGAR `runs`: re-checked, moved to its chromosome
+-- the line of an alignment at `x` (whole sequence) with CIGAR `runs`, moved to its chromosome
+def moveTo (offs ns : Array Nat) (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) :
+    Option MateReport :=
+  let r := mateReportOf x runs
+  match chromOf offs ns r.placement.start r.placement.stop with
+  | some c => some { r with placement := unshiftP c offs[c]! r.placement }
+  | none => none
+
 def checkMove (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray)
     (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) : Option MateReport :=
-  if chkCand pgs R (revCompK R) x runs then
-    let r := mateReportOf x runs
-    match chromOf offs ns r.placement.start r.placement.stop with
-    | some c => some { r with placement := unshiftP c offs[c]! r.placement }
-    | none => none
-  else none
+  if chkCand pgs R (revCompK R) x runs then moveTo offs ns x runs else none
+
+-- the gap-free CIGAR checked by the byte compare (`checkMoveD_eq`)
+def checkMoveD (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray) (x : MapSpec.Placement × Int) :
+    Option MateReport :=
+  if chkCandD pgs R (revCompK R) x then moveTo offs ns x [(AlignmentSpec.Step.diag, R.size)] else none
+
+theorem checkMoveD_eq {pgs : Array PGen} {offs ns : Array Nat} {R : ByteArray} {x : MapSpec.Placement × Int}
+    {r : MateReport} (h : checkMoveD pgs offs ns R x = some r) :
+    checkMove pgs offs ns R x [(AlignmentSpec.Step.diag, R.size)] = some r := by
+  unfold checkMoveD at h
+  split at h
+  · rename_i hc
+    unfold checkMove
+    rw [if_pos (chkCandD_ok _ _ _ _ hc)]
+    exact h
+  · cases h
 
 -- the CIGAR of a mate placed at `x`: the router's checked runs, else the banded DP
 def mateRuns (pgs : Array PGen) (R : ByteArray) (m : MateX) (x : MapSpec.Placement × Int) :
@@ -176,7 +251,7 @@ def mateRuns (pgs : Array PGen) (R : ByteArray) (m : MateX) (x : MapSpec.Placeme
 -- has the read's length), else `mateRuns` (`<|>` is lazy: the banded DP runs only when needed)
 def mateOf (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray) (m : MateX) : Option MateReport :=
   m.pl.bind fun x =>
-    (if x.1.1.len == R.size then checkMove pgs offs ns R x [(AlignmentSpec.Step.diag, R.size)] else none) <|>
+    (if x.1.1.len == R.size then checkMoveD pgs offs ns R x else none) <|>
       (mateRuns pgs R m x).bind (checkMove pgs offs ns R x)
 
 -- tags whose mates' placements form the pair in hand (T1gm: one tied best pair; T1um: the T2 pair)
@@ -305,7 +380,7 @@ theorem checkMove_sound
     (R : ByteArray) (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) (r : MateReport)
     (h : checkMove (cutAll G #[0] #[G.n]) offs ns R x runs = some r) :
     ∃ a : GenomicAlignment genome (decodeRead R), a.report = r ∧ MateAt genome offs ns (decodeRead R) x a := by
-  unfold checkMove at h
+  unfold checkMove moveTo at h
   split at h
   · rename_i hc
     obtain ⟨hcig, -⟩ := chkCand_sound _ _ (Whole.genomeBytes_whole G) R _ (encodes_decodeRead R) _ runs hc
@@ -343,13 +418,12 @@ theorem mateOf_sound
     rw [hp] at h
     simp only [Option.bind_some] at h
     refine ⟨x, rfl, ?_⟩
-    cases h0 : (if x.1.1.len == R.size then checkMove (cutAll G #[0] #[G.n]) offs ns R x
-        [(AlignmentSpec.Step.diag, R.size)] else none) with
+    cases h0 : (if x.1.1.len == R.size then checkMoveD (cutAll G #[0] #[G.n]) offs ns R x else none) with
     | some r0 =>
       rw [h0] at h
       cases h
       split at h0
-      · exact checkMove_sound hslice hchr R x _ r h0
+      · exact checkMove_sound hslice hchr R x _ r (checkMoveD_eq h0)
       · cases h0
     | none =>
       rw [h0] at h
