@@ -1350,6 +1350,15 @@ Blocker: 5.8 GB + the main index held twice (file + heap) doesn't fit 15 GB → 
 main index (Main.lean). O2's order: (1) trimming in Spec/Shim, (2) low-repeat k=21 find-only extra index, (3) deepCaps.
 All Opus boxes archived after the night (O1–O6).
 
+### Decisions open for Rowan (morning report 2026-11-02)
+1 trimming in Spec/Shim chunkPairs (ReadTrim.trimRead; diff in DEEP_CAPS_2.md) · 2 merge festive-fermi into main ·
+3 Main.lean I/O overlap (small first chunk, SAM formatting in the background write) · 4 low-repeat k=21 extra index
+(find-only, .unknown) · 5 mmap index load · 6 deepCaps on after trimming · 7 junkScore (−16 / InsertSettings / relative)
+· 8 leftover no-pair answers (cheap no-good-pair proof vs "gave up") · 9 mate rescue on all −17 pairs · 10 gateBudget
+default · 11 graded MAPQ + NM/MD in Spec/Sam · 12 BAM default · 13 parTasks ≥ cores for 32-thread servers · 14 allow
+ngi-igenomes.s3.amazonaws.com · 15 dedup / heuristic (off).
+Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
+
 ### Later (Rowan)
 - **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
   maybe force reporting it whenever one exists.
