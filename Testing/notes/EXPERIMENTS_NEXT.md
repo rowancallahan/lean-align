@@ -66,7 +66,7 @@ heuristic's best settings for M2, glibc allocations and the bignum on the hg38 p
   (Spec/Shim.lean, Rowan approves) — no theorem changes (alignPairs is a pure function of its input).
 - **Bytes all the way**: keep names/qualities as ByteArray from FASTQ to output (today: String + UTF-8 validation);
   write records into one byte buffer per batch. Fits Rowan's FASTQ redo.
-- **BAM**: compressed BAM costs deflate CPU (often more than SAM text); uncompressed BAM (level 0) is cheap and
+- **BAM** (Rowan: he will add a Lean zip implementation later for compression — faster; until then BAM is uncompressed): compressed BAM costs deflate CPU (often more than SAM text); uncompressed BAM (level 0) is cheap and
   smaller than SAM — time SAM vs BAM-level-0 vs BAM-default. Validate with samtools (quickcheck, view, flagstat vs
   minibwa; needs samtools on the box). Rowan writes the BAM spec.
 - FASTQ pairing check: done (00b3165) — mate names must match and both files end together, else exit 1.
