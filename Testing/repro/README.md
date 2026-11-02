@@ -5,7 +5,7 @@ Index of recipes (R-ids are used in the results page). Each script prints the nu
 
 | id | what | command (from the repo root, after the setup below) | measured here |
 |---|---|---|---|
-| R1 | speed vs minibwa (CPU, wall, end-to-end) | `bash Testing/repro/speed.sh SET [REPS=6] [THREADS=4]` | NovaSeq 200k, 3 reps: 3 min 59 s |
+| R1 | speed vs minibwa (CPU, wall, end-to-end) | `sh Testing/scripts/headline.sh OUT 'k:$S/lean-align mbdef:$MINIBWA' 'novaseq:novaseq_200k'` then `python3 -I Testing/scripts/ab_med.py OUT/LOG` (see R1 below) | not re-timed here (REPEAT=3 x 2 tools, 6+ min) |
 | R2 | instruction counts (callgrind) | `bash Testing/repro/ir.sh BINARY SET [PAIRS=2000]` | not timed (200 pairs ran to completion) |
 | R3 | mapped / unique / agreement with minibwa | `bash Testing/repro/mapping.sh OUT hg38_mason hg38_low hg002_200k novaseq_200k` | `hg38_low`: 1 min 45 s |
 | R4 | unique-genome exact match | `bash Testing/unique/run.sh OUT` | 5 min 9 s |
@@ -38,16 +38,15 @@ Release assets (names): `genome.fa.partaa/ab`, `shim.idx.partaa/ab/ac`, `shim.id
 
 ## Box-specific caveats (they decide how far a re-run can differ)
 - **Index load is the noise.** The shim reads a 5.3 GB index into memory (`readBinFile`), minibwa's index is 7 GB, the box has 15 GB: the page cache is reclaimed and the shim's load of an
-  empty FASTQ varied 1.6-44 s between runs on the author's box (THREADS_2026-11-02.md "Final proven head"; N32_KERNELS §4; my own runs 5-44 s). Timings therefore subtract an empty-FASTQ run made right before
-  each full run. Wall differences under about 10 s are noise; **user+sys CPU is the steadier column** (run-to-run spread about +-10-20%, N32_KERNELS §4-5).
+  empty FASTQ varied 1.6-44 s between runs on the author's box (THREADS_2026-11-02.md "Final proven head"; N32_KERNELS §4; my own runs 5-44 s). The N32 §5 timings subtract an empty-FASTQ run made right before
+  each full run; `headline.sh` (R1) instead measures the load inside the run. Wall differences under about 10 s are noise; **user+sys CPU is the steadier column** (run-to-run spread about +-10-20%, N32_KERNELS §4-5).
 - **One tool at a time, nothing else running, `taskset -c 0-3`.** Interleaving the tools made it worse (N32 §4: "empty runs up to 500 s"). Use REPS >= 3 (a single repetition can give a negative minibwa map time).
 - **SAM output is deterministic** (the same SAM for 2 and 4 threads and across runs: THREADS_2026-11-02.md "Fix"; I re-ran R3 (`hg38_low`), R4, R5 and the counts of R6 on the current head: identical to the notes). So the mapping, validation and proof numbers should reproduce exactly; only R1 and R2 timings have a spread.
-- `speed.sh` uses the same subtraction for both tools (empty run). THREADS_2026-11-02.md instead subtracts minibwa's own "index loaded" log time and, for ours, the median of 12 empty runs; those numbers are not produced by `speed.sh`.
+- Methods differ between notes: N32 §5/N33 §5 subtract an empty-FASTQ run (6 reps, median); THREADS_2026-11-02 subtracts minibwa's own "index loaded" log time; N32_REPEATS §7 (`headline.sh`) measures the shim's index load **inside the run** (`timed_load.py`, /proc rchar until the index-file size is read) and minibwa's from its log. Only the last is what R1 runs; A1-A6 of the results page are the older empty-run method.
 
-## R1 `speed.sh`
-`bash Testing/repro/speed.sh novaseq_200k 6 4` (also `hg002_200k`, `hg38_mason`, `hg38_low`). Per tool: one warm-up empty run, then 6 x (empty run, full run); prints map wall, CPU (user+sys), end-to-end, the 6 individual values, and the line
-`SET 4 threads: minibwa X s / ours Y s = Z.ZZx wall; CPU ...; end-to-end ...`. To compare a past head, `git checkout COMMIT && lake build lean-align` first (the claims name their commit).
-Expected: see the claim table (RESULTS_2026-11-02.md section A). Time: about 2 x (1 + 2 x REPS) index loads and 2 x REPS full maps; NovaSeq 200k with REPS=3 took 3 min 59 s. Needs a few GB of free disk for the SAM it writes (a full disk makes `lean-align` die with "no space left on device" and the script then exits without output).
+## R1 `headline.sh` (kept instead of my earlier `speed.sh`, which implemented the N32 §5 empty-run subtraction)
+Exact invocations and numbers: `Testing/notes/N32_REPEATS.md` §7 (round on e384063: `sh Testing/scripts/headline.sh OUT 'k:$S/v.k mbdef:$S/minibwa' 'novaseq:novaseq_200k'`, likewise `hg002_200k`, `hg38_mason`, `hg38_low`; envs REPEAT=3, THREADS=4, INDEX, INDEX_MB, READS; then `python3 -I Testing/scripts/ab_med.py LOG`). It drops page caches, `cat`s the index before each run, pins `taskset -c 0-3`, and reports load-subtracted median wall/CPU and end-to-end.
+Caveat: the `ab_med.py` docstring still says "empty-FASTQ run" for ours; the code uses the in-run load from `timed_load.py`. To compare a past head, `git checkout COMMIT && lake build lean-align` first. Needs free disk for the SAMs (a full disk makes `lean-align` die with "no space left on device").
 
 ## R2 `ir.sh`
 `bash Testing/repro/ir.sh .lake/build/bin/lean-align novaseq_200k 2000` prints callgrind's `Collected : N` (index load included, as in N32/N33). Deterministic; build both commits, copy each `lean-align`, run twice, compare.

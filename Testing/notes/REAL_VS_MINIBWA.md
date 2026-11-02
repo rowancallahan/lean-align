@@ -36,14 +36,16 @@ So half of our last-resort pairs are reads minibwa maps confidently, the main se
 
 | | NovaSeq | HiSeq |
 |---|---|---|
-| mates at same place | 355 300 | 349 362 |
-| minibwa clipped, not comparable | 5 250 (1.5 %) | 24 973 (7.2 %) |
-| same query length: minibwa strictly better | 449 (0.16 %) | 170 (0.20 %) |
-| same query length: equal | 99.82 % | 99.79 % |
-| same query length: ours better | 47 | 12 |
-| ours trimmed (shorter query): minibwa strictly better / ours better | 340 / 9 376 | 720 / 80 240 |
+| mates at same place | 356 541 | 352 185 |
+| minibwa clipped, not comparable | 5 621 (1.58 %) | 26 190 (7.44 %) |
+| same query length: minibwa strictly better | 818 (0.29 %) | 363 (0.42 %) |
+| same query length: equal | 99.68 % | 99.55 % |
+| same query length: ours better | 86 | 20 |
+| ours trimmed (shorter query): minibwa strictly better / ours better | 573 / 9 560 | 1 296 / 81 044 |
 
-"Ours better" with a trimmed query is expected: minibwa scores the extra low-quality bases we dropped. **Every one of the 619 mates
+*(Corrected 2026-11-02: this table and the "619" below were stale; they now match `real_vs_minibwa/{novaseq,hg002}_200k.report.md` section 2, HiSeq = hg002_200k.)*
+
+"Ours better" with a trimmed query is expected: minibwa scores the extra low-quality bases we dropped. **Every one of the 1 181 mates (818 + 363)
 where minibwa is strictly better at the same length is labelled `unknown` by us (never unique or multimapper)**: NovaSeq `boundsOnly` 490
 (278 with AS < -100), `stoppedEarly` 297, `eachMateUnique` 28, `deepSearchTie` 3; HiSeq `boundsOnly` 206, `stoppedEarly` 95, `eachMateUnique` 61, `deepSearchTie` 1.
 No unique claim is contradicted by a better end-to-end alignment at the same place.
