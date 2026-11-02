@@ -193,11 +193,77 @@ theorem chromGo_eq (offs ns : Array Nat) (s e : Nat) : ∀ k c r,
     · rw [if_pos h, if_pos h]; rfl
     · rw [if_neg h, if_neg h, chromGo_eq offs ns s e k (c + 1)]
 
-@[inline] def chromOfL (offs ns : Array Nat) (s e : Nat) : Option Nat := chromGo offs ns s e ns.size 0 none
+theorem ausN_le (a : Array Nat) : a.usize.toNat ≤ a.size := by
+  show a.size.toUSize.toNat ≤ a.size
+  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
+
+-- `chromGo` with the index in `USize` and the entries read by `uget` (`chromGoU_eq`)
+def chromGoU (offs ns : @& Array Nat) (s e : Nat) (k c : USize) (r : Option Nat) : Option Nat :=
+  if k = 0 then r
+  else if h : c < offs.usize ∧ c < ns.usize then
+    let o := offs.uget c (Nat.lt_of_lt_of_le h.1 (ausN_le offs))
+    let hit := decide (o ≤ s) && decide (e ≤ o + ns.uget c (Nat.lt_of_lt_of_le h.2 (ausN_le ns)))
+    match r with
+    | none => if hit then chromGoU offs ns s e (k - 1) (c + 1) (some c.toNat) else chromGoU offs ns s e (k - 1) (c + 1) none
+    | some d => if hit then none else chromGoU offs ns s e (k - 1) (c + 1) (some d)
+  else r
+termination_by k.toNat
+decreasing_by
+  all_goals
+    have : k.toNat ≠ 0 := fun e => by apply ‹¬ k = 0›; exact USize.toNat_inj.mp (by rw [e]; rfl)
+    rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [MapSpec.Fast.pgu_one]; omega),
+      MapSpec.Fast.pgu_one]
+    omega
+
+theorem chromGoU_eq (offs ns : Array Nat) (s e : Nat) (ho : offs.size < 4294967295) (hn : ns.size < 4294967295) :
+    ∀ (k : Nat) (kU cU : USize) (c : Nat) (r : Option Nat), kU.toNat = k → cU.toNat = c →
+      c + k ≤ offs.size → c + k ≤ ns.size → chromGoU offs ns s e kU cU r = chromGo offs ns s e k c r := by
+  have hso : offs.usize.toNat = offs.size := MapSpec.Fast.pgu_n _ (by omega)
+  have hsn : ns.usize.toNat = ns.size := MapSpec.Fast.pgu_n _ (by omega)
+  intro k
+  induction k with
+  | zero =>
+    intro kU cU c r hk _ _ _
+    have : kU = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [chromGoU, if_pos this]; cases r <;> rfl
+  | succ k ih =>
+    intro kU cU c r hk hc h1 h2
+    have hk0 : ¬ kU = 0 := fun e => by rw [e] at hk; simp at hk
+    have h : cU < offs.usize ∧ cU < ns.usize :=
+      ⟨by show cU.toNat < offs.usize.toNat; omega, by show cU.toNat < ns.usize.toNat; omega⟩
+    have ek : (kU - 1).toNat = k := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ kU.toNat; rw [MapSpec.Fast.pgu_one]; omega),
+        MapSpec.Fast.pgu_one, hk]; rfl
+    have ec : (cU + 1).toNat = c + 1 := by
+      rw [MapSpec.Fast.pgu_add _ _ (by rw [MapSpec.Fast.pgu_one]; omega), MapSpec.Fast.pgu_one, hc]
+    have go : offs.uget cU (Nat.lt_of_lt_of_le h.1 (ausN_le offs)) = offs[c]! := by
+      rw [getElem!_pos offs c (by omega)]; subst hc; rfl
+    have gn : ns.uget cU (Nat.lt_of_lt_of_le h.2 (ausN_le ns)) = ns[c]! := by
+      rw [getElem!_pos ns c (by omega)]; subst hc; rfl
+    rw [chromGoU, if_neg hk0, dif_pos h]
+    simp only [go, gn]
+    by_cases hh : (decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) = true
+    · cases r with
+      | none => rw [chromGo, if_pos hh]; dsimp only; rw [if_pos hh, ih _ _ _ _ ek ec (by omega) (by omega), hc]
+      | some d => rw [chromGo]; simp only [hh, ↓reduceIte]
+    · cases r with
+      | none => rw [chromGo, if_neg hh]; dsimp only; rw [if_neg hh, ih _ _ _ _ ek ec (by omega) (by omega)]
+      | some d => rw [chromGo]; simp only [hh, Bool.false_eq_true, ↓reduceIte]; rw [ih _ _ _ _ ek ec (by omega) (by omega)]
+
+@[inline] def chromOfL (offs ns : Array Nat) (s e : Nat) : Option Nat :=
+  if offs.size < 4294967295 ∧ ns.size < 4294967295 ∧ ns.size ≤ offs.size then
+    chromGoU offs ns s e ns.size.toUSize 0 none
+  else chromGo offs ns s e ns.size 0 none
 
 @[csimp] theorem chromOf_eqL : @chromOf = @chromOfL := by
   funext offs ns s e
-  rw [chromOfL, chromGo_eq, chromOf, List.range_eq_range']
+  have hL : chromOfL offs ns s e = chromGo offs ns s e ns.size 0 none := by
+    unfold chromOfL; split
+    · rename_i h
+      exact chromGoU_eq offs ns s e h.1 h.2.1 ns.size _ 0 0 none (MapSpec.Fast.pgu_n _ (by omega)) rfl
+        (by omega) (by omega)
+    · rfl
+  rw [hL, chromGo_eq, chromOf, List.range_eq_range']
   cases (List.range' 0 ns.size).filter _ with
   | nil => rfl
   | cons a t => cases t <;> rfl
