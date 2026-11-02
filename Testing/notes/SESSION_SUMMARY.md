@@ -1326,6 +1326,22 @@ gap is the cap and read ends, not the router. At junkScore −17, ~1 in 6 HiSeq 
   covered regions. Requirement: ONE generic index-building function (seed length, window, covered-region filter);
   the main 25-mer index is its k=25 / "everything" instance; one checker and one completeness lemma, instantiated.
   Variable-length (minimal unique) seeds: S1 research note VARIABLE_SEEDS.md.
+- **Uniqueness picture (Rowan, 2026-11-02 night):** `.unique` (proved one best) · `.multimapper` (proved exact tie) ·
+  `.nearTie` (to add: "maps pretty good with a buddy": reported pair ≥ junkScore and ≥ bestPossibleScore − gap, and a
+  buddy proper pair at a different placement ≥ bestPossibleScore − gap; `nearTieGap` setting, e.g. 8; anchored to the
+  bound so two mediocre pairs can't qualify; multimapper = gap 0) · `.unknown` with a pair (real pair, no claim) ·
+  `.unknown` without (proved junk, bound < junkScore) · "gave up" (maybe; see next).
+- **Near-tie instead of "gave up"? (think about):** near-tie covers repeat give-ups with two good pairs in hand; it can't
+  cover "no proper partner" pairs (mates on different chromosomes, chimeras) — a cheap proof that no good proper pair
+  exists (all hits far apart) could push those below junkScore (honest junk). If both cover the leftover, "gave up" may
+  be unnecessary; otherwise the degenerate last-resort pairs stay (0.2–1% with junkScore −16). Measure coverage first.
+- **Score floor for reported `.unknown` pairs (eventually):** e.g. pair score ≥ junkScore, so no degenerate "150I"
+  pairs; needs "gave up" (or full near-tie coverage) at the same time.
+- **Skip super-common seeds (think about):** like BWA-MEM/minimap2 (~500 occurrences); treat skipped seeds as possibly
+  spoiled in the pigeonhole bound (bound stays correct, weaker for that read).
+- **M2 status (O3):** CI passes with main's .unknown clause; failed index build now writes a chromosome-lengths record
+  (proved round trip), so no hBuilt hypothesis is needed; leftover pairs get the degenerate last-resort pair
+  (Proofs/LastResort.lean). Index builder proof (O5/O6) is a bonus now, not a blocker.
 - **Near-tie labels for MAPQ:** a proved near-tie (two placements within x of bestPossibleScore) so every reported pair
   gets a real MAPQ; ties are the x = 0 case.
 - **Error caps for longer reads:** make caps relative to read length (not fixed −12/−16 by length band), seeds and
