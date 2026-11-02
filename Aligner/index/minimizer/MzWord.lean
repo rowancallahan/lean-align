@@ -243,6 +243,114 @@ open Mz
 
 theorem slot_eqW (ix : MzIdx) (t : Nat) : ix.slot t = (slotW ix.sl ix.sw t).toNat := rfl
 
+/-! `slotW` on machine words (compiled code only): `slotW_eq_slotWF` (`@[csimp]`). The slot offset
+`sw * t` is a `USize`, and the four (or five, six, eight) bytes are read by `uget` behind one bounds
+check, so the reads can merge. -/
+
+theorem uget_eq_getElem (B : ByteArray) (u : USize) (i : Nat) (h1 : u.toNat < B.size) (h2 : i < B.size)
+    (e : u.toNat = i) : B.uget u h1 = B[i]'h2 := by subst e; rfl
+
+theorem ulit (c : Nat) (h : c < 2 ^ 32) : (OfNat.ofNat c : USize).toNat = c := pgu_n c h
+
+/-- On a 64-bit platform (checked once per call by `slotWF`) machine words do not wrap below 2^64. -/
+theorem usz_n64 (hU : System.Platform.numBits = 64) (n : Nat) (h : n < 2 ^ 64) : n.toUSize.toNat = n := by
+  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (by rw [hU]; exact h)]
+
+theorem uadd64 (hU : System.Platform.numBits = 64) (a b : USize) (h : a.toNat + b.toNat < 2 ^ 64) :
+    (a + b).toNat = a.toNat + b.toNat := by
+  rw [USize.toNat_add, Nat.mod_eq_of_lt (by show _ < 2 ^ System.Platform.numBits; rw [hU]; exact h)]
+
+theorem uaddl (hU : System.Platform.numBits = 64) (j : USize) (c : Nat) (hc : c < 2 ^ 32)
+    (h : j.toNat + c < 2 ^ 64) : (j + (OfNat.ofNat c : USize)).toNat = j.toNat + c := by
+  rw [uadd64 hU _ _ (by rw [ulit c hc]; exact h), ulit c hc]
+
+/-- `rd4` at a machine-word offset `j < 2^60` (`rd4U_eq`). -/
+@[inline] def rd4U (hU : System.Platform.numBits = 64) (B : ByteArray) (j : USize) (hj : j.toNat < 2 ^ 60) : UInt64 :=
+  if h : j + 3 < B.usize then
+    have h3 : (j + 3).toNat < B.usize.toNat := h
+    have e3 : (j + 3).toNat = j.toNat + 3 := uaddl hU j 3 (by decide) (by omega)
+    have hs := pgu_usize_le B
+    (B.uget j (by omega)).toUInt64 |||
+      ((B.uget (j + 1) (by rw [uaddl hU j 1 (by decide) (by omega)]; omega)).toUInt64 <<< 8) |||
+      ((B.uget (j + 2) (by rw [uaddl hU j 2 (by decide) (by omega)]; omega)).toUInt64 <<< 16) |||
+      ((B.uget (j + 3) (by omega)).toUInt64 <<< 24)
+  else rd4 B j.toNat
+
+theorem rd4U_eq (hU : System.Platform.numBits = 64) (B : ByteArray) (j : USize) (hj : j.toNat < 2 ^ 60) :
+    rd4U hU B j hj = rd4 B j.toNat := by
+  unfold rd4U
+  by_cases h : j + 3 < B.usize
+  · rw [dif_pos h]
+    have h3 : (j + 3).toNat < B.usize.toNat := h
+    have e3 : (j + 3).toNat = j.toNat + 3 := uaddl hU j 3 (by decide) (by omega)
+    have hs := pgu_usize_le B
+    unfold rd4
+    rw [dif_pos (by omega)]
+    dsimp only
+    rw [uget_eq_getElem B j j.toNat _ (by omega) rfl,
+      uget_eq_getElem B (j + 1) (j.toNat + 1) _ (by omega) (uaddl hU j 1 (by decide) (by omega)),
+      uget_eq_getElem B (j + 2) (j.toNat + 2) _ (by omega) (uaddl hU j 2 (by decide) (by omega)),
+      uget_eq_getElem B (j + 3) (j.toNat + 3) _ (by omega) e3]
+  · rw [dif_neg h]
+
+/-- `byteAt` at a machine-word offset. -/
+@[inline] def byteAtU (B : ByteArray) (j : USize) (sh : UInt64) : UInt64 := (pgGet B j).toUInt64 <<< sh
+
+theorem umul64 (hU : System.Platform.numBits = 64) (sw t : USize) (hs : sw.toNat < 16) (ht : t.toNat < 2 ^ 40) :
+    (sw * t).toNat = sw.toNat * t.toNat := by
+  have : sw.toNat * t.toNat < 2 ^ 44 :=
+    Nat.lt_of_le_of_lt (Nat.mul_le_mul (Nat.le_of_lt hs) (Nat.le_refl _))
+      (by rw [show (2 : Nat) ^ 44 = 16 * 2 ^ 40 by decide]; exact Nat.mul_lt_mul_of_pos_left ht (by decide))
+  rw [USize.toNat_mul, Nat.mod_eq_of_lt (by show _ < 2 ^ System.Platform.numBits; rw [hU]; omega)]
+
+/-- `slotW` with `sw`, `t`, the offset in `USize` (`slotWU_eq`). -/
+@[inline] def slotWU (hU : System.Platform.numBits = 64) (B : ByteArray) (sw t : USize) (hs : sw.toNat < 16)
+    (ht : t.toNat < 2 ^ 40) : UInt64 :=
+  let j := sw * t
+  have ej : j.toNat = sw.toNat * t.toNat := umul64 hU sw t hs ht
+  have hm : sw.toNat * t.toNat < 2 ^ 44 :=
+    Nat.lt_of_le_of_lt (Nat.mul_le_mul (Nat.le_of_lt hs) (Nat.le_refl _))
+      (by rw [show (2 : Nat) ^ 44 = 16 * 2 ^ 40 by decide]; exact Nat.mul_lt_mul_of_pos_left ht (by decide))
+  if sw = 4 then rd4U hU B j (by omega)
+  else if sw = 5 then rd4U hU B j (by omega) ||| byteAtU B (j + 4) 32
+  else if sw = 6 then rd4U hU B j (by omega) ||| byteAtU B (j + 4) 32 ||| byteAtU B (j + 5) 40
+  else rd4U hU B j (by omega) ||| (rd4U hU B (j + 4) (by rw [uaddl hU j 4 (by decide) (by omega)]; omega) <<< 32)
+
+theorem slotWU_eq (hU : System.Platform.numBits = 64) (B : ByteArray) (sw t : USize) (hs : sw.toNat < 16)
+    (ht : t.toNat < 2 ^ 40) : slotWU hU B sw t hs ht = slotW B sw.toNat t.toNat := by
+  have ej : (sw * t).toNat = sw.toNat * t.toNat := umul64 hU sw t hs ht
+  have hm : sw.toNat * t.toNat < 2 ^ 44 :=
+    Nat.lt_of_le_of_lt (Nat.mul_le_mul (Nat.le_of_lt hs) (Nat.le_refl _))
+      (by rw [show (2 : Nat) ^ 44 = 16 * 2 ^ 40 by decide]; exact Nat.mul_lt_mul_of_pos_left ht (by decide))
+  have e4 : (sw * t + 4).toNat = sw.toNat * t.toNat + 4 := by
+    rw [uaddl hU _ 4 (by decide) (by rw [ej]; omega), ej]
+  have e5 : (sw * t + 5).toNat = sw.toNat * t.toNat + 5 := by
+    rw [uaddl hU _ 5 (by decide) (by rw [ej]; omega), ej]
+  have q : ∀ c : Nat, c < 16 → ((sw = (OfNat.ofNat c : USize)) ↔ sw.toNat = c) := fun c hc => by
+    constructor
+    · intro h; rw [h]; exact ulit c (by omega)
+    · intro h; apply USize.toNat_inj.mp; rw [h]; exact (ulit c (by omega)).symm
+  unfold slotWU slotW byteAtU
+  simp only [rd4U_eq, pgGet_eq, ej, e4, e5, Mz.byteAt, q 4 (by decide), q 5 (by decide), q 6 (by decide)]
+
+/-- 2^40 as a constant (a literal ≥ 2^32 in a body is rebuilt from its digits at every call). -/
+@[noinline] def two40 : Nat := 1099511627776
+
+/-- `slotW` for the compiled code. -/
+@[inline] def slotWF (B : @& ByteArray) (sw t : Nat) : UInt64 :=
+  if h : System.Platform.numBits = 64 ∧ sw < 16 ∧ t < two40 then
+    slotWU h.1 B sw.toUSize t.toUSize (by rw [usz_n64 h.1 sw (by omega)]; exact h.2.1)
+      (by rw [usz_n64 h.1 t (by have := h.2.2; unfold two40 at this; omega)]; have := h.2.2; unfold two40 at this; exact this)
+  else slotW B sw t
+
+@[csimp] theorem slotW_eq_slotWF : @slotW = @slotWF := by
+  funext B sw t
+  unfold slotWF; split
+  · rename_i h
+    have := h.2.2; unfold two40 at this
+    rw [slotWU_eq, usz_n64 h.1 sw (by omega), usz_n64 h.1 t (by omega)]
+  · rfl
+
 /-- `scanAW` with the key test on the `UInt64` slot first (`kb`, `key`: `ix.kbM`, the key, as
 `UInt64`s); an entry whose key differs is skipped without `okAtW`. -/
 def scanAWK (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
