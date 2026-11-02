@@ -10,7 +10,7 @@ namespace Spec
 structure InsertSettings where
   range         : Nat × Nat  -- allowed fragment length: min and max, both included
   dovetailSlack : Nat := 0
-  requiredMapBound : Int := 17
+  requiredMapBound : Int := -16
   junkScore : Int := -50
 
 
