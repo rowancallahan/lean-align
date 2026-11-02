@@ -82,10 +82,24 @@ def buildIndex (byteGenome : GenomeFile) : ByteArray :=
 
 /-! ## The aligner -/
 
+-- Deeper caps (Testing/notes/DEEP_CAPS.md), OFF by default: pairs that pass 1 leaves without a hit
+-- or partner get pass 2 at cap 20 (150–249 letters) / 28 (≥ 250 letters), only when both mates'
+-- lookup cost at that cap is ≤ 3000 (bench: WG_PASS2=1 WG_T2=250:28,150:20 WG_P2BUDGET=3000).
+-- Any setting is sound (`tierPair_sound` holds for every `TierCfg`).
+def deepCaps : Bool := false
+
+-- pass-2 cap by mate length (a mate keeps its pass-1 cap where this is not deeper: `cap2Of`)
+def deepCap2 (n : Nat) : Nat := if 250 ≤ n then 28 else if 150 ≤ n then 20 else 0
+
 -- the router's settings for these insert settings (any settings are sound; these are for speed)
 def tierCfg (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (offs : Array Nat)
     (pgs : Array MapSpec.Fast.PGen) : MapSpec.Fast.TierCfg :=
-  TierHeur.rtxCfg { cap1 := fun n => if 150 ≤ n then 16 else if 100 ≤ n then 12 else if 75 ≤ n then 11 else 12 }
+  TierHeur.rtxCfg { cap1 := fun n => if 150 ≤ n then 16 else if 100 ≤ n then 12 else if 75 ≤ n then 11 else 12
+                    pass2 := deepCaps
+                    cap2 := deepCap2
+                    gate2 := fun a b =>
+                      MapSpec.Fast.costP pk (deepCap2 a.size) (MapSpec.Fast.prepMate pk a : MapSpec.Fast.PrepM MapSpec.Fast.MzP) ≤ 3000 &&
+                      MapSpec.Fast.costP pk (deepCap2 b.size) (MapSpec.Fast.prepMate pk b : MapSpec.Fast.PrepM MapSpec.Fast.MzP) ≤ 3000 }
     pk offs pgs insertSettings.range.1 insertSettings.range.2 insertSettings.dovetailSlack
 
 -- the bound that always holds: every score is ≤ 0
