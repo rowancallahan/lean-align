@@ -1,13 +1,20 @@
 import Proofs.Report
 
-/-! # The last step: no answer without a pair unless it is junk
+/-! # The last step: the report floor
 
-Spec's `.unknown` clause: an answer without a pair must have `bestPossibleScore < junkScore`. The router and
-the fallback (`Proofs/Report.lean`) find a real proper pair for almost every pair; for the rest (`finalize`):
+Spec's `PairAnswer.Correct` asks two things the router's answers (`CorrectU`) do not:
+* every printed pair scores at least `junkScore` (clause 1, any uniqueness);
+* an answer without a pair (`.unknown`) has `bestPossibleScore < requiredMapBound`.
 
-* some chromosome has at least `lo` letters (and `lo ≤ hi`): the degenerate proper pair — mate 1 forward on
-  the empty window `[0, 0)`, mate 2 reverse on `[lo, lo)`, each aligned as insertions only (`degenerate_sound`);
-* else no proper pair exists at all (`no_proper`), so any bound holds: `junkScore - 1`.
+`finalize` checks the first on the pair in hand (its printed score is the pair's score, `score_of_report`) and
+drops a pair below `junkScore`. A pair that is `.unique` / `.multimapper` is a best proper pair, so its own score
+is then a proved bound (`provedBound`). Without a pair, the answer is correct when its bound is
+`< requiredMapBound`, or when no proper pair exists at all (`no_proper`: no chromosome has `range.1` letters, or
+the range is empty), where any bound holds: `requiredMapBound - 1`.
+
+What is left is the LEFTOVER (`Leftover`): no pair `≥ junkScore` in hand and no proved bound
+`< requiredMapBound`. Spec has no answer for it yet. `finalize_correct` proves: the answer is `Correct`, or it is
+a leftover and still `CorrectU` (its pair-free bound is true). The degenerate all-insertion pair is never printed.
 
 The chromosome lengths come from the index (`ns`), or from the lengths record `buildIndex` writes when its
 check fails (`Proofs/Aligner.lean`). -/
@@ -16,41 +23,14 @@ namespace Spec.LastResort
 
 open Bridge
 
-/-! ## The degenerate pair -/
+/-! ## A printed pair's score -/
 
--- insertions only: a path of the read against no letters
-def gapPath (q : Read) : Path q [] :=
-  ⟨List.replicate q.length .gapY, by simp [List.count_replicate], by simp [List.count_replicate]⟩
+-- the pair's score as printed (`score_of_report`)
+def repScore (rep : PairReport) : Int := rep.mate1.score + rep.mate2.score
 
--- a mate's line at the empty window `p` (its letters on `p`'s strand all inserted)
-def emptyReport (p : Placement) (read : Read) : MateReport :=
-  ⟨p, (gapPath (p.strand.orient read)).cigar, (gapPath (p.strand.orient read)).score defaultScoring⟩
-
--- mate 1 forward on `[0, 0)`, mate 2 reverse on `[lo, lo)`, chromosome `c`
-def degeneratePair (c lo : Nat) (m1 m2 : Read) : PairReport :=
-  ⟨emptyReport ⟨c, 0, 0, .forward⟩ m1, emptyReport ⟨c, lo, lo, .reverse⟩ m2⟩
-
-theorem empty_fits {genome : Genome} {c s : Nat} {chr : Chromosome} (hc : genome[c]? = some chr)
-    (hs : s ≤ chr.seq.length) (st : Strand) :
-    (⟨c, s, s, st⟩ : Placement).reference genome = some [] := by
-  unfold Placement.reference
-  simp [hc, hs]
-
--- the alignment printed by `emptyReport`
-def emptyAlignment {genome : Genome} (read : Read) (p : Placement) (h : p.reference genome = some []) :
-    GenomicAlignment genome read :=
-  ⟨p, [], h, gapPath (p.strand.orient read)⟩
-
-theorem degenerate_sound {genome : Genome} {m1 m2 : Read} (range : Nat × Nat) (slack c : Nat) (chr : Chromosome)
-    (hc : genome[c]? = some chr) (hlo : range.1 ≤ chr.seq.length) (hr : range.1 ≤ range.2) :
-    ∃ pair : PairAlignment genome m1 m2,
-      pair.report = degeneratePair c range.1 m1 m2 ∧ pair.IsProper range slack := by
-  refine ⟨⟨emptyAlignment m1 _ (empty_fits hc (Nat.zero_le _) .forward),
-    emptyAlignment m2 _ (empty_fits hc hlo .reverse)⟩, rfl, ?_⟩
-  obtain ⟨lo, hi⟩ := range
-  simp only at hlo hr
-  simp [PairAlignment.IsProper, emptyAlignment]
-  omega
+theorem score_of_report {genome : Genome} {m1 m2 : Read} {pair : PairAlignment genome m1 m2} {rep : PairReport}
+    (h : pair.report = rep) : pair.score = repScore rep := by
+  subst h; rfl
 
 /-! ## No proper pair at all -/
 
@@ -89,57 +69,185 @@ theorem no_proper {genome : Genome} {m1 m2 : Read} (range : Nat × Nat) (slack :
 
 /-! ## The last step -/
 
--- `fit lo`: a chromosome where the degenerate pair fits (none: no chromosome has `lo` letters); the mates
--- and `fit` are only used (decoded, searched) when the answer has no pair and is not junk
-def finalize (insertSettings : InsertSettings) (fit : Nat → Option Nat) (R1 R2 : ByteArray) (a : PairAnswer) :
-    PairAnswer :=
-  if a.found.isNone && decide (insertSettings.junkScore ≤ a.bestPossibleScore) then
-    match (if insertSettings.range.1 ≤ insertSettings.range.2 then fit insertSettings.range.1 else none) with
-    | some c => { a with found := some (degeneratePair c insertSettings.range.1 (decodeRead R1) (decodeRead R2)),
-                         uniqueness := .unknown }
-    | none => { a with bestPossibleScore := insertSettings.junkScore - 1, uniqueness := .unknown }
-  else a
+-- no proper pair exists at all: the range is empty, or no chromosome has `range.1` letters (`fit` finds none)
+def noPair (insertSettings : InsertSettings) (fit : Nat → Option Nat) : Bool :=
+  !(decide (insertSettings.range.1 ≤ insertSettings.range.2) && (fit insertSettings.range.1).isSome)
 
-theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {R1 R2 : ByteArray} {a : PairAnswer}
+-- a bound the answer proves: its own, or (a best proper pair in hand) the pair's score if lower
+def provedBound (a : PairAnswer) : Int :=
+  match a.found, a.uniqueness with
+  | some rep, .unique => min a.bestPossibleScore (repScore rep)
+  | some rep, .multimapper => min a.bestPossibleScore (repScore rep)
+  | _, _ => a.bestPossibleScore
+
+-- no pair, bound `b`: below `requiredMapBound`, or `requiredMapBound - 1` when no proper pair exists;
+-- otherwise the bound stays `b` (a leftover)
+def boundOnly (insertSettings : InsertSettings) (fit : Nat → Option Nat) (b : Int) (a : PairAnswer) : PairAnswer :=
+  { a with found := none, uniqueness := .unknown,
+           bestPossibleScore :=
+             if b < insertSettings.requiredMapBound then b
+             else if noPair insertSettings fit then insertSettings.requiredMapBound - 1 else b }
+
+-- `fit lo`: a chromosome with at least `lo` letters (none: no chromosome has `lo` letters)
+def finalize (insertSettings : InsertSettings) (fit : Nat → Option Nat) (a : PairAnswer) : PairAnswer :=
+  match a.found with
+  | some rep =>
+    if insertSettings.junkScore ≤ repScore rep then a
+    else boundOnly insertSettings fit (provedBound a) a
+  | none => boundOnly insertSettings fit a.bestPossibleScore a
+
+-- THE LEFTOVER: no pair and no proved bound below `requiredMapBound`. Spec has no correct answer for it yet.
+def Leftover (insertSettings : InsertSettings) (a : PairAnswer) : Prop :=
+  a.found = none ∧ insertSettings.requiredMapBound ≤ a.bestPossibleScore
+
+instance (insertSettings : InsertSettings) (a : PairAnswer) : Decidable (Leftover insertSettings a) :=
+  inferInstanceAs (Decidable (_ ∧ _))
+
+theorem provedBound_ok {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read} {a : PairAnswer}
+    (ha : CorrectU insertSettings genome m1 m2 a) (pair : PairAlignment genome m1 m2)
+    (hp : pair.IsProper insertSettings.range insertSettings.dovetailSlack) : pair.score ≤ provedBound a := by
+  obtain ⟨-, hb, hu⟩ := ha
+  have h0 := hb pair hp
+  unfold provedBound
+  cases hf : a.found with
+  | none => exact h0
+  | some rep =>
+    cases hq : a.uniqueness with
+    | unknown => exact h0
+    | unique =>
+      rw [hq] at hu
+      obtain ⟨rep', hr', best, hbr, hbest⟩ := hu
+      rw [hf] at hr'; cases hr'
+      have := hbest.1.2 pair hp
+      rw [score_of_report hbr] at this
+      simp only; omega
+    | multimapper =>
+      rw [hq] at hu
+      obtain ⟨rep', hr', best, -, hbr, hbest, -⟩ := hu
+      rw [hf] at hr'; cases hr'
+      have := hbest.2 pair hp
+      rw [score_of_report hbr] at this
+      simp only; omega
+
+theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read}
     (fit : Nat → Option Nat)
-    (hfit : ∀ c, fit insertSettings.range.1 = some c → ∃ chr, genome[c]? = some chr ∧ insertSettings.range.1 ≤ chr.seq.length)
     (hnone : fit insertSettings.range.1 = none →
       ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr → chr.seq.length < insertSettings.range.1)
-    (ha : CorrectU insertSettings genome (decodeRead R1) (decodeRead R2) a) :
-    (finalize insertSettings fit R1 R2 a).Correct insertSettings genome (decodeRead R1) (decodeRead R2) := by
-  obtain ⟨hf, hb, hu⟩ := ha
+    (a : PairAnswer) (b : Int)
+    (hb : ∀ pair : PairAlignment genome m1 m2,
+      pair.IsProper insertSettings.range insertSettings.dovetailSlack → pair.score ≤ b) :
+    (boundOnly insertSettings fit b a).Correct insertSettings genome m1 m2 ∨
+      (Leftover insertSettings (boundOnly insertSettings fit b a) ∧
+        CorrectU insertSettings genome m1 m2 (boundOnly insertSettings fit b a)) := by
+  have hno : noPair insertSettings fit = true →
+      ∀ pair : PairAlignment genome m1 m2, ¬ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
+    intro h
+    apply no_proper
+    simp only [noPair, Bool.not_eq_true', Bool.and_eq_false_iff, decide_eq_false_iff_not,
+      Option.isSome_eq_false_iff, Option.isNone_iff_eq_none] at h
+    rcases h with h | h
+    · exact .inl (by omega)
+    · exact .inr (hnone h)
+  unfold boundOnly
+  by_cases h1 : b < insertSettings.requiredMapBound
+  · left
+    rw [if_pos h1]
+    exact ⟨fun _ h => by simp at h, hb, fun _ => h1⟩
+  · rw [if_neg h1]
+    by_cases h2 : noPair insertSettings fit = true
+    · left
+      rw [if_pos h2]
+      exact ⟨fun _ h => by simp at h, fun pair hp => absurd hp (hno h2 pair),
+        fun _ => show insertSettings.requiredMapBound - 1 < insertSettings.requiredMapBound by omega⟩
+    · right
+      rw [if_neg h2]
+      exact ⟨⟨rfl, show insertSettings.requiredMapBound ≤ b by omega⟩, fun _ h => by simp at h, hb, trivial⟩
+
+-- the answer is correct, or it is a leftover whose pair-free bound is still true
+theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read} {a : PairAnswer}
+    (fit : Nat → Option Nat)
+    (hnone : fit insertSettings.range.1 = none →
+      ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr → chr.seq.length < insertSettings.range.1)
+    (ha : CorrectU insertSettings genome m1 m2 a) :
+    (finalize insertSettings fit a).Correct insertSettings genome m1 m2 ∨
+      (Leftover insertSettings (finalize insertSettings fit a) ∧
+        CorrectU insertSettings genome m1 m2 (finalize insertSettings fit a)) := by
   unfold finalize
-  by_cases hc : (a.found.isNone && decide (insertSettings.junkScore ≤ a.bestPossibleScore)) = true
-  · rw [if_pos hc]
-    simp only [Bool.and_eq_true, Option.isNone_iff_eq_none, decide_eq_true_eq] at hc
-    split
-    · rename_i c hcf
-      have hr : insertSettings.range.1 ≤ insertSettings.range.2 := by
-        by_cases hn : insertSettings.range.1 ≤ insertSettings.range.2
-        · exact hn
-        · rw [if_neg hn] at hcf; cases hcf
-      rw [if_pos hr] at hcf
-      obtain ⟨chr, hg, hl⟩ := hfit c hcf
-      obtain ⟨pair, hrep, hprop⟩ := degenerate_sound (m1 := decodeRead R1) (m2 := decodeRead R2) insertSettings.range
-        insertSettings.dovetailSlack c chr hg hl hr
-      refine ⟨fun rep h => ?_, hb, fun h => by cases h⟩
-      cases h
-      exact ⟨pair, hrep, hprop⟩
-    · rename_i hcf
-      have hno : ∀ pair : PairAlignment genome (decodeRead R1) (decodeRead R2), ¬ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
-        apply no_proper
-        by_cases hr : insertSettings.range.1 ≤ insertSettings.range.2
-        · rw [if_pos hr] at hcf
-          exact .inr (hnone hcf)
-        · exact .inl (by omega)
-      refine ⟨fun rep h => hf rep h, fun pair hp => absurd hp (hno pair), fun _ => by simp only; omega⟩
-  · rw [if_neg hc]
-    refine ⟨hf, hb, ?_⟩
-    simp only [Bool.and_eq_true, Option.isNone_iff_eq_none, decide_eq_true_eq, not_and] at hc
-    cases hq : a.uniqueness with
-    | unique => rw [hq] at hu; exact hu
-    | multimapper => rw [hq] at hu; exact hu
-    | unknown => intro h0; have := hc h0; omega
+  cases hf : a.found with
+  | none => exact boundOnly_correct fit hnone a _ ha.2.1
+  | some rep =>
+    simp only
+    by_cases hj : insertSettings.junkScore ≤ repScore rep
+    · rw [if_pos hj]
+      left
+      obtain ⟨h1, h2, h3⟩ := ha
+      refine ⟨fun rep' h => ?_, h2, ?_⟩
+      · obtain ⟨pair, hr, hp⟩ := h1 rep' h
+        rw [hf] at h; cases h
+        exact ⟨pair, hr, hp, by rw [score_of_report hr]; exact hj⟩
+      · cases hq : a.uniqueness with
+        | unique => rw [hq] at h3; exact h3
+        | multimapper => rw [hq] at h3; exact h3
+        | unknown => intro h; rw [hf] at h; cases h
+    · rw [if_neg hj]
+      exact boundOnly_correct fit hnone a _ (provedBound_ok ha)
+
+/-! ## A second look at a leftover: the exact pair search at 16
+
+`pairGXE` at `Gc = 16` (`pairGXE_sound`) lists every proper pair of the mates' hits within 16 and keeps those
+scoring `≥ -16`. Every mate of a pair `≥ -16` scores `≥ -16`, so its seeds (the pigeonhole of `hitsKPF`) put it in
+the list: nothing seen proves every proper pair `< -16` (a T3 with pair floor `pf = 16`, bound `-17`); a pair seen
+is the unique best (T1u) or a proved tie (T1um, one tied pair in hand: `tie16`) at every caps `≥ 16`. -/
+
+-- a pair of the tie (unproved: the printed pair is re-checked, `Report.foundOf`): the top proper pair of the
+-- mates' hits within 16, as `pairGXE` lists them
+open MapSpec MapSpec.Fast in
+def tie16 (usl lo hi : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (a b : ByteArray) : Option PairHit :=
+  let lX := hitsKPF pk ByteArray.empty offs pgs a 16
+  topW dcost0 (properPairsF usl lo hi lX (hitsKPFN usl hi pk ByteArray.empty offs pgs b 16 lX))
+
+open MapSpec MapSpec.Fast in
+def search16 (usl lo hi : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (a b : ByteArray)
+    (t : TierOut) : TierOut :=
+  match pairGXE dcost0 usl lo hi 16 false pk offs pgs a b with
+  | some (some (x, y), true) =>
+    { t with tag := .t1u, g0 := 16,
+             m1 := { st := "P", cap := t.m1.cap, pen := (-x.2).toNat, pl := some x },
+             m2 := { st := "P", cap := t.m2.cap, pen := (-y.2).toNat, pl := some y } }
+  | some (none, true) =>
+    let tp := tie16 usl lo hi pk offs pgs a b
+    { t with tag := .t1um, g0 := 16,
+             m1 := { st := "P", cap := t.m1.cap, pl := tp.map (·.1) },
+             m2 := { st := "P", cap := t.m2.cap, pl := tp.map (·.2) } }
+  | some (_, false) => { tag := .t3, pf := some 16 }
+  | none => t
+
+open MapSpec MapSpec.Fast in
+theorem search16_ok {usl lo hi : Nat} {g : MapSpec.Genome} {m1 m2 : List Char} {ix : Mz.MzIdx} {G : PGen}
+    {offs ns : Array Nat} (hcut : cutOk G offs ns = true) (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g)
+    (hchk : Mz.check2P ix G = true) {a b : ByteArray} (ha : Encodes a m1) (hb : Encodes b m2) {t : TierOut}
+    (hT : TierOk usl lo hi g m1 m2 (some a) (some b) t) :
+    TierOk usl lo hi g m1 m2 (some a) (some b) (search16 usl lo hi ((ix, G) : PkMz) offs (cutAll G offs ns) a b t) := by
+  have S := fun r seen P1 P2 (h1 : 16 ≤ P1) (h2 : 16 ≤ P2) h =>
+    pairGXE_sound dcost0 usl lo hi 16 g m1 m2 ix G offs ns a b hcut hg ha hb hchk (Nat.le_refl _) false
+      P1 P2 h1 h2 r seen h
+  have floor : ∀ r, pairGXE dcost0 usl lo hi 16 false ((ix, G) : PkMz) offs (cutAll G offs ns) a b = some (r, false) →
+      TierOk usl lo hi g m1 m2 (some a) (some b) ({ tag := .t3, pf := some 16 } : TierOut) := by
+    intro r hq
+    show FloorOk usl lo hi g m1 m2 _
+    refine ⟨mateFloor_zero _ _, mateFloor_zero _ _, fun G0 hG0 P1 P2 h1 h2 w hw => ?_⟩
+    cases hG0
+    rcases Int.lt_or_le (pairScoreD dcost0 w) (-((16 : Nat) : Int)) with h | h
+    · exact h
+    · exact absurd ((S r false P1 P2 h1 h2 hq).1.mpr ⟨w, hw, h⟩) Bool.false_ne_true
+  unfold search16
+  rcases hq : pairGXE dcost0 usl lo hi 16 false ((ix, G) : PkMz) offs (cutAll G offs ns) a b with
+    _ | ⟨_ | ⟨x, y⟩, _ | _⟩
+  · exact hT
+  · exact floor _ hq
+  · exact ⟨Nat.le_refl _, fun P1 P2 h1 h2 => (S _ _ P1 P2 h1 h2 hq).2.2 rfl rfl⟩
+  · exact floor _ hq
+  · exact ⟨Nat.le_refl _, fun P1 P2 h1 h2 => ⟨x, y, rfl, rfl, ((S _ _ P1 P2 h1 h2 hq).2.1 rfl).symm⟩⟩
 
 /-! ## Chromosome lengths, from the index or from the lengths record -/
 

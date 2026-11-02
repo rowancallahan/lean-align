@@ -1,73 +1,68 @@
 # Report floor: proofs (branch speed/report-floor-proofs, base spec/report-floor @ e24e8df)
 
-## Status: BLOCKED after Step 0 (no Lean in this container)
+Spec (Rowan): `requiredMapBound := -16` (an answer without a pair needs `bestPossibleScore < requiredMapBound`),
+`junkScore := -50` (every printed pair, any label, has `pair.score >= junkScore`). `Proofs/Answer.lean` mirrors it
+(CI checks the mirror).
 
-The container had no elan or Lean toolchain. The network policy refused raw.githubusercontent.com,
-github.com/releases and releases.lean-lang.org (403 connect_rejected), so `lake build` could not run.
-Nothing below was checked by Lean. Step 2 (a)-(c) was not started, and no chr21, NovaSeq or HiSeq
-measurements were made. Fix: allow those hosts in the environment's network settings, or use a
-release with a toolchain or build cache. Then rerun this task.
+## Status
 
-## Step 0 (done)
+`lake build` and `sh Testing/scripts/CI_check.sh` pass (standard axioms only, no sorry outside Spec/).
+`alignPairs_correct` is proved for every result except a LEFTOVER, which Spec has no answer for yet. The leftover
+is one named predicate, `Spec.LastResort.Leftover`, and one hypothesis, `hNoLeftover`. On chr21 no read is a leftover.
 
-- `Proofs/Answer.lean` is now `Spec/Aligner.lean` up to `/-! ## The index and the aligner`, with
-  `import Spec.Mapping` changed to `import Proofs.Mapping`, plus one comment line at the top and `end Spec`.
-  It now has `requiredMapBound := -16`, `junkScore := -50`, the clause-1 floor `pair.score >= junkScore`,
-  and `.unknown`/`none` with `bestPossibleScore < requiredMapBound`.
-- `Testing/scripts/CI_check.sh` now compares the two textually, like the Fasta/Fastq/Sam mirror checks.
-  It passes on the new file and FAILS on the old file at e24e8df (checked with the shell; this step needs no Lean).
-- Why not import Spec directly: `Spec/Aligner.lean` also holds the `sorry` holes `buildIndex` and
-  `alignPairs`, and `Proofs/Aligner.lean` defines the same names in `namespace Spec`. Importing it
-  would clash and pull in the `sorry`. Making that clean needs a split of Spec, which is frozen.
-- Not checked by CI either (outside this task): `Proofs/Alignment.lean` and `Proofs/Mapping.lean`
-  against `Spec/`. They differ by design, because the proofs are inlined.
+## Where the build broke (confirmed with Lean)
 
-## Where the build breaks (from reading the code; not confirmed by a build)
+Only `LastResort.finalize_correct` (5 errors: the degenerate pair is below junkScore; the pass-through and the
+`none` arm had no `>= junkScore` proof; the `.unknown` guard used junkScore) and, through it, `alignOne_correct`.
 
-Only `PairAnswer.Correct` changed. `CorrectU` (Bridge.lean:190) is internal and has no floor, so
-Bridge, Report, Whole and `noIndexAnswer_correct` still elaborate. Only
-`LastResort.finalize_correct` (LastResort.lean:107) targets `.Correct`. It breaks in four places:
+## What is proved
 
-1. Degenerate branch (`some c`): the all-insertion pair scores -(6+2·len1) - (6+2·len2) (-612 for 2x150).
-   That is below junkScore -50, so `pair.score >= junkScore` is false, not merely unproved.
-2. Pass-through (`else a`) and the `none` arm: every `found = some` from the router or fallback
-   (`foundOf`, `fallbackOf`, ties) needs `score >= junkScore`. `CorrectU` gives only `IsProper`.
-3. `none` arm, `.unknown` clause: `bestPossibleScore := junkScore - 1` must be `< requiredMapBound`.
-   That holds for the defaults (-51 < -16) but not for every `InsertSettings`.
-   Use `requiredMapBound - 1`.
-4. Pass-through, `.unknown` with `found = none`: the guard `junkScore ≤ bestPossibleScore` gives only
-   `bestPossibleScore < junkScore`. The guard must use `requiredMapBound`.
+`Proofs/LastResort.lean`:
+- `finalize`: a pair with printed score `>= junkScore` is kept (`score_of_report`: the printed sum is the pair's
+  score). A pair below junkScore is dropped. Its bound is `provedBound`: the answer's own bound, or the pair's
+  score if the pair is `.unique` / `.multimapper` (`provedBound_ok`). With no pair (`boundOnly`), the answer is
+  correct if the bound is `< requiredMapBound`, or if no proper pair exists at all (`noPair`, `no_proper`), when
+  it becomes `requiredMapBound - 1`. Anything else is a `Leftover`. The degenerate all-insertion pair is gone.
+- `finalize_correct`: `Correct ∨ (Leftover ∧ CorrectU)`, with no hypothesis. A leftover's bound is still true.
+- `search16` / `search16_ok` (steps (a)+(b)+(c) in one): the existing exact pair search `pairGXE` at `Gc = 16`
+  (`pairGXE_sound`; its hit lists come from the seed pigeonhole `hitsKPF_mem` and the near-partner list
+  `hitsKPFN`, so they are complete for mates `>= -16`). If it sees no proper pair `>= -16`, that gives a T3 with
+  `pf = 16`, i.e. bound `-17` (via `FloorOk`). If it sees one, the best is unique (T1u, printed) or a proved tie
+  (T1um, one tied pair `tie16` printed after re-checking). No new seed or bound machinery was needed.
 
-`alignOne_correct` (Aligner.lean:313, 352) uses `finalize_correct`, so it fails with it. Nothing else
-should fail. `fallbackFrom` (Aligner.lean:116) still starts the fallback at `junkScore`, which is now
--50. The proof does not depend on that value, but the fallback should start at `requiredMapBound`.
+`Proofs/Aligner.lean`:
+- `fallbackFrom` starts at `requiredMapBound`.
+- `answerOfReads`: router, re-check, finalize. A leftover is answered again from `search16` of the router's output.
+- `alignPairs_correct_or_leftover` (no extra hypothesis): every result is `PairResult.Correct` or `IsLeftover`.
+- `alignPairs_correct` / `alignPairs_end_to_end`: Spec's statements plus ONE hypothesis
+  `hNoLeftover : ∀ i result, (alignPairs …)[i]? = some result → ¬ result.IsLeftover insertSettings`.
 
-## Plan for finalize (unproved design)
+## The leftover: what Spec needs
 
-Each step is a decidable check on the answer in hand. The main theorem's statement does not change.
+`Leftover s a := a.found = none ∧ s.requiredMapBound ≤ a.bestPossibleScore`. This means no pair `>= junkScore`
+in hand, and no proof that every proper pair is `< requiredMapBound`, even after `search16`. It can still happen
+when:
+- `pairGXE` returns `none`: a mate is too short for the pigeonhole at 16 (`fastT 16`);
+- a pair `>= -16` was seen but its CIGAR did not re-check (the unproved banded DP failed) and the fallback found nothing;
+- the index check failed at build time, so `noIndexAnswer` has bound 0.
 
-0. `found = some rep`, with `rep.mate1.score + rep.mate2.score >= junkScore`: keep it.
-   This is decidable on the report, because `pair.report = rep` gives `pair.score` = the sum of the report's scores.
-   This fixes break 2 for every pair that is printed.
-0'. `found = some rep` below junkScore, labelled `.unique` or `.multimapper`: the pair is a best proper pair.
-   So `bestPossibleScore := its score` is a proved bound. Answer `none` if that score is `< requiredMapBound`.
-   This always holds when `junkScore ≤ requiredMapBound`. It costs nothing.
-1. (b) Discordant: sort-merge the mate-1 and mate-2 hits. If no FR pair lies within `range` (plus dovetail
-   slack), no proper pair has both mates at their hits. Combined with (a), that gives a bound `< requiredMapBound`.
-2. (a) Pigeonhole: if pair >= -16 then each mate >= -16, so each mate has at most 4 errors. With at least
-   5 non-overlapping exact seeds, plus 1 for each seed `capBudget` skipped, a seed hits at the true place.
-   Then the hit lists from (b)/(c) are complete for pairs >= -16. Reuse the existing seed and bound lemmas.
-3. (c) Few hits: align each mate in a window around each hit (the window the bound lemma needs) with the
-   proved kernel or checker. If every hit pair is `< requiredMapBound`, answer `none` with that bound.
-4. `leftover`: none of the above went through. The answer goes out through an explicit `gaveUp`
-   placeholder that claims nothing. This is the one place where the proof does not yet go through.
-   Its Spec meaning is Rowan's to decide; nothing is invented here.
+The answer printed for a leftover is unmapped with its true bound (`XB >= -16`, `XU:unknown`). What Spec would
+need to close the theorem is a new answer form whose `Correct` clause is only the bound (clause 2), with no
+`< requiredMapBound` claim, e.g. a `Uniqueness`/result `.gaveUp` ("too many candidate places"):
 
-Needed from Rowan for `leftover`: a Spec answer for "best pair found < junkScore, bound not proved
-< requiredMapBound". A likely form is unmapped with no bound claim ("gave up" / "too many places").
-Until it exists, `alignPairs_correct` cannot be fully proved for those reads.
+    | .gaveUp => answer.found = none   -- bound clause (2) still holds; nothing else claimed
 
-## Measurements
+With that, `finalize` would label leftovers `.gaveUp`, and `alignPairs_correct` would follow from
+`alignPairs_correct_or_leftover` with no `hNoLeftover`.
 
-None. Lean could not be installed, so no measurements were possible. The reads exist as release assets
-(`bench-release`: hg38_mason/low, novaseq_200k, hg002_1M) and can be fetched with `gh api`, but they are no use without a build.
+## Measurements (chr21, index c21m2.idx, `lean-align map … 100 1000`, 200,000 pairs each)
+
+| set | reported (>= junk) | none, bound < -16 | leftover | time |
+|---|---|---|---|---|
+| chr21_mason | 197,434 | 2,566 | 0 | 8 s |
+| chr21_low   | 199,318 |   682 | 0 | 6 s |
+
+Before `search16` (guard fixes only): mason 196,927 / 2,049 / 1,024 leftover; low 198,701 / 494 / 805 leftover.
+All of those leftovers were true proper pairs inside the range: mates with tied best placements in repeats, where
+the router stopped (T2/T3) or found a tie it could not print. Raising the router's budgets only, with no `search16`,
+left 863 / 517.
