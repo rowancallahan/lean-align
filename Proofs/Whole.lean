@@ -80,9 +80,9 @@ theorem correct_of_whole (insertSettings : InsertSettings) (m1 m2 : Read)
     (hslice : ∀ c chr, genome[c]? = some chr →
       off c + chr.seq.length ≤ W.length ∧ chr.seq = (W.drop (off c)).take chr.seq.length)
     (answer : PairAnswer) (hfound : answer.found = none) (huniq : answer.uniqueness = .unknown)
-    (h : answer.Correct insertSettings [⟨name, W⟩] m1 m2) :
-    answer.Correct insertSettings genome m1 m2 := by
-  unfold PairAnswer.Correct at h ⊢
+    (h : CorrectU insertSettings [⟨name, W⟩] m1 m2 answer) :
+    CorrectU insertSettings genome m1 m2 answer := by
+  unfold CorrectU at h ⊢
   refine ⟨fun _ hr => (by rw [hfound] at hr; cases hr), fun pair hp => ?_, (by rw [huniq]; trivial)⟩
   obtain ⟨a, ha, hsa⟩ := alignment_shift (name := name) hslice pair.first
   obtain ⟨b, hb, hsb⟩ := alignment_shift (name := name) hslice pair.second
