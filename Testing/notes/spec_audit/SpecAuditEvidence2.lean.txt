@@ -1,0 +1,119 @@
+import Spec.Aligner
+open Spec
+
+def chrA : Chromosome := ⟨"chrA", List.replicate 2000 'A'⟩
+theorem chrA_len : chrA.seq.length = 2000 := List.length_replicate
+def gen : Genome := [chrA]
+def m : Read := ['A','C','G','T']
+
+theorem fitsEmpty (pos : Nat) (h : pos ≤ 2000) (s : Strand) :
+    (Placement.mk 0 pos pos s).reference gen = some [] := by
+  have : gen[0]? = some chrA := rfl
+  simp [Placement.reference, this, chrA_len, h]
+
+-- all four letters inserted (gapY), window empty
+def ins (pos : Nat) (h : pos ≤ 2000) (s : Strand) : GenomicAlignment gen m :=
+  ⟨⟨0, pos, pos, s⟩, [], fitsEmpty pos h s,
+   ⟨[.gapY,.gapY,.gapY,.gapY], by cases s <;> simp [Strand.orient, reverseComplement, m, List.count_cons], by simp⟩⟩
+def garbage : PairAlignment gen m m := ⟨ins 1000 (by decide) .forward, ins 1300 (by decide) .reverse⟩
+example : garbage.IsProper (100, 1000) 0 := by
+  simp [PairAlignment.IsProper, garbage, ins]
+
+
+
+theorem sc_m : defaultScoring.matchScore = 0 := rfl
+theorem sc_mm : defaultScoring.mismatchScore = -4 := rfl
+theorem sc_o : defaultScoring.gapOpen = -6 := rfl
+theorem sc_e : defaultScoring.gapExtend = -2 := rfl
+
+theorem scoreWalk_le : ∀ (steps : List Step) (q r : Read) (prev : Option Step),
+    scoreWalk defaultScoring steps q r prev ≤ 0 := by
+  intro steps
+  induction steps with
+  | nil => intro q r prev; simp [scoreWalk]
+  | cons s rest ih =>
+    intro q r prev
+    cases s with
+    | diag =>
+      cases q with
+      | nil => simp [scoreWalk]
+      | cons a q => cases r with
+        | nil => simp [scoreWalk]
+        | cons b r =>
+          have := ih q r (some .diag)
+          simp only [scoreWalk, sc_m, sc_mm]
+          split <;> omega
+    | gapX =>
+      cases r with
+      | nil => simp [scoreWalk]
+      | cons b r =>
+        have := ih q r (some .gapX)
+        simp only [scoreWalk, sc_o, sc_e]
+        split <;> omega
+    | gapY =>
+      cases q with
+      | nil => simp [scoreWalk]
+      | cons a q =>
+        have := ih q r (some .gapY)
+        simp only [scoreWalk, sc_o, sc_e]
+        split <;> omega
+
+
+
+theorem pathScore_le {q r : Read} (p : Path q r) : p.score defaultScoring ≤ 0 := scoreWalk_le p.steps q r none
+
+-- (A) with the NEW spec the old counterexample still works for short reads (floor -50): 2 mates of 4 letters score -28
+def lazyAnswer : PairAnswer := ⟨some garbage.report, 0, .unknown, .boundsOnly⟩
+theorem lazy_correct_short : lazyAnswer.Correct {range := (100, 1000)} gen m m := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro report h
+    simp only [lazyAnswer, Option.some.injEq] at h
+    subst h
+    refine ⟨garbage, rfl, by simp [PairAlignment.IsProper, garbage, ins], ?_⟩
+    decide
+  · intro pair _
+    have h1 := pathScore_le pair.first.path
+    have h2 := pathScore_le pair.second.path
+    simp only [PairAlignment.score, GenomicAlignment.score, lazyAnswer]
+    omega
+  · simp [lazyAnswer]
+
+-- (B) the theorem is false for some settings: junkScore > requiredMapBound.  Perfect pair on an all-A chromosome of 100 letters.
+def chrB : Chromosome := ⟨"chrB", List.replicate 100 'A'⟩
+def genB : Genome := [chrB]
+def mA : Read := ['A','A','A','A']
+def mT : Read := ['T','T','T','T']
+def perfect : PairAlignment genB mA mT :=
+  ⟨⟨⟨0, 10, 14, .forward⟩, ['A','A','A','A'], by decide,
+     ⟨[.diag,.diag,.diag,.diag], by simp [Strand.orient, mA, List.count_cons], by simp⟩⟩,
+   ⟨⟨0, 60, 64, .reverse⟩, ['A','A','A','A'], by decide,
+     ⟨[.diag,.diag,.diag,.diag], by simp [Strand.orient, reverseComplement, complement, mT, List.count_cons], by simp⟩⟩⟩
+#eval perfect.score
+theorem perfect_proper : perfect.IsProper (10, 1000) 0 := by simp [PairAlignment.IsProper, perfect]
+
+-- with junkScore := 1 (any value above the best proper score works the same way) NO answer is Correct
+theorem no_correct_answer (answer : PairAnswer) :
+    ¬ answer.Correct {range := (10, 1000), junkScore := 1} genB mA mT := by
+  rintro ⟨h1, h2, h3⟩
+  have hb : perfect.score ≤ answer.bestPossibleScore := h2 perfect perfect_proper
+  have hs : perfect.score = 0 := by
+    simp only [PairAlignment.score, GenomicAlignment.score, perfect]; decide
+  have floor : ∀ r, answer.found = some r → False := by
+    intro r hr
+    obtain ⟨pair, hrep, _, hscore⟩ := h1 r hr
+    have a1 := pathScore_le pair.first.path
+    have a2 := pathScore_le pair.second.path
+    simp only [PairAlignment.score, GenomicAlignment.score] at hscore
+    omega
+  cases hu : answer.uniqueness with
+  | unique => simp only [hu] at h3; obtain ⟨r, hr, _⟩ := h3; exact floor r hr
+  | multimapper => simp only [hu] at h3; obtain ⟨r, hr, _⟩ := h3; exact floor r hr
+  | unknown =>
+    simp only [hu] at h3
+    cases hf : answer.found with
+    | some r => exact floor r hf
+    | none =>
+      have := h3 hf
+      have h16 : answer.bestPossibleScore < -16 := this
+      omega
+#print axioms no_correct_answer
