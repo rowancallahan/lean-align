@@ -8,12 +8,14 @@ runs, mbl = {}, {}
 for l in open(sys.argv[1]):
     m = re.match(r'TIME (\S+) (\S+) r(\d+)( empty)?: wall ([\d.]+) s, cpu ([\d.]+) s', l)
     if m: runs[(m[1], m[2], m[3], bool(m[4]))] = (float(m[5]), float(m[6]))
+    m = re.match(r'TIME (\S+) (\S+) r(\d+): .* load ([\d.]+) s, loadcpu ([\d.]+) s', l)
+    if m: mbl[(m[1], m[2], m[3])] = (float(m[4]), float(m[5]))   # load measured in the run (timed_load.py)
     m = re.match(r'MBLOAD (\S+) (\S+) r(\d+) ([\d.]+) ([\d.]+)', l)
     if m: mbl[(m[1], m[2], m[3])] = (float(m[4]), float(m[4]) * float(m[5]))
 res = defaultdict(list)
 for (s, v, r, e), (w, c) in runs.items():
     if e: continue
-    lw, lc = mbl[(s, v, r)] if v.startswith('mb') else runs[(s, v, r, True)]
+    lw, lc = mbl[(s, v, r)] if (s, v, r) in mbl else runs[(s, v, r, True)]
     res[(s, v)].append((w - lw, c - lc, w, c, lw))
 med = {}
 for (s, v), xs in sorted(res.items()):
