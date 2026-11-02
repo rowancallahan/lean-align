@@ -281,3 +281,7 @@ lean_exe floor_prof where                 -- benchmark only: pairs the report fl
 lean_exe floor_pipe where                 -- benchmark only: the cheap report-floor pipeline and repeat witnesses (unproved IO)
   srcDir := "Testing/benches"
   root := `FloorPipe
+
+lean_exe pipe_prof where                  -- benchmark only: per-stage time of the report-floor pipeline (unproved IO)
+  srcDir := "Testing/benches"
+  root := `PipeProf
