@@ -100,6 +100,7 @@ MAXOCC + 32 entries skipped before verification (`ss2`, single thread)
 | HiSeq trimmed (28,893) | 20 | 11,565 | 9,776 (+4.9%) | – | 5,539 / 3,897 / 2,129 | 412.7 (14.3) |
 | HiSeq trimmed | 100 | 12,633 | 10,180 | – | 6,293 / 4,092 / 2,248 | 1714.2 (59.3) |
 | NovaSeq trimmed (27,454) | 20 | 13,088 | 11,164 (+5.6%) | – | 6,210 / 4,318 / 2,560 | 148.7 (5.4) |
+| NovaSeq trimmed | 100 | 14,327 | 11,657 | – | 7,165 / 4,508 / 2,654 | 579.7 (21.1) |
 For scale, the whole shim run (4 cores, total CPU): mason ~53 s, low ~26 s, HiSeq trimmed ~28 s, NovaSeq trimmed ~29 s.
 The prototype's DP fills a full row per read letter (O(n·(n + 2b)) per diagonal, not banded O(n·b)): a banded DP
 and 4 threads would cut its cost roughly 10× and 4×; HiSeq/NovaSeq are DP-bound, mason/low lookup-bound.
