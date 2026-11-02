@@ -842,6 +842,119 @@ theorem flagsOkS_eq (w : ByteArray) (stop : Nat) : ∀ n b, stop - b = n → fla
   let j := (e - 1) / 32
   bwdW rw gw (a / 32) s (2 * s).toUInt64 (64 - 2 * s).toUInt64 lo e j k (gword gw (a / 32 + j + 1))
 
+/-! `hamA` / `fwdA` / `bwdA` with the start split by machine words (compiled code only): `hamA_eq_hamAF`,
+`fwdA_eq_fwdAF`, `bwdA_eq_bwdAF` (`@[csimp]`). The word index `a / 32` and shift `a % 32` come from `UInt64` shifts
+and masks (not `Nat` shift / mod calls), and the first genome word from `gwordU`; taken when `a < 2^33`. -/
+
+/-- `2^33`, out of line (a literal ≥ `2^32` in a body is rebuilt by GMP at every call). -/
+@[noinline] def aBig : Nat := 8589934592
+
+theorem a64_div (a : Nat) (h : a < aBig) : (a.toUInt64 >>> 5).toNat = a / 32 := by
+  have hU : UInt64.size = 18446744073709551616 := rfl
+  have h' : a < 8589934592 := h
+  rw [UInt64.toNat_shiftRight, UInt64.toNat_ofNat_of_lt' (by omega)]
+  simp only [show (5 : UInt64).toNat % 64 = 5 from rfl, Nat.shiftRight_eq_div_pow]
+
+theorem a64_mod (a : Nat) (h : a < aBig) : (a.toUInt64 &&& 31).toNat = a % 32 := by
+  have hU : UInt64.size = 18446744073709551616 := rfl
+  have h' : a < 8589934592 := h
+  rw [UInt64.toNat_and, UInt64.toNat_ofNat_of_lt' (by omega), show (31 : UInt64).toNat = 2 ^ 5 - 1 from rfl,
+    Nat.and_two_pow_sub_one_eq_mod]
+
+theorem a64_sh (a : Nat) (h : a < aBig) : 2 * (a.toUInt64 &&& 31) = (2 * (a % 32)).toUInt64 := by
+  have hU : UInt64.size = 18446744073709551616 := rfl
+  apply UInt64.toNat_inj.mp
+  have hm := a64_mod a h
+  have : a % 32 < 32 := Nat.mod_lt _ (by decide)
+  rw [UInt64.toNat_mul, hm, UInt64.toNat_ofNat_of_lt' (by omega), show (2 : UInt64).toNat = 2 from rfl]
+  omega
+
+theorem a64_sh' (a : Nat) (h : a < aBig) : 64 - 2 * (a.toUInt64 &&& 31) = (64 - 2 * (a % 32)).toUInt64 := by
+  have hU : UInt64.size = 18446744073709551616 := rfl
+  apply UInt64.toNat_inj.mp
+  have hm := a64_mod a h
+  have : a % 32 < 32 := Nat.mod_lt _ (by decide)
+  have e2 : (2 * (a.toUInt64 &&& 31)).toNat = 2 * (a % 32) := by
+    rw [UInt64.toNat_mul, hm, show (2 : UInt64).toNat = 2 from rfl]; omega
+  rw [UInt64.toNat_sub_of_le _ _ (by rw [UInt64.le_iff_toNat_le, e2]; show 2 * (a % 32) ≤ 64; omega), e2,
+    UInt64.toNat_ofNat_of_lt' (by omega), show (64 : UInt64).toNat = 64 from rfl]
+
+theorem a64_word (gw : ByteArray) (a j : Nat) (h : a < aBig) (hj : j < 2 ^ 16) :
+    gwordU gw ((a.toUInt64 >>> 5) + j.toUInt64).toUSize = gword gw (a / 32 + j) := by
+  have hU : UInt64.size = 18446744073709551616 := rfl
+  have h' : a < 8589934592 := h
+  have e : ((a.toUInt64 >>> 5) + j.toUInt64).toNat = a / 32 + j := by
+    rw [UInt64.toNat_add, a64_div a h, UInt64.toNat_ofNat_of_lt' (by omega)]; omega
+  have eu : ((a.toUInt64 >>> 5) + j.toUInt64).toUSize.toNat = a / 32 + j := by
+    rw [UInt64.toNat_toUSize, e, Nat.mod_eq_of_lt (by have := usz_pow; omega)]
+  rw [gwordU_eq _ _ (by rw [eu]; omega), eu]
+
+@[inline] def hamAF (rw : Array UInt64) (gw : ByteArray) (a lim stop : Nat) : Nat :=
+  if a < aBig then
+    let a64 := a.toUInt64
+    let s64 := a64 &&& 31
+    hamW rw gw (a64 >>> 5).toNat s64.toNat (2 * s64) (64 - 2 * s64) lim stop 0 0 (gwordU gw ((a64 >>> 5) + (0 : Nat).toUInt64).toUSize)
+  else hamAS rw gw a lim stop
+where
+  /-- `hamA` (its slow path; not rewritten by `csimp`). -/
+  hamAS (rw : Array UInt64) (gw : ByteArray) (a lim stop : Nat) : Nat :=
+    let s := a % 32
+    hamW rw gw (a / 32) s (2 * s).toUInt64 (64 - 2 * s).toUInt64 lim stop 0 0 (gword gw (a / 32))
+
+@[csimp] theorem hamA_eq_hamAF : @hamA = @hamAF := by
+  funext rw gw a lim stop
+  unfold hamAF hamA
+  split
+  · rename_i h
+    simp only []
+    rw [a64_div a h, a64_mod a h, a64_sh' a h, a64_sh a h, a64_word gw a 0 h (by decide), Nat.add_zero]
+  · rfl
+
+@[inline] def fwdAF (rw : Array UInt64) (gw : ByteArray) (a stop k : Nat) : Nat :=
+  if a < aBig then
+    let a64 := a.toUInt64
+    let s64 := a64 &&& 31
+    fwdW rw gw (a64 >>> 5).toNat s64.toNat (2 * s64) (64 - 2 * s64) stop 0 k (gwordU gw ((a64 >>> 5) + (0 : Nat).toUInt64).toUSize)
+  else fwdAS rw gw a stop k
+where
+  /-- `fwdA` (its slow path; not rewritten by `csimp`). -/
+  fwdAS (rw : Array UInt64) (gw : ByteArray) (a stop k : Nat) : Nat :=
+    let s := a % 32
+    fwdW rw gw (a / 32) s (2 * s).toUInt64 (64 - 2 * s).toUInt64 stop 0 k (gword gw (a / 32))
+
+@[csimp] theorem fwdA_eq_fwdAF : @fwdA = @fwdAF := by
+  funext rw gw a stop k
+  unfold fwdAF fwdA
+  split
+  · rename_i h
+    simp only []
+    rw [a64_div a h, a64_mod a h, a64_sh' a h, a64_sh a h, a64_word gw a 0 h (by decide), Nat.add_zero]
+  · rfl
+
+@[inline] def bwdAF (rw : Array UInt64) (gw : ByteArray) (a lo e k : Nat) : Nat :=
+  let j := (e - 1) / 32
+  if a < aBig ∧ j < 65535 then
+    let a64 := a.toUInt64
+    let s64 := a64 &&& 31
+    bwdW rw gw (a64 >>> 5).toNat s64.toNat (2 * s64) (64 - 2 * s64) lo e j k (gwordU gw ((a64 >>> 5) + (j + 1).toUInt64).toUSize)
+  else bwdAS rw gw a lo e k
+where
+  /-- `bwdA` (its slow path; not rewritten by `csimp`). -/
+  bwdAS (rw : Array UInt64) (gw : ByteArray) (a lo e k : Nat) : Nat :=
+    let s := a % 32
+    let j := (e - 1) / 32
+    bwdW rw gw (a / 32) s (2 * s).toUInt64 (64 - 2 * s).toUInt64 lo e j k (gword gw (a / 32 + j + 1))
+
+@[csimp] theorem bwdA_eq_bwdAF : @bwdA = @bwdAF := by
+  funext rw gw a lo e k
+  unfold bwdAF bwdA
+  simp only []
+  split
+  · rename_i h
+    rw [a64_div a h.1, a64_mod a h.1, a64_sh' a h.1, a64_sh a h.1, a64_word gw a ((e - 1) / 32 + 1) h.1 (by omega),
+      Nat.add_assoc]
+  · rfl
+
 /-- Number of letters scanned with bytes before the word path. -/
 def pre : Nat := 8
 
