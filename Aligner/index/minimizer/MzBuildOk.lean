@@ -856,3 +856,420 @@ theorem fill_fold (bk : Nat → Nat) (sv : Nat → UInt64) (nb : Nat) (E : List 
     exact ih (P ++ [x]) _ (by rw [← hE]; simp) (fill_step bk sv nb E P l x hE hb hlen st h)
 
 end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+theorem wcU_acgt (B : ByteArray) (n : Nat) : ∀ i x, (∀ t < n, acgt (B.get! (i + t)) = true) →
+    (wcU B i (i + n) x).toNat = (x.toNat * 4 ^ n + wc B i n) % 2 ^ 64 := by
+  induction n with
+  | zero =>
+    intro i x _
+    rw [wcU, if_neg (by omega)]
+    simp [wc, Nat.mod_eq_of_lt x.toNat_lt]
+  | succ n ih =>
+    intro i x hA
+    rw [wcU, if_pos (by omega)]
+    dsimp only
+    rw [if_pos (by simpa using hA 0 (by omega)), show i + (n + 1) = (i + 1) + n by omega,
+      ih (i + 1) _ (fun t ht => by rw [show i + 1 + t = i + (t + 1) by omega]; exact hA _ (by omega))]
+    have hw := wc_add B i 1 n
+    have h1' : wc B i 1 = byteCode (B.get! i) := by simp [wc]
+    rw [Nat.add_comm 1 n, h1'] at hw
+    rw [hw]
+    have hc := byteCode_lt (B.get! i)
+    have e : (x * 4 + (byteCode (B.get! i)).toUInt64).toNat = (x.toNat * 4 + byteCode (B.get! i)) % 2 ^ 64 := by
+      rw [UInt64.toNat_add, UInt64.toNat_mul]
+      simp only [Nat.toUInt64, UInt64.toNat_ofNat', show (4 : UInt64).toNat = 4 from rfl]
+      rw [Nat.mod_eq_of_lt (show byteCode (B.get! i) < 2 ^ 64 by omega)]
+      rw [Nat.add_mod, Nat.mod_mod, ← Nat.add_mod]
+    rw [e, Nat.pow_succ]
+    have key : ∀ a P W M : Nat, ((a % M) * P + W) % M = (a * P + W) % M := by
+      intro a P W M; rw [Nat.add_mod, Nat.mul_mod, Nat.mod_mod, ← Nat.mul_mod, ← Nat.add_mod]
+    rw [key]
+    congr 1
+    rw [Nat.add_mul, Nat.mul_assoc, Nat.mul_comm 4 (4 ^ n), Nat.add_assoc, Nat.pow_succ]
+
+/-- The k-word at an indexed place: its code (all ACGT, so not `BADU`). -/
+theorem wcU_word (G : ByteArray) (y : Nat) (hA : ∀ t < 22, acgt (G.get! (y + t)) = true) :
+    wcU G y (y + 22) 0 ≠ BADU ∧ (wcU G y (y + 22) 0).toNat = wc G y 22 := by
+  have e := wcU_acgt G 22 y 0 hA
+  have hl := wc_lt G y 22
+  simp only [show (0 : UInt64).toNat = 0 from rfl, Nat.zero_mul, Nat.zero_add] at e
+  have h22 : (4 : Nat) ^ 22 < 2 ^ 64 := by decide
+  rw [Nat.mod_eq_of_lt (by omega)] at e
+  refine ⟨fun h => ?_, e⟩
+  rw [h] at e
+  have : (4 : Nat) ^ 22 < 2 ^ 64 - 1 := by decide
+  rw [show BADU.toNat = 2 ^ 64 - 1 from rfl] at e
+  omega
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+theorem kf_ix0 (G : ByteArray) : (ix0 G).kf = min 18 (40 - (G.size.log2 + 1)) := by
+  simp [mkIdx]
+
+theorem allA_nil (B : ByteArray) (i : Nat) : allA B i i = true := by rw [allA, if_neg (Nat.lt_irrefl _)]
+
+theorem wcGo_nil (B : ByteArray) (i x : Nat) : wcGo B i i x = x := by rw [wcGo, if_neg (Nat.lt_irrefl _)]
+
+theorem lt_pow_log2 (n : Nat) : n < 2 ^ (n.log2 + 1) := Nat.lt_log2_self
+
+/-- The slot of an indexed place `x`: `x · 2^kf + key`, below `2^40`. -/
+theorem slotAt_ix0 (G : ByteArray) (hpb : G.size.log2 + 1 ≤ 39) (x h : Nat) (hx : x + 22 ≤ G.size) :
+    (slotAt (ix0 G) G x h).toNat = x * 2 ^ (ix0 G).kf + h % 2 ^ (ix0 G).kf ∧
+      x * 2 ^ (ix0 G).kf + h % 2 ^ (ix0 G).kf < 2 ^ 40 := by
+  have hkf := kf_ix0 G
+  unfold slotAt
+  have hgood : (decide ((ix0 G).c ≤ x) && decide (x + (ix0 G).k + (ix0 G).c ≤ G.size) &&
+      allA G (x - (ix0 G).c) x && allA G (x + (ix0 G).k) (x + (ix0 G).k + (ix0 G).c)) = true := by
+    simp only [show (ix0 G).c = 0 from rfl, show (ix0 G).k = 22 from rfl, Nat.sub_zero, Nat.add_zero, allA_nil]
+    simp [hx]
+  dsimp only
+  rw [if_pos hgood]
+  simp only [show (ix0 G).c = 0 from rfl, show (ix0 G).k = 22 from rfl, Nat.sub_zero, Nat.add_zero, wcGo_nil,
+    show (ix0 G).T = (ix0 G).kf from by simp [mkIdx], show (ix0 G).kbM = 2 ^ (ix0 G).kf - 1 from rfl]
+  generalize (ix0 G).kf = kf at hkf
+  have hxl : x < 2 ^ (G.size.log2 + 1) := Nat.lt_of_lt_of_le (by omega) (Nat.le_of_lt (lt_pow_log2 G.size))
+  have hb : x * 2 ^ kf < 2 ^ 40 := by
+    calc x * 2 ^ kf < 2 ^ (G.size.log2 + 1) * 2 ^ kf := Nat.mul_lt_mul_of_pos_right hxl (Nat.pow_pos (by omega))
+      _ = 2 ^ (G.size.log2 + 1 + kf) := (Nat.pow_add _ _ _).symm
+      _ ≤ 2 ^ 40 := Nat.pow_le_pow_right (by omega) (by omega)
+  have hk : h % 2 ^ kf < 2 ^ kf := Nat.mod_lt _ (Nat.pow_pos (by omega))
+  have hb2 : x * 2 ^ kf + h % 2 ^ kf < 2 ^ 40 := by
+    have : x * 2 ^ kf + 2 ^ kf ≤ 2 ^ 40 := by
+      have h1 : (x + 1) * 2 ^ kf ≤ 2 ^ 40 := by
+        calc (x + 1) * 2 ^ kf ≤ 2 ^ (G.size.log2 + 1) * 2 ^ kf := Nat.mul_le_mul_right _ hxl
+          _ = 2 ^ (G.size.log2 + 1 + kf) := (Nat.pow_add _ _ _).symm
+          _ ≤ 2 ^ 40 := Nat.pow_le_pow_right (by omega) (by omega)
+      rw [Nat.add_mul, Nat.one_mul] at h1; exact h1
+    omega
+  refine ⟨?_, hb2⟩
+  have hk18 : kf ≤ 18 := by omega
+  have hx39 : x < 2 ^ 39 := Nat.lt_of_lt_of_le hxl (Nat.pow_le_pow_right (by omega) hpb)
+  simp only [UInt64.toNat_or, UInt64.toNat_shiftLeft, Nat.toUInt64, UInt64.toNat_ofNat', UInt64.toNat_and,
+    Nat.shiftLeft_eq, show (0 : Nat) % 2 ^ 64 = 0 from rfl, Nat.zero_mul, Nat.zero_mod, Nat.or_zero, and_mask_eq]
+  rw [Nat.mod_eq_of_lt (show kf < 2 ^ 64 by omega), Nat.mod_eq_of_lt (show kf < 64 by omega),
+    Nat.mod_eq_of_lt (show x < 2 ^ 64 by omega), Nat.mod_eq_of_lt (show x * 2 ^ kf < 2 ^ 64 by omega),
+    Nat.mod_eq_of_lt (show h % 2 ^ kf < 2 ^ 64 by
+      have : 2 ^ kf ≤ 2 ^ 18 := Nat.pow_le_pow_right (by omega) hk18
+      omega), Nat.or_comm, or_add _ _ _ hk]
+  omega
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+/-- The places the builder indexes (and `checkComp` visits). -/
+abbrev EG (G : ByteArray) : List Nat := evs (ix0 G) G 0 (G.size + 1 - q) 0
+/-- Bucket of place `x`. -/
+abbrev bkG (G : ByteArray) (x : Nat) : Nat := (ix0 G).hsh (wc G x 22) >>> 18
+/-- Slot of place `x`. -/
+abbrev svG (G : ByteArray) (x : Nat) : UInt64 := slotAt (ix0 G) G x ((ix0 G).hsh (wc G x 22))
+
+theorem good_ix0 (G : ByteArray) : Good (ix0 G) := good_of_checkParams _ (checkParams_ix0 _)
+
+theorem pb_le (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : G.size.log2 + 1 ≤ 39 := by
+  by_cases h0 : G.size = 0
+  · rw [h0]; decide
+  · have : G.size.log2 < 33 := (Nat.log2_lt h0).mpr (by omega)
+    omega
+
+theorem acgt_zero : acgt 0 = false := by decide
+
+theorem EG_length (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : (EG G).length < 2 ^ 32 := by
+  have := evs_length (ix0 G) G (G.size + 1 - q) 0 0
+  have hq : q = 25 := rfl
+  show (evs (ix0 G) G 0 (G.size + 1 - q) 0).length < _
+  omega
+
+theorem EG_mem (G : ByteArray) (x : Nat) (hx : x ∈ EG G) :
+    x + 22 ≤ G.size ∧ ∀ t < 22, acgt (G.get! (x + t)) = true := by
+  obtain ⟨s, _, hA, rfl⟩ := evs_mem _ _ _ _ _ _ hx
+  have hA' := (allA_iff G q s).mp hA
+  have hm := mini_lt (good_ix0 G) (wcGo G s (s + q) 0)
+  have hw : (ix0 G).w = 4 := rfl
+  have hq : q = 25 := rfl
+  have hs : s + q ≤ G.size := by
+    apply Classical.byContradiction; intro hlt
+    have := hA' (q - 1) (by omega)
+    rw [get!_ge _ _ (by omega), acgt_zero] at this; cases this
+  unfold pmOf
+  refine ⟨by omega, fun t ht => ?_⟩
+  have := hA' ((ix0 G).mini (wcGo G s (s + q) 0) + t) (by omega)
+  rwa [← Nat.add_assoc] at this
+
+theorem EG_sorted (G : ByteArray) : (EG G).Pairwise (· < ·) :=
+  (evs_sorted (ix0 G) rfl rfl rfl G _ 0 0 (Nat.zero_le _)).2
+
+theorem bkG_lt (G : ByteArray) (x : Nat) : bkG G x < 2 ^ 26 := bucket_lt (good_ix0 G) _
+
+theorem cntOf_spec (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) :
+    (cntOf G).size = 4 * (2 ^ 26 + 1) ∧ ∀ j ≤ 2 ^ 26, getU32 (cntOf G) j = offF (bkG G) (EG G) j := by
+  have hlen := EG_length G hsz
+  have hfm : foldMins (ix0 G) G (zeros (4 * (2 ^ 26 + 1))) (cntStep (ix0 G)) =
+      (EG G).foldl (fun cnt x => setU32 cnt (bkG G x + 1) (getU32 cnt (bkG G x + 1) + 1))
+        (zeros (4 * (2 ^ 26 + 1))) := by
+    rw [foldMins_evs _ (good_ix0 G)]; rfl
+  obtain ⟨c1, c2⟩ := count_fold (bkG G) (2 ^ 26) (EG G) (zeros (4 * (2 ^ 26 + 1))) (size_zeros _)
+    (fun x _ => bkG_lt G x) (fun j => by rw [getU32_zeros]; omega)
+  have hall := offF_all (bkG G) (2 ^ 26) (EG G) (fun x _ => bkG_lt G x)
+  obtain ⟨s1, s2⟩ := sum_fold (bkG G) (2 ^ 26) (EG G) _ c1 (fun j _ => by rw [c2, getU32_zeros]; omega)
+    (by omega) (2 ^ 26) (Nat.le_refl _)
+  unfold cntOf
+  rw [hfm]
+  exact ⟨s1, fun j hj => by rw [s2 j hj, if_pos hj]⟩
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+def slOf (G : ByteArray) : ByteArray :=
+  (foldMins (ix0 G) G (cntOf G, zeros (5 * getU32 (cntOf G) (2 ^ 26))) (fillStep (ix0 G) G)).2
+
+def runsOf (G : ByteArray) : Array Nat := (List.range' 0 G.size).foldl (runStep G) #[]
+
+/-- The index `buildW` returns (`buildW_eq`). -/
+def ixB (G : ByteArray) : MzIdx :=
+  { (ix0 G) with
+    offs := cntOf G
+    sl := slOf G
+    runs := runsOf G }
+
+theorem slOf_spec (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) :
+    (slOf G).size = 5 * (EG G).length ∧
+    ∀ b < 2 ^ 26, ∀ r < cntB (bkG G) (EG G) b,
+      rdSlot (slOf G) 5 (offF (bkG G) (EG G) b + r) = (svG G ((inB (bkG G) (EG G) b).getD r 0)).toNat % 2 ^ 40 := by
+  obtain ⟨c1, c2⟩ := cntOf_spec G hsz
+  have hall := offF_all (bkG G) (2 ^ 26) (EG G) (fun x _ => bkG_lt G x)
+  have hfm : foldMins (ix0 G) G (cntOf G, zeros (5 * getU32 (cntOf G) (2 ^ 26))) (fillStep (ix0 G) G) =
+      (EG G).foldl (fillG (bkG G) (svG G)) (cntOf G, zeros (5 * getU32 (cntOf G) (2 ^ 26))) := by
+    rw [foldMins_evs _ (good_ix0 G)]; rfl
+  have h0 : FillInv (bkG G) (svG G) (2 ^ 26) (EG G) [] (cntOf G, zeros (5 * getU32 (cntOf G) (2 ^ 26))) := by
+    unfold FillInv
+    dsimp only
+    refine ⟨c1, ?_, fun b hb => ?_, fun b _ r hr => ?_⟩
+    · rw [size_zeros, c2 _ (Nat.le_refl _), hall]
+    · rw [c2 _ (by omega)]; rfl
+    · exact absurd hr (Nat.not_lt_zero _)
+  obtain ⟨_, f2, _, f4⟩ := fill_fold (bkG G) (svG G) (2 ^ 26) (EG G) (fun x _ => bkG_lt G x) (EG_length G hsz)
+    (EG G) [] _ rfl h0
+  unfold slOf
+  rw [hfm]
+  exact ⟨f2, f4⟩
+
+theorem T_ix0 (G : ByteArray) : (ix0 G).T = (ix0 G).kf := by simp [mkIdx]
+
+end MapSpec.Mz.BO
+namespace MapSpec.Mz.BO
+theorem ixB_T (G : ByteArray) : (ixB G).T = (ix0 G).T := by dsimp only [ixB]
+theorem ixB_tM (G : ByteArray) : (ixB G).tM = (ix0 G).tM := by dsimp only [ixB]
+theorem tM_ix0 (G : ByteArray) : (ix0 G).tM = 2 ^ (ix0 G).kf - 1 := by simp [mkIdx]
+
+theorem posOf_def (ix : MzIdx) (e : Nat) : ix.posOf e = e >>> ix.T := rfl
+theorem tagOf_def (ix : MzIdx) (e : Nat) : ix.tagOf e = e &&& ix.tM := rfl
+
+theorem posOf_slot (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) (x : Nat) (hx : x + 22 ≤ G.size) :
+    (ixB G).posOf ((svG G x).toNat % 2 ^ 40) = x ∧
+    (ixB G).tagOf ((svG G x).toNat % 2 ^ 40) = (ix0 G).hsh (wc G x 22) % 2 ^ (ix0 G).kf := by
+  obtain ⟨e1, e2⟩ := slotAt_ix0 G (pb_le G hsz) x ((ix0 G).hsh (wc G x 22)) hx
+  have e1' : (svG G x).toNat = x * 2 ^ (ix0 G).kf + (ix0 G).hsh (wc G x 22) % 2 ^ (ix0 G).kf := e1
+  rw [e1']
+  have e3 := Nat.mod_eq_of_lt e2
+  rw [e3]
+  have hk : (ix0 G).hsh (wc G x 22) % 2 ^ (ix0 G).kf < 2 ^ (ix0 G).kf := Nat.mod_lt _ (Nat.two_pow_pos _)
+  rw [posOf_def, tagOf_def]
+  rw [ixB_T, ixB_tM, T_ix0, tM_ix0, shiftRight_eq, and_mask_eq]
+  refine ⟨?_, ?_⟩
+  · rw [Nat.add_comm, Nat.add_mul_div_right _ _ (Nat.pow_pos (by omega)), Nat.div_eq_of_lt hk, Nat.zero_add]
+  · rw [Nat.add_comm, Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt hk]
+
+theorem ixB_offs (G : ByteArray) : (ixB G).offs = cntOf G := by dsimp only [ixB]
+theorem ixB_sl (G : ByteArray) : (ixB G).sl = slOf G := by dsimp only [ixB]
+theorem ixB_runs (G : ByteArray) : (ixB G).runs = runsOf G := by dsimp only [ixB]
+theorem ixB_sw (G : ByteArray) : (ixB G).sw = 5 := by dsimp only [ixB]; rfl
+theorem ixB_ob (G : ByteArray) : (ixB G).ob = 0 := by dsimp only [ixB]; rfl
+theorem ixB_k (G : ByteArray) : (ixB G).k = 22 := by dsimp only [ixB]; rfl
+theorem ixB_kb (G : ByteArray) : (ixB G).kb = 18 := by dsimp only [ixB]; rfl
+theorem ixB_B (G : ByteArray) : (ixB G).B = 26 := by dsimp only [ixB]; rfl
+theorem ixB_c (G : ByteArray) : (ixB G).c = 0 := by dsimp only [ixB]; rfl
+theorem ixB_kf (G : ByteArray) : (ixB G).kf = (ix0 G).kf := by dsimp only [ixB]
+theorem ixB_kbM (G : ByteArray) : (ixB G).kbM = 2 ^ (ix0 G).kf - 1 := by dsimp only [ixB]; rfl
+theorem ixB_fM (G : ByteArray) : (ixB G).fM = 0 := by dsimp only [ixB]; rfl
+theorem ixB_fsh (G : ByteArray) : (ixB G).fsh = (ix0 G).kf := by dsimp only [ixB]; simp [mkIdx]
+theorem ixB_hsh (G : ByteArray) (x : Nat) : (ixB G).hsh x = (ix0 G).hsh x := by dsimp only [ixB, MzIdx.hsh]
+theorem ixB_mini (G : ByteArray) (v : Nat) : (ixB G).mini v = (ix0 G).mini v := by dsimp only [ixB, MzIdx.mini]
+theorem checkParams_with (ix : MzIdx) (o s : ByteArray) (r : Array Nat) :
+    checkParams { ix with offs := o, sl := s, runs := r } = checkParams ix := rfl
+theorem ixB_checkParams (G : ByteArray) : checkParams (ixB G) = true := by
+  dsimp only [ixB]; rw [checkParams_with]; exact checkParams_ix0 _
+
+theorem slot_def (ix : MzIdx) (t : Nat) : ix.slot t = rdSlot ix.sl ix.sw t := rfl
+theorem loB_def (ix : MzIdx) (b : Nat) : ix.loB b = getU32 ix.offs (ix.ob + b) := rfl
+theorem hiB_def (ix : MzIdx) (b : Nat) : ix.hiB b = getU32 ix.offs (ix.ob + b + 1) := rfl
+
+theorem inB_mid (bk : Nat → Nat) (P l : List Nat) (x : Nat) :
+    inB bk (P ++ x :: l) (bk x) = inB bk P (bk x) ++ x :: inB bk l (bk x) := by
+  simp [inB, List.filter_append, List.filter_cons]
+
+theorem cntB_nil (bk : Nat → Nat) (b : Nat) : cntB bk [] b = 0 := rfl
+
+theorem offF_succ (bk : Nat → Nat) (l : List Nat) (j : Nat) : offF bk l (j + 1) = offF bk l j + cntB bk l j := rfl
+
+theorem cntB_single (bk : Nat → Nat) (x b : Nat) : cntB bk [x] b = if bk x = b then 1 else 0 := by
+  rw [cntB_cons, cntB_nil, Nat.zero_add]
+
+theorem upd_step (fill : ByteArray) (b0 : Nat) (f g : Nat → Nat) (hs : 4 * b0 + 3 < fill.size)
+    (hlt : f b0 + g b0 + 1 < 2 ^ 32) (h : ∀ b < 2 ^ 26, getU32 fill b = f b + g b) :
+    ∀ b < 2 ^ 26, getU32 (setU32 fill b0 (f b0 + g b0 + 1)) b = f b + (g b + if b0 = b then 1 else 0) := by
+  intro b hb
+  rw [getU32_setU32 _ _ _ _ hs]
+  by_cases e : b = b0
+  · subst e; rw [if_pos rfl, if_pos rfl, Nat.mod_eq_of_lt hlt]; omega
+  · rw [if_neg e, if_neg (Ne.symm e), h b hb, Nat.add_zero]
+
+theorem getD_mid (P l : List Nat) (x : Nat) : (P ++ x :: l).getD P.length 0 = x := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_append_right (Nat.le_refl _)]; simp
+
+/-- The checker's completeness pass, along the builder's places. -/
+theorem replay_ok (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) :
+    ∀ l P fill, P ++ l = EG G → fill.size = 4 * (2 ^ 26 + 1) → (∀ b < 2 ^ 26, getU32 fill b = offF (bkG G) (EG G) b + cntB (bkG G) P b) →
+      replay (ixB G) G fill l = true := by
+  obtain ⟨c1, c2⟩ := cntOf_spec G hsz
+  obtain ⟨s1, s2⟩ := slOf_spec G hsz
+  have hlen := EG_length G hsz
+  have hall := offF_all (bkG G) (2 ^ 26) (EG G) (fun x _ => bkG_lt G x)
+  intro l
+  induction l with
+  | nil => intro _ _ _ _ _; rfl
+  | cons x l ih =>
+    intro P fill hE hfs hf
+    have hxE : x ∈ EG G := by rw [← hE]; simp
+    obtain ⟨hx22, _⟩ := EG_mem G x hxE
+    have hb := bkG_lt G x
+    have hcE : cntB (bkG G) (EG G) (bkG G x) = cntB (bkG G) P (bkG G x) + cntB (bkG G) (x :: l) (bkG G x) := by
+      rw [← hE, cntB_append]
+    have hcx : cntB (bkG G) (x :: l) (bkG G x) ≥ 1 := by rw [cntB_cons, if_pos rfl]; omega
+    have hs4 : 4 * bkG G x + 3 < fill.size := by omega
+    simp only [replay]
+    rw [ixB_k, wcGo_zero, ixB_hsh, ixB_kb, show (ix0 G).hsh (wc G x 22) >>> 18 = bkG G x from rfl,
+      loB_def, hiB_def, ixB_ob, ixB_offs, Nat.zero_add, c2 _ (by omega), c2 _ (by omega), hf _ hb, slot_def,
+      ixB_sl, ixB_sw, s2 _ hb _ (by omega)]
+    have hinB : (inB (bkG G) (EG G) (bkG G x)).getD (cntB (bkG G) P (bkG G x)) 0 = x := by
+      have := getD_mid (inB (bkG G) P (bkG G x)) (inB (bkG G) l (bkG G x)) x
+      rw [length_inB] at this
+      rw [← hE, inB_mid, this]
+    rw [hinB, (posOf_slot G hsz x hx22).1, offF_succ]
+    simp only [decide_eq_true (Nat.le_add_right _ _), decide_eq_true (show offF (bkG G) (EG G) (bkG G x) +
+      cntB (bkG G) P (bkG G x) < offF (bkG G) (EG G) (bkG G x) + cntB (bkG G) (EG G) (bkG G x) by omega),
+      beq_self_eq_true, Bool.true_and]
+    have hE' : P ++ [x] ++ l = EG G := by rw [← hE]; simp
+    have hfs' : (setU32 fill (bkG G x) (offF (bkG G) (EG G) (bkG G x) + cntB (bkG G) P (bkG G x) + 1)).size = 4 * (2 ^ 26 + 1) := by
+      rw [size_setU32, hfs]
+    refine ih (P ++ [x]) _ hE' hfs' (fun b hb' => ?_)
+    have hmo := offF_mono (bkG G) (EG G) (bkG G x + 1) (2 ^ 26 - (bkG G x + 1))
+    rw [show bkG G x + 1 + (2 ^ 26 - (bkG G x + 1)) = 2 ^ 26 by omega, hall] at hmo
+    have hof := offF_succ (bkG G) (EG G) (bkG G x)
+    rw [cntB_append, cntB_single]
+    exact upd_step fill (bkG G x) (offF (bkG G) (EG G)) (cntB (bkG G) P) hs4 (by omega) hf b hb'
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+theorem checkBucket_of (ix : MzIdx) (G : ByteArray) (b hi : Nat) :
+    ∀ n t, (∀ t', t ≤ t' → t' < t + n → entryOk ix G b hi t' = true) → checkBucket ix G b hi n t = true := by
+  intro n
+  induction n with
+  | zero => intro t _; rfl
+  | succ n ih =>
+    intro t h
+    simp only [checkBucket, Bool.and_eq_true]
+    exact ⟨h t (Nat.le_refl _) (by omega), ih (t + 1) (fun t' h1 h2 => h t' (by omega) (by omega))⟩
+
+theorem checkSound_of (ix : MzIdx) (G : ByteArray) :
+    ∀ n b, (∀ b', b ≤ b' → b' < b + n →
+      checkBucket ix G b' (ix.hiB b') (ix.hiB b' - ix.loB b') (ix.loB b') = true) → checkSound ix G n b = true := by
+  intro n
+  induction n with
+  | zero => intro b _; rfl
+  | succ n ih =>
+    intro b h
+    simp only [checkSound, Bool.and_eq_true]
+    exact ⟨h b (Nat.le_refl _) (by omega), ih (b + 1) (fun b' h1 h2 => h b' (by omega) (by omega))⟩
+
+theorem getD_mem_inB (bk : Nat → Nat) (E : List Nat) (b r : Nat) (hr : r < cntB bk E b) :
+    (inB bk E b).getD r 0 ∈ E ∧ bk ((inB bk E b).getD r 0) = b := by
+  rw [← length_inB] at hr
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hr, Option.getD_some]
+  have := List.getElem_mem hr
+  unfold inB at this
+  rw [List.mem_filter, beq_iff_eq] at this
+  exact this
+
+theorem getD_inB_lt (bk : Nat → Nat) (E : List Nat) (hs : E.Pairwise (· < ·)) (b r : Nat)
+    (hr : r + 1 < cntB bk E b) : (inB bk E b).getD r 0 < (inB bk E b).getD (r + 1) 0 := by
+  rw [← length_inB] at hr
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by omega), Option.getD_some,
+    List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hr, Option.getD_some]
+  have hp : (inB bk E b).Pairwise (· < ·) := hs.filter _
+  exact List.pairwise_iff_getElem.mp hp r (r + 1) (by omega) hr (by omega)
+
+theorem befF_def (ix : MzIdx) (tg : Nat) : ix.befF tg = (tg >>> ix.bsh) &&& ix.fM := rfl
+theorem aftF_def (ix : MzIdx) (tg : Nat) : ix.aftF tg = (tg >>> ix.ash) &&& ix.fM := rfl
+theorem flagF_def (ix : MzIdx) (tg : Nat) : ix.flagF tg = tg >>> ix.fsh := rfl
+theorem keyF_def (ix : MzIdx) (tg : Nat) : ix.keyF tg = tg &&& ix.kbM := rfl
+theorem wcU_nil (B : ByteArray) (i : Nat) (x : UInt64) : wcU B i i x = x := by rw [wcU, if_neg (Nat.lt_irrefl _)]
+
+theorem entryOk_gen (ix : MzIdx) (G : ByteArray) (b hi t y H kf : Nat)
+    (hpos : ix.posOf (ix.slot t) = y) (htag : ix.tagOf (ix.slot t) = H % 2 ^ kf)
+    (hk : ix.k = 22) (hc : ix.c = 0) (hkb : ix.kb = 18) (hkbM : ix.kbM = 2 ^ kf - 1) (hfsh : ix.fsh = kf)
+    (hfM : ix.fM = 0) (hh : ix.hsh (wc G y 22) = H) (hb : H >>> 18 = b) (hy : y + 22 ≤ G.size)
+    (hA : ∀ t < 22, acgt (G.get! (y + t)) = true)
+    (hnext : hi ≤ t + 1 ∨ y < ix.posOf (ix.slot (t + 1))) : entryOk ix G b hi t = true := by
+  obtain ⟨hw1, hw2⟩ := wcU_word G y hA
+  unfold entryOk
+  simp only [hpos, htag, hk, hc, Nat.sub_zero, Nat.add_zero, wcU_nil, hw2, hh, hkb, hb, keyF_def, flagF_def,
+    befF_def, aftF_def, hkbM, hfsh, hfM, and_mask_eq, Nat.mod_mod, Nat.and_zero, Bool.and_eq_true, Bool.or_eq_true,
+    decide_eq_true_eq, bne_iff_ne, ne_eq, beq_iff_eq, hy, Nat.zero_le, hw1, not_false_eq_true, true_and, and_true]
+  exact ⟨Or.inr ⟨⟨⟨by decide, by decide⟩, rfl⟩, rfl⟩, hnext⟩
+
+end MapSpec.Mz.BO
+
+namespace MapSpec.Mz.BO
+
+theorem entryOk_ixB (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) (b : Nat) (hb : b < 2 ^ 26) (r : Nat)
+    (hr : r < cntB (bkG G) (EG G) b) :
+    entryOk (ixB G) G b (offF (bkG G) (EG G) (b + 1)) (offF (bkG G) (EG G) b + r) = true := by
+  obtain ⟨s1, s2⟩ := slOf_spec G hsz
+  obtain ⟨hyE, hyb⟩ := getD_mem_inB (bkG G) (EG G) b r hr
+  have hslot : (ixB G).slot (offF (bkG G) (EG G) b + r) = (svG G ((inB (bkG G) (EG G) b).getD r 0)).toNat % 2 ^ 40 := by
+    rw [slot_def, ixB_sl, ixB_sw, s2 b hb r hr]
+  generalize hy : (inB (bkG G) (EG G) b).getD r 0 = y at hyE hyb hslot
+  obtain ⟨hy22, hyA⟩ := EG_mem G y hyE
+  obtain ⟨p1, p2⟩ := posOf_slot G hsz y hy22
+  refine entryOk_gen (ixB G) G b _ _ y ((ix0 G).hsh (wc G y 22)) (ix0 G).kf (by rw [hslot, p1]) (by rw [hslot, p2])
+    (ixB_k G) (ixB_c G) (ixB_kb G) (ixB_kbM G) (ixB_fsh G) (ixB_fM G) (ixB_hsh G _) hyb hy22 hyA ?_
+  by_cases hn : r + 1 < cntB (bkG G) (EG G) b
+  · right
+    have hlt := getD_inB_lt (bkG G) (EG G) (EG_sorted G) b r hn
+    rw [hy] at hlt
+    obtain ⟨hzE, _⟩ := getD_mem_inB (bkG G) (EG G) b (r + 1) hn
+    obtain ⟨hz22, _⟩ := EG_mem G _ hzE
+    rw [Nat.add_assoc, slot_def, ixB_sl, ixB_sw, s2 b hb (r + 1) hn, (posOf_slot G hsz _ hz22).1]
+    exact hlt
+  · left; rw [offF_succ]; omega
+
+theorem checkSound_ixB (G : ByteArray) (hsz : G.size ≤ 2 ^ 32 + 23) : checkSound (ixB G) G (2 ^ (ixB G).B) 0 = true := by
+  obtain ⟨c1, c2⟩ := cntOf_spec G hsz
+  rw [ixB_B]
+  refine checkSound_of _ _ _ _ (fun b _ hb => ?_)
+  have hb' : b < 2 ^ 26 := by omega
+  rw [hiB_def, loB_def, ixB_ob, ixB_offs, Nat.zero_add, c2 _ (by omega), c2 _ (by omega), offF_succ]
+  refine checkBucket_of _ _ _ _ _ _ (fun t h1 h2 => ?_)
+  obtain ⟨r, rfl⟩ : ∃ r, t = offF (bkG G) (EG G) b + r := ⟨t - offF (bkG G) (EG G) b, by omega⟩
+  rw [← offF_succ]
+  exact entryOk_ixB G hsz b hb' r (by omega)
+
+end MapSpec.Mz.BO
