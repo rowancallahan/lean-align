@@ -256,3 +256,7 @@ lean_exe whole_genome where           -- whole genome held once: index over a vi
 lean_exe seed_lab where               -- seed lookup cost on the whole genome (benchmark only, unproved IO)
   srcDir := "Testing/benches"
   root := `SeedLab
+
+lean_exe bam_write where              -- BAM writer prototype with stored BGZF blocks vs SAM text (benchmark only, unproved)
+  srcDir := "Testing/benches"
+  root := `BamWrite

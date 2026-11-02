@@ -1251,3 +1251,65 @@ Code on main was checked by identifier (`git grep` on main); only the ideas belo
   dedup is not. Idea worth keeping: dedup candidate windows before the expensive kernels.
 
 ### Next experiments — see Testing/notes/EXPERIMENTS_NEXT.md (index lookup, dedup, deeper error caps)
+
+## 2026-11-02 — n31 boxes: results, merges, spec decisions (Rowan)
+
+### Reporting rule (Rowan)
+Speed is reported as "minibwa X s / ours Y s = Z.ZZx" (x = minibwa/ours, two decimals, >1 = we are faster), same box only.
+Headline = index load subtracted (ours: interleaved empty-FASTQ run; minibwa: its "index loaded" time), FASTQ read +
+SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not the headline.
+
+### Merged into claude/festive-fermi-mf9mo6 (CI_check passed, SAM byte-identical on chr21 mason/low)
+- O2 `speed/n31-lookup-sort`: diags merge (`diags_eqM`) and nextK key skip (`scanAWK_eqC`). nextK: −0.4% Ir but −30% CPU
+  (it removed most of the shared-index refcount traffic). hg38, load subtracted, minibwa default / ours: HiSeq 23.4/8.0 s
+  = 2.93x, NovaSeq 11.9/8.7 = 1.37x, mason 13.3/13.5 = 0.99x, low 8.8/8.7 = 1.01x.
+- O3 `speed/n31-deep-caps`: `deepCaps := false` in Proofs/Aligner.lean (gated pass 2 at caps 20/28). mason +7,075 pairs at
+  truth for ~1% CPU; HiSeq +29–83% CPU. Shim costs much more than the bench with it on: cause not found (DEEP_CAPS.md §3a).
+- O4 b3131b2 only (window starts in Nat, no GMP bignums on hg38): −10…−20% Ir, CPU change within noise. Dedup 323d4e8
+  NOT merged (NovaSeq 3.9% duplicates; save for large read sets).
+- S3 `speed/n31-sam-example`: 28-pair SAM comparison example, IO_PAIRED_UNPAIRED_TRIM.md, BAM stored-block prototype.
+  BAM is 16–19% fewer bytes but slower to write (~+0.7 s wall / 2.3 s CPU per 200k); samtools quickcheck/flagstat/round
+  trip all OK. BAM shelved; SAM stays the output.
+- S1 `speed/n31-wfa`: bandWfa behind WG_XHWFA (default off). bandDP is <1% of hg38 Ir at 150–250 bp. Kept usable for
+  long reads later.
+- O1 `speed/n31-threads`: slotW/rdSlot `@[noinline]` + borrowed `@& ByteArray`, per-task setup (`ParMap.parMapS`, proved
+  = map). Cause of the ~40% thread overhead: atomic inc/dec of the shared 5.3 GB index ByteArray per bucket slot. After:
+  4-core CPU = 1-core CPU. Locked ops / 2k pairs: 1.65M → 1.00M (with nextK) → 0.75M (combined).
+- Not worth it on hg38: danger regions (S2: flag catches 7% of ties, ≤0.1% CPU; hg38 ties are in diverged repeats).
+
+### M2: placements (O3, branch m2/placements, merges last)
+- Stage 1–2: CIGAR by certificate (unproved bandDP, re-checked by proved `chkCand` → `alignment_of_cigar`), pair
+  reported for T1/T1g/T1u/T2b/T2 (proper). Stage 3: T1/T1g/T1u carry `.unique` (proved `IsUniqueBestProper`).
+  sam_compare: all 19 mapped pairs at minibwa's exact position. Stage 4 (ties) skipped: Rowan tosses multimappers.
+- Answers that fail the check, and T2 with a non-proper pair, must be labelled boundsOnly.
+
+### Spec decisions in progress (Rowan writes Spec/; we only explain)
+- Why M1 printed everything unmapped: `PairAnswer.Correct` only constrains `found = some`; `found = none` + `.unknown`
+  + a correct bound satisfies it. The tier carries no claim.
+- Direction (Rowan): decide in terms of `answer.uniqueness`, not tiers:
+  `.unique` → found, unique best (unchanged) · `.multimapper` → a proved tie (two best proper pairs at different
+  placements), nothing reported · `.unknown` → `found = none → bestPossibleScore < T` (no pair only if junk).
+  Later: per-tier claims, one at a time.
+- T: likely free at −(cap+1) per read length (junk pairs come out at XB −17 for ≥150 bp); budget-stopped repeat answers
+  (e.g. s24, XB 0) are the cost. Measure on hg38 before fixing T.
+
+### Decision (Rowan, later 2026-11-02): report the pair in hand
+- `.unknown` with no pair only for junk: `found = none → bestPossibleScore < T` (Rowan adds to Spec/). Everything
+  else reports a pair. Repeats/ties where the router stops early: depth-first fallback (one candidate, aligned,
+  chkCand-checked), reported `.unknown` with the bound left wide — like minibwa's MAPQ 0. M2 stage 5 (O3).
+- A pair-agnostic "two pairs close to each other" claim is vacuous (any read has many terrible pairs with near-equal
+  scores); a near-tie claim must be anchored to the bound: both pairs ≥ bestPossibleScore − x.
+
+### Later (Rowan)
+- **Junk score as a setting:** define it at the top of Spec/Aligner.lean; likely a field of `InsertSettings` (a run
+  setting that flows through alignPairs_correct), maybe per read length (the free value follows the router's cap,
+  −(cap+1): −17 at ≥150 bp). Alternatively route it through the tiers, so a smaller set of options leads to "junk".
+- **Near-tie labels for MAPQ:** a proved near-tie (two placements within x of bestPossibleScore) so every reported pair
+  gets a real MAPQ; ties are the x = 0 case.
+- **Error caps for longer reads:** make caps relative to read length (not fixed −12/−16 by length band), seeds and
+  bounds to match, so long-read matching works. Long reads are mostly single-end, so the spec may change for them too
+  (single-end / unpaired answers next to the paired ones; see IO_PAIRED_UNPAIRED_TRIM.md). WFA (bandWfa) is there for
+  long reads.
+- Pipelining with one extra core needs a ≥5-core box (and a 4-task cap on alignPairs' parMap).
+- Index read is 5–30 s when the page cache is cold: mmap needs a Main.lean change (Rowan's file).
+- BAM later if faster; compression via Rowan's lean-zip.

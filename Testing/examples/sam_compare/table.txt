@@ -1,0 +1,57 @@
+pair         kind         m  truth             minibwa chr:pos str CIGAR MAPQ proper  bench chr:pos str pen  bench=mb  shim flag XB XT
+s0           unique       1  chr11:12961790 +  chr11:12961790 + 150M 60 yes           chr11:12961790 + -12   same pos  77 i:-16 Z:eachMateUnique
+s0           unique       2  chr11:12961932 -  chr11:12961932 - 150M 60 yes           chr11:12961933 - -4    overlap   141 i:-16 Z:eachMateUnique
+s1           unique       1  chr12:68106872 +  chr12:68106872 + 150M 60 yes           chr12:68106872 + 0     same pos  77 i:-4 Z:eachMateUnique
+s1           unique       2  chr12:68107037 -  chr12:68107037 - 150M 60 yes           chr12:68107037 - -4    same pos  141 i:-4 Z:eachMateUnique
+s2           unique       1  chr2:147920752 -  chr2:147920752 - 150M 60 yes           chr2:147920752 - -12   same pos  77 i:-16 Z:eachMateUnique
+s2           unique       2  chr2:147920621 +  chr2:147920621 + 150M 60 yes           chr2:147920621 + -4    same pos  141 i:-16 Z:eachMateUnique
+s3           unique       1  chr1:156497201 -  chr1:156497201 - 150M 60 yes           chr1:156497201 - 0     same pos  77 i:-4 Z:eachMateUnique
+s3           unique       2  chr1:156497040 +  chr1:156497040 + 150M 60 yes           chr1:156497040 + -4    same pos  141 i:-4 Z:eachMateUnique
+s4           unique       1  chr13:74714468 -  chr13:74714468 - 150M 60 yes           chr13:74714468 - -12   same pos  77 i:-12 Z:eachMateUnique
+s4           unique       2  chr13:74714298 +  chr13:74714298 + 150M 60 yes           chr13:74714298 + 0     same pos  141 i:-12 Z:eachMateUnique
+s5           unique       1  chr21:38313527 -  chr21:38313527 - 150M 60 yes           chr21:38313527 - -4    same pos  77 i:-4 Z:eachMateUnique
+s5           unique       2  chr21:38313370 +  chr21:38313370 + 150M 60 yes           chr21:38313370 + 0     same pos  141 i:-4 Z:eachMateUnique
+s6           unique       1  chr3:171507029 +  chr3:171507029 + 150M 60 yes           chr3:171507029 + -16   same pos  77 i:-32 Z:eachMateUnique
+s6           unique       2  chr3:171507196 -  chr3:171507196 - 150M 60 yes           chr3:171507196 - -16   same pos  141 i:-32 Z:eachMateUnique
+s7           unique       1  chrX:142732753 -  chrX:142732753 - 150M 60 yes           chrX:142732753 - -8    same pos  77 i:-12 Z:eachMateUnique
+s7           unique       2  chrX:142732567 +  chrX:142732567 + 150M 60 yes           chrX:142732567 + -4    same pos  141 i:-12 Z:eachMateUnique
+s8           unique       1  chr6:65524160 +   chr6:65524160 + 150M 60 yes            chr6:65524160 + -16    same pos  77 i:-24 Z:eachMateUnique
+s8           unique       2  chr6:65524327 -   chr6:65524327 - 150M 60 yes            chr6:65524327 - -8     same pos  141 i:-24 Z:eachMateUnique
+s10          unique       1  chr4:113198791 +  chr4:113198791 + 150M 60 yes           chr4:113198791 + -4    same pos  77 i:-4 Z:eachMateUnique
+s10          unique       2  chr4:113198934 -  chr4:113198934 - 150M 60 yes           chr4:113198934 - 0     same pos  141 i:-4 Z:eachMateUnique
+s13          unique       1  chr7:83109742 -   chr7:83109742 - 150M 60 yes            chr7:83109742 - 0      same pos  77 i:-4 Z:eachMateUnique
+s13          unique       2  chr7:83109597 +   chr7:83109597 + 150M 60 yes            chr7:83109597 + -4     same pos  141 i:-4 Z:eachMateUnique
+s17          unique       1  chr17:73849390 -  chr17:73849390 - 150M 60 yes           chr17:73849391 - -4    overlap   77 i:-16 Z:eachMateUnique
+s17          unique       2  chr17:73849219 +  chr17:73849219 + 150M 60 yes           chr17:73849219 + -8    same pos  141 i:-16 Z:eachMateUnique
+s18          unique       1  chr8:61941888 +   chr8:61941888 + 150M 60 yes            chr8:61941888 + -8     same pos  77 i:-12 Z:eachMateUnique
+s18          unique       2  chr8:61942062 -   chr8:61942062 - 150M 60 yes            chr8:61942062 - -4     same pos  141 i:-12 Z:eachMateUnique
+s20          unique       1  chr16:49560560 -  chr16:49560560 - 150M 60 yes           chr16:49560560 - -8    same pos  77 i:-8 Z:eachMateUnique
+s20          unique       2  chr16:49560376 +  chr16:49560376 + 150M 60 yes           chr16:49560376 + 0     same pos  141 i:-8 Z:eachMateUnique
+s25          unique       1  chr9:93251672 +   chr9:93251672 + 150M 60 yes            chr9:93251672 + -8     same pos  77 i:-8 Z:eachMateUnique
+s25          unique       2  chr9:93251836 -   chr9:93251836 - 150M 60 yes            chr9:93251836 - 0      same pos  141 i:-8 Z:eachMateUnique
+s29          unique       1  chr5:95481548 -   chr5:95481548 - 150M 60 yes            none (T3 noHit2)       no pair   77 i:-17 Z:boundsOnly
+s29          unique       2  chr5:95481463 +   chr5:95481463 + 150M 60 yes            none (T3 noHit2)       no pair   141 i:-17 Z:boundsOnly
+s50          unique       1  chr14:89855182 -  chr14:89855182 - 150M 60 yes           chr14:89855182 - -8    same pos  77 i:-16 Z:eachMateUnique
+s50          unique       2  chr14:89855031 +  chr14:89855031 + 150M 60 yes           chr14:89855031 + -8    same pos  141 i:-16 Z:eachMateUnique
+s53          unique       1  chr22:34601670 +  chr22:34601670 + 150M 60 yes           chr22:34601670 + -4    same pos  77 i:-4 Z:eachMateUnique
+s53          unique       2  chr22:34601811 -  chr22:34601811 - 150M 60 yes           chr22:34601811 - 0     same pos  141 i:-4 Z:eachMateUnique
+s60          unique       1  chr19:4859628 +   chr19:4859628 + 150M 60 yes            chr19:4859628 + -4     same pos  77 i:-16 Z:eachMateUnique
+s60          unique       2  chr19:4859784 -   chr19:4859784 - 150M 60 yes            chr19:4859784 - -12    same pos  141 i:-16 Z:eachMateUnique
+s74          unique       1  chr10:96727666 +  chr10:96727666 + 150M 60 yes           chr10:96727666 + 0     same pos  77 i:0 Z:eachMateUnique
+s74          unique       2  chr10:96727856 -  chr10:96727856 - 150M 60 yes           chr10:96727856 - 0     same pos  141 i:0 Z:eachMateUnique
+s24          non-unique   1  chr18:20302594 -  chr18:20302594 - 150M 1 yes            none (T3 tie2)         no pair   77 i:0 Z:boundsOnly
+s24          non-unique   2  chr18:20302436 +  chr18:20302436 + 150M 1 yes            none (T3 tie2)         no pair   141 i:0 Z:boundsOnly
+s65          non-unique   1  chr1:120005690 -  chr1:120005690 - 150M 0 yes            none (T3 tie1)         no pair   77 i:0 Z:boundsOnly
+s65          non-unique   2  chr1:120005562 +  chr1:120005562 + 150M 0 yes            none (T3 tie1)         no pair   141 i:0 Z:boundsOnly
+s81          non-unique   1  chrX:61937758 +   chrX:61937758 + 150M 5 yes             none (T2 tie2)         no pair   77 i:0 Z:boundsOnly
+s81          non-unique   2  chrX:61937913 -   chrX:61937913 - 150M 5 yes             none (T2 tie2)         no pair   141 i:0 Z:boundsOnly
+s215         non-unique   1  chr1:148642544 -  chr1:146191828 - 150M 0 yes            none (T2 tie1)         no pair   77 i:0 Z:stoppedEarly
+s215         non-unique   2  chr1:148642372 +  chr1:146191656 + 150M 0 yes            none (T2 tie1)         no pair   141 i:0 Z:stoppedEarly
+s343         non-unique   1  chr7:74976507 -   chr7:74976507 - 150M 21 yes            none (T2 tie2)         no pair   77 i:0 Z:stoppedEarly
+s343         non-unique   2  chr7:74976323 +   chr7:74976323 + 150M 19 yes            none (T2 tie2)         no pair   141 i:0 Z:stoppedEarly
+14752:41059  unmapped     1  -                 *  unmapped                            none (T3 noHit1)       -         77 i:-17 Z:boundsOnly
+14752:41059  unmapped     2  -                 *  unmapped                            none (T3 noHit1)       -         141 i:-17 Z:boundsOnly
+19441:41106  unmapped     1  -                 *  unmapped                            none (T3 noHit1)       -         77 i:-17 Z:boundsOnly
+19441:41106  unmapped     2  -                 *  unmapped                            none (T3 noHit1)       -         141 i:-17 Z:boundsOnly
+7561:41059   half-mapped  1  -                 chr2:79434646 - 250M 60 no             none (T3 short2)       no pair   77 i:-17 Z:boundsOnly
+7561:41059   half-mapped  2  -                 *  unmapped                            none (T3 short2)       -         141 i:-17 Z:boundsOnly

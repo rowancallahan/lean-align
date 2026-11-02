@@ -107,7 +107,7 @@ deriving Inhabited
   else 0
 
 /-- Slot `t` of a slot array with `sw` bytes per slot (4, 5, 6; any other width reads 8). -/
-@[inline] def rdSlot (B : ByteArray) (sw t : Nat) : Nat :=
+@[noinline] def rdSlot (B : @& ByteArray) (sw t : Nat) : Nat :=
   let j := sw * t
   (if sw = 4 then rd4 B j
    else if sw = 5 then rd4 B j ||| byteAt B (j + 4) 32
