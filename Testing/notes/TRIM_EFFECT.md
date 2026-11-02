@@ -15,7 +15,7 @@ Same shim at ab3aacd built twice: normal (Spec.trimRecord = proved trimmer) and 
 | ... < -100 | 2.40 % | 2.77 % | 2.62 % | 5.10 % |
 | all mapped pairs (incl. all-insertion) < -50 / < -100 | 6.36 / 5.10 % | 5.62 / 3.95 % | 4.83 / 3.84 % | 8.94 / 5.72 % |
 
-(Scores are over kept bases for trim, over full reads for no-trim: not like for like. The all-insertion share is higher with trimming on NovaSeq: 5 434 vs 2 285 pairs.)
+(Scores are over kept bases for trim, over full reads for no-trim: not like for like. The all-insertion share is higher with trimming on NovaSeq: 5 436 vs 2 285 pairs.)
 
 | per pair | NovaSeq | HiSeq |
 |---|---|---|
