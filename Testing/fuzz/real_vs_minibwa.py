@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Real reads (no truth): classify every mate of ours.sam against minibwa.sam. Fails on any surprise (asserts).
-   python3 -I real_vs_minibwa.py SET ours.sam mb.sam [N_EXAMPLES=20] > report.md   (examples also in SET.examples.tsv)
+   python3 -I real_vs_minibwa.py SET ours.sam mb.sam R1.fq R2.fq [N_EXAMPLES=20] > report.md   (examples also in SET.examples.tsv)
 Scoring model of ours: match 0, mismatch -4, gap of k: -(6+2k), end to end. minibwa score recomputed in that model from
 CIGAR+NM when it has no S/H (mismatches = NM - gap bases; N bases count as mismatches in NM, as in ours)."""
 import re, sys, collections
-name, ours_p, mb_p = sys.argv[1:4]; NEX = int(sys.argv[4]) if len(sys.argv) > 4 else 20
+name, ours_p, mb_p, fq1, fq2 = sys.argv[1:6]; NEX = int(sys.argv[6]) if len(sys.argv) > 6 else 20
 OPS = re.compile(r'(\d+)([MIDNSHP=X])')
 
 def load(path):
@@ -39,6 +39,32 @@ def my_score(m):
     return -(4 * mm + sum(6 + 2 * n for n in gaps))
 
 ours, mb = load(ours_p), load(mb_p)
+RC = str.maketrans('ACGTNacgtn', 'TGCANtgcan')
+def fastq(path):
+    d = {}
+    it = iter(open(path))
+    for h in it:
+        d[h[1:].split()[0].split('/')[0]] = next(it).strip(); next(it); next(it)
+    return d
+fq = {1: fastq(fq1), 2: fastq(fq2)}
+def segdiags(a, start):
+    """set of (diagonal) over the M/=/X segments of a record; start = read offset (in alignment orientation) of the first CIGAR base."""
+    q, r, out = start, a['pos'], set()
+    for n, o in ((int(n), o) for n, o in OPS.findall(a['cigar'])):
+        if o in 'M=X': out.add(r - q); q += n; r += n
+        elif o in 'IS': q += n
+        elif o in 'DN': r += n
+    return out
+# Our mates are quality-trimmed (no S in CIGAR): locate our SEQ in the original read so the diagonal (POS minus bases
+# before the aligned start, in alignment orientation) is comparable with minibwa's POS - leading clip.
+for b in mb.values():
+    if b['mapped']: b['segs'] = segdiags(b, 0)
+for (q, m), a in ours.items():
+    if not a['mapped'] or a['degenerate']: continue
+    seq = a['line'].split('\t')[9]
+    o = fq[m][q]; o = o if a['strand'] == '+' else o.translate(RC)[::-1]
+    i = o.find(seq); assert i >= 0, (q, m)
+    a['trim_left'] = i; a['trim_total'] = len(o) - len(seq); a['diag'] = a['pos'] - a['lead'] - i; a['segs'] = segdiags(a, i)
 assert ours.keys() == mb.keys(), 'the two files have different reads'
 keys = sorted(ours)                      # (qname, mate)
 N = len(keys)
@@ -51,8 +77,8 @@ def classify(a, b):
     if not b['mapped']: return 'mapped by ours only'
     if (a['chr'], a['strand']) == (b['chr'], b['strand']):
         if a['pos'] == b['pos']: return 'same pos+strand, same CIGAR' if a['cigar'] == b['cigar'] else 'same pos+strand, CIGAR differs'
-        if a['diag'] == b['diag'] or a['pos'] - a['lead'] == b['pos'] - b['lead']:
-            return 'same diagonal (POS shifted by clipping), CIGAR differs'
+        if a['segs'] & b['segs']:
+            return 'same alignment diagonal (POS shifted by our trimming / minibwa clipping / an indel in a trimmed or clipped part), CIGAR differs'
     if a['mapq'] == 60 and b['mapq'] >= 30: return 'DIFFERENT pos: ours unique (60), minibwa MAPQ>=30  [ALARMING]'
     if a['mapq'] == 0 or b['mapq'] == 0: return 'different pos, repeats (either MAPQ 0)'
     return 'different pos, other'
@@ -96,14 +122,17 @@ for k in same:
     assert a['AS'] is not None
     rel = 'minibwa strictly better' if s > a['AS'] else 'equal' if s == a['AS'] else 'ours better'
     tab[(g, rel)] += 1
+    tab[('t', g)] += 1
     if rel == 'minibwa strictly better': better.append((k, s, g))
 print(f'{len(same)} mates at the same place.\n\n| group | minibwa strictly better | equal | ours better |\n|---|---|---|---|')
 for g in ('same query length', 'ours trimmed/shorter query'):
-    t = sum(v for (gg, _), v in tab.items() if gg == g)
+    t = tab[('t', g)]
     print(f'| {g} ({t}) | ' + ' | '.join(pct(tab[(g, r)], max(t, 1)) for r in ('minibwa strictly better', 'equal', 'ours better')) + ' |')
 print(f'\nminibwa clipped, not comparable: {pct(tab["minibwa clipped: not comparable"], len(same))}.')
 gain = collections.Counter(s - ours[k]['AS'] for k, s, g in better if g == 'same query length')
 print('Gain (minibwa score - ours, same query length) histogram: ' + ', '.join(f'+{d}: {n}' for d, n in sorted(gain.items())[:12]))
+bt = collections.Counter((ours[k]['tags'].get('XU'), ours[k]['tags'].get('XT', '').strip(), 'degenerate-like: AS<-100' if ours[k]['AS'] < -100 else 'AS>=-100') for k, s, g in better if g == 'same query length')
+print('\nminibwa strictly better, same query length: by our XU / XT / score: ' + '; '.join(f'{k}={n}' for k, n in bt.most_common(10)))
 print('Note: "ours better" or "minibwa better" with same query length at the same place both indicate scoring/NM-convention issues '
       'if frequent; an optimal end-to-end aligner never loses at the same placement.')
 
@@ -144,7 +173,8 @@ def hint(a, b):
     if a['degenerate']: h.append('ours degenerate')
     if b['clip']: h.append(f'minibwa clip ({re.sub(r"[0-9]+M", "M", b["cigar"])})')
     if a['clip']: h.append('ours clip')
-    if a['qlen'] != b['qlen']: h.append(f'ours trimmed (qlen {a["qlen"]} vs {b["qlen"]})')
+    if a.get('trim_total'): h.append(f'ours trimmed {a["trim_left"]} left/{a["trim_total"] - a["trim_left"]} right (aligned orientation)')
+    elif a['qlen'] != b['qlen']: h.append(f'qlen {a["qlen"]} vs {b["qlen"]}')
     if 'XA' in b['tags']: h.append('minibwa XA (repeat)')
     if near(a, b): h.append(f'{abs(a["pos"] - b["pos"])} bp apart')
     if a['ngaps'] != b['ngaps']: h.append('gap count differs (indel)')

@@ -1,31 +1,92 @@
-# Real data: lean-align vs minibwa (NovaSeq 200k, HiSeq 200k) — STATUS: BLOCKED, NO RESULTS YET
+# Real reads: lean-align vs minibwa (hg38, NovaSeq 200k and HiSeq 200k)
 
-**No numbers in this note yet.** The script is written and smoke-tested on a hand-made 2-pair SAM only. The run was blocked:
+Ours: `claude/festive-fermi-mf9mo6` head e384063 (quality trimming, capBudget 5000, chunk 20000, n32 kernels), release `shim.idx`
+(SHA-256 matches the release; the head accepted it), `lean-align map shim.idx R1 R2 out.sam 100 1000`. minibwa c07de5c built
+from lh3/minibwa, `map -t 4`, release index. Lean 4.35 came from the GitHub release zip (release.lean-lang.org is blocked by the proxy).
+Script: `Testing/fuzz/real_vs_minibwa.py SET ours.sam mb.sam R1.fq R2.fq`. Full reports and the 20+20+20 raw example records
+are in `Testing/notes/real_vs_minibwa/` (`SET.report.md`, `SET.examples.tsv`). No truth: this shows disagreements, not errors.
 
-- The permission classifier denied building minibwa c07de5c from the cloned lh3/minibwa source (`make`) and downloading
-  elan (needed for Lean v4.35.0, which this box lacks; no `lake`/`lean`/`samtools` either). Not worked around.
-- Done before the block: `bench-release` assets for novaseq_200k, hg002_200k, MANIFEST, SHA256, `shim.idx.chromosomes`,
-  `mb.l2b` were fetched via `gh api` (works); the minibwa index parts and `shim.idx` parts were still downloading.
-  `git clone https://github.com/lh3/minibwa` works; the archive tarball URL gives 403.
-- Still needed to get results: (1) permission to build minibwa and install elan/Lean 4.35 + `lake build lean-align` at
-  `claude/festive-fermi-mf9mo6` head e384063; (2) the shim index (the release's `shim.idx` was built from an older commit; if the
-  head rejects it, rebuild from hg38 `genome.fa`, ~3 GB download).
+**Method point that changes the numbers.** We quality-trim mates and print the trimmed SEQ with no `S`. A naive POS comparison
+calls 30 591 NovaSeq mates "ours unique, minibwa MAPQ >= 30, different position"; nearly all are a 1-bp trim shift. The script finds the
+trimmed SEQ inside the original read, and calls two mates the same place when their M-segment diagonals (POS minus read offset) share one.
 
-## Script: `Testing/fuzz/real_vs_minibwa.py SET ours.sam mb.sam [N]`
-Writes a markdown report to stdout and `SET.examples.tsv` (raw records of both tools, N=20 each, evenly spread):
-1. Per-mate classes: same pos+strand (same CIGAR / CIGAR differs); same diagonal (POS shifted by a leading clip);
-   DIFFERENT pos with ours MAPQ 60 and minibwa MAPQ >= 30 (alarming); different pos with either MAPQ 0 (repeats);
-   different pos other; mapped by one tool only; unmapped by both; ours degenerate all-insertion (section 1b: minibwa's
-   MAPQ / XA / mapped-or-not for those). Different-pos classes also report how many are within 50 bp on the same strand.
-2. Score check at the same place: minibwa's score recomputed in our model (0, -4, -(6+2k)) from CIGAR+NM when it has no
-   S/H; compared with our AS, split by equal query length vs ours trimmed (SEQ shorter). Counts strictly better / equal /
-   worse, gain histogram, and how many are not comparable because minibwa clipped.
-3. Pairs minibwa maps with min MAPQ >= 30: our pair score (AS1+AS2) binned (< -100, -100..-50, -50..-32, -32..-16, >= -16), degenerate count, same-place count,
-   minibwa's own pair score in our model, cumulative shares below -16/-32/-50/-100, and the number a -50 floor would unmap.
-Assumptions to check on the first real run: our AS is the end-to-end penalty of the (trimmed) SEQ; minibwa NM counts N bases as mismatches; our
-trimmed mates have no S in CIGAR (trimmed bases are simply absent from SEQ), hence the query-length split.
-Example explanations (item 3 of the task) can only be written from the real `examples.tsv`; the `hint` field already flags
-minibwa clip, our trimming, XA (repeat), distance, gap-count difference.
+## 1. Per-mate classes (percent of 400 000 mates)
 
-Run: `python3 -I Testing/fuzz/real_vs_minibwa.py novaseq_200k ours.sam mb.sam`, with the SAMs from the commands in
-`Testing/scripts/output_vs_minibwa.sh` (`lean-align map shim.idx R1 R2 ours.sam 100 1000`; `minibwa map -t 4 mb R1 R2`).
+| class | NovaSeq | HiSeq |
+|---|---|---|
+| same pos+strand, same CIGAR | 70.72 | 21.29 |
+| same pos+strand, CIGAR differs | 8.40 | 32.28 |
+| same alignment diagonal (trim / clip / indel in trimmed part), CIGAR differs | 10.02 | 34.47 |
+| different pos, repeats (either MAPQ 0) | 5.78 | 4.78 |
+| **different pos, ours unique, minibwa MAPQ >= 30 (alarming)** | **5 mates (0.001)** | **12 mates (0.003)** |
+| different pos, other | 7 | 20 |
+| mapped by minibwa only | 2.06 | 5.75 |
+| mapped by ours only | 0.16 | 0.07 |
+| unmapped by both | 0.13 | 0.16 |
+| ours degenerate all-insertion | 2.72 (10 872 mates) | 1.19 (4 770) |
+
+HiSeq "CIGAR differs" is large because 2x250 reads are trimmed or clipped often, not because placements differ.
+Different-position repeats: minibwa has XA on 7 276 / 6 386 of them in the earlier count; ours is almost always `unknown` there.
+
+**Degenerate all-insertion mates, what minibwa did** (NovaSeq / HiSeq): mapped with MAPQ 60 for 51 % / 50 %, MAPQ 30-59 7 % / 7 %,
+MAPQ 1-29 18 % / 19 %, MAPQ 0 14 % / 19 %, unmapped 10 % / 5 %; proper flag 70 % / 79 %; soft-clipped 35 % / 59 %.
+So half of our last-resort pairs are reads minibwa maps confidently, the main sensitivity gap, as in the October note.
+
+## 2. Score check at the same place (minibwa recomputed in our model; only where it has no clipping)
+
+| | NovaSeq | HiSeq |
+|---|---|---|
+| mates at same place | 355 300 | 349 362 |
+| minibwa clipped, not comparable | 5 250 (1.5 %) | 24 973 (7.2 %) |
+| same query length: minibwa strictly better | 449 (0.16 %) | 170 (0.20 %) |
+| same query length: equal | 99.82 % | 99.79 % |
+| same query length: ours better | 47 | 12 |
+| ours trimmed (shorter query): minibwa strictly better / ours better | 340 / 9 376 | 720 / 80 240 |
+
+"Ours better" with a trimmed query is expected: minibwa scores the extra low-quality bases we dropped. **Every one of the 619 mates
+where minibwa is strictly better at the same length is labelled `unknown` by us (never unique or multimapper)**: NovaSeq `boundsOnly` 490
+(278 with AS < -100), `stoppedEarly` 297, `eachMateUnique` 28, `deepSearchTie` 3; HiSeq `boundsOnly` 206, `stoppedEarly` 95, `eachMateUnique` 61, `deepSearchTie` 1.
+No unique claim is contradicted by a better end-to-end alignment at the same place.
+
+## 3. Pair score AS1+AS2, pairs minibwa maps confidently (both mates, min MAPQ >= 30)
+
+NovaSeq: 182 462 pairs (we map both mates of 98.7 %); HiSeq 184 996 (95.6 %).
+
+| our pair score | NovaSeq pairs (degenerate) | HiSeq pairs (degenerate) |
+|---|---|---|
+| < -100 | 5 252 (2 827) | 4 129 (1 271) |
+| -100 .. -50 | 1 383 (1) | 898 (4) |
+| -50 .. -32 | 1 806 (0) | 923 (1) |
+| -32 .. -16 | 6 136 | 6 687 |
+| >= -16 | 165 499 | 164 204 |
+
+Share of minibwa-confident pairs we map that score < -16 / < -32 / < -50 / < -100: NovaSeq 8.1 / 4.7 / 3.7 / 2.9 %; HiSeq 7.2 / 3.4 / 2.8 / 2.3 %.
+**A -50 floor would unmap 6 635 (NovaSeq) and 5 027 (HiSeq) pairs that minibwa maps confidently**, on top of the 2 386 / 8 155 we already miss.
+Of those, the below -100 bin is mostly degenerate pairs (43-54 % NovaSeq, 31 % HiSeq: these are our "gave up" answers). The -100..-50 and -50..-32
+bins are real alignments (almost none degenerate); in them minibwa's own alignment, scored in our model, is also < -50 for 354 of 871 (NovaSeq) and
+155 of 366 (HiSeq) unclipped pairs (but over untrimmed reads), and the same place as ours for 59 % / 48 %. Reading: the floor mostly removes
+degenerate pairs, but each set has ~1 400 / ~900 real pairs in -100..-50 that minibwa maps and that are partly genuine high-error pairs, partly trimming/clipping artifacts.
+Pairs examples: `SET.examples.tsv`, section LOW_PAIR. Caveat: minibwa's score here is over the full read, ours over the trimmed one.
+
+## 4. Examples with explanations
+
+Alarming class (only 5 + 12 mates, all listed in `SET.examples.tsv` section ALARMING). Patterns:
+- **Our trimmed mate is short (75-135 bp) and lands on one copy of a segmental duplication, minibwa's full-length read prefers another** (HiSeq
+  `10257:52325` both mates: ours chr22_KI270733v1_random, minibwa chr21, whose XA lists our copy; `17914:59681` mate 2: ours 118 bp after trimming 132, minibwa 168M82S 196 bp away,
+  XA lists ours; `8802:50180` both mates: ours 16438408, minibwa 14810874 with XA listing ours, minibwa MAPQ 39-41). Trimming removed the bases that tell the copies apart, yet we called it unique. This is the one pattern to look at: a unique claim on a trimmed read.
+- **Near-identical repeat copies, minibwa MAPQ only 40-50 with n2 > 1** (NovaSeq `29414:28573`, `5421:23343`): both tools give a proper pair (insert ~300 / ~490); ours has AS -8/-8 and -12/0, minibwa NM 3 on each mate (about -24) at its place, so ours scores at least as well; minibwa's MAPQ shows it is unsure.
+- **Different pair (mate 2 anchored elsewhere)**: `16648:42181` mate 1: minibwa pairs it 1 Mb away (TLEN 1 051 047, MAPQ 29), ours proper at 302 bp. Fragment-range (100-1000) difference, not an error.
+- **Indel/clip near the start** (NovaSeq `16351:30686`, `13928:25614`, `22959:27477`): trimmed or clipped part holds an indel; 4-24 bp apart; same alignment otherwise. Left in the class because the diagonal match tolerance is the first aligned segment only for these.
+- **Adapter/clip at the 3' end** (HiSeq `19478:55738`, `19772:45126`, `20459:61108`, `4517:62498`, `9614:58907`): minibwa soft-clips 13-133 bases, we trim 50-175; positions differ by the clip, same locus. Several also carry an XA.
+
+"minibwa better" (SET.examples.tsv, MINIBWA_BETTER; 20 each): all are `unknown` pairs with large penalties from the unfinished-search tiers
+(`boundsOnly`, `stoppedEarly`): ours is a gapped alignment at the right place that is far from optimal (AS -136 / -400 / -264 / -524, a staircase of
+1-5 bp indels), while minibwa has one clean indel (for example 69M10D82M, NM 10). Exceptions: HiSeq `12021:48777`, `14237:46779` (label `eachMateUnique`, `unknown`): ours `248M1I1M` AS -8, minibwa `250M` with one mismatch = -4.
+These have the same read length and place, so ours is 4 worse: a 1-base insertion at the last base instead of a mismatch. Worth a look if the kernel is meant to be optimal at that
+tier (the label is `unknown`, so no proof is violated). Counts: NovaSeq 28 and HiSeq 61 mates with `eachMateUnique` + `unknown` and AS >= -100.
+
+## 5. Not done / caveats
+
+- Disjoint-unique rescoring (both tools unique, disjoint intervals): the class above counts 5 / 12 mates; the genome (3 GB `genome.fa`) was not downloaded, so not rescored.
+- minibwa's score uses NM; N bases and clipped mates are not comparable (counts above).
+- The release `shim.idx` is from f7ab094; it loaded and ran at e384063 without complaint.
