@@ -2914,6 +2914,15 @@ def main (args : List String) : IO UInt32 := do
             let d1 := dangerCnt pk dmask a (prepMate pk a)
             let d2 := dangerCnt pk dmask b (prepMate pk b)
             s!"{d1.1}\t{d1.2}\t{d2.1}\t{d2.2}")]
+      -- WG_SEEDCNT=1 (prototype, repeat hint): per pair, per mate and strand (fwd, rev): min and median bucket size over its seeds
+      let scM (R : ByteArray) : String :=
+        let s := prepMate pk R
+        let st := fun (pp : Array MzP) =>
+          let sz := (pp.toList.map (LookG.size pk)).mergeSort (· ≤ ·)
+          s!"{sz.headD 0}\t{sz.getD (sz.length / 2) 0}"
+        s!"{st s.ps}\t{st s.pr}"
+      let xdump0 := xdump0 ++
+        if (← IO.getEnv "WG_SEEDCNT").getD "0" == "1" then [("seedcnt", fun a b => s!"{scM a}\t{scM b}")] else []
       let xdump : List (String × (ByteArray → ByteArray → String)) := xdump0 ++
         if (← IO.getEnv "WG_TIEROUT").getD "0" == "1" then
           [("tiers", fun a b => let t := tierP a b
