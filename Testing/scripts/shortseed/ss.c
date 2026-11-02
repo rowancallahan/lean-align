@@ -119,6 +119,7 @@ static int mapMate(const uint8_t *r, int n, int maxocc, int cap, Pl *out, int ma
     static int64_t dg[200000]; int nd = 0;
     MINIMIZERS(s, n, {
       nLook++; uint64_t b = H_ >> sh; uint32_t lo = boff[b], hi = boff[b + 1]; int cnt = 0; int start = nd;
+      if (maxocc && hi - lo > (uint32_t)maxocc + 32) { nSkip++; continue; }
       for (uint32_t t = lo; t < hi; t++) { uint64_t p = pos[t]; if (p < (uint64_t)P_) continue; int ok = 1;
         for (int q = 0; q < K && ok; q++) if (G[p + q] != s[P_ + q]) ok = 0;
         if (ok) { cnt++; if (nd < 200000) dg[nd++] = (int64_t)p - P_; } }

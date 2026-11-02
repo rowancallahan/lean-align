@@ -88,3 +88,39 @@ K = 18, W = 4 (21-letter clean stretch), same 1000-pair inputs: mason MAXOCC 20 
 truth, 32.8 / 51.4 ms; low 682 / 763, 508 / 568 at truth, 53.3 / 79.6 ms; HiSeq 382 / 417 proper (325 / 337 unique),
 75.2 / 139.0 ms; NovaSeq 484 / 534 (414 / 435 unique), 53.7 / 75.2 ms. Same gains as K = 21 (±1–2%) at 1.7–2.2× the
 cost (exact hits per lookup 1,731–4,630): the 24-letter guarantee of K = 21 already covers these pairs.
+
+### All unmapped pairs of the 200k sets (measured, not scaled): K = 21, W = 4, cap 32, a bucket with more than
+MAXOCC + 32 entries skipped before verification (`ss2`, single thread)
+| set (boundsOnly pairs) | MAXOCC | proper | unique | at truth | worse mate ≤16 / ≤24 / ≤32 | CPU s (ms/pair) |
+|---|---|---|---|---|---|---|
+| mason (18,887) | 20 | 16,509 | 14,686 | 14,968 (+7.5% of 200k) | 3,592 / 11,813 / 1,104 | 78.3 (4.1) |
+| mason | 100 | 17,250 | 15,217 | 15,540 | 4,124 / 11,994 / 1,132 | 305.8 (16.2) |
+| low (6,212) | 20 | 4,300 | 3,199 | 3,246 (+1.6%) | 2,951 / 1,153 / 196 | 28.7 (4.6) |
+| low | 100 | 4,797 | 3,538 | 3,653 | 3,451 / 1,166 / 180 | 131.9 (21.2) |
+| HiSeq trimmed (28,893) | 20 | 11,565 | 9,776 (+4.9%) | – | 5,539 / 3,897 / 2,129 | 412.7 (14.3) |
+| HiSeq trimmed | 100 | 12,633 | 10,180 | – | 6,293 / 4,092 / 2,248 | 1714.2 (59.3) |
+| NovaSeq trimmed (27,454) | 20 | 13,088 | 11,164 (+5.6%) | – | 6,210 / 4,318 / 2,560 | 148.7 (5.4) |
+| NovaSeq trimmed | 100 | 14,327 | 11,657 | – | 7,165 / 4,508 / 2,654 | 579.7 (21.1) |
+For scale, the whole shim run (4 cores, total CPU): mason ~53 s, low ~26 s, HiSeq trimmed ~28 s, NovaSeq trimmed ~29 s.
+The prototype's DP fills a full row per read letter (O(n·(n + 2b)) per diagonal, not banded O(n·b)): a banded DP
+and 4 threads would cut its cost roughly 10× and 4×; HiSeq/NovaSeq are DP-bound, mason/low lookup-bound.
+
+## Findings and recommendation
+1. **Trim in the shim first** (above): +22.7k HiSeq pairs at no cost, and deepCaps then costs ~+40% instead of +135%.
+2. **The biggest remaining gain is not the cap.** Of the pairs a 21-mer second pass recovers, 1/4 (mason) to 2/3
+   (low) have both mates within today's −16: the proved mapper gives up on them (cost gate 60000, repeats). The rest
+   need a mate at −17…−24 (mason: 11.5k of 15k at truth) — deepCaps' cap 20/28 reaches part of those.
+3. **K = 21, W = 4 is enough** (24-letter clean stretch); K = 18 finds the same pairs at ~2× the cost.
+4. **Low-repeat filter**: skipping seeds with > 20 hits keeps ~95% of the at-truth gain of MAXOCC 100 at 1/4–1/5 of
+   the cost; no filter is ~1000× slower (4.1 s/pair).
+5. **Memory**: the full (K = 21, W = 4) index is 5.8 GB; with the shim's 5.3 GB index (held twice: file + heap)
+   it does not fit a 15 GB box. A build-time low-repeat filter (only k-mers with ≤ N occurrences; "covered region" =
+   positions whose minimizer k-mer occurs ≤ N times in hg38) would shrink it; size not measured yet.
+6. **Proposed design** (Rowan's direction): the extra index only FINDS candidates for pairs left unmapped; each
+   candidate is aligned and re-checked by the proved checker (`chkCand`), must be a proper pair, and is reported
+   `.unknown` — no completeness proof needed now. Later, completeness within covered regions (one generic builder
+   and checker for both indexes, the 25-mer index = "all positions") makes "unique" provable for pairs whose
+   candidates all fall in covered regions.
+
+Expected value at 200k, MAXOCC 20: mason +7.5% pairs at truth, low +1.6%, HiSeq +4.9% unique, NovaSeq +5.6% unique
+(on top of trimming); deepCaps alone (DEEP_CAPS.md): mason +3.5%, HiSeq +1.1%, NovaSeq +0.5%.
