@@ -109,7 +109,7 @@ lean_lib IndexMinimizer where   -- minimizer index (MzIndex) and its checkers
 @[default_target]
 lean_lib IndexPackedGenome where   -- 2-bit packed genome
   srcDir := "Aligner/index/packed_genome"
-  roots := #[`MapperPGen, `MapperPacked, `MzPacked, `WgPacked]
+  roots := #[`MapperPGen, `MapperPacked, `MzBuildP, `MzPacked, `WgPacked]
 
 @[default_target]
 lean_lib IndexRepeatMask where   -- repeat masking
