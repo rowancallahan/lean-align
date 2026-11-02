@@ -68,3 +68,28 @@ Caveat: the shim index (5.3 GB) and minibwa's (8.7 GB) do not both fit in this b
 - `Spec/Sam.lean` prints T2/T1um pairs (uniqueness unknown) as mapped with MAPQ 0; Rowan may want a flag.
 - `.multimapper` needs a second tied best pair named by the router (the tie proofs only say no unique best).
 - The shim's `rtxCfg` has the pair guarantee off (`pg := none`): T1g/T1gm never occur in the shim.
+
+## Stage 5 (2026-11-02 later): report the pair in hand; Rowan's `.unknown` clause
+Spec (main f57e195): `InsertSettings.junkScore` (default −17; −16 approved, pending on main) and, for `.unknown`,
+`found = none → bestPossibleScore < junkScore`. Proved here with `junkScore` as a parameter; Spec/ not edited.
+- `Bridge.CorrectU` = the old clause; every router-level theorem proves it. `Proofs/LastResort.lean`
+  `finalize` / `finalize_correct` turn it into `Correct`: no pair and bound ≥ junkScore → the degenerate proper
+  pair (mate 1 forward on `[0,0)`, mate 2 reverse on `[lo,lo)`, insertions only) on the first chromosome with
+  ≥ lo letters; none (or lo > hi) → no proper pair exists (`no_proper`), bound := junkScore − 1.
+- Failed index build: `buildIndex` writes a chromosome-lengths record (tag `LENS`, base-255 digits;
+  `readLens_record`), read before `loadIndex`, so the clause also holds without an index.
+- Before the last resort (settings in `Proofs/Aligner.lean`): `reportTies` (ties print a pair), `fallbackOn`
+  (bound ≥ junkScore: router placement, then up to 16 rarest-seed anchors per strand per mate, the other mate
+  aligned near it with `nearY`; all re-checked), `mateRescue` (the fallback also on junk answers with a mate in
+  hand), `gateBudget` (router lookup budget; default 60000).
+- Cost cuts: CIGAR from merged runs (`encodeCigar_expand`), gap-free check as a byte compare (`chkCandD_ok`);
+  both SAM byte-identical.
+
+hg38 200k, main's junkScore −17: printed mason 100% (degenerate 1.53%), low 100% (0.19%), NovaSeq 99.97% (4.92%),
+HiSeq 99.92% (9.18%); both at truth mason 95.38%, low 96.80%. With −16 the degenerate pairs fall to mason 1,261,
+low 329, NovaSeq 1,938, HiSeq 1,112 (the bound −17 pairs become junk). Timing (median of 3, load subtracted,
+FASTQ + SAM in): mason minibwa 15.0 s / ours 26.2 s = 0.57x (CPU 0.92x); HiSeq 26.7 s / 17.0 s = 1.57x (CPU 2.84x);
+NovaSeq 13.7 s / 11.2 s = 1.22x (CPU 1.51x); our wall is noisy here, CPU steadier.
+
+gateBudget sweep (median of 3, CPU s / unique pairs): mason 60000 60.6 / 176,444; 15000 42.7 / 171,890;
+5000 30.1 / 165,474; 2000 26.6 / 160,062. NovaSeq 46.7 / 163,941; 35.4 / 159,029; 29.5 / 153,267; 26.4 / 148,763.
