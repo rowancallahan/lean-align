@@ -17,9 +17,52 @@ open Bridge
 
 /-! ## Old CIGAR → new report -/
 
+-- runs merged: zero counts dropped, equal neighbours joined (`encodeCigar` of their expansion, `encodeCigar_expand`)
+def mergeRuns : List (Step × Nat) → List (Step × Nat)
+  | [] => []
+  | (_, 0) :: rest => mergeRuns rest
+  | (s, n + 1) :: rest =>
+    match mergeRuns rest with
+    | [] => [(s, n + 1)]
+    | (t, k) :: tl => if s = t then (s, n + 1 + k) :: tl else (s, n + 1) :: (t, k) :: tl
+
+theorem encodeCigar_replicate (s : Step) (rest : List Step) : ∀ n,
+    encodeCigar (List.replicate (n + 1) s ++ rest) =
+      match encodeCigar rest with
+      | [] => [(s, n + 1)]
+      | (t, k) :: tl => if s = t then (s, n + 1 + k) :: tl else (s, n + 1) :: (t, k) :: tl
+  | 0 => by
+    simp only [List.replicate, List.cons_append, List.nil_append, encodeCigar]
+    cases encodeCigar rest with
+    | nil => rfl
+    | cons h tl => obtain ⟨t, k⟩ := h; simp only [Nat.add_comm]
+  | n + 1 => by
+    rw [List.replicate_succ, List.cons_append, encodeCigar, encodeCigar_replicate s rest n]
+    cases encodeCigar rest with
+    | nil => simp
+    | cons h tl =>
+      obtain ⟨t, k⟩ := h
+      by_cases hst : s = t
+      · subst hst; simp; omega
+      · simp [hst]
+
+theorem encodeCigar_expand : ∀ runs : List (Step × Nat),
+    encodeCigar (runs.flatMap fun (s, n) => List.replicate n s) = mergeRuns runs
+  | [] => rfl
+  | (s, 0) :: rest => by simp [mergeRuns, encodeCigar_expand rest]
+  | (s, n + 1) :: rest => by
+    rw [List.flatMap_cons, encodeCigar_replicate, encodeCigar_expand rest, mergeRuns]
+
 -- one mate's line from an old placement and its runs
 def mateReportOf (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) : MateReport :=
-  ⟨newPlacement x.1, (encodeCigar ((AlignmentSpec.expandCigar runs.toArray).map Hits.newStepOf)).toArray, x.2⟩
+  ⟨newPlacement x.1, (mergeRuns (runs.map fun (s, n) => (Hits.newStepOf s, n))).toArray, x.2⟩
+
+theorem mateReportOf_cigar (runs : List (AlignmentSpec.Step × Nat)) :
+    encodeCigar ((AlignmentSpec.expandCigar runs.toArray).map Hits.newStepOf) =
+      mergeRuns (runs.map fun (s, n) => (Hits.newStepOf s, n)) := by
+  rw [← encodeCigar_expand]
+  congr 1
+  simp only [AlignmentSpec.expandCigar, List.map_flatMap, List.flatMap_map, List.map_replicate]
 
 theorem newStrand_orient (read : Read) (s : MapSpec.Strand) :
     (newStrand s).orient read = MapSpec.Fast.strandRead read s := by
@@ -42,7 +85,9 @@ theorem alignment_of_cigar {genome : Genome} {read : Read} {x : MapSpec.Placemen
   have hsc := Hits.score_pathOfWalk hw
   simp only [GenomicAlignment.report, mateReportOf, Path.cigar, GenomicAlignment.score]
   congr 1
-  exact hsc.trans hs
+  · show (encodeCigar ((AlignmentSpec.expandCigar runs.toArray).map Hits.newStepOf)).toArray = _
+    rw [mateReportOf_cigar]
+  · exact hsc.trans hs
 
 /-! ## Back from the whole sequence to its chromosome -/
 
