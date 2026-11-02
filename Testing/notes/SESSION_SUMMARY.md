@@ -1361,6 +1361,7 @@ Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
 
 #### Decision questions in detail (Rowan is thinking these over)
 1. **Trimming in the shim?** → DECIDED (Rowan): yes, he will add it later.
+   Rowan: also ADAPTER trimming (linear; the proved trimmer today is quality-window only — no adapter code exists yet).
    Also later maybe: switch to LOCAL alignment (clip step with a fixed clip penalty at read ends, like BWA/minibwa):
    uniqueness/bound definitions carry over (different score); needs clipped-end kernels + certificates, pigeonhole bound
    with clipped bases, CIGAR S ops — about M2-sized proof work. Global + trimming for now. Spec/Shim chunkPairs → ReadTrim.trimRead per mate (qualities are in the FASTQ record);
