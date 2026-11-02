@@ -49,3 +49,28 @@ cache and makes the empty-run load meaningless).
 | NovaSeq 2×151 | 13.3 s / 8.8 s = 1.51x | 13.9 / 8.8 = 1.58x | 1.81x / 1.91x | 29.7 → 27.3 s (base: 1.58x) |
 NovaSeq's wall did not move (8.4 → 8.8 s, noise) although its CPU fell: 27 s CPU on 4 cores is 6.8 s, the rest is
 outside alignPairs (FASTQ reading / SAM writing in Main.lean, not edited).
+
+## 5. Combined matrix after merging festive-fermi 12d1016 (quality trimming in the shim)
+Same box, minibwa c07de5c default, 4 threads, FASTQ + SAM in, load subtracted; ours median of 5 (NovaSeq, mason) or 3,
+minibwa median of 3. Our load is measured inside each run (`timed_load.py`); the separate empty-run load of §4 turned out
+unreliable once trimming runs were added (2-12 s run to run, impossible values), so §4's numbers are superseded.
+a = 12d1016; b = + n32 (capBudget 10000); c = b, capBudget 5000; d = b + chunk 20000; e = chunk 10000;
+f = first chunk 10000, then 100000 (d-f: Main.lean literal changed locally only, not committed).
+
+| set | a | b | c | d | e | f |
+|---|---|---|---|---|---|---|
+| NovaSeq (mb 14.2 s) | 12.5 s 1.13x | 10.5 s 1.35x | 9.9 s 1.43x | 9.4 s **1.50x** | 9.9 s 1.43x | 10.4 s 1.36x |
+| CPU ratio | 1.40x | 1.60x | 1.74x | 1.66x | 1.68x | 1.62x |
+| mason (mb 14.1 s) | 15.2 s 0.93x | 11.1 s 1.27x | 9.8 s 1.44x | 10.2 s 1.38x | 10.1 s 1.39x | 10.8 s 1.30x |
+| CPU ratio | 1.09x | 1.49x | 1.75x | 1.52x | 1.52x | 1.51x |
+| low (mb 9.9 s) | 8.8 s 1.13x | 8.3 s 1.19x | 7.6 s 1.30x | 7.2 s 1.38x | 6.7 s 1.47x | 8.5 s 1.17x |
+| HiSeq 200k (mb 28.7 s) | 13.4 s 2.14x | 12.1 s 2.37x | 11.7 s 2.46x | 10.1 s 2.86x | 10.1 s 2.84x | 12.5 s 2.31x |
+
+SAM split (real mapped / degenerate / unique; d-f identical to b):
+| set | a | b | c |
+|---|---|---|---|
+| NovaSeq | 95.06 / 2.63 / 82.50% | 95.07 / 2.65 / 82.44% | 95.09 / 2.72 / 81.94% |
+| mason (at truth) | 97.00 / 0.92 / 87.21% (93.91%) | 97.00 / 0.94 / 86.99% (93.87%) | 96.98 / 0.99 / 86.51% (93.70%) |
+| low (at truth) | 99.70 / 0.15 / 94.68% (96.69%) | 99.70 / 0.15 / 94.68% (96.67%) | 99.70 / 0.16 / 94.23% (96.54%) |
+| HiSeq | 92.86 / 1.12 / 82.01% | 92.87 / 1.13 / 81.87% | 92.90 / 1.19 / 81.71% |
+HiSeq now changes too: trimmed mates under 200 letters get per-mate caps.
