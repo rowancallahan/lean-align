@@ -69,3 +69,35 @@ Mapping for the same pairs (not part of the comparison): mason 32.3 s, hg002 10.
   (stored blocks do not compress; real BGZF would, at a CPU cost without zlib).
 - Because it is not faster, no `Spec/Sam.lean` change is proposed from this. The prototype's field order and types are in
   `BamWrite.lean` (`putRecord`, `bamPair` mirror `samLines`) should Rowan want a BAM spec for `IO_PAIRED_UNPAIRED_TRIM.md` §5.
+
+## Update 2026-11-02 (box S1): BAM output stage now at or below SAM when pairs are mapped
+
+Changes in `BamWrite.lean` only (bench; nothing in Spec/ or the shim): (1) `putI32` without the `Int` range check against a
+literal above 2^32 (it cost ~700 Ir per call: 10 calls per record); (2) `putQual`/`putSeq` as `USize` loops: SEQ two bases per
+step from a 65536-entry pair table (packed byte + invalid-letter flag; forward and reverse-complement tables), QUAL byte - 33;
+output positions written by `uset` into a buffer extended once per field (`extendZ`, one copy of zeros) instead of `push` calls;
+(3) `crc32` with machine-word indices and `getU`/`rwAt` table reads (it was ~29 Ir per byte, now ~19). The BAM files are
+byte-identical to the previous version's on every set and mode below (`cmp`), so the samtools / Python validation above carries over.
+Not done: qualities kept as bytes (needs `FastqRecord` from Spec/), 8 bases per step (the C of the loops is already ~25 instructions
+per element; a wider step needs word loads from a `ByteArray`, which Lean does not have).
+
+Callgrind (5000 NovaSeq pairs, synthetic results, output stage): BAM `bamPair` 305 M -> 242 M Ir, `putI32` 64 M -> 11 M, BGZF framing 70 M;
+SAM `samChunk` 417 M. So BAM (records + framing) 312 M vs SAM 417 M.
+
+Output stage, 200 000 pairs, median of 4 repetitions after a discarded first one, 4 cores (format s / wall s / CPU s; box timings vary
+~20%; "write" is page-cache noise so format and CPU are the fair columns):
+
+| set, results | SAM format / wall / CPU | BAM before | BAM now |
+|---|---|---|---|
+| NovaSeq, real `alignPairs` (199 946 pairs found) | 0.59 / 0.72 / 2.1 (both builds) | 0.77-0.96 / 0.88-1.05 / 2.6-3.4 | 0.42 / 0.50-0.54 / 1.4 (0.52 / 0.61 / 1.8 worst) |
+| mason, synthetic mapped | 0.58 / 0.80 / 2.15 | 0.76 / 0.96 / 2.7 | 0.51 / 0.77 / 1.75 |
+| NovaSeq, synthetic mapped | 0.58 / 0.73 / 2.04 | 0.88 / 1.22 / 3.1 | 0.44 / 0.83 / 1.73 |
+| HiSeq (hg002), synthetic mapped | 1.04 / 1.67 / 3.98 | 1.08 / 2.04 / 4.3 | 0.90 / 1.67 / 3.0 |
+| mason, M1 (all unmapped) | 0.29 / 0.55 / 1.10 | 0.82 / 1.10 / 3.0 | 0.47 / 0.81 / 1.54 |
+| NovaSeq, M1 | 0.30 / 0.44 / 1.06 | 0.70 / 0.88 / 2.5 | 0.46 / 0.65 / 1.52 |
+| HiSeq, M1 | 0.36 / 0.92 / 1.62 | 1.25 / 1.92 / 4.5 | 0.48 / 0.70 / 1.73 |
+(SAM columns are the new build's; the previous build's SAM numbers are within noise of them.)
+
+Reading: for mapped pairs (the M2 case) BAM format time and CPU are now below SAM on all sets (0.42-0.90 s vs 0.58-1.04 s format;
+1.4-3.0 s vs 2.0-4.0 s CPU) and the file is 20% smaller. For unmapped pairs (M1) BAM is still ~0.15-0.2 s slower than SAM in format
+time (fixed cost per record plus BGZF framing; SAM just copies the text).

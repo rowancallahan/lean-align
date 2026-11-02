@@ -883,7 +883,7 @@ search can use), `chk := false` (the router re-checks its picks) and bucket limi
 the heuristic's pairs at XH=0's cost on easy reads; to be confirmed on chr21 and hg38). With `cmax := 16`
 a pair whose summed ceiling stays over 16 is T3, not T2: it keeps no found pair. -/
 def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (lo hi usl : Nat)
-    (heur : Bool := false) : TierCfg :=
+    (heur : Bool := false) (bud : Nat := 60000) : TierCfg :=
   let hcfg : HCfg :=
     { w := 8, r := 2, ck := 100, np := 8, dl := 16, seeds := true, near := true, band := true
       sv := true, seedAll := true, bl := 1000000, ge := 12, kx := true, vf := true, nk := 1
@@ -898,7 +898,7 @@ def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (
     hi := hi
     usl := usl
     pg := none
-    gate := fun _ _ _ _ c1 c2 => 60000 < c1 || 60000 < c2
+    gate := fun _ _ _ _ c1 c2 => bud < c1 || bud < c2
     pref := fun G0 a b s1 s2 => decide (rare (sbound G0 + 2) b s2 < rare (sbound G0 + 2) a s1)
     ceil := fun R s => ceilX pk offs pgs R s 500 16
     heur := fun a b s1 s2 m1 m2 =>

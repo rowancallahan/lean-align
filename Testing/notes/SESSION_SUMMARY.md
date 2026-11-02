@@ -1300,10 +1300,48 @@ SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not
 - A pair-agnostic "two pairs close to each other" claim is vacuous (any read has many terrible pairs with near-equal
   scores); a near-tie claim must be anchored to the bound: both pairs ≥ bestPossibleScore − x.
 
+### Spec change on main (Rowan, f57e195 = 37c21a7 + FROZEN.sha256) — the spec to prove against now; tiers later
+`InsertSettings.junkScore : Int := -17`; `.unknown` branch: `answer.found = none → answer.bestPossibleScore <
+insertSettings.junkScore`. With a pair, clause 1 makes it real; without, it is proved junk. A junk pair (bound <
+junkScore) may still be reported or tossed.
+
+### Decision (Rowan, 2026-11-02 night): junkScore default −16
+Junk = no proper pair scoring ≥ −16 (what the −16 cap proves for free; bound −17 qualifies). Approved one-line change
+to Spec/Aligner.lean default (+ FROZEN.sha256), applied at the M2 merge. Bound-0 lookup-gate leftovers (3–6k/set) and
+378 dovetail T1 pairs (HiSeq) violate the clause for any junkScore: O3 fixing. deepCaps / relative caps research: O2.
+
+### Read-quality facts (O4, minibwa NM on hg38, 200k each)
+Mates within our −16 cap: NovaSeq 94.8%, HiSeq 88.6% (≤2 mismatches: 91.2% / 81.1%). Soft-clipped mates: HiSeq 13.2%,
+NovaSeq 4.3% (our alignment is end-to-end and the shim doesn't trim). This matches our ~82% kept vs minibwa ~98%: the
+gap is the cap and read ends, not the router. At junkScore −17, ~1 in 6 HiSeq pairs minibwa maps would be "junk".
+
 ### Later (Rowan)
+- **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
+  maybe force reporting it whenever one exists.
 - **Junk score as a setting:** define it at the top of Spec/Aligner.lean; likely a field of `InsertSettings` (a run
   setting that flows through alignPairs_correct), maybe per read length (the free value follows the router's cap,
   −(cap+1): −17 at ≥150 bp). Alternatively route it through the tiers, so a smaller set of options leads to "junk".
+- **Extra short-seed index (Rowan):** an extra index of short seeds in low-repeat regions to place more reads; later
+  made complete within the regions it covers (proof per region) so "unique" is provable when all candidates fall in
+  covered regions. Requirement: ONE generic index-building function (seed length, window, covered-region filter);
+  the main 25-mer index is its k=25 / "everything" instance; one checker and one completeness lemma, instantiated.
+  Variable-length (minimal unique) seeds: S1 research note VARIABLE_SEEDS.md.
+- **Uniqueness picture (Rowan, 2026-11-02 night):** `.unique` (proved one best) · `.multimapper` (proved exact tie) ·
+  `.nearTie` (to add: "maps pretty good with a buddy": reported pair ≥ junkScore and ≥ bestPossibleScore − gap, and a
+  buddy proper pair at a different placement ≥ bestPossibleScore − gap; `nearTieGap` setting, e.g. 8; anchored to the
+  bound so two mediocre pairs can't qualify; multimapper = gap 0) · `.unknown` with a pair (real pair, no claim) ·
+  `.unknown` without (proved junk, bound < junkScore) · "gave up" (maybe; see next).
+- **Near-tie instead of "gave up"? (think about):** near-tie covers repeat give-ups with two good pairs in hand; it can't
+  cover "no proper partner" pairs (mates on different chromosomes, chimeras) — a cheap proof that no good proper pair
+  exists (all hits far apart) could push those below junkScore (honest junk). If both cover the leftover, "gave up" may
+  be unnecessary; otherwise the degenerate last-resort pairs stay (0.2–1% with junkScore −16). Measure coverage first.
+- **Score floor for reported `.unknown` pairs (eventually):** e.g. pair score ≥ junkScore, so no degenerate "150I"
+  pairs; needs "gave up" (or full near-tie coverage) at the same time.
+- **Skip super-common seeds (think about):** like BWA-MEM/minimap2 (~500 occurrences); treat skipped seeds as possibly
+  spoiled in the pigeonhole bound (bound stays correct, weaker for that read).
+- **M2 status (O3):** CI passes with main's .unknown clause; failed index build now writes a chromosome-lengths record
+  (proved round trip), so no hBuilt hypothesis is needed; leftover pairs get the degenerate last-resort pair
+  (Proofs/LastResort.lean). Index builder proof (O5/O6) is a bonus now, not a blocker.
 - **Near-tie labels for MAPQ:** a proved near-tie (two placements within x of bestPossibleScore) so every reported pair
   gets a real MAPQ; ties are the x = 0 case.
 - **Error caps for longer reads:** make caps relative to read length (not fixed −12/−16 by length band), seeds and

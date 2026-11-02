@@ -97,3 +97,14 @@ CPU: ours uses 1.3–5x less CPU than minibwa on every set (e.g. mason 53.6 vs 7
    parameters on read-only arrays in the recursive helpers.
 Items 1–4 together: est. −15 to −20% Ir. Whether Ir turns into CPU here is uncertain: on hg38 the bucket scans and
 genome reads miss cache, and the GMP fix's −20% Ir (11-02) did not show beyond the CPU noise on this box.
+
+## 6. Port onto 88bde0a (branch `speed/n31-asm`, merged into `speed/n31-dedup-heur`)
+`speed/n31-asm` = 88bde0a + 5c49eb4 (`lanesAnyV`) + 7323fd2 (`stageKSPN`). This branch's `scanAWK3` (052080d) is
+superseded by S1's `scanAWK3`/`scanAWF`/`fastOkW` on head (machine-word test, slot read once, one guard per lookup:
+item 1 of §5) and is not ported. The dedup (`alignPairsD`, ebd4a47 + 12325f5) does not fit head's new
+`alignOneC (setup)` signature and is off the `alignPairs` path after the merge (kept in history).
+callgrind on 2000 pairs vs 88bde0a, SAM byte-identical, CI_check passes:
+| set | 88bde0a | + lanesAnyV + stageKSPN | change |
+|---|---|---|---|
+| hg38 mason | 3.7821G | 3.6415G | −3.7% |
+| HiSeq HG002 | 2.0318G | 2.0113G | −1.0% |
