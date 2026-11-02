@@ -1,0 +1,90 @@
+import Spec.Aligner
+open Spec
+
+def chrA : Chromosome := ⟨"chrA", List.replicate 2000 'A'⟩
+theorem chrA_len : chrA.seq.length = 2000 := List.length_replicate
+def gen : Genome := [chrA]
+def m : Read := ['A','C','G','T']
+
+theorem fitsEmpty (pos : Nat) (h : pos ≤ 2000) (s : Strand) :
+    (Placement.mk 0 pos pos s).reference gen = some [] := by
+  have : gen[0]? = some chrA := rfl
+  simp [Placement.reference, this, chrA_len, h]
+
+-- all four letters inserted (gapY), window empty
+def ins (pos : Nat) (h : pos ≤ 2000) (s : Strand) : GenomicAlignment gen m :=
+  ⟨⟨0, pos, pos, s⟩, [], fitsEmpty pos h s,
+   ⟨[.gapY,.gapY,.gapY,.gapY], by cases s <;> simp [Strand.orient, reverseComplement, m, List.count_cons], by simp⟩⟩
+def garbage : PairAlignment gen m m := ⟨ins 1000 (by decide) .forward, ins 1300 (by decide) .reverse⟩
+example : garbage.IsProper (100, 1000) 0 := by
+  simp [PairAlignment.IsProper, garbage, ins]
+
+
+
+theorem sc_m : defaultScoring.matchScore = 0 := rfl
+theorem sc_mm : defaultScoring.mismatchScore = -4 := rfl
+theorem sc_o : defaultScoring.gapOpen = -6 := rfl
+theorem sc_e : defaultScoring.gapExtend = -2 := rfl
+
+theorem scoreWalk_le : ∀ (steps : List Step) (q r : Read) (prev : Option Step),
+    scoreWalk defaultScoring steps q r prev ≤ 0 := by
+  intro steps
+  induction steps with
+  | nil => intro q r prev; simp [scoreWalk]
+  | cons s rest ih =>
+    intro q r prev
+    cases s with
+    | diag =>
+      cases q with
+      | nil => simp [scoreWalk]
+      | cons a q => cases r with
+        | nil => simp [scoreWalk]
+        | cons b r =>
+          have := ih q r (some .diag)
+          simp only [scoreWalk, sc_m, sc_mm]
+          split <;> omega
+    | gapX =>
+      cases r with
+      | nil => simp [scoreWalk]
+      | cons b r =>
+        have := ih q r (some .gapX)
+        simp only [scoreWalk, sc_o, sc_e]
+        split <;> omega
+    | gapY =>
+      cases q with
+      | nil => simp [scoreWalk]
+      | cons a q =>
+        have := ih q r (some .gapY)
+        simp only [scoreWalk, sc_o, sc_e]
+        split <;> omega
+
+
+theorem pathScore_le {q r : Read} (p : Path q r) : p.score defaultScoring ≤ 0 := scoreWalk_le p.steps q r none
+
+-- the laziest PairAnswer: a garbage proper pair, bound 0, "unknown", any tier -- satisfies PairAnswer.Correct
+def lazyAnswer : PairAnswer := ⟨some garbage.report, 0, .unknown, .boundsOnly⟩
+
+theorem lazy_correct : lazyAnswer.Correct {range := (100, 1000)} gen m m := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro report h
+    simp only [lazyAnswer, Option.some.injEq] at h
+    subst h
+    exact ⟨garbage, rfl, by simp [PairAlignment.IsProper, garbage, ins]⟩
+  · intro pair _
+    have h1 := pathScore_le pair.first.path
+    have h2 := pathScore_le pair.second.path
+    simp only [PairAlignment.score, GenomicAlignment.score, lazyAnswer]
+    omega
+  · simp [lazyAnswer]
+#print axioms lazy_correct
+
+namespace Spec
+-- a kernel that never aligns anything satisfies AlignmentKernelCorrect (every path score is <= 0 < 1)
+theorem lazy_kernel_correct : AlignmentKernelCorrect defaultScoring (fun _ _ => .unaligned 1) := by
+  intro q r
+  simp only [AlignmentResult.Correct]
+  intro path
+  have := pathScore_le path
+  omega
+#print axioms lazy_kernel_correct
+end Spec
