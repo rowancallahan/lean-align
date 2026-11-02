@@ -49,6 +49,33 @@ def rawLook (ix : Mz.MzIdx) (p : MzP) (base : Nat) : Array Nat := Id.run do
   if b == 65 then 0 else if b == 67 then 1 else if b == 71 then 2 else if b == 84 then 3 else 4
 
 
+/-- `hamming R P st lim 0 stop 0` (`hamP_eq`): 32 letters per step (`hamA`) when the read packs (≤ 256
+letters, all ACGT) and the window's blocks are all flagged (pure ACGT); else the letter loop. -/
+def hamP (R : ByteArray) (P : PGen) (st lim stop : Nat) : Nat :=
+  let K := packRP R
+  if K.ok && decide (0 < stop) && decide (stop ≤ R.size) && winOk P st stop then
+    hamA K.w P.w (P.o + st) lim stop
+  else hamming R P st lim 0 stop 0
+
+theorem hamP_eq (R : ByteArray) (P : PGen) (st lim stop : Nat) :
+    hamP R P st lim stop = hamming R P st lim 0 stop 0 := by
+  unfold hamP
+  simp only []
+  split
+  · rename_i h
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨⟨⟨hok, h0⟩, hs⟩, hw⟩ := h
+    unfold winOk at hw
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hw
+    obtain ⟨hn, hf⟩ := hw
+    have hW : WOk R (MapSpec.Mz.unpack P) P st stop := ⟨MapSpec.Mz.rep_unpack P, hok, hs, hn, fun x hx =>
+      flagsOk_get P.w _ _ _ rfl hf _ (Nat.div_le_div_right (by omega)) (by
+        have := Nat.div_le_div_right (c := 64) (show P.o + st + x ≤ P.o + st + stop - 1 by omega)
+        omega)⟩
+    rw [hamA_eq R (MapSpec.Mz.unpack P) P st stop hW lim]
+    exact (hamming_same' (Rep.same (MapSpec.Mz.rep_unpack P)) R st lim 0 stop 0).symm
+  · rfl
+
 def hamD (R Rr : ByteArray) (pgs : Array PGen) (v D lim : Nat) : Nat := Id.run do
   let nc := pgs.size
   let n := R.size
@@ -56,7 +83,8 @@ def hamD (R Rr : ByteArray) (pgs : Array PGen) (v D lim : Nat) : Nat := Id.run d
   let G := pgs[v % nc]!
   let st := D - n
   -- mismatches of `Rx[0, n)` against `G[st ..]`, `lim + 1` once above `lim`: the machine-word `hamming`
-  MapSpec.Fast.hamming Rx G st lim 0 n 0
+  -- (`hamP_eq`: the same count by 32-letter words)
+  hamP Rx G st lim n
 
 
 def interS (a b : Array Nat) : Array Nat := Id.run do
@@ -185,6 +213,46 @@ def winL (G : PGen) (a b : Nat) : ByteArray :=
   let b := min b G.n
   winLg G (b - a) a (ByteArray.emptyWithCapacity (b - a))
 
+/-! `winL` on machine words (compiled code only): `winL_eq_winLF` (`@[csimp]`). The letters are read by
+`rawU` at `o + i` in `USize` (`o = G.o` converted once), with no `i < G.n` test per letter (`b ≤ G.n`). -/
+
+/-- `winLg` with `i` in `USize` and the genome offset `o` hoisted (`winLgU_eq`). -/
+def winLgU (G : PGen) (o : USize) : (fuel : Nat) → USize → ByteArray → ByteArray
+  | 0, _, out => out
+  | f + 1, i, out => winLgU G o f (i + 1) (out.push (rawU G (o + i)))
+
+theorem winLgU_eq (G : PGen) (o : USize) (ho : o.toNat = G.o) (hb : G.o + G.n < 4294967295) :
+    ∀ f (iU : USize) (i : Nat) out, iU.toNat = i → i + f ≤ G.n → winLgU G o f iU out = winLg G f i out := by
+  intro f
+  induction f with
+  | zero => intro iU i out _ _; rfl
+  | succ f ih =>
+    intro iU i out hi hf
+    rw [winLgU, winLg]
+    have e1 : (iU + 1).toNat = i + 1 := by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, hi]
+    have eg : rawU G (o + iU) = G.get i := by
+      rw [rawU_eq, pgu_add _ _ (by omega), ho, hi]
+      simp only [PGen.get, show i < G.n by omega, ↓reduceIte]
+    rw [eg]; exact ih _ _ _ e1 (by omega)
+
+/-- `winL` for the compiled code (`winL_eq_winLF`). -/
+@[inline] def winLF (G : PGen) (a b : Nat) : ByteArray :=
+  let b := min b G.n
+  if G.o + G.n < 4294967295 then
+    winLgU G G.o.toUSize (b - a) a.toUSize (ByteArray.emptyWithCapacity (b - a))
+  else winLg G (b - a) a (ByteArray.emptyWithCapacity (b - a))
+
+@[csimp] theorem winL_eq_winLF : @winL = @winLF := by
+  funext G a b
+  unfold winL winLF
+  simp only []
+  split
+  · rename_i h
+    by_cases ha : a < min b G.n
+    · exact (winLgU_eq G _ (pgu_n _ (by omega)) h (min b G.n - a) _ a _ (pgu_n _ (by omega)) (by omega)).symm
+    · rw [show min b G.n - a = 0 by omega]; rfl
+  · rfl
+
 /-- Steps as runs. -/
 def runsOf (steps : List AlignmentSpec.Step) : List (AlignmentSpec.Step × Nat) :=
   steps.foldr (fun s acc => match acc with
@@ -233,10 +301,87 @@ def bandCells (X W : @& ByteArray) (K c0s m lim : UInt32) :
           bandCells X W K c0s m lim f i (k + 1) INF (if ev < lim then ev else INF) pa pb nlo nhi
             H F (tb.set! jc byte)
 
+/-- Doubling `b` `f` times (`b ++ b` is one `memcpy`). -/
+def zerosGo : Nat → ByteArray → ByteArray
+  | 0, b => b
+  | f + 1, b => zerosGo f (b ++ b)
+
+theorem zerosGo_data : ∀ f (c : Nat) (b : ByteArray), b.data = Array.replicate c 0 →
+    (zerosGo f b).data = Array.replicate (2 ^ f * c) 0
+  | 0, c, b, h => by simp [zerosGo, h]
+  | f + 1, c, b, h => by
+    rw [zerosGo, zerosGo_data f (c + c) (b ++ b) (by rw [ByteArray.data_append, h, Array.replicate_append_replicate]),
+      Nat.pow_succ]
+    congr 1; rw [Nat.mul_assoc, Nat.two_mul]
+
+/-- `n` zero bytes by doubling (`zerosB_eq`: `⟨Array.replicate n 0⟩`, which builds a boxed array first). -/
+def zerosB (n : Nat) : ByteArray := (zerosGo (Nat.log2 n + 1) ⟨#[0]⟩).extract 0 n
+
+theorem zerosB_eq (n : Nat) : zerosB n = ⟨Array.replicate n 0⟩ := by
+  apply ByteArray.ext
+  rw [zerosB, ByteArray.data_extract, zerosGo_data _ 1 ⟨#[0]⟩ rfl, Array.extract_replicate, Nat.mul_one]
+  congr 1
+  have : n < 2 ^ (Nat.log2 n + 1) := Nat.lt_log2_self
+  omega
+
+/-- First diagonal of row `i` that `bandCells` computes (the cells before it are skipped there: window
+column `< 0`, or left of the previous row's live cells `[pa, pb)`), at most `K`. -/
+@[inline] def rowStart (K c0s i pa : UInt32) : UInt32 :=
+  let SH : UInt32 := 1048576
+  let a := if pa > 0 then pa - 1 else 0
+  let b := if i + c0s < SH then SH - (i + c0s) else 0
+  min K (max a b)
+
+/-- `bandCells` with the skipped cells jumped over (`bandDPg true`; Testing/benches/BandCellsAB.lean checks
+`bandDPg true = bandDPg false` on random cases): each row starts at `rowStart` (the cells before it are skipped
+by `bandCells`: window column `< 0`, or left of the previous row's live cells), and once a cell is skipped for
+lying right of the window, or right of `pb` with `hl`, `e` both `≥ lim`, the rest of the row is skipped too (the
+column only grows; a skip sets `hl`, `e` to `INF ≥ lim`), so the row ends there.  Rows `1 … n` (`n` = read
+length; `bandCells`' fuel `n (K + 1)` is exactly those rows).  The same cells are written with the same values. -/
+def bandCellsJ (X W : @& ByteArray) (K c0s m lim n : UInt32) :
+    (fuel : Nat) → (i k hl e pa pb nlo nhi : UInt32) → (H F : Array UInt32) → (tb : ByteArray) →
+    Array UInt32 × ByteArray × Bool
+  | 0, _, _, _, _, _, _, _, _, H, _, tb => (H, tb, true)
+  | f + 1, i, k, hl, e, pa, pb, nlo, nhi, H, F, tb =>
+    let INF : UInt32 := 16777216
+    let SH : UInt32 := 1048576
+    if k == K then
+      if nlo == K then (H, tb, false)
+      else if i == n then (H, tb, true)
+      else bandCellsJ X W K c0s m lim n f (i + 1) (rowStart K c0s (i + 1) nlo) INF INF nlo nhi K 0 H F tb
+    else
+      let col := i + k + c0s
+      if col < SH || k + 1 < pa then
+        bandCellsJ X W K c0s m lim n f i (k + 1) INF INF pa pb nlo nhi H F tb
+      else if col > SH + m || (k ≥ pb && hl + 8 ≥ lim && e + 2 ≥ lim) then
+        bandCellsJ X W K c0s m lim n f i K INF INF pa pb nlo nhi H F tb
+      else
+        let j := (i - 1) * K + k
+        let fa := if k + 1 < pb then H[(j + 1).toNat]! + 8 else INF
+        let fb := if k + 1 < pb then F[(j + 1).toNat]! + 2 else INF
+        let fx := fb < fa
+        let fv := if fx then fb else fa
+        let ea := hl + 8
+        let eb := e + 2
+        let ex := eb < ea
+        let ev := if ex then eb else ea
+        let d := if col > SH && k < pb then
+          H[j.toNat]! + (if X.get! (i - 1).toNat == W.get! (col - SH - 1).toNat then 0 else 4) else INF
+        let src : UInt8 := if d ≤ ev && d ≤ fv then 0 else if ev ≤ fv then 1 else 2
+        let h := if src == 0 then d else if src == 1 then ev else fv
+        let byte := src ||| (if ex then 4 else 0) ||| (if fx then 8 else 0)
+        let jc := (j + K).toNat
+        if h < lim then
+          bandCellsJ X W K c0s m lim n f i (k + 1) h ev pa pb (if nlo == K then k else nlo) (k + 1)
+            (H.set! jc h) (F.set! jc fv) (tb.set! jc byte)
+        else
+          bandCellsJ X W K c0s m lim n f i (k + 1) INF (if ev < lim then ev else INF) pa pb nlo nhi
+            H F (tb.set! jc byte)
+
 /-- Banded semi-global affine DP (sc0 penalties: mismatch 4, gap 6 + 2L) of the whole read `X` in the
 window letters `W` (free window ends), on the diagonals `s0 − w … s0 + w` (`s0` = read start in `W`):
 (start in `W`, length, penalty, runs) when the penalty is `< lim`; stops once a whole row is `≥ lim`. -/
-def bandDP (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
+def bandDPg (jump : Bool) (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
   let n := X.size
   let m := W.size
   let K := 2 * w + 1
@@ -258,9 +403,13 @@ def bandDP (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Na
   if pa == K then return none
   -- (`INF − 1`: an array distinct from `H0`, not shared)
   let F0 : Array UInt32 := Array.replicate ((n + 1) * K) (INF.toUInt32 - 1)
-  let tb0 : ByteArray := ByteArray.mk (Array.replicate ((n + 1) * K) 0)
-  let (H, tb, ok) := bandCells X W K.toUInt32 (c0 + SH).toNat.toUInt32 m.toUInt32 lim.toUInt32 (n * (K + 1))
-    1 0 INF.toUInt32 INF.toUInt32 pa.toUInt32 pb.toUInt32 K.toUInt32 0 H0 F0 tb0
+  let tb0 : ByteArray := zerosB ((n + 1) * K)
+  let c0s := (c0 + SH).toNat.toUInt32
+  let (H, tb, ok) := if jump then
+      bandCellsJ X W K.toUInt32 c0s m.toUInt32 lim.toUInt32 n.toUInt32 (n * (K + 1))
+        1 (rowStart K.toUInt32 c0s 1 pa.toUInt32) INF.toUInt32 INF.toUInt32 pa.toUInt32 pb.toUInt32 K.toUInt32 0 H0 F0 tb0
+    else bandCells X W K.toUInt32 c0s m.toUInt32 lim.toUInt32 (n * (K + 1))
+      1 0 INF.toUInt32 INF.toUInt32 pa.toUInt32 pb.toUInt32 K.toUInt32 0 H0 F0 tb0
   if !ok || H.size != (n + 1) * K then return none
   let cl : Int := c0 + (n : Int)
   let mut bk := K
@@ -302,6 +451,10 @@ def bandDP (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Na
   let ce := cl + (bk : Int)
   if cs < 0 || ce < cs then return none
   return some (cs.toNat, (ce - cs).toNat, bv, runsOf steps)
+
+/-- `bandDPg` with `bandCellsJ` (the cells `bandCells` skips are jumped over; same output). -/
+def bandDP (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) :=
+  bandDPg true X W s0 w lim
 
 /-- Same contract as `bandDP` (penalties are even: halved here, mismatch 2, gap of `L` letters 3 + `L`), by
 gap-affine wavefronts: level `s` keeps, per diagonal of the band, the furthest read row reached with penalty `2s`
@@ -490,7 +643,7 @@ def voteD (X W : ByteArray) (k : Nat) : Option (Nat × Nat) :=
   let sh : UInt32 := (32 - lg).toUInt32
   let msk : UInt32 := ((1 : UInt32) <<< (2 * k).toUInt32) - 1
   let (keys, offs) := vIns X k.toUInt32 sh msk TM n 0 0 0 (Array.replicate (1 <<< lg) 0) (Array.replicate (1 <<< lg) 1)
-  let votes := vScan W keys offs n.toUInt32 k.toUInt32 sh msk TM m 0 0 0 (ByteArray.mk (Array.replicate (m + n + 1) 0))
+  let votes := vScan W keys offs n.toUInt32 k.toUInt32 sh msk TM m 0 0 0 (zerosB (m + n + 1))
   let (bt, bv) := argMaxB votes votes.size 0 0 0
   if bv == 0 then none else some (bt.toNat, bv.toNat)
 

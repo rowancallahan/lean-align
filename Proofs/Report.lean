@@ -297,12 +297,17 @@ theorem diagPen_ham (X : ByteArray) (G : PGen) (st L : Nat) : ∀ k i (acc : Int
         diagPen_ham X G st L k (i + 1) _ (m + 1) (by omega)]
       push_cast; omega
 
+-- (from letter 0: by 32-letter words, `TierHeur.hamP_eq`)
 @[inline] def diagPenH (X : ByteArray) (G : PGen) (st k i : Nat) (acc : Int) : Int :=
-  acc - 4 * (MapSpec.Fast.hamming X G st k i (i + k) 0 : Nat)
+  if i = 0 then acc - 4 * (TierHeur.hamP X G st k k : Nat)
+  else acc - 4 * (MapSpec.Fast.hamming X G st k i (i + k) 0 : Nat)
 
 @[csimp] theorem diagPen_eqH : @diagPen = @diagPenH := by
   funext X G st k i acc
-  rw [diagPenH, diagPen_ham X G st k k i acc 0 (by omega)]; omega
+  rw [diagPenH, diagPen_ham X G st k k i acc 0 (by omega)]
+  split
+  · rename_i h; subst h; rw [TierHeur.hamP_eq, Nat.zero_add]; omega
+  · omega
 
 def chkCandD (pgs : Array PGen) (R Rr : ByteArray) (h : MapSpec.Placement × Int) : Bool :=
   let X := if h.1.2 = .fwd then R else Rr
