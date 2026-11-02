@@ -154,12 +154,17 @@ def alignOne (insertSettings : InsertSettings) (lens : Array Nat) (loaded : Opti
               (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
                 (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2))))
 
+-- tasks per chunk (any value gives the same results: `ParMap.parMap_eq_map`). Use at least the
+-- machine's core count: each task runs on its own thread, so 16 tasks use at most 16 cores. On 4 cores,
+-- 4..64 tasks cost within ~7% CPU of each other (Testing/notes/THREADS_2026-11-02.md)
+def parTasks : Nat := 16
+
 -- a chunk of pairs; the implementation may work across the chunk however it likes
 def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   let (lens, loaded) := readIndex index
-  -- 16 batches, one task each (ParMap.parMap_eq_map: the same as a plain map)
-  (ParMap.parMap 16 (fun (bytes1, bytes2) => alignOne insertSettings (lens.getD []).toArray loaded bytes1 bytes2)
+  -- `parTasks` batches, one task each (ParMap.parMap_eq_map: the same as a plain map)
+  (ParMap.parMap parTasks (fun (bytes1, bytes2) => alignOne insertSettings (lens.getD []).toArray loaded bytes1 bytes2)
     pairs.toArray).toList
 
 -- the router's settings and genome view, computed once per chunk (`alignPairs_eqC`)
@@ -190,7 +195,7 @@ def alignOneC (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
 def alignPairsC (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   let lens := ((readIndex index).1.getD []).toArray
-  (ParMap.parMapS 16 (fun _ => chunkSetup insertSettings (readIndex index).2)
+  (ParMap.parMapS parTasks (fun _ => chunkSetup insertSettings (readIndex index).2)
     (fun setup (bytes1, bytes2) => alignOneC insertSettings lens setup bytes1 bytes2) pairs.toArray).toList
 
 theorem alignOneC_eq (insertSettings : InsertSettings) (lens : Array Nat) (loaded : Option LoadedIndex)
