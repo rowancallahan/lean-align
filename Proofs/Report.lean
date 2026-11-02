@@ -144,10 +144,12 @@ end unshift
 open MapSpec.Fast
 
 -- runs for the read over exactly `x`'s window from the unproved banded DP (every result is re-checked)
+-- The DP's bound is the router's penalty + 1: `checkMove` keeps only runs whose re-checked score is `x.2`,
+-- and runs of penalty ≥ `−x.2 + 1` can never pass, so cells at or above it are not needed (same lines).
 def alignAt (G : PGen) (R Rr : ByteArray) (x : MapSpec.Placement × Int) : Option (List (AlignmentSpec.Step × Nat)) :=
   let X := if x.1.2 = .fwd then R else Rr
   let W := TierHeur.winL G x.1.1.start (x.1.1.start + x.1.1.len)
-  match TierHeur.bandDP X W 0 16 1000000 with
+  match TierHeur.bandDP X W 0 16 ((-x.2).toNat + 1) with
   | some (cs, len, _, runs) => if cs == 0 && len == x.1.1.len then some runs else none
   | none => none
 
