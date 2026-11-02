@@ -211,7 +211,29 @@ instance.  `SameG x y`: two genomes of any representations with the same size an
 bytes; every kernel gives the same answer on both (`hamming_same`, …).  `Rep P G`
 is `SameG P G`. -/
 
-instance : GRead PGen := ⟨PGen.get, PGen.n⟩
+/-- `PGen.get` at a machine-word index (`PGen.getW_eq`, when `o + n < 2^32 − 1`). -/
+@[inline] def PGen.getW (P : PGen) (u : USize) : UInt8 :=
+  if u < P.n.toUSize then rawU P (P.o.toUSize + u) else 0
+
+theorem PGen.getW_eq (P : PGen) (u : USize) (h : decide (P.o + P.n < 4294967295) = true) :
+    P.getW u = P.get u.toNat := by
+  simp only [decide_eq_true_eq] at h
+  have en : P.n.toUSize.toNat = P.n := pgu_n _ (by omega)
+  have eo : P.o.toUSize.toNat = P.o := pgu_n _ (by omega)
+  have hlt : (u < P.n.toUSize) ↔ (u.toNat < P.n) := by
+    rw [show (u < P.n.toUSize) = (u.toNat < P.n.toUSize.toNat) from rfl, en]
+  unfold PGen.getW PGen.get
+  by_cases hu : u.toNat < P.n
+  · have ea : (P.o.toUSize + u).toNat = P.o + u.toNat := by rw [pgu_add _ _ (by rw [eo]; omega), eo]
+    rw [if_pos (hlt.mpr hu), if_pos hu, rawU_eq, ea]
+  · rw [if_neg (fun h => hu (hlt.mp h)), if_neg hu]
+
+instance : GRead PGen where
+  get := PGen.get
+  size := PGen.n
+  ok P := decide (P.o + P.n < 4294967295)
+  getW := PGen.getW
+  getW_eq P u h := PGen.getW_eq P u h
 
 /-- Same length, same byte at every index. -/
 def SameG {G1 G2 : Type} [GRead G1] [GRead G2] (x : G1) (y : G2) : Prop :=
