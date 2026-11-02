@@ -317,9 +317,9 @@ def pairGQCtie (G0 : Nat) (swap : Bool) (a b : ByteArray) (lX : List (Placement 
 /-- Floors and ceilings of both mates, then the heuristic: T2 when both claim a ceiling, else T3. -/
 def tierB (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat)
     (g1 g2 : Option (Nat × Option (Nat × Nat × Nat))) : Tag × MateX × MateX :=
-  let m1 := mateT pk pgs a s1 (cfg.rcfg.cap1 a.size) c1 (nhOf .one rk) (ccOf .one rk) (knOf .one rk) g1
+  let m1 := mateT pk pgs a s1 (cfg.rcfg.cap1 a) c1 (nhOf .one rk) (ccOf .one rk) (knOf .one rk) g1
     (fun _ => cfg.ceil a s1)
-  let m2 := mateT pk pgs b s2 (cfg.rcfg.cap1 b.size) c2 (nhOf .two rk) (ccOf .two rk) (knOf .two rk) g2
+  let m2 := mateT pk pgs b s2 (cfg.rcfg.cap1 b) c2 (nhOf .two rk) (ccOf .two rk) (knOf .two rk) g2
     (fun _ => cfg.ceil b s2)
   let h := cfg.heur a b s1 s2 m1 m2
   let m1 := applyC pgs a s1.Rr m1 h.1
@@ -351,14 +351,14 @@ def tierRest (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int)
       match r with
       | some (x, y) =>
         { tag := .t1g, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
-          m1 := { st := "P", cap := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
-          m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+          m1 := { st := "P", cap := cfg.rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+          m2 := { st := "P", cap := cfg.rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
       | none =>
         if seen then
           let tp := pairGQCtie cfg pgs G0 swap a b lX
           { tag := .t1gm, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
-            m1 := { st := "P", cap := cfg.rcfg.cap1 a.size, pl := tp.map (·.1) },
-            m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pl := tp.map (·.2) } }
+            m1 := { st := "P", cap := cfg.rcfg.cap1 a, pl := tp.map (·.1) },
+            m2 := { st := "P", cap := cfg.rcfg.cap1 b, pl := tp.map (·.2) } }
         else
           let gx := gxOf pgs.size G0 lX
           let t := if swap then tierB cfg pk pgs a b s1 s2 rk c1 c2 none (some gx)
@@ -373,14 +373,14 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
   | none, _ => { tag := .t0, why := some (.trimmedAway .one) }
   | _, none => { tag := .t0, why := some (.trimmedAway .two) }
   | some a, some b =>
-    if cfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cfg.rcfg.cap1 a.size) (prepMate pk a : PrepM MzP))
-        (costP pk (cfg.rcfg.cap1 b.size) (prepMate pk b : PrepM MzP)) then tierRest cfg pk offs pgs a b none 0 0 else
+    if cfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cfg.rcfg.cap1 a) (prepMate pk a : PrepM MzP))
+        (costP pk (cfg.rcfg.cap1 b) (prepMate pk b : PrepM MzP)) then tierRest cfg pk offs pgs a b none 0 0 else
     let r := tierRT cfg pk offs pgs a b
     match r.out with
     | .mapped (x, y) =>
       { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
-        m1 := { st := "U", cap := cfg.rcfg.cap1 a.size, cd := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
-        m2 := { st := "U", cap := cfg.rcfg.cap1 b.size, cd := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+        m1 := { st := "U", cap := cfg.rcfg.cap1 a, cd := cfg.rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+        m2 := { st := "U", cap := cfg.rcfg.cap1 b, cd := cfg.rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
     | .unmapped rs k => tierRest cfg pk offs pgs a b (some (rs, k)) r.c1 r.c2
 
 /-- `mapChromsGBFG` with both strands' packed reads given (`mapChromsGBFG_eqP`). -/
@@ -490,7 +490,7 @@ theorem mapChromsGBFGPO_eq {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [
 /-- `mateKPP` with the seed orders given (`mateKPPO_eq`). -/
 def mateKPPO {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) (o1 o2 : List Nat) : MateR :=
-  let b := mapChromsGBFGPO (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+  let b := mapChromsGBFGPOT (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
     (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) s.K1 s.K2 P ix G offs pgs R s.Rr s.ps s.pr o1 o2
   (decodeP pgs.size P b, decide (b.pen ≤ P))
 
@@ -517,15 +517,16 @@ theorem regionPenKPSO_eq (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Arr
 /-- `mateKP` reading the packed reads from the preparation (`mateKP_eqP`: the same for `prepMate`). -/
 def mateKPP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : MateR :=
-  let b := mapChromsGBFGP (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+  let b := mapChromsGBFGPOT (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
     (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) s.K1 s.K2 P ix G offs pgs R s.Rr s.ps s.pr
+    (ordG (s.ps.map (LookG.size ix)) (R.size / 25)) (ordG (s.pr.map (LookG.size ix)) (R.size / 25))
   (decodeP pgs.size P b, decide (b.pen ≤ P))
 
 theorem mateKP_eqP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
     mateKP P ix G offs pgs R (prepMate ix R : PrepM Pp) = mateKPP P ix G offs pgs R (prepMate ix R : PrepM Pp) := by
   unfold mateKP mateKPP
-  simp only [mapChromsGBFG_eqP]
+  rw [mapChromsGBFGT_eqPO]
   rfl
 
 theorem mateKPPO_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
@@ -576,8 +577,8 @@ theorem passGSF_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat)
 /-- `routeG` on two reads, pass 1's lookup costs and searches given (`routeGS_eq`). -/
 def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray)
     (k1 k2 : Nat) (m1 m2 : Nat → MateR) (g1 g2 : Nat → Placement → Nat) : Routed :=
-  let A1 := rc.cap1 R1.size
-  let A2 := rc.cap1 R2.size
+  let A1 := rc.cap1 R1
+  let A2 := rc.cap1 R2
   let o := if !fastT A1 R1 then .unmapped (.tooShort .one) none
     else if !fastT A2 R2 then .unmapped (.tooShort .two) none
     else passGSF K1 A1 A2 (rc.ord1 R1 R2) lo hi R1 R2 k1 k2 m1 m2 g1 g2
@@ -591,7 +592,7 @@ def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray)
     else ⟨o, 1, A1, A2⟩
 
 theorem routeGS_eq (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) :
-    routeGS rc K1 K2 lo hi R1 R2 (K1.cost (rc.cap1 R1.size) (K1.prep R1)) (K1.cost (rc.cap1 R2.size) (K1.prep R2))
+    routeGS rc K1 K2 lo hi R1 R2 (K1.cost (rc.cap1 R1) (K1.prep R1)) (K1.cost (rc.cap1 R2) (K1.prep R2))
       (fun Q => K1.mate Q R1 (K1.prep R1))
       (fun Q => K1.mate Q R2 (K1.prep R2)) (fun Q => K1.region Q R1) (fun Q => K1.region Q R2) =
       routeG rc K1 K2 lo hi (some R1) (some R2) := rfl
@@ -612,14 +613,14 @@ def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Opti
       match r with
       | some (x, y) =>
         { tag := .t1g, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
-          m1 := { st := "P", cap := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
-          m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+          m1 := { st := "P", cap := cfg.rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+          m2 := { st := "P", cap := cfg.rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
       | none =>
         if seen then
           let tp := pairGQCtie cfg pgs G0 swap a b lX
           { tag := .t1gm, sfx := sfx, why := why, c1 := c1, c2 := c2, g0 := G0, sw := swap,
-            m1 := { st := "P", cap := cfg.rcfg.cap1 a.size, pl := tp.map (·.1) },
-            m2 := { st := "P", cap := cfg.rcfg.cap1 b.size, pl := tp.map (·.2) } }
+            m1 := { st := "P", cap := cfg.rcfg.cap1 a, pl := tp.map (·.1) },
+            m2 := { st := "P", cap := cfg.rcfg.cap1 b, pl := tp.map (·.2) } }
         else
           let gx := gxOf pgs.size G0 lX
           let t := if swap then tierB cfg pk pgs a b s1 s2 rk c1 c2 none (some gx)
@@ -1009,8 +1010,8 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
     let za2 := s1.pr.map (LookG.size pk)
     let zb1 := s2.ps.map (LookG.size pk)
     let zb2 := s2.pr.map (LookG.size pk)
-    let c1 := costZ (cfg.rcfg.cap1 a.size) za1 za2
-    let c2 := costZ (cfg.rcfg.cap1 b.size) zb1 zb2
+    let c1 := costZ (cfg.rcfg.cap1 a) za1 za2
+    let c2 := costZ (cfg.rcfg.cap1 b) zb1 zb2
     if cfg.gate a b s1 s2 c1 c2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
     let oa1 := ordG za1 (a.size / 25)
     let oa2 := ordG za2 (a.size / 25)
@@ -1023,8 +1024,8 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
     match r.out with
     | .mapped (x, y) =>
       { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
-        m1 := { st := "U", cap := cfg.rcfg.cap1 a.size, cd := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
-        m2 := { st := "U", cap := cfg.rcfg.cap1 b.size, cd := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+        m1 := { st := "U", cap := cfg.rcfg.cap1 a, cd := cfg.rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+        m2 := { st := "U", cap := cfg.rcfg.cap1 b, cd := cfg.rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
     | .unmapped rs k => tierRestS cfg pk offs pgs a b s1 s2 (some (rs, k)) r.c1 r.c2
 
 end router
@@ -1707,10 +1708,10 @@ theorem tierB_ok {a b : ByteArray} (ha : Encodes a m1) (hb : Encodes b m2)
           (prepMate ((ix, G) : PkMz) b) rk c1 c2 g1 g2).2.2.ok = true) ∨
        (tierB cfg ((ix, G) : PkMz) (cutAll G offs ns) a b (prepMate ((ix, G) : PkMz) a)
           (prepMate ((ix, G) : PkMz) b) rk c1 c2 g1 g2).1 = .t3) := by
-  have A1 := mateT_inv hg hcut hchk ha (cfg.rcfg.cap1 a.size) c1 (nhOf .one rk) (ccOf .one rk) (knOf .one rk) g1
+  have A1 := mateT_inv hg hcut hchk ha (cfg.rcfg.cap1 a) c1 (nhOf .one rk) (ccOf .one rk) (knOf .one rk) g1
     (fun _ => cfg.ceil a (prepMate ((ix, G) : PkMz) a)) (nhOf_ok H .one) (ccOf_ok H .one)
     (fun _ h => ⟨_, knOf_ok H .one h⟩) hg1
-  have A2 := mateT_inv hg hcut hchk hb (cfg.rcfg.cap1 b.size) c2 (nhOf .two rk) (ccOf .two rk) (knOf .two rk) g2
+  have A2 := mateT_inv hg hcut hchk hb (cfg.rcfg.cap1 b) c2 (nhOf .two rk) (ccOf .two rk) (knOf .two rk) g2
     (fun _ => cfg.ceil b (prepMate ((ix, G) : PkMz) b)) (nhOf_ok H .two) (ccOf_ok H .two)
     (fun _ h => ⟨_, knOf_ok H .two h⟩) hg2
   unfold tierB
@@ -1806,8 +1807,8 @@ theorem tierPairB_sound (O1 O2 : Option ByteArray) (h1 : ∀ R, O1 = some R → 
       unfold tierPairB
       dsimp only
       by_cases hgate : cfg.gate a b (prepMate ((ix, G) : PkMz) a) (prepMate ((ix, G) : PkMz) b)
-          (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 a.size) (prepMate ((ix, G) : PkMz) a : PrepM MzP))
-          (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 b.size) (prepMate ((ix, G) : PkMz) b : PrepM MzP)) = true
+          (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 a) (prepMate ((ix, G) : PkMz) a : PrepM MzP))
+          (costP ((ix, G) : PkMz) (cfg.rcfg.cap1 b) (prepMate ((ix, G) : PkMz) b : PrepM MzP)) = true
       · rw [if_pos hgate]
         exact tierRest_ok cfg g m1 m2 ix G offs ns hcut hg hchk ha hb (fun _ _ h => by cases h)
       rw [if_neg hgate]

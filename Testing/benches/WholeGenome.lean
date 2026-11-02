@@ -1750,8 +1750,8 @@ def uprofRun (rcfg : RouteCfg) (kK : PassKer) (pk : PkMz) (upN : Nat) (uout : St
   for k in [0:min upN r1.size] do
     let R1 := r1[k]!
     let R2 := r2[k]!
-    let P1 := rcfg.cap1 R1.size
-    let P2 := rcfg.cap1 R2.size
+    let P1 := rcfg.cap1 R1
+    let P2 := rcfg.cap1 R2
     if !(fastT P1 R1 && fastT P2 R2) then continue
     let s1 := kK.prep R1
     let s2 := kK.prep R2
@@ -2593,7 +2593,7 @@ def main (args : List String) : IO UInt32 := do
         match x.splitOn ":" with
         | [a, b] => (a.toNat!, b.toNat!)
         | _ => (0, 0)
-      let cap1F : Nat → Nat := fun n =>
+      let cap1F : ByteArray → Nat := fun R => let n := R.size
         if !c1s.isEmpty then (match c1s.find? (fun x => x.1 ≤ n) with | some x => x.2 | none => 12) else
         if 150 ≤ n then 16 else if 100 ≤ n then 12 else if short75 && 75 ≤ n then 11 else if short then 7 else 12
       let t2s := ((← IO.getEnv "WG_T2").getD "150:20").splitOn "," |>.filter (· ≠ "") |>.map fun x =>
@@ -2708,7 +2708,7 @@ def main (args : List String) : IO UInt32 := do
       let fHB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUp N a b then none else fH a b
       -- RTB<N>: the same gate (caps of pass 1, `cap1F`) in front of mode RT, the default
       let gaveUpR (N : Nat) (a b : ByteArray) : Bool :=
-        N < costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) || N < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)
+        N < costP pk (cap1F a) (prepMate pk a : PrepM MzP) || N < costP pk (cap1F b) (prepMate pk b : PrepM MzP)
       let fRTB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUpR N a b then none else fRT a b
       -- RTL (bench only, exactness by `mapSpecBoth_mono` as in `mateH`): mode RT with each whole-genome
       -- mate search run as a cap ladder WG_LADDER (default 0,4,8,12): the first rung with any hit
@@ -2725,7 +2725,7 @@ def main (args : List String) : IO UInt32 := do
       let kL : PassKer := { kK with mate := ladM }
       let ordL : ByteArray → ByteArray → Option Bool := fun a b =>
         if lord == "hi" then
-          some (decide (costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)))
+          some (decide (costP pk (cap1F a) (prepMate pk a : PrepM MzP) < costP pk (cap1F b) (prepMate pk b : PrepM MzP)))
         else none
       let routeL (a b : ByteArray) : Routed := routeG { rcfg with ord1 := ordL } kL kL lo hi (some a) (some b)
       let fRTL : ByteArray → ByteArray → PairOut := fun a b => (routeL a b).out.toOpt
@@ -2852,14 +2852,14 @@ def main (args : List String) : IO UInt32 := do
         if dStop == 3 then
           let t := tierPair tcfg pk offs pgs (some a) (some b)
           { t with sfx := if dFlag a b then "d" else t.sfx } else
-        if dStop == 2 && !tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (rcfg.cap1 a.size) (prepMate pk a : PrepM MzP))
-            (costP pk (rcfg.cap1 b.size) (prepMate pk b : PrepM MzP)) then
+        if dStop == 2 && !tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (rcfg.cap1 a) (prepMate pk a : PrepM MzP))
+            (costP pk (rcfg.cap1 b) (prepMate pk b : PrepM MzP)) then
           let r := tierRT tcfg pk offs pgs a b
           match r.out with
           | .mapped (x, y) =>
             { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
-              m1 := { st := "U", cap := rcfg.cap1 a.size, cd := rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
-              m2 := { st := "U", cap := rcfg.cap1 b.size, cd := rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+              m1 := { st := "U", cap := rcfg.cap1 a, cd := rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+              m2 := { st := "U", cap := rcfg.cap1 b, cd := rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
           | .unmapped rs k =>
             if dFlag a b then { tag := .t3, why := some rs } else
             tierUp tcfg pk offs pgs a b (tierRest tcfg pk offs pgs a b (some (rs, k)) r.c1 r.c2)
@@ -3007,8 +3007,8 @@ def main (args : List String) : IO UInt32 := do
           for k in [0:min rpN r1.size] do
             let R1 := r1[k]!
             let R2 := r2[k]!
-            let P1 := rcfg.cap1 R1.size
-            let P2 := rcfg.cap1 R2.size
+            let P1 := rcfg.cap1 R1
+            let P2 := rcfg.cap1 R2
             if !fastT P1 R1 || !fastT P2 R2 then continue
             let t0 ← IO.monoNanosNow
             let s1 ← (← IO.mkRef (kK.prep R1)).get
@@ -3075,8 +3075,8 @@ def main (args : List String) : IO UInt32 := do
           for k in [0:min mpN r1.size] do
             let R1 := r1[k]!
             let R2 := r2[k]!
-            let P1 := rcfg.cap1 R1.size
-            let P2 := rcfg.cap1 R2.size
+            let P1 := rcfg.cap1 R1
+            let P2 := rcfg.cap1 R2
             if !fastT P1 R1 || !fastT P2 R2 then continue
             let r0 ← IO.monoNanosNow
             let o ← (← IO.mkRef (route R1 R2)).get
@@ -3147,8 +3147,8 @@ def main (args : List String) : IO UInt32 := do
             all := #[all[0]! + 1, all[1]! + (t1 - t0), all[2]! + (t2 - t1), all[3]!]
             if t1 - t0 ≤ slUs * 1000 then continue
             all := all.set! 3 (all[3]! + 1)
-            let P1 := rcfg.cap1 R1.size
-            let P2 := rcfg.cap1 R2.size
+            let P1 := rcfg.cap1 R1
+            let P2 := rcfg.cap1 R2
             let mut ex : Array Nat := #[0, 0, 0, 0, 0, 0]
             let key ← if !fastT P1 R1 || !fastT P2 R2 then pure s!"short | {showR o}" else do
               let s1 : PrepM MzP := prepMate pk R1
@@ -3278,8 +3278,8 @@ def main (args : List String) : IO UInt32 := do
           let a := r1[k]!
           let b := r2[k]!
           let u0 ← IO.monoNanosNow
-          let o ← (← IO.mkRef (if tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cap1F a.size) (prepMate pk a : PrepM MzP))
-            (costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)) then none else some (tierRT tcfg pk offs pgs a b))).get
+          let o ← (← IO.mkRef (if tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cap1F a) (prepMate pk a : PrepM MzP))
+            (costP pk (cap1F b) (prepMate pk b : PrepM MzP)) then none else some (tierRT tcfg pk offs pgs a b))).get
           let u1 ← IO.monoNanosNow
           let t ← (← IO.mkRef (tierP a b)).get
           let u2 ← IO.monoNanosNow
