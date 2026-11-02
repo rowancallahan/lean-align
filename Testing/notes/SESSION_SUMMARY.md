@@ -1321,6 +1321,11 @@ gap is the cap and read ends, not the router. At junkScore −17, ~1 in 6 HiSeq 
 - **Junk score as a setting:** define it at the top of Spec/Aligner.lean; likely a field of `InsertSettings` (a run
   setting that flows through alignPairs_correct), maybe per read length (the free value follows the router's cap,
   −(cap+1): −17 at ≥150 bp). Alternatively route it through the tiers, so a smaller set of options leads to "junk".
+- **Extra short-seed index (Rowan):** an extra index of short seeds in low-repeat regions to place more reads; later
+  made complete within the regions it covers (proof per region) so "unique" is provable when all candidates fall in
+  covered regions. Requirement: ONE generic index-building function (seed length, window, covered-region filter);
+  the main 25-mer index is its k=25 / "everything" instance; one checker and one completeness lemma, instantiated.
+  Variable-length (minimal unique) seeds: S1 research note VARIABLE_SEEDS.md.
 - **Near-tie labels for MAPQ:** a proved near-tie (two placements within x of bestPossibleScore) so every reported pair
   gets a real MAPQ; ties are the x = 0 case.
 - **Error caps for longer reads:** make caps relative to read length (not fixed −12/−16 by length band), seeds and
