@@ -107,12 +107,6 @@ def tierCfg (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (offs : A
 def noIndexAnswer : PairAnswer :=
   { found := none, bestPossibleScore := 0, uniqueness := .unknown, tier := .boundsOnly }
 
--- the router's answer with the pair in hand printed when it re-checks (`Proofs/Report.lean`)
-def answerOfPair (insertSettings : InsertSettings) (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat)
-    (read1 read2 : ByteArray) (t : MapSpec.Fast.TierOut) : PairAnswer :=
-  Report.withFound (answerOf t)
-    (Report.foundOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns read1 read2 t)
-
 def alignOne (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
   match bytes1, bytes2 with
@@ -125,7 +119,7 @@ def alignOne (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
           -- the router searches the packed genome as ONE sequence (offsets `#[0]`, lengths `#[G.n]`):
           -- its seed loop then does not pay per chromosome; `Proofs/Whole.lean` moves the answer
           -- back to the chromosomes, `Proofs/Report.lean` the found pair
-          .aligned (answerOfPair insertSettings (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
+          .aligned (Report.answerOfPair insertSettings (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
             (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
               (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2)))
 
@@ -154,7 +148,7 @@ def alignOneC (setup : Option Setup)
       match setup with
       | none => .aligned noIndexAnswer
       | some (insertSettings, cfg, pk, pgs, offs, ns) =>
-          .aligned (answerOfPair insertSettings pgs offs ns read1 read2 (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2)))
+          .aligned (Report.answerOfPair insertSettings pgs offs ns read1 read2 (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2)))
 
 def alignPairsC (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
@@ -239,11 +233,14 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
         rw [← henc.1, Array.getElem_map, ← getElem!_pos (MapSpec.Fast.cutAll G offs ns) c
           (by simp [MapSpec.Fast.cutAll]; omega), MapSpec.Fast.cutAll_get G offs ns c hc, MapSpec.Fast.unpack_size]
         rfl
+      have hlen : genome.length = ns.size := by
+        have hsz := hg.1
+        simp only [Array.size_map, oldGenome, List.length_map, MapSpec.Fast.cutAll, Array.size_range] at hsz
+        omega
       -- moved to the chromosomes: each is a slice of the whole; the found pair re-checked (`Report`)
-      exact Report.withFound_correct _ _
+      exact Report.answerOfPair_correct hslice hchr hlen insertSettings read1 read2 _ hok
         (Whole.correct_of_whole insertSettings _ _ hslice _ rfl rfl
-          (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok)) rfl
-        (fun rep h => Report.foundOf_sound hslice hchr insertSettings read1 read2 _ rep h)
+          (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok))
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.

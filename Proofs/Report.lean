@@ -98,37 +98,38 @@ end unshift
 
 open MapSpec.Fast
 
--- the CIGAR at `x` from the unproved banded DP on the window's letters (every result is re-checked)
-def alignAt (G : PGen) (R Rr : ByteArray) (x : MapSpec.Placement × Int) :
-    Option ((MapSpec.Placement × Int) × List (AlignmentSpec.Step × Nat)) :=
+-- runs for the read over exactly `x`'s window from the unproved banded DP (every result is re-checked)
+def alignAt (G : PGen) (R Rr : ByteArray) (x : MapSpec.Placement × Int) : Option (List (AlignmentSpec.Step × Nat)) :=
   let X := if x.1.2 = .fwd then R else Rr
   let W := TierHeur.winL G x.1.1.start (x.1.1.start + x.1.1.len)
   match TierHeur.bandDP X W 0 16 1000000 with
-  | some (cs, len, pen, runs) => some ((⟨⟨x.1.1.chr, x.1.1.start + cs, len⟩, x.1.2⟩, -(pen : Int)), runs)
+  | some (cs, len, _, runs) => if cs == 0 && len == x.1.1.len then some runs else none
   | none => none
 
--- the chromosome holding letters `[s, e)` of the whole sequence
+-- the one chromosome whose slice of the whole sequence holds letters `[s, e)` (none: no or several)
 def chromOf (offs ns : Array Nat) (s e : Nat) : Option Nat :=
-  (List.range ns.size).find? fun c => decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)
+  match (List.range ns.size).filter (fun c => decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) with
+  | [c] => some c
+  | _ => none
 
--- a proposed alignment `h` with CIGAR `runs` (whole sequence `pgs`): re-checked, moved to its chromosome
+-- the alignment at `x` (whole sequence `pgs`) with CIGAR `runs`: re-checked, moved to its chromosome
 def checkMove (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray)
-    (h : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) : Option MateReport :=
-  if chkCand pgs R (revCompK R) h runs then
-    let r := mateReportOf h runs
+    (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) : Option MateReport :=
+  if chkCand pgs R (revCompK R) x runs then
+    let r := mateReportOf x runs
     match chromOf offs ns r.placement.start r.placement.stop with
     | some c => some { r with placement := unshiftP c offs[c]! r.placement }
     | none => none
   else none
 
--- the proposed CIGAR of a mate placed at `x`: the router's checked runs, else the banded DP
-def proposal (pgs : Array PGen) (R : ByteArray) (m : MateX) (x : MapSpec.Placement × Int) :
-    Option ((MapSpec.Placement × Int) × List (AlignmentSpec.Step × Nat)) :=
-  if m.cg then some (x, m.runs) else alignAt pgs[0]! R (revCompK R) x
+-- the CIGAR of a mate placed at `x`: the router's checked runs, else the banded DP
+def mateRuns (pgs : Array PGen) (R : ByteArray) (m : MateX) (x : MapSpec.Placement × Int) :
+    Option (List (AlignmentSpec.Step × Nat)) :=
+  if m.cg then some m.runs else alignAt pgs[0]! R (revCompK R) x
 
--- one mate's line
+-- one mate's line, at the router's placement and score
 def mateOf (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray) (m : MateX) : Option MateReport :=
-  (m.pl.bind (proposal pgs R m)).bind fun (h, runs) => checkMove pgs offs ns R h runs
+  m.pl.bind fun x => (mateRuns pgs R m x).bind (checkMove pgs offs ns R x)
 
 -- tags whose mates' placements form the pair in hand
 def reportable : Tag → Bool
@@ -153,12 +154,30 @@ section sound
 variable {genome : Genome} {G : PGen} {offs ns : Array Nat}
 
 theorem chromOf_some {s e c : Nat} (h : chromOf offs ns s e = some c) :
-    c < ns.size ∧ offs[c]! ≤ s ∧ e ≤ offs[c]! + ns[c]! := by
+    c < ns.size ∧ offs[c]! ≤ s ∧ e ≤ offs[c]! + ns[c]! ∧
+      ∀ c', c' < ns.size → offs[c']! ≤ s → e ≤ offs[c']! + ns[c']! → c' = c := by
   unfold chromOf at h
-  have hm := List.mem_of_find?_eq_some h
-  have hp := List.find?_some h
-  simp only [Bool.and_eq_true, decide_eq_true_eq] at hp
-  exact ⟨List.mem_range.1 hm, hp⟩
+  split at h
+  · rename_i c0 hl
+    cases h
+    have hm : c ∈ (List.range ns.size).filter
+        (fun c => decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) := by rw [hl]; simp
+    rw [List.mem_filter, List.mem_range] at hm
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hm
+    refine ⟨hm.1, hm.2.1, hm.2.2, fun c' hc' h1 h2 => ?_⟩
+    have hm' : c' ∈ (List.range ns.size).filter
+        (fun c => decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) := by
+      rw [List.mem_filter, List.mem_range]; simp only [Bool.and_eq_true, decide_eq_true_eq]; exact ⟨hc', h1, h2⟩
+    rw [hl] at hm'
+    simpa using hm'
+  · cases h
+
+-- what a printed mate is: an alignment at the router's placement `x` (moved to chromosome `c`, the only
+-- one holding it) with the router's score
+def MateAt (genome : Genome) (offs ns : Array Nat) (read : Read) (x : MapSpec.Placement × Int)
+    (a : GenomicAlignment genome read) : Prop :=
+  ∃ c, c < ns.size ∧ a.placement = unshiftP c offs[c]! (newPlacement x.1) ∧ a.score = x.2 ∧
+    ∀ c', c' < ns.size → offs[c']! ≤ (newPlacement x.1).start → (newPlacement x.1).stop ≤ offs[c']! + ns[c']! → c' = c
 
 theorem checkMove_sound
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
@@ -167,7 +186,7 @@ theorem checkMove_sound
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
     (R : ByteArray) (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) (r : MateReport)
     (h : checkMove (cutAll G #[0] #[G.n]) offs ns R x runs = some r) :
-    ∃ a : GenomicAlignment genome (decodeRead R), a.report = r := by
+    ∃ a : GenomicAlignment genome (decodeRead R), a.report = r ∧ MateAt genome offs ns (decodeRead R) x a := by
   unfold checkMove at h
   split at h
   · rename_i hc
@@ -177,14 +196,16 @@ theorem checkMove_sound
     split at h
     · rename_i c hcO
       cases h
-      obtain ⟨hcn, h1, h2⟩ := chromOf_some hcO
+      obtain ⟨hcn, h1, h2, huq⟩ := chromOf_some hcO
       obtain ⟨chr, hgc, hlen⟩ := hchr c hcn
       have hpl : b.placement = (mateReportOf x runs).placement := congrArg MateReport.placement hb
       obtain ⟨a, ha⟩ := alignment_unshift (name := "") (W := decodeRead (MapSpec.Mz.unpack G))
         (off := fun c => offs[c]!) hslice b c chr hgc (by rw [hpl]; exact h1) (by rw [hpl, hlen]; exact h2)
-      refine ⟨a, ha.trans ?_⟩
-      show MateReport.mk (unshiftP c offs[c]! b.placement) b.report.cigar b.report.score = _
-      rw [hpl, hb]
+      have har : a.report = { mateReportOf x runs with placement := unshiftP c offs[c]! (mateReportOf x runs).placement } := by
+        refine ha.trans ?_
+        show MateReport.mk (unshiftP c offs[c]! b.placement) b.report.cigar b.report.score = _
+        rw [hpl, hb]
+      refine ⟨a, har, c, hcn, congrArg MateReport.placement har, congrArg MateReport.score har, huq⟩
     · cases h
   · cases h
 
@@ -195,13 +216,19 @@ theorem mateOf_sound
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
     (R : ByteArray) (m : MateX) (r : MateReport)
     (h : mateOf (cutAll G #[0] #[G.n]) offs ns R m = some r) :
-    ∃ a : GenomicAlignment genome (decodeRead R), a.report = r := by
+    ∃ x, m.pl = some x ∧ ∃ a : GenomicAlignment genome (decodeRead R), a.report = r ∧
+      MateAt genome offs ns (decodeRead R) x a := by
   unfold mateOf at h
-  cases hp : (m.pl.bind (proposal (cutAll G #[0] #[G.n]) R m)) with
+  cases hp : m.pl with
   | none => rw [hp] at h; cases h
-  | some q =>
+  | some x =>
     rw [hp] at h
-    exact checkMove_sound hslice hchr R q.1 q.2 r h
+    simp only [Option.bind_some] at h
+    cases hr : mateRuns (cutAll G #[0] #[G.n]) R m x with
+    | none => rw [hr] at h; cases h
+    | some runs =>
+      rw [hr] at h
+      exact ⟨x, rfl, checkMove_sound hslice hchr R x runs r h⟩
 
 theorem foundOf_sound
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
@@ -212,7 +239,9 @@ theorem foundOf_sound
     (h : foundOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
       (cutAll G #[0] #[G.n]) offs ns R1 R2 t = some rep) :
     ∃ pair : PairAlignment genome (decodeRead R1) (decodeRead R2),
-      pair.report = rep ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
+      pair.report = rep ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack ∧
+      ∃ x y, t.m1.pl = some x ∧ t.m2.pl = some y ∧
+        MateAt genome offs ns (decodeRead R1) x pair.first ∧ MateAt genome offs ns (decodeRead R2) y pair.second := by
   unfold foundOf at h
   split at h
   · split at h
@@ -220,12 +249,12 @@ theorem foundOf_sound
       split at h
       · rename_i hp
         cases h
-        obtain ⟨x, hx⟩ := mateOf_sound hslice hchr R1 _ a h1
-        obtain ⟨y, hy⟩ := mateOf_sound hslice hchr R2 _ b h2
-        refine ⟨⟨x, y⟩, by simp only [PairAlignment.report, hx, hy], ?_⟩
+        obtain ⟨x, hx1, p, hpr, hpx⟩ := mateOf_sound hslice hchr R1 _ a h1
+        obtain ⟨y, hy1, q, hqr, hqy⟩ := mateOf_sound hslice hchr R2 _ b h2
+        refine ⟨⟨p, q⟩, by simp only [PairAlignment.report, hpr, hqr], ?_, x, y, hx1, hy1, hpx, hqy⟩
         rw [isProper_iff]
-        have px : x.placement = a.placement := by rw [← hx]; rfl
-        have py : y.placement = b.placement := by rw [← hy]; rfl
+        have px : p.placement = a.placement := by rw [← hpr]; rfl
+        have py : q.placement = b.placement := by rw [← hqr]; rfl
         simp only [px, py]
         exact hp
       · cases h
@@ -234,19 +263,227 @@ theorem foundOf_sound
 
 end sound
 
-/-! ## The answer with the found pair -/
+end Spec.Report
 
--- `a` with `found := f`
-def withFound (a : PairAnswer) (f : Option PairReport) : PairAnswer := { a with found := f }
+/-! ## Stage 3: what T1 / T1g / T1u prove about the hits, at every threshold -/
 
--- a bounds-only correct answer stays correct with any found pair that is a real proper pair
-theorem withFound_correct {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read}
-    (a : PairAnswer) (f : Option PairReport) (ha : a.Correct insertSettings genome m1 m2)
-    (hu : a.uniqueness = .unknown)
-    (hf : ∀ rep, f = some rep → ∃ pair : PairAlignment genome m1 m2,
-      pair.report = rep ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack) :
-    (withFound a f).Correct insertSettings genome m1 m2 := by
-  refine ⟨hf, ha.2.1, ?_⟩
-  simp [withFound, hu]
+namespace Spec.Report
+open MapSpec MapSpec.Fast Bridge
+
+-- every proper pair of hits scores at most `(x, y)`, and only `(x, y)`'s placements reach it
+def UniqHits (sl lo hi : Nat) (g : MapSpec.Genome) (m1 m2 : List Char) (x y : MapSpec.Placement × Int) : Prop :=
+  ∀ p q : MapSpec.Placement × Int,
+    (p, q) ∈ properPairs sl lo hi (hitsBoth sc0 p.2 g m1) (hitsBoth sc0 q.2 g m2) →
+    p.2 + q.2 ≤ x.2 + y.2 ∧ (x.2 + y.2 ≤ p.2 + q.2 → p.1 = x.1 ∧ q.1 = y.1)
+
+theorem hit_lower {T T' : Int} {g : MapSpec.Genome} {m : List Char} {p : MapSpec.Placement × Int}
+    (h : p ∈ hitsBoth sc0 T g m) (hT : T' ≤ p.2) : p ∈ hitsBoth sc0 T' g m := by
+  obtain ⟨pl, s⟩ := p
+  rw [mem_hitsBoth_T] at h ⊢
+  exact ⟨h.1, h.2.1, hT⟩
+
+-- the unique best of a mate (any cap) at the same score has the same placement
+theorem same_of_mapSpecBoth {T0 : Int} {g : MapSpec.Genome} {m : List Char} {x p : MapSpec.Placement × Int}
+    (h : mapSpecBoth sc0 T0 g m = some x) (hp : p ∈ hitsBoth sc0 p.2 g m) (he : x.2 ≤ p.2) : p.1 = x.1 := by
+  have hx := mapSpecBoth_mem h
+  have hT : T0 ≤ x.2 := by
+    obtain ⟨pl, s⟩ := x
+    rw [mem_hitsBoth_T] at hx; exact hx.2.2
+  have hp' := hit_lower hp (Int.le_trans hT he)
+  unfold mapSpecBoth at h
+  rw [selectUniqueBy_eq_some_iff _ (hitsBoth_scoreFun _ _ _ _)] at h
+  rcases h.2 p hp' with hlt | heq
+  · omega
+  · exact heq
+
+theorem uniqHits_t1 {sl lo hi : Nat} {g : MapSpec.Genome} {m1 m2 : List Char} {c1 c2 : Nat}
+    {x y : MapSpec.Placement × Int} (h : pairSpecT (-(c1 : Int)) (-(c2 : Int)) lo hi g m1 m2 = some (x, y)) :
+    UniqHits sl lo hi g m1 m2 x y := by
+  unfold pairSpecT at h
+  cases h1 : mapSpecBoth sc0 (-(c1 : Int)) g m1 <;> cases h2 : mapSpecBoth sc0 (-(c2 : Int)) g m2 <;>
+    rw [h1, h2] at h <;> simp only [reduceCtorEq] at h
+  rename_i a b
+  split at h
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    intro p q hpq
+    rw [mem_properPairs] at hpq
+    obtain ⟨hp, hq, -⟩ := hpq
+    simp only at hp hq
+    have lp := Bridge.le_of_mapSpecBoth h1 hp
+    have lq := Bridge.le_of_mapSpecBoth h2 hq
+    refine ⟨by omega, fun hs => ⟨same_of_mapSpecBoth h1 hp (by omega), same_of_mapSpecBoth h2 hq (by omega)⟩⟩
+  · cases h
+
+theorem uniqHits_ut {sl lo hi g0 : Nat} {g : MapSpec.Genome} {m1 m2 : List Char} {x y : MapSpec.Placement × Int}
+    (hall : ∀ P1 P2 : Nat, g0 ≤ P1 → g0 ≤ P2 → ∃ x' y', some x = some x' ∧ some y = some y' ∧
+      pairSpecUT sc0 dcost0 sl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2 = some (x', y')) :
+    UniqHits sl lo hi g m1 m2 x y := by
+  intro p q hpq
+  have hpq0 := hpq
+  rw [mem_properPairs] at hpq0
+  obtain ⟨hp, hq, hprop⟩ := hpq0
+  obtain ⟨c1, c2⟩ := Bridge.cap_le (g0 := g0) (hitsBoth_nonpos _ _ _ _ hp)
+  obtain ⟨c3, c4⟩ := Bridge.cap_le (g0 := g0) (hitsBoth_nonpos _ _ _ _ hq)
+  obtain ⟨x', y', ex, ey, hs⟩ := hall _ _ c1 c3
+  cases ex; cases ey
+  have hmem : (p, q) ∈ properPairs sl lo hi (hitsBoth sc0 (-((max g0 (-p.2).toNat : Nat) : Int)) g m1)
+      (hitsBoth sc0 (-((max g0 (-q.2).toNat : Nat) : Int)) g m2) :=
+    mem_properPairs.2 ⟨hit_lower hp c2, hit_lower hq c4, hprop⟩
+  refine ⟨Bridge.le_of_pairSpecUT hs hmem, fun hge => ?_⟩
+  unfold pairSpecUT at hs
+  rw [bestPairD_iff _ _ _ _ _ _ (hitsBoth_scoreFun _ _ _ _) (hitsBoth_scoreFun _ _ _ _)] at hs
+  rcases hs.2 _ hmem with hlt | ⟨e1, e2⟩
+  · rw [Bridge.pairScoreD_dcost0, Bridge.pairScoreD_dcost0] at hlt; simp only at hlt; omega
+  · exact ⟨e1, e2⟩
+
+theorem new_old (p : Spec.Placement) (h : p.start ≤ p.stop) : newPlacement (oldPlacement p) = p := by
+  obtain ⟨c, st, e, sd⟩ := p
+  simp only at h
+  cases sd <;> simp [newPlacement, oldPlacement, newStrand, oldStrand] <;> omega
+
+section unique
+variable {genome : Genome} {G : PGen} {offs ns : Array Nat}
+
+-- an alignment on the genome whose shift is the hit `z`, inside the only chromosome `c` holding `z`,
+-- is at `z` moved to `c`
+theorem placement_back
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (hlen : genome.length = ns.size)
+    {read : Read} (a : GenomicAlignment genome read) (b : GenomicAlignment (Whole.wholeOf G) read)
+    (z : MapSpec.Placement) (c : Nat)
+    (hb : b.placement = Whole.shift (fun c => offs[c]!) a.placement) (hz : oldPlacement b.placement = z)
+    (hu : ∀ c', c' < ns.size → offs[c']! ≤ (newPlacement z).start → (newPlacement z).stop ≤ offs[c']! + ns[c']! → c' = c) :
+    a.placement = unshiftP c offs[c]! (newPlacement z) := by
+  have hnz : newPlacement z = Whole.shift (fun c => offs[c]!) a.placement := by
+    rw [← hz, new_old _ (start_le_stop b), hb]
+  have hfit := a.fits
+  unfold Placement.reference at hfit
+  cases hg : genome[a.placement.chromosome]? with
+  | none => rw [hg] at hfit; cases hfit
+  | some chr =>
+    rw [hg] at hfit
+    have hin : a.placement.stop ≤ chr.seq.length := by
+      by_cases hc : a.placement.start ≤ a.placement.stop ∧ a.placement.stop ≤ chr.seq.length
+      · exact hc.2
+      · simp [hc] at hfit
+    have hcl : a.placement.chromosome < ns.size := by
+      rw [← hlen]; exact (List.getElem?_eq_some_iff.mp hg).1
+    obtain ⟨chr', hg', hl'⟩ := hchr _ hcl
+    rw [hg] at hg'
+    cases hg'
+    have hcc := hu a.placement.chromosome hcl (by rw [hnz]; simp [Whole.shift])
+      (by rw [hnz]; simp only [Whole.shift]; omega)
+    rw [hnz, ← hcc]
+    generalize a.placement = q
+    obtain ⟨qc, qs, qe, qst⟩ := q
+    simp [unshiftP, Whole.shift]
+
+theorem unique_of_uniqHits
+    (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
+      offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
+      chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (hlen : genome.length = ns.size)
+    (insertSettings : InsertSettings) {m1 m2 : Read} {x y : MapSpec.Placement × Int}
+    (hU : UniqHits insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+      (oldGenome (Whole.wholeOf G)) m1 m2 x y)
+    (P : PairAlignment genome m1 m2) (hP : P.IsProper insertSettings.range insertSettings.dovetailSlack)
+    (h1 : MateAt genome offs ns m1 x P.first) (h2 : MateAt genome offs ns m2 y P.second) :
+    P.IsUniqueBestProper insertSettings := by
+  obtain ⟨c1, -, hp1, hs1, hu1⟩ := h1
+  obtain ⟨c2, -, hp2, hs2, hu2⟩ := h2
+  have hPs : P.score = x.2 + y.2 := by simp only [PairAlignment.score, hs1, hs2]
+  have key : ∀ Q : PairAlignment genome m1 m2, Q.IsProper insertSettings.range insertSettings.dovetailSlack →
+      Q.score ≤ x.2 + y.2 ∧ (x.2 + y.2 ≤ Q.score → Q.placements = P.placements) := by
+    intro Q hQ
+    obtain ⟨b1, hb1, hsb1⟩ := Whole.alignment_shift (name := "") (W := decodeRead (MapSpec.Mz.unpack G))
+      (off := fun c => offs[c]!) hslice Q.first
+    obtain ⟨b2, hb2, hsb2⟩ := Whole.alignment_shift (name := "") (W := decodeRead (MapSpec.Mz.unpack G))
+      (off := fun c => offs[c]!) hslice Q.second
+    have hQ' := Whole.isProper_shift Q ⟨b1, b2⟩ hb1 hb2 hQ
+    rw [isProper_iff] at hQ'
+    obtain ⟨s1, l1, hm1⟩ := hit_of_alignment b1 b1.score (Int.le_refl _)
+    obtain ⟨s2, l2, hm2⟩ := hit_of_alignment b2 b2.score (Int.le_refl _)
+    have hm := hU (oldPlacement b1.placement, s1) (oldPlacement b2.placement, s2)
+      (mem_properPairs.2 ⟨hit_lower hm1 (Int.le_refl _), hit_lower hm2 (Int.le_refl _), hQ'⟩)
+    simp only at hm
+    have hsc : Q.score = b1.score + b2.score := by simp only [PairAlignment.score, hsb1, hsb2]
+    refine ⟨by omega, fun hge => ?_⟩
+    obtain ⟨e1, e2⟩ := hm.2 (by omega)
+    have q1 := placement_back hchr hlen Q.first b1 x.1 c1 hb1 e1 hu1
+    have q2 := placement_back hchr hlen Q.second b2 y.1 c2 hb2 e2 hu2
+    simp only [PairAlignment.placements, q1, q2, hp1, hp2]
+  refine ⟨⟨hP, fun Q hQ => by rw [hPs]; exact (key Q hQ).1⟩, fun Q hQ hne => ?_⟩
+  rw [hPs]
+  by_cases hge : x.2 + y.2 ≤ Q.score
+  · exact absurd ((key Q hQ).2 hge) hne
+  · omega
+
+end unique
+
+theorem uniqHits_of_tierOk {sl lo hi : Nat} {g : MapSpec.Genome} {m1 m2 : List Char} {O1 O2 : Option ByteArray}
+    {t : TierOut} {x y : MapSpec.Placement × Int} (hok : TierOk sl lo hi g m1 m2 O1 O2 t)
+    (ht : t.tag = .t1 ∨ t.tag = .t1g ∨ t.tag = .t1u) (hx : t.m1.pl = some x) (hy : t.m2.pl = some y) :
+    UniqHits sl lo hi g m1 m2 x y := by
+  unfold TierOk at hok
+  rcases ht with h | h | h <;> rw [h] at hok
+  · obtain ⟨x', y', hx', hy', hs⟩ := hok
+    rw [hx] at hx'; rw [hy] at hy'
+    cases hx'; cases hy'
+    exact uniqHits_t1 hs
+  · obtain ⟨-, -, hall⟩ := hok
+    refine uniqHits_ut (g0 := t.g0) fun P1 P2 h1 h2 => ?_
+    obtain ⟨x', y', hx', hy', hs⟩ := hall P1 P2 h1 h2
+    exact ⟨x', y', by rw [← hx]; exact hx', by rw [← hy]; exact hy', hs⟩
+  · obtain ⟨-, hall⟩ := hok
+    refine uniqHits_ut (g0 := t.g0) fun P1 P2 h1 h2 => ?_
+    obtain ⟨x', y', hx', hy', hs⟩ := hall P1 P2 h1 h2
+    exact ⟨x', y', by rw [← hx]; exact hx', by rw [← hy]; exact hy', hs⟩
+
+/-! ## The answer -/
+
+-- T1 / T1g / T1u with the pair printed: the unique best proper pair
+def uniqOf (t : TierOut) (f : Option PairReport) : Uniqueness :=
+  match f, t.tag with
+  | some _, .t1 | some _, .t1g | some _, .t1u => .unique
+  | _, _ => .unknown
+
+-- the router's answer with the pair in hand printed when it re-checks
+def answerOfPair (insertSettings : InsertSettings) (pgs : Array PGen) (offs ns : Array Nat)
+    (R1 R2 : ByteArray) (t : TierOut) : PairAnswer :=
+  let f := foundOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+  { Bridge.answerOf t with found := f, uniqueness := uniqOf t f }
+
+theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
+    (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
+      offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
+      chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (hlen : genome.length = ns.size)
+    (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut)
+    (hok : TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+      (oldGenome (Whole.wholeOf G)) (decodeRead R1) (decodeRead R2) (some R1) (some R2) t)
+    (ha : (Bridge.answerOf t).Correct insertSettings genome (decodeRead R1) (decodeRead R2)) :
+    (answerOfPair insertSettings (cutAll G #[0] #[G.n]) offs ns R1 R2 t).Correct insertSettings genome
+      (decodeRead R1) (decodeRead R2) := by
+  unfold answerOfPair
+  generalize hf : foundOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+    (cutAll G #[0] #[G.n]) offs ns R1 R2 t = f
+  refine ⟨fun rep h => ?_, ha.2.1, ?_⟩
+  · have h' : f = some rep := h
+    rw [h'] at hf
+    obtain ⟨pair, hr, hp, -⟩ := foundOf_sound hslice hchr insertSettings R1 R2 t rep hf
+    exact ⟨pair, hr, hp⟩
+  · cases f with
+    | none => simp [uniqOf]
+    | some rep =>
+      obtain ⟨pair, hr, hp, x, y, hx, hy, h1, h2⟩ := foundOf_sound hslice hchr insertSettings R1 R2 t rep hf
+      have hu : t.tag = .t1 ∨ t.tag = .t1g ∨ t.tag = .t1u → pair.IsUniqueBestProper insertSettings := fun ht =>
+        unique_of_uniqHits hslice hchr hlen insertSettings (uniqHits_of_tierOk hok ht hx hy) pair hp h1 h2
+      cases htag : t.tag <;> simp only [uniqOf, htag]
+      · exact ⟨rep, rfl, pair, hr, hu (.inl htag)⟩
+      · exact ⟨rep, rfl, pair, hr, hu (.inr (.inl htag))⟩
+      · exact ⟨rep, rfl, pair, hr, hu (.inr (.inr htag))⟩
 
 end Spec.Report
