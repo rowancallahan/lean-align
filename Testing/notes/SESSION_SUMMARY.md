@@ -1358,6 +1358,8 @@ All Opus boxes archived after the night (O1–O6).
 default · 11 graded MAPQ + NM/MD in Spec/Sam · 12 BAM default · 13 parTasks ≥ cores for 32-thread servers · 14 allow
 ngi-igenomes.s3.amazonaws.com · 15 dedup / heuristic (off).
 Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
+**Stopping point (Rowan):** NovaSeq at 2x vs minibwa (same box, load subtracted, FASTQ+SAM included). Then Rowan moves to
+formalizing FASTQ and SAM (Spec) and writing the blog post.
 
 #### Decision questions in detail (Rowan is thinking these over)
 1. **Trimming in the shim?** → DONE (38fa84a, Rowan approved): Spec/Fastq trimRecord (proved ReadTrim.trimRead) on
