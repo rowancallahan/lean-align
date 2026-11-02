@@ -74,3 +74,25 @@ SAM split (real mapped / degenerate / unique; d-f identical to b):
 | low (at truth) | 99.70 / 0.15 / 94.68% (96.69%) | 99.70 / 0.15 / 94.68% (96.67%) | 99.70 / 0.16 / 94.23% (96.54%) |
 | HiSeq | 92.86 / 1.12 / 82.01% | 92.87 / 1.13 / 81.87% | 92.90 / 1.19 / 81.71% |
 HiSeq now changes too: trimmed mates under 200 letters get per-mate caps.
+
+## 6. Headline round on festive-fermi ad6f7df (= f3f7be1 for the shim: capBudget 5000, chunk 20000)
+`Testing/scripts/headline.sh`: one tool at a time, the other tool's index dropped from the page cache (posix_fadvise),
+own index read before every run, our empty-FASTQ run right before each timed run, load measured in the run
+(`timed_load.py`); 4 threads, median of 3, FASTQ + SAM in. g = shipped head; g10 = same with capBudget 10000.
+
+| set | minibwa default / ours (g) | native / g | CPU (def) | g10 | user CPU g / mb |
+|---|---|---|---|---|---|
+| NovaSeq 200k | 14.5 s / 8.3 s = **1.75x** | 1.73x | 1.84x | 1.74x (CPU 1.91x) | 26.0 / 50.9 s |
+| mason | 14.2 / 7.2 = 1.97x | 1.97x | 2.12x | 1.54x | 23.0 / 48.8 |
+| low | 11.1 / 5.7 = 1.94x | 1.86x | 2.06x | 1.87x | 17.4 / 36.9 |
+| HiSeq 200k | 27.3 / 10.0 = 2.72x | 2.71x | 3.19x | 2.79x | 29.6 / 99.5 |
+Min wall (ours g): NovaSeq 7.5, mason 7.2, low 5.7, HiSeq 8.3 s. Runs within ~1 s of each other.
+
+SAM split g (real mapped / degenerate / unique / at truth): NovaSeq 95.09 / 2.72 / 81.94; mason 96.98 / 0.99 / 86.51 / 93.70;
+low 99.70 / 0.16 / 94.23 / 96.54; HiSeq 92.90 / 1.19 / 81.71. (g10: NovaSeq 95.07 / 2.65 / 82.44; mason 97.00 / 0.94 /
+86.99 / 93.87; low 99.70 / 0.15 / 94.68 / 96.67; HiSeq 92.87 / 1.13 / 81.87.)
+
+Degenerate pairs with a mate trimmed short (shorter mate's SEQ length): NovaSeq 5,436 degenerate: < 50 bp 915 (16.8%),
+< 75 bp 1,314, < 100 bp 1,721, < 151 (any trimming) 4,578 (84%). HiSeq: 2,385, < 50 bp 613 (25.7%).
+Pair score (AS1 + AS2) of real mapped pairs (all-insertion CIGARs excluded), share below −16 / −32 / −50 / −64 / −100:
+NovaSeq 9.26 / 5.14 / 3.68 / 3.08 / 2.40%; HiSeq 8.78 / 4.49 / 3.61 / 3.20 / 2.62%.
