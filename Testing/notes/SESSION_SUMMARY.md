@@ -1301,6 +1301,9 @@ SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not
   scores); a near-tie claim must be anchored to the bound: both pairs ≥ bestPossibleScore − x.
 
 ### Later (Rowan)
+- **Junk score as a setting:** define it at the top of Spec/Aligner.lean; likely a field of `InsertSettings` (a run
+  setting that flows through alignPairs_correct), maybe per read length (the free value follows the router's cap,
+  −(cap+1): −17 at ≥150 bp). Alternatively route it through the tiers, so a smaller set of options leads to "junk".
 - **Near-tie labels for MAPQ:** a proved near-tie (two placements within x of bestPossibleScore) so every reported pair
   gets a real MAPQ; ties are the x = 0 case.
 - **Error caps for longer reads:** make caps relative to read length (not fixed −12/−16 by length band), seeds and
