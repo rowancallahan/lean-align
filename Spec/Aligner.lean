@@ -10,9 +10,13 @@ namespace Spec
 structure InsertSettings where
   range         : Nat × Nat  -- allowed fragment length: min and max, both included
   dovetailSlack : Nat := 0
-  requiredMapBound : Int := -16
-  junkScore : Int := -50
-
+  junkScore : Int := -100
+  --This makes it so that 26-49 bp reads have to map perfectly and
+  --The number of mismatches goes up every 25bp we can change this later if we 
+  --End up getting more seeds etc it taks the minimum length in seeds, subtracts -1
+  --Then it tops out at -16 where it is min 4 etc we can change these all later
+  requiredMapBound : Read -> Read -> Int := fun mate1 mate2 => 
+   -4 * ((min 4 ((min mate1.length mate2.length)/25-1) : Nat) : Int)
 
 inductive Mate where
   | one
@@ -119,7 +123,7 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
        ∃ pair other : PairAlignment genome mate1 mate2, pair.report = report ∧
          pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
    | .unknown => 
-       answer.found = none → answer.bestPossibleScore < insertSettings.requiredMapBound
+       answer.found = none → answer.bestPossibleScore < insertSettings.requiredMapBound mate1 mate2
    )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)
