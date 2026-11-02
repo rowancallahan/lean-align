@@ -307,6 +307,129 @@ def bandDP (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Na
   if cs < 0 || ce < cs then return none
   return some (cs.toNat, (ce - cs).toNat, bv, runsOf steps)
 
+/-- Same contract as `bandDP` (penalties are even: halved here, mismatch 2, gap of `L` letters 3 + `L`), by
+gap-affine wavefronts: level `s` keeps, per diagonal of the band, the furthest read row reached with penalty `2s`
+(`M` any end, `I` window letters, `D` read letters; stored as row + 1, 0 = none).  Cost grows with the penalty,
+not with the read length.  The levels are kept (`K` entries each) for the traceback; the first diagonal that
+reaches the end of the read at the lowest level is taken (as `bandDP` takes the first minimum). -/
+def bandWfa (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
+  let n := X.size
+  let m := W.size
+  let K := 2 * w + 1
+  let SH : Int := 1048576
+  let c0 : Int := s0 - (w : Int)
+  if c0 + SH < 0 || c0 > SH || m ≥ 1048576 || n ≥ 1048576 || lim == 0 then return none
+  let c0s : UInt32 := (c0 + SH).toNat.toUInt32
+  let shU : UInt32 := 1048576
+  let shm : UInt32 := shU + m.toUInt32
+  let nU : UInt32 := n.toUInt32
+  let smax := min ((min lim (1 <<< 23) - 1) / 2) (2 * n + 4 * w + 8)
+  let mut M : Array UInt32 := Array.mkEmpty (64 * K)
+  let mut I : Array UInt32 := Array.mkEmpty (64 * K)
+  let mut D : Array UInt32 := Array.mkEmpty (64 * K)
+  let mut dead := 0
+  let mut hit : Option (Nat × Nat) := none
+  for s in [0:smax + 1] do
+    let mut any := false
+    for k in [0:K] do
+      let ku := k.toUInt32
+      let ck := ku + c0s
+      let iv : UInt32 :=
+        if k ≥ 1 then
+          let src := max (if s ≥ 4 then M[(s - 4) * K + k - 1]! else 0) (if s ≥ 1 then I[(s - 1) * K + k - 1]! else 0)
+          if src > 0 && (src - 1) + ck ≤ shm then src else 0
+        else 0
+      let dv : UInt32 :=
+        if k + 1 < K then
+          let src := max (if s ≥ 4 then M[(s - 4) * K + k + 1]! else 0) (if s ≥ 1 then D[(s - 1) * K + k + 1]! else 0)
+          if src > 0 && src ≤ nU then src + 1 else 0
+        else 0
+      let mm : UInt32 :=
+        if s == 0 then (if shU ≤ ck && ck ≤ shm then 1 else 0)
+        else if s ≥ 2 then
+          let a := M[(s - 2) * K + k]!
+          if a > 0 && a - 1 < nU && (a - 1) + ck < shm then a + 1 else 0
+        else 0
+      let mut mv := max mm (max iv dv)
+      if mv > 0 then
+        let mut i := mv - 1
+        while i < nU && i + ck < shm && X.get! i.toNat == W.get! (i + ck - shU).toNat do
+          i := i + 1
+        mv := i + 1
+        any := true
+        if hit.isNone && mv == nU + 1 then hit := some (s, k)
+      M := M.push mv
+      I := I.push iv
+      D := D.push dv
+    if hit.isSome then break
+    dead := if any then 0 else dead + 1
+    if dead ≥ 4 then return none
+  let some (sE, kE) := hit | return none
+  -- traceback; state 0 = M, 1 = I, 2 = D
+  let push := fun (r : List (AlignmentSpec.Step × Nat)) (t : AlignmentSpec.Step) (c : Nat) =>
+    match r with
+    | (u, d) :: rest => if u == t then (u, d + c) :: rest else (t, c) :: r
+    | [] => [(t, c)]
+  let mut s := sE
+  let mut k := kE
+  let mut i := n
+  let mut st := 0
+  let mut runs : List (AlignmentSpec.Step × Nat) := []
+  let mut fuel := 4 * (n + smax) + 8
+  let mut done := false
+  while !done && fuel > 0 do
+    fuel := fuel - 1
+    if st == 0 then
+      if s == 0 then
+        runs := push runs .diag i
+        done := true
+      else
+        let ku := k.toUInt32
+        let ck := ku + c0s
+        let a := if s ≥ 2 then M[(s - 2) * K + k]! else 0
+        let mmv : UInt32 := if a > 0 && a - 1 < nU && (a - 1) + ck < shm then a + 1 else 0
+        let iv := I[s * K + k]!
+        let dv := D[s * K + k]!
+        let pre := max mmv (max iv dv)
+        assert! pre > 0 && pre.toNat ≤ i + 1
+        if i + 1 > pre.toNat then runs := push runs .diag (i + 1 - pre.toNat)
+        if mmv == pre then
+          runs := push runs .diag 1
+          i := pre.toNat - 2
+          s := s - 2
+        else
+          i := pre.toNat - 1
+          st := if iv == pre then 1 else 2
+    else if st == 1 then
+      runs := push runs .gapX 1
+      let src := I[s * K + k]!
+      let a := if s ≥ 4 then M[(s - 4) * K + k - 1]! else 0
+      if a == src then
+        st := 0
+        s := s - 4
+      else s := s - 1
+      k := k - 1
+    else
+      runs := push runs .gapY 1
+      let src := D[s * K + k]! - 1
+      let a := if s ≥ 4 then M[(s - 4) * K + k + 1]! else 0
+      i := i - 1
+      if a == src then
+        st := 0
+        s := s - 4
+      else s := s - 1
+      k := k + 1
+  if !done then return none
+  let cs := c0 + (k : Int)
+  let ce := c0 + (kE : Int) + (n : Int)
+  if cs < 0 || ce < cs then return none
+  return some (cs.toNat, (ce - cs).toNat, 2 * sE, runs)
+
+/-- `bandWfa` (bench switch) or `bandDP`. -/
+@[inline] def bandAln (wf : Bool) (X W : ByteArray) (s0 : Int) (w lim : Nat) :
+    Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) :=
+  if wf then bandWfa X W s0 w lim else bandDP X W s0 w lim
+
 /-- First free slot of the open-addressing table `keys` from slot `s` (`fuel` probes). -/
 def vFree (keys : @& Array UInt32) (TM : UInt32) : (fuel : Nat) → (s : UInt32) → UInt32
   | 0, s => s
@@ -415,7 +538,7 @@ def gapHint (X W : ByteArray) (s : Int) (w e : Nat) : Bool := Id.run do
 shared 11-mers (or `sv`, the read start in the window that the
 read's seeds give), gapless there, then the banded DP (± `w`) when the gapless penalty is over 8.
 (start, length, penalty, runs). -/
-def nearY (X : ByteArray) (G : PGen) (ws we w lim bl ge : Nat) (sv : Option Int) (vf : Bool := true) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
+def nearY (X : ByteArray) (G : PGen) (ws we w lim bl ge : Nat) (sv : Option Int) (vf : Bool := true) (wf : Bool := false) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
   let n := X.size
   let we := min we G.n
   if n == 0 || we < ws + n then return none
@@ -449,7 +572,7 @@ def nearY (X : ByteArray) (G : PGen) (ws we w lim bl ge : Nat) (sv : Option Int)
       best := some (a + s1.toNat, n, 4 * mm, [(AlignmentSpec.Step.diag, n)])
       lim := 4 * mm
   if lim > 8 && (ge == 0 || gapHint X W s1 w ge) then
-    if let some (cs, len, p, runs) := bandDP X W s1 w (min lim bl) then
+    if let some (cs, len, p, runs) := bandAln wf X W s1 w (min lim bl) then
       best := some (a + cs, len, p, runs)
   return best
 
@@ -591,6 +714,7 @@ structure HCfg where
   ge : Nat := 12          -- the banded DP only where `gapHint` (ends of `ge` letters) flags an indel (0: always)
   nk : Nat := 1           -- near the partner: up to `nk` seed diagonals (`seedVoteK`), the best alignment kept
   cmax : Nat := 1000000   -- only pairs with summed ceiling ≤ `cmax` count (the exact pair search's 16); 1000000: off
+  wfa : Bool := false     -- bench: the banded step by wavefronts (`bandWfa`) instead of `bandDP`
   chk : Bool := true      -- re-score each candidate with `chkAln` (false: trust it; the router re-checks the picks)
 
 /-- Re-score `(vc, start, len, pen, runs)` of a read (`R` forward, `Rr` reverse) with `checkRuns`:
@@ -631,7 +755,7 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
     let ws := p.1.start - min p.1.start cfg.w
     let W := winL G ws (p.1.start + p.1.len + cfg.w)
     if cfg.ge != 0 && !gapHint Rx W ((p.1.start - ws : Nat) : Int) cfg.w cfg.ge then return m
-    match bandDP Rx W ((p.1.start - ws : Nat) : Int) cfg.w (min (min m.pH L) cfg.bl) with
+    match bandAln cfg.wfa Rx W ((p.1.start - ws : Nat) : Int) cfg.w (min (min m.pH L) cfg.bl) with
     | some (cs, len, pen, runs) =>
       match chkAln pgs R Rr v (ws + cs) len pen runs with
       | some h => return m.withC h.1 5 h.2
@@ -665,7 +789,7 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
           let W := winL G ws (st + n + cfg.w)
           let Rx := if v < nc then R else Rr
           if cfg.ge != 0 && !gapHint Rx W ((st - ws : Nat) : Int) cfg.w cfg.ge then return r.bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
-          if let some (cs, len, pen, runs) := bandDP Rx W ((st - ws : Nat) : Int) cfg.w (min h cfg.bl) then
+          if let some (cs, len, pen, runs) := bandAln cfg.wfa Rx W ((st - ws : Nat) : Int) cfg.w (min h cfg.bl) then
             r := some (ws + cs, len, pen, runs)
         return r.bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
       -- an exact mate (RT's unique best) is kept when `kx`
@@ -685,15 +809,15 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
       let X := if v < nc then R else Rr
       if cfg.nk ≤ 1 then
         let sv := if cfg.sv then seedVote pk offs x.1.chr ws we X (if v < nc then s.ps else s.pr) else none
-        (nearY X G ws we cfg.w lim cfg.bl cfg.ge sv cfg.vf).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+        (nearY X G ws we cfg.w lim cfg.bl cfg.ge sv cfg.vf cfg.wfa).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
       else Id.run do
         let svs := if cfg.sv then seedVoteK pk offs x.1.chr ws we X (if v < nc then s.ps else s.pr) cfg.nk (2 * cfg.w) else #[]
         if svs.isEmpty then
-          return (nearY X G ws we cfg.w lim cfg.bl cfg.ge none cfg.vf).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
+          return (nearY X G ws we cfg.w lim cfg.bl cfg.ge none cfg.vf cfg.wfa).bind fun (st, len, pen, runs) => chkAln pgs R Rr v st len pen runs
         let mut best : Option ((Placement × Int) × List (AlignmentSpec.Step × Nat)) := none
         let mut lim := lim
         for sv in svs do
-          if let some (st, len, pen, runs) := nearY X G ws we cfg.w lim cfg.bl cfg.ge (some sv) cfg.vf then
+          if let some (st, len, pen, runs) := nearY X G ws we cfg.w lim cfg.bl cfg.ge (some sv) cfg.vf cfg.wfa then
             if let some h := chkAln pgs R Rr v st len pen runs then
               best := some h
               lim := pen
@@ -759,7 +883,7 @@ search can use), `chk := false` (the router re-checks its picks) and bucket limi
 the heuristic's pairs at XH=0's cost on easy reads; to be confirmed on chr21 and hg38). With `cmax := 16`
 a pair whose summed ceiling stays over 16 is T3, not T2: it keeps no found pair. -/
 def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (lo hi usl : Nat)
-    (heur : Bool := false) : TierCfg :=
+    (heur : Bool := false) (bud : Nat := 60000) : TierCfg :=
   let hcfg : HCfg :=
     { w := 8, r := 2, ck := 100, np := 8, dl := 16, seeds := true, near := true, band := true
       sv := true, seedAll := true, bl := 1000000, ge := 12, kx := true, vf := true, nk := 1
@@ -774,7 +898,7 @@ def rtxCfg (rcfg : RouteCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (
     hi := hi
     usl := usl
     pg := none
-    gate := fun _ _ _ _ c1 c2 => 60000 < c1 || 60000 < c2
+    gate := fun _ _ _ _ c1 c2 => bud < c1 || bud < c2
     pref := fun G0 a b s1 s2 => decide (rare (sbound G0 + 2) b s2 < rare (sbound G0 + 2) a s1)
     ceil := fun R s => ceilX pk offs pgs R s 500 16
     heur := fun a b s1 s2 m1 m2 =>

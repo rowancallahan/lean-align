@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
 
 @[default_target]
 lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Index, `Proofs.Aligner, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
+  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.Index, `Proofs.Aligner, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
 
 @[default_target]
 lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
@@ -256,3 +256,7 @@ lean_exe whole_genome where           -- whole genome held once: index over a vi
 lean_exe seed_lab where               -- seed lookup cost on the whole genome (benchmark only, unproved IO)
   srcDir := "Testing/benches"
   root := `SeedLab
+
+lean_exe bam_write where              -- BAM writer prototype with stored BGZF blocks vs SAM text (benchmark only, unproved)
+  srcDir := "Testing/benches"
+  root := `BamWrite
