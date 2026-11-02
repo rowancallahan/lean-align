@@ -1,0 +1,294 @@
+diff --git a/Main.lean b/Main.lean
+index 52a0324..8efebe4 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -18,18 +18,22 @@ def main (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+     let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
+-    IO.FS.writeBinFile indexPath (Spec.buildIndex byteGenome)
+-    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome)
++    let index := Spec.buildIndex byteGenome
++    IO.FS.writeBinFile indexPath index
++    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome index)
+     return 0
+   | ["map", indexPath, reads1Path, reads2Path, outPath, minFragment, maxFragment] =>
+-    let insertSettings : Spec.InsertSettings := { range := (minFragment.toNat!, maxFragment.toNat!) }
++    let some minFragment := minFragment.toNat? | throw (IO.userError "MIN_FRAGMENT is not a number")
++    let some maxFragment := maxFragment.toNat? | throw (IO.userError "MAX_FRAGMENT is not a number")
++    let insertSettings : Spec.InsertSettings := { range := (minFragment, maxFragment) }
+     -- TRUSTED: the index file is `buildIndex byteGenome` for the genome (the theorem's `hIndex`),
+-    -- and INDEX.chromosomes lists that genome's names and lengths
++    -- and INDEX.chromosomes lists that genome's names and lengths (checked: it carries this index's size and checksum)
+     let index ← IO.FS.readBinFile indexPath
+-    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
++    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes") index
+     let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
+     let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
+-    let out ← IO.FS.Handle.mk outPath .write
++    -- written to OUT.part and renamed at the end, so a run that stops on an error leaves no SAM under the final name
++    let out ← IO.FS.Handle.mk (outPath ++ ".part") .write
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+@@ -52,6 +56,8 @@ def main (args : List String) : IO UInt32 := do
+       let previous := writing
+       writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+     IO.ofExcept writing.get
++    out.flush
++    IO.FS.rename (outPath ++ ".part") outPath
+     return 0
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
+diff --git a/Proofs/Fasta.lean b/Proofs/Fasta.lean
+index 77c4559..02177b8 100644
+--- a/Proofs/Fasta.lean
++++ b/Proofs/Fasta.lean
+@@ -27,11 +27,17 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+     if 0 < line.size && line[0]! == 62 then
+       if started then
+         chromosomes := chromosomes.push (name, sequence)
+-      name := String.fromUTF8! (line.extract 1 line.size)
++      -- the name is the header up to the first space or tab (as samtools faidx and GATK do)
++      name := ((String.fromUTF8! (line.extract 1 line.size)).takeWhile (fun c => c != ' ' && c != '\t')).toString
++      unless !name.isEmpty do throw (IO.userError "FASTA: empty chromosome name")
+       sequence := ByteArray.empty
+       started := true
+     else if started then
++      unless allBytes isDnaByte line do
++        throw (IO.userError s!"FASTA {name}: letters other than A C G T N (lowercase, IUPAC)")
+       sequence := sequence ++ line
++    else if 0 < line.size then
++      throw (IO.userError "FASTA: sequence before the first '>' line")
+   if started then
+     chromosomes := chromosomes.push (name, sequence)
+   return chromosomes
+@@ -39,15 +45,28 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+ -- chromosome names and lengths, in genome order (saved next to the index at build time)
+ abbrev ChromosomeList := Array (String × Nat)
+ 
+--- one "name<TAB>length" line per chromosome
+-def chromosomeListText (byteGenome : GenomeFile) : String :=
++-- FNV-1a 64 bit over the bytes
++def fnv1a (bytes : ByteArray) : UInt64 := Id.run do
++  let mut h : UInt64 := 14695981039346656037
++  for b in bytes do
++    h := (h ^^^ b.toUInt64) * 1099511628211
++  return h
++
++-- first line "#index<TAB>size<TAB>checksum" of the saved index, then one "name<TAB>length" line per chromosome
++def chromosomeListText (byteGenome : GenomeFile) (index : ByteArray) : String :=
++  s!"#index\t{index.size}\t{fnv1a index}\n" ++
+   String.join (byteGenome.toList.map fun (name, sequence) => s!"{name}\t{sequence.size}\n")
+ 
+-def readChromosomeList (path : String) : IO ChromosomeList := do
++def badList {α : Type} (path why : String) : IO α := throw (IO.userError s!"{path}: {why}")
++
++-- the list saved for exactly this index; a different index, or a damaged list, stops the run
++def readChromosomeList (path : String) (index : ByteArray) : IO ChromosomeList := do
+   let lines := (← IO.FS.readFile path).splitOn "\n" |>.filter (· ≠ "")
+-  return lines.toArray.map fun line =>
+-    match line.splitOn "\t" with
+-    | [name, length] => (name, length.toNat!)
+-    | _ => (line, 0)
++  let header :: rest := lines | badList path "empty"
++  unless header == s!"#index\t{index.size}\t{fnv1a index}" do badList path "was not saved with this index (size or checksum differ)"
++  rest.toArray.mapM fun line => do
++    let [name, length] := line.splitOn "\t" | badList path s!"malformed line '{line}'"
++    let some length := length.toNat? | badList path s!"length '{length}' is not a number"
++    return (name, length)
+ 
+ end Spec
+diff --git a/Proofs/Fastq.lean b/Proofs/Fastq.lean
+index e65183e..98451ae 100644
+--- a/Proofs/Fastq.lean
++++ b/Proofs/Fastq.lean
+@@ -47,11 +47,27 @@ def FastqReader.line (reader : FastqReader) : IO (Option ByteArray) := do
+     reader.pos.set 0
+   return none
+ 
++-- every byte satisfies `p`
++def allBytes (p : UInt8 → Bool) (bytes : ByteArray) : Bool := Id.run do
++  for i in [0:bytes.size] do
++    if !p bytes[i]! then return false
++  return true
++
++-- the letters the spec's `GenomeIsDNA` allows: A C G T N
++def isDnaByte (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84 || b == 78
++
++-- a FASTQ line is bad input: stop the run (all bytes are checked to be printable ASCII before any String is made)
++def badFastq (what : String) : IO α := throw (IO.userError s!"FASTQ: {what}")
++
+ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some header ← reader.line | return none
+-  let some letters ← reader.line | return none
+-  let some _plus ← reader.line | return none
+-  let some quality ← reader.line | return none
++  let some letters ← reader.line | badFastq "file ends inside a record"
++  let some plus ← reader.line | badFastq "file ends inside a record"
++  let some quality ← reader.line | badFastq "file ends inside a record"
++  unless 0 < header.size && header[0]! == 64 && allBytes (fun b => 32 ≤ b && b ≤ 126) header do badFastq "header line is not '@' + printable ASCII"
++  unless 0 < plus.size && plus[0]! == 43 do badFastq "third line of a record does not start with '+'"
++  unless allBytes isDnaByte letters do badFastq "letters other than A C G T N (lowercase, IUPAC)"
++  unless allBytes (fun b => 33 ≤ b && b ≤ 126) quality do badFastq "quality outside '!'..'~'"
+   return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
+                 quality := String.fromUTF8! quality }
+ 
+@@ -78,6 +94,10 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+     | some record1, some record2 =>
+       if mateName record1.name != mateName record2.name then
+         throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
++      for record in [record1, record2] do
++        let name := mateName record.name
++        unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
++          badFastq s!"read name '{record.name}' is not a SAM QNAME"
+       if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
+         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
+       chunk := chunk.push (trimRecord record1, trimRecord record2)
+diff --git a/Spec/Fasta.lean b/Spec/Fasta.lean
+index c607c84..bdd7fed 100644
+--- a/Spec/Fasta.lean
++++ b/Spec/Fasta.lean
+@@ -27,11 +27,17 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+     if 0 < line.size && line[0]! == 62 then
+       if started then
+         chromosomes := chromosomes.push (name, sequence)
+-      name := String.fromUTF8! (line.extract 1 line.size)
++      -- the name is the header up to the first space or tab (as samtools faidx and GATK do)
++      name := ((String.fromUTF8! (line.extract 1 line.size)).takeWhile (fun c => c != ' ' && c != '\t')).toString
++      unless !name.isEmpty do throw (IO.userError "FASTA: empty chromosome name")
+       sequence := ByteArray.empty
+       started := true
+     else if started then
++      unless allBytes isDnaByte line do
++        throw (IO.userError s!"FASTA {name}: letters other than A C G T N (lowercase, IUPAC)")
+       sequence := sequence ++ line
++    else if 0 < line.size then
++      throw (IO.userError "FASTA: sequence before the first '>' line")
+   if started then
+     chromosomes := chromosomes.push (name, sequence)
+   return chromosomes
+@@ -39,15 +45,28 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+ -- chromosome names and lengths, in genome order (saved next to the index at build time)
+ abbrev ChromosomeList := Array (String × Nat)
+ 
+--- one "name<TAB>length" line per chromosome
+-def chromosomeListText (byteGenome : GenomeFile) : String :=
++-- FNV-1a 64 bit over the bytes
++def fnv1a (bytes : ByteArray) : UInt64 := Id.run do
++  let mut h : UInt64 := 14695981039346656037
++  for b in bytes do
++    h := (h ^^^ b.toUInt64) * 1099511628211
++  return h
++
++-- first line "#index<TAB>size<TAB>checksum" of the saved index, then one "name<TAB>length" line per chromosome
++def chromosomeListText (byteGenome : GenomeFile) (index : ByteArray) : String :=
++  s!"#index\t{index.size}\t{fnv1a index}\n" ++
+   String.join (byteGenome.toList.map fun (name, sequence) => s!"{name}\t{sequence.size}\n")
+ 
+-def readChromosomeList (path : String) : IO ChromosomeList := do
++def badList {α : Type} (path why : String) : IO α := throw (IO.userError s!"{path}: {why}")
++
++-- the list saved for exactly this index; a different index, or a damaged list, stops the run
++def readChromosomeList (path : String) (index : ByteArray) : IO ChromosomeList := do
+   let lines := (← IO.FS.readFile path).splitOn "\n" |>.filter (· ≠ "")
+-  return lines.toArray.map fun line =>
+-    match line.splitOn "\t" with
+-    | [name, length] => (name, length.toNat!)
+-    | _ => (line, 0)
++  let header :: rest := lines | badList path "empty"
++  unless header == s!"#index\t{index.size}\t{fnv1a index}" do badList path "was not saved with this index (size or checksum differ)"
++  rest.toArray.mapM fun line => do
++    let [name, length] := line.splitOn "\t" | badList path s!"malformed line '{line}'"
++    let some length := length.toNat? | badList path s!"length '{length}' is not a number"
++    return (name, length)
+ 
+ end Spec
+diff --git a/Spec/Fastq.lean b/Spec/Fastq.lean
+index e65183e..98451ae 100644
+--- a/Spec/Fastq.lean
++++ b/Spec/Fastq.lean
+@@ -47,11 +47,27 @@ def FastqReader.line (reader : FastqReader) : IO (Option ByteArray) := do
+     reader.pos.set 0
+   return none
+ 
++-- every byte satisfies `p`
++def allBytes (p : UInt8 → Bool) (bytes : ByteArray) : Bool := Id.run do
++  for i in [0:bytes.size] do
++    if !p bytes[i]! then return false
++  return true
++
++-- the letters the spec's `GenomeIsDNA` allows: A C G T N
++def isDnaByte (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84 || b == 78
++
++-- a FASTQ line is bad input: stop the run (all bytes are checked to be printable ASCII before any String is made)
++def badFastq (what : String) : IO α := throw (IO.userError s!"FASTQ: {what}")
++
+ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some header ← reader.line | return none
+-  let some letters ← reader.line | return none
+-  let some _plus ← reader.line | return none
+-  let some quality ← reader.line | return none
++  let some letters ← reader.line | badFastq "file ends inside a record"
++  let some plus ← reader.line | badFastq "file ends inside a record"
++  let some quality ← reader.line | badFastq "file ends inside a record"
++  unless 0 < header.size && header[0]! == 64 && allBytes (fun b => 32 ≤ b && b ≤ 126) header do badFastq "header line is not '@' + printable ASCII"
++  unless 0 < plus.size && plus[0]! == 43 do badFastq "third line of a record does not start with '+'"
++  unless allBytes isDnaByte letters do badFastq "letters other than A C G T N (lowercase, IUPAC)"
++  unless allBytes (fun b => 33 ≤ b && b ≤ 126) quality do badFastq "quality outside '!'..'~'"
+   return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
+                 quality := String.fromUTF8! quality }
+ 
+@@ -78,6 +94,10 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+     | some record1, some record2 =>
+       if mateName record1.name != mateName record2.name then
+         throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
++      for record in [record1, record2] do
++        let name := mateName record.name
++        unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
++          badFastq s!"read name '{record.name}' is not a SAM QNAME"
+       if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
+         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
+       chunk := chunk.push (trimRecord record1, trimRecord record2)
+diff --git a/Spec/Shim.lean b/Spec/Shim.lean
+index 963f393..f3806fe 100644
+--- a/Spec/Shim.lean
++++ b/Spec/Shim.lean
+@@ -17,18 +17,22 @@ def main (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+     let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
+-    IO.FS.writeBinFile indexPath (Spec.buildIndex byteGenome)
+-    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome)
++    let index := Spec.buildIndex byteGenome
++    IO.FS.writeBinFile indexPath index
++    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome index)
+     return 0
+   | ["map", indexPath, reads1Path, reads2Path, outPath, minFragment, maxFragment] =>
+-    let insertSettings : Spec.InsertSettings := { range := (minFragment.toNat!, maxFragment.toNat!) }
++    let some minFragment := minFragment.toNat? | throw (IO.userError "MIN_FRAGMENT is not a number")
++    let some maxFragment := maxFragment.toNat? | throw (IO.userError "MAX_FRAGMENT is not a number")
++    let insertSettings : Spec.InsertSettings := { range := (minFragment, maxFragment) }
+     -- TRUSTED: the index file is `buildIndex byteGenome` for the genome (the theorem's `hIndex`),
+-    -- and INDEX.chromosomes lists that genome's names and lengths
++    -- and INDEX.chromosomes lists that genome's names and lengths (checked: it carries this index's size and checksum)
+     let index ← IO.FS.readBinFile indexPath
+-    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
++    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes") index
+     let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
+     let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
+-    let out ← IO.FS.Handle.mk outPath .write
++    -- written to OUT.part and renamed at the end, so a run that stops on an error leaves no SAM under the final name
++    let out ← IO.FS.Handle.mk (outPath ++ ".part") .write
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+@@ -51,6 +55,8 @@ def main (args : List String) : IO UInt32 := do
+       let previous := writing
+       writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+     IO.ofExcept writing.get
++    out.flush
++    IO.FS.rename (outPath ++ ".part") outPath
+     return 0
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
