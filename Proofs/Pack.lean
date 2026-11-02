@@ -785,12 +785,16 @@ theorem packAll_eq (gbs : Array ByteArray) :
 /-- The bytes of all chromosomes, one after the other. -/
 def catG (byteGenome : GenomeFile) : List UInt8 := catL (byteGenome.map (·.2)).toList
 
+/-- Bytes of blocks for `N` letters. -/
+def wBytes (N : Nat) : Nat := 17 * (N / 64) + (if N % 64 = 0 then 0 else 1 + (N % 64 + 3) / 4)
+
 /-- The packed genome `buildLoaded` makes spells `catG`, and its block bytes for each letter are in
 `G.w`. -/
 theorem packAll_spec (byteGenome : GenomeFile) (hN : (catG byteGenome).length < 2 ^ 32) :
     let G := Index.packAll (byteGenome.map (·.2))
     G.n = (catG byteGenome).length ∧ G.o = 0 ∧
-    ∀ i, i < G.n → G.raw i = (catG byteGenome)[i]! ∧ 17 * (i / 64) < G.w.size ∧ cpos i < G.w.size := by
+    (∀ i, i < G.n → G.raw i = (catG byteGenome)[i]! ∧ 17 * (i / 64) < G.w.size ∧ cpos i < G.w.size) ∧
+    G.w.size = wBytes (catG byteGenome).length ∧ G.ex.size ≤ 12 * (catG byteGenome).length := by
   intro G
   have hG : G = _ := packAll_eq _
   generalize hL : catL (byteGenome.map (·.2)).toList = L at hG
@@ -800,11 +804,17 @@ theorem packAll_spec (byteGenome : GenomeFile) (hN : (catG byteGenome).length < 
     (fun j _ => by simp) (by simpa using hN)
   rw [Nat.zero_add] at I
   rw [hG]
-  refine ⟨I.hn, rfl, fun i hi => ?_⟩
-  have hi' : i < L.length := by rw [show (PB.finish _).n = _ from I.hn] at hi; exact hi
-  refine ⟨finish_raw _ _ _ I hN i hi', ?_, ?_⟩
-  · rw [finish_w, wF_size _ _ _ I]; split <;> omega
-  · rw [finish_w]; exact (wF_code _ _ _ I i hi').2
+  refine ⟨I.hn, rfl, fun i hi => ?_, by rw [finish_w, wF_size _ _ _ I]; rfl, ?_⟩
+  · have hi' : i < L.length := by rw [show (PB.finish _).n = _ from I.hn] at hi; exact hi
+    refine ⟨finish_raw _ _ _ I hN i hi', ?_, ?_⟩
+    · rw [finish_w, wF_size _ _ _ I]; split <;> omega
+    · rw [finish_w]; exact (wF_code _ _ _ I i hi').2
+  · show (pack32 _).size ≤ _
+    rw [(pack32_spec _).1]
+    have h1 := cnt_le _ _ _ I.ex
+    have h2 := I.ex.exm
+    unfold cnt at h1
+    omega
 
 theorem eqRunP_of (P : PGen) (b : ByteArray) : ∀ k i, (∀ j, i ≤ j → j < i + k → P.get j = b.get! j) →
     Index.eqRunP P b i k = true := by

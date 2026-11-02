@@ -314,6 +314,7 @@ theorem runsB_spec (G : ByteArray) : (runsB G).size ≤ 2 * G.size ∧ ∀ x ∈
 
 /-- What the save/load and checker-shift proofs need from the built minimizer index. -/
 structure BuiltOk (ix : MzIdx) (N : Nat) : Prop where
+  B26 : ix.B = 26
   sz : ix.offs.size = 4 * (2 ^ ix.B + 1)
   ob0 : ix.ob = 0
   sw : ix.sw = 5
@@ -333,7 +334,7 @@ theorem buildW_ok (G : ByteArray) (hN : G.size < 2 ^ 32) : BuiltOk (buildW G 22 
   have hB : (ix0 G).B = 26 := rfl
   have tot : getU32 (cnt2 G) (2 ^ 26) ≤ G.size := by rw [c2 _ (Nat.le_refl _)]; exact (cnt1_spec G hN).2.1
   have hkf : (ix0 G).kf ≤ 18 := by simp only [ix0, mkIdx]; omega
-  refine ⟨?_, rfl, rfl, ?_, ?_, ?_, r1, r2, ?_⟩
+  refine ⟨rfl, ?_, rfl, rfl, ?_, ?_, ?_, r1, r2, ?_⟩
   · simp only [hB]; exact c1
   · intro b hb; simp only [hB] at hb ⊢
     rw [c2 b hb, c2 _ (Nat.le_refl _)]; exact sumU_mono _ _ _ (by omega)
