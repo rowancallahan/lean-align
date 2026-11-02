@@ -1359,6 +1359,34 @@ default · 11 graded MAPQ + NM/MD in Spec/Sam · 12 BAM default · 13 parTasks �
 ngi-igenomes.s3.amazonaws.com · 15 dedup / heuristic (off).
 Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
 
+#### Decision questions in detail (Rowan is thinking these over)
+1. **Trimming in the shim?** Spec/Shim chunkPairs → ReadTrim.trimRead per mate (qualities are in the FASTQ record);
+   fully trimmed mate → none. +22.7k HiSeq pairs, NovaSeq CPU ~34 → ~28 s, deepCaps HiSeq cost +135% → ~+40%. minibwa
+   doesn't trim (it soft-clips); our scoring is end to end, so trimming plays that role. Trim time counts in our runs.
+2. **Merge claude/festive-fermi-mf9mo6 into main?** CI green; includes Rowan's spec (junkScore −16), M2, speed work,
+   proved index builder.
+3. **Main.lean I/O overlap?** 200k sets = 2 chunks of 100k: first-chunk read and last-chunk format/write don't overlap
+   mapping → mason/low don't scale 2→4 threads. Proposal: small first chunk (~10k), samChunk inside the background write.
+4. **Low-repeat k=21 extra index?** Find-only second pass (checked pair, proper, .unknown): mason +7.5%, low +1.6%,
+   HiSeq +4.9%, NovaSeq +5.6%. Needs a build-time filter (positions whose k-mer occurs ≤ N times) or mmap to fit 15 GB.
+   Later: proof per covered region → "unique" provable; one generic index builder.
+5. **mmap the index in Main.lean?** Cold load 5–30 s; index held twice in memory today (file + heap).
+6. **deepCaps on?** After trimming (cost then ~+40% HiSeq, ~+12% NovaSeq; gains mason +3.5%, HiSeq +1.1%).
+7. **junkScore:** keep −16 (= what the cap proves free), move into InsertSettings (done as a field), make it relative
+   to read length (ties to relative caps / long reads)?
+8. **Leftover no-pair answers (0.16–0.97% degenerate "150I" pairs):** add a cheap proof that no good proper pair exists
+   (mates' hits never form a proper pair → honest junk), near-tie label (small gaps cover little), or a "gave up" label;
+   then a score floor for reported .unknown pairs.
+9. **Mate rescue scope:** today only when a mate has a placement in hand; on all bound −17 pairs: +21k HiSeq, +8.6k
+   NovaSeq, +6.2k mason.
+10. **gateBudget default** (60000): 15000 = mason −30% / NovaSeq −24% CPU, unique 176k → 172k (mason).
+11. **SAM output:** graded MAPQ (today 0/60), NM/MD tags, AS sign, supplementary lines, half-mapped flags (Spec/Sam).
+12. **BAM as default output?** Now ≤ SAM in format time/CPU for mapped output, ~20% smaller; samtools checks pass.
+13. **parTasks for 32-thread servers:** ≥ core count (compile-time setting in Proofs/Aligner.lean).
+14. **Soft-masked hg38 (ngi-igenomes.s3.amazonaws.com):** APPROVED by Rowan for repeat tricks; needs the host added
+    under Allowed domains in the environment's Network access settings.
+15. **Dedup** (large read sets) and the **heuristic** (M2 settings): both still off.
+
 ### Later (Rowan)
 - **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
   maybe force reporting it whenever one exists.
