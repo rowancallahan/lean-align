@@ -52,6 +52,42 @@ structure GW where
 @[inline] def loadG (w : ByteArray) (u0 k : Nat) : GW :=
   ⟨loadW w (u0 + 16) (k - 16) #[], ldw w u0 k 0, ldw w u0 k 1, ldw w u0 k 2, ldw w u0 k 3, ldw w u0 k 4, ldw w u0 k 5, ldw w u0 k 6, ldw w u0 k 7, ldw w u0 k 8, ldw w u0 k 9, ldw w u0 k 10, ldw w u0 k 11, ldw w u0 k 12, ldw w u0 k 13, ldw w u0 k 14, ldw w u0 k 15⟩
 
+/-- `ldw` on machine words (`ldwU_eq`). -/
+@[inline] def ldwU (w : ByteArray) (u0 k i : USize) : UInt64 := if i < k then gwordU w (u0 + i) else 0
+
+theorem ldwU_eq (w : ByteArray) (u0 k i : USize) (hu : u0.toNat + 16 < 2 ^ 28) (hi : i.toNat < 16) :
+    ldwU w u0 k i = ldw w u0.toNat k.toNat i.toNat := by
+  unfold ldwU ldw
+  have e : (u0 + i).toNat = u0.toNat + i.toNat := usz_add' _ _ (by omega)
+  by_cases c : i < k
+  · rw [if_pos c, if_pos (show i.toNat < k.toNat from c), gwordU_eq w _ (by omega), e]
+  · rw [if_neg c, if_neg (show ¬ i.toNat < k.toNat from c)]
+
+/-- `loadG` with the 16 field words read on machine words when the window fits (`loadG_eqU`). -/
+@[inline] def loadGU (w : ByteArray) (u0 k : Nat) : GW :=
+  if u0 + 16 < 2 ^ 28 ∧ k < 2 ^ 28 then
+    let uU := u0.toUSize
+    let kU := k.toUSize
+    ⟨loadW w (u0 + 16) (k - 16) #[], ldwU w uU kU 0, ldwU w uU kU 1, ldwU w uU kU 2, ldwU w uU kU 3,
+      ldwU w uU kU 4, ldwU w uU kU 5, ldwU w uU kU 6, ldwU w uU kU 7, ldwU w uU kU 8, ldwU w uU kU 9,
+      ldwU w uU kU 10, ldwU w uU kU 11, ldwU w uU kU 12, ldwU w uU kU 13, ldwU w uU kU 14, ldwU w uU kU 15⟩
+  else loadG w u0 k
+
+@[csimp] theorem loadG_eqU : @loadG = @loadGU := by
+  funext w u0 k
+  unfold loadGU
+  split
+  · next h =>
+    have hu : u0.toUSize.toNat = u0 := usz_n _ (by omega)
+    have hk : k.toUSize.toNat = k := usz_n _ (by omega)
+    have l : ∀ i : Nat, i < 16 → ldwU w u0.toUSize k.toUSize (OfNat.ofNat i) = ldw w u0 k i := by
+      intro i hi
+      rw [ldwU_eq w _ _ _ (by rw [hu]; omega) (by rw [usz_lit i (by omega)]; exact hi), hu, hk, usz_lit i (by omega)]
+    simp only [loadG, l 0 (by decide), l 1 (by decide), l 2 (by decide), l 3 (by decide), l 4 (by decide),
+      l 5 (by decide), l 6 (by decide), l 7 (by decide), l 8 (by decide), l 9 (by decide), l 10 (by decide),
+      l 11 (by decide), l 12 (by decide), l 13 (by decide), l 14 (by decide), l 15 (by decide)]
+  · rfl
+
 /-- Word `i` of the window. -/
 @[inline] def GW.get (g : GW) (i : Nat) : UInt64 :=
   if i < 8 then
