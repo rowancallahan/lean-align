@@ -169,22 +169,23 @@ instance : LawfulBEq ByteArray where
   eq_of_beq {a b} h := ByteArray.ext (by change a.data == b.data at h; simpa using h)
 
 -- identical pairs of a chunk (PCR / optical duplicates) are aligned once: the distinct pairs are
--- mapped in 16 tasks, every pair (each keeps its own place) looks its result up
+-- mapped in 16 tasks (each with its own setup, as `alignPairsC`), every pair (each keeps its own
+-- place) looks its result up
 def alignPairsD (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
-  let setup := chunkSetup insertSettings (loadIndex index)
-  let f := fun (p : Option ByteArray × Option ByteArray) => alignOneC setup p.1 p.2
+  let mk := fun (_ : Unit) => chunkSetup insertSettings (loadIndex index)
   let xs := pairs.toArray
-  let tbl := ParMap.buildTable (ParMap.parMap 16 (fun k => (k, f k)) (ParMap.distinct xs))
-  (xs.map (ParMap.lookupOr f tbl)).toList
+  let tbl := ParMap.buildTable (ParMap.parMapS 16 mk (fun setup k => (k, alignOneC setup k.1 k.2))
+    (ParMap.distinct xs))
+  (xs.map (ParMap.lookupOr (fun p => alignOneC (mk ()) p.1 p.2) tbl)).toList
 
 theorem alignPairsD_eq : @alignPairsD = @alignPairsC := by
   funext insertSettings index pairs
-  simp only [alignPairsD, alignPairsC, ParMap.parMap_eq_map]
+  simp only [alignPairsD, alignPairsC, ParMap.parMapS_eq]
   congr 1
   apply Array.map_congr_left
-  intro x _
-  apply ParMap.lookupOr_eq
+  rintro ⟨a, b⟩ _
+  rw [ParMap.lookupOr_eq]
   apply ParMap.buildTable_sound
   intro p hp
   obtain ⟨k, _, rfl⟩ := Array.mem_map.mp hp
