@@ -10,7 +10,9 @@ namespace Spec
 structure InsertSettings where
   range         : Nat × Nat  -- allowed fragment length: min and max, both included
   dovetailSlack : Nat := 0
-  junkScore : Int := -17
+  requiredMapBound : Int := 17
+  junkScore : Int := -50
+
 
 inductive Mate where
   | one
@@ -100,7 +102,10 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
   -- the pair found is a real proper pair, printed exactly
   (∀ report, answer.found = some report →
     ∃ pair : PairAlignment genome mate1 mate2,
-      pair.report = report ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack) ∧
+      pair.report = report ∧
+      (pair.IsProper insertSettings.range insertSettings.dovetailSlack) ^
+      pair.score >= junkScore
+      ) ∧
   -- the bound holds for every proper pair
   (∀ pair : PairAlignment genome mate1 mate2,
     pair.IsProper insertSettings.range insertSettings.dovetailSlack → pair.score ≤ answer.bestPossibleScore) ∧
@@ -114,7 +119,7 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
        ∃ pair other : PairAlignment genome mate1 mate2, pair.report = report ∧
          pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
    | .unknown => 
-       answer.found = none → answer.bestPossibleScore < insertSettings.junkScore
+       answer.found = none → answer.bestPossibleScore < insertSettings.requiredMapBound
    )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)
