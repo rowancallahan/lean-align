@@ -96,3 +96,71 @@ Degenerate pairs with a mate trimmed short (shorter mate's SEQ length): NovaSeq 
 < 75 bp 1,314, < 100 bp 1,721, < 151 (any trimming) 4,578 (84%). HiSeq: 2,385, < 50 bp 613 (25.7%).
 Pair score (AS1 + AS2) of real mapped pairs (all-insertion CIGARs excluded), share below −16 / −32 / −50 / −64 / −100:
 NovaSeq 9.26 / 5.14 / 3.68 / 3.08 / 2.40%; HiSeq 8.78 / 4.49 / 3.61 / 3.20 / 2.62%.
+
+## 7. Headline round on festive-fermi e384063 (ad6f7df + speed/n32-kernels), 2026-11-02 evening
+Commits: ours = festive-fermi e384063 (shim built from that tree: capBudget 5000, chunk 20000); minibwa = lh3/minibwa
+c07de5c, `make` default flags. Index: release `bench-release` (shim.idx, mb.*). Box: 4 cores, 15 GB, nothing else running.
+Invocation (from the repo root; S = scratchpad holding the two binaries):
+
+    sh Testing/scripts/headline.sh OUT 'k:$S/v.k mbdef:$S/minibwa' 'novaseq:novaseq_200k'
+    sh Testing/scripts/headline.sh OUT 'k:$S/v.k mbdef:$S/minibwa' 'mason:hg38_mason low:hg38_low hiseq:hg002_200k'
+    python3 -I Testing/scripts/ab_med.py LOG
+
+headline.sh: THREADS=4 (taskset 0-3, `map -t 4` for minibwa), REPEAT=3; per set all our runs, then all minibwa runs; before
+a tool's group the other tool's index is dropped from the page cache (posix_fadvise DONTNEED); before every run the
+tool's own index is read once (cat > /dev/null); our timed runs are preceded by an empty-FASTQ run (timed, not used) and
+timed by timed_load.py, which measures the load inside the run (time and CPU until the process has read
+index-file-size bytes). minibwa's load = its own "index loaded" wall and wall × CPU ratio. FASTQ read and SAM write
+included. Headline = median of (wall − load); CPU = median of (CPU − load CPU).
+
+| set | minibwa / ours (wall − load) | CPU | end-to-end wall |
+|---|---|---|---|
+| NovaSeq 200k | 15.7 s / 6.2 s = **2.51x** | 57.0 / 20.9 s = 2.73x | 29.5 / 7.9 s |
+| mason | 14.7 / 8.0 = 1.85x | 54.2 / 26.9 = 2.01x | 28.4 / 9.7 |
+| low | 9.7 / 5.4 = 1.80x | 34.0 / 17.5 = 1.94x | 19.8 / 9.7 |
+| HiSeq 200k | 28.0 / 7.9 = 3.56x | 107.1 / 26.4 = 4.06x | 39.2 / 10.6 |
+
+Noise: our three runs per set agree within ~1 s on wall − load (NovaSeq 6.2 / 6.2 / 6.5 s); minibwa within ~1.5 s. Across
+rounds on different days / page-cache histories the same build moved ~10% (mason 7.2 s in §6 vs 8.0 s here, same Ir — below).
+
+Raw lines (ours: TIME with in-run load; minibwa: TIME and MBLOAD = index-loaded wall, CPU ratio):
+
+    TIME novaseq k r1: wall 7.9 s, cpu 22.6 s, user 18.5 s, sys 4.0 s, load 1.75 s, loadcpu 1.73 s, peak 5.43 GB, exit 0
+    TIME novaseq k r2: wall 7.9 s, cpu 22.2 s, user 19.0 s, sys 3.1 s, load 1.65 s, loadcpu 1.63 s, peak 5.44 GB, exit 0
+    TIME novaseq k r3: wall 8.2 s, cpu 23.9 s, user 20.4 s, sys 3.5 s, load 1.72 s, loadcpu 1.66 s, peak 5.43 GB, exit 0
+    TIME novaseq mbdef r1: wall 37.9 s, cpu 79.5 s, user 56.2 s, peak 7.69 GB, exit 0
+    MBLOAD novaseq mbdef r1 22.681 0.99
+    TIME novaseq mbdef r2: wall 27.7 s, cpu 71.1 s, user 58.8 s, peak 7.69 GB, exit 0
+    MBLOAD novaseq mbdef r2 11.075 0.99
+    TIME novaseq mbdef r3: wall 29.5 s, cpu 70.7 s, user 55.7 s, peak 7.70 GB, exit 0
+    MBLOAD novaseq mbdef r3 13.811 0.99
+    TIME mason k r1: wall 13.6 s, cpu 34.1 s, user 27.3 s, sys 6.8 s, load 5.04 s, loadcpu 5.00 s, peak 5.43 GB, exit 0
+    TIME mason k r2: wall 9.7 s, cpu 28.3 s, user 25.0 s, sys 3.3 s, load 1.74 s, loadcpu 1.72 s, peak 5.41 GB, exit 0
+    TIME mason k r3: wall 9.6 s, cpu 28.7 s, user 24.7 s, sys 4.0 s, load 1.79 s, loadcpu 1.75 s, peak 5.42 GB, exit 0
+    TIME mason mbdef r1: wall 33.4 s, cpu 73.0 s, user 51.9 s, peak 7.86 GB, exit 0
+    MBLOAD mason mbdef r1 18.895 0.99
+    TIME mason mbdef r2: wall 27.7 s, cpu 66.6 s, user 52.6 s, peak 7.87 GB, exit 0
+    MBLOAD mason mbdef r2 12.954 0.99
+    TIME mason mbdef r3: wall 28.4 s, cpu 67.5 s, user 52.9 s, peak 7.86 GB, exit 0
+    MBLOAD mason mbdef r3 13.451 0.99
+    TIME low k r1: wall 9.7 s, cpu 22.7 s, user 16.4 s, sys 6.3 s, load 4.07 s, loadcpu 4.03 s, peak 5.43 GB, exit 0
+    TIME low k r2: wall 10.3 s, cpu 22.4 s, user 16.3 s, sys 6.1 s, load 4.93 s, loadcpu 4.89 s, peak 5.43 GB, exit 0
+    TIME low k r3: wall 7.9 s, cpu 19.5 s, user 16.0 s, sys 3.4 s, load 2.65 s, loadcpu 2.60 s, peak 5.43 GB, exit 0
+    TIME low mbdef r1: wall 30.3 s, cpu 56.2 s, user 33.0 s, peak 7.58 GB, exit 0
+    MBLOAD low mbdef r1 20.372 0.99
+    TIME low mbdef r2: wall 19.8 s, cpu 43.9 s, user 32.9 s, peak 7.58 GB, exit 0
+    MBLOAD low mbdef r2 10.113 0.98
+    TIME low mbdef r3: wall 16.1 s, cpu 39.5 s, user 32.0 s, peak 7.58 GB, exit 0
+    MBLOAD low mbdef r3 6.568 0.99
+    TIME hiseq k r1: wall 14.0 s, cpu 34.0 s, user 25.7 s, sys 8.3 s, load 5.08 s, loadcpu 5.02 s, peak 5.48 GB, exit 0
+    TIME hiseq k r2: wall 9.5 s, cpu 27.1 s, user 23.1 s, sys 4.1 s, load 1.86 s, loadcpu 1.82 s, peak 5.48 GB, exit 0
+    TIME hiseq k r3: wall 10.6 s, cpu 29.1 s, user 24.9 s, sys 4.2 s, load 2.74 s, loadcpu 2.72 s, peak 5.47 GB, exit 0
+    TIME hiseq mbdef r1: wall 44.2 s, cpu 123.3 s, user 103.8 s, peak 8.03 GB, exit 0
+    MBLOAD hiseq mbdef r1 16.234 1.00
+    TIME hiseq mbdef r2: wall 39.2 s, cpu 119.5 s, user 107.8 s, peak 8.02 GB, exit 0
+    MBLOAD hiseq mbdef r2 10.365 0.99
+    TIME hiseq mbdef r3: wall 38.0 s, cpu 112.5 s, user 100.3 s, peak 8.03 GB, exit 0
+    MBLOAD hiseq mbdef r3 10.786 0.99
+
+Mason recheck (callgrind, `lean-align map`, first 2,000 pairs): ad6f7df 1.658G Ir, e384063 1.619G Ir (−2.4%); NovaSeq
+1.406G → 1.141G (−18.8%); SAM identical on both. The kernels merge did not slow mason; 7.2 vs 8.0 s is run-to-run noise.
