@@ -1360,7 +1360,10 @@ ngi-igenomes.s3.amazonaws.com · 15 dedup / heuristic (off).
 Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
 
 #### Decision questions in detail (Rowan is thinking these over)
-1. **Trimming in the shim?** Spec/Shim chunkPairs → ReadTrim.trimRead per mate (qualities are in the FASTQ record);
+1. **Trimming in the shim?** → DECIDED (Rowan): yes, he will add it later.
+   Also later maybe: switch to LOCAL alignment (clip step with a fixed clip penalty at read ends, like BWA/minibwa):
+   uniqueness/bound definitions carry over (different score); needs clipped-end kernels + certificates, pigeonhole bound
+   with clipped bases, CIGAR S ops — about M2-sized proof work. Global + trimming for now. Spec/Shim chunkPairs → ReadTrim.trimRead per mate (qualities are in the FASTQ record);
    fully trimmed mate → none. +22.7k HiSeq pairs, NovaSeq CPU ~34 → ~28 s, deepCaps HiSeq cost +135% → ~+40%. minibwa
    doesn't trim (it soft-clips); our scoring is end to end, so trimming plays that role. Trim time counts in our runs.
 2. **Merge claude/festive-fermi-mf9mo6 into main?** CI green; includes Rowan's spec (junkScore −16), M2, speed work,
