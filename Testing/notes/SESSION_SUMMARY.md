@@ -1305,6 +1305,11 @@ SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not
 insertSettings.junkScore`. With a pair, clause 1 makes it real; without, it is proved junk. A junk pair (bound <
 junkScore) may still be reported or tossed.
 
+### Decision (Rowan, 2026-11-02 night): junkScore default −16
+Junk = no proper pair scoring ≥ −16 (what the −16 cap proves for free; bound −17 qualifies). Approved one-line change
+to Spec/Aligner.lean default (+ FROZEN.sha256), applied at the M2 merge. Bound-0 lookup-gate leftovers (3–6k/set) and
+378 dovetail T1 pairs (HiSeq) violate the clause for any junkScore: O3 fixing. deepCaps / relative caps research: O2.
+
 ### Read-quality facts (O4, minibwa NM on hg38, 200k each)
 Mates within our −16 cap: NovaSeq 94.8%, HiSeq 88.6% (≤2 mismatches: 91.2% / 81.1%). Soft-clipped mates: HiSeq 13.2%,
 NovaSeq 4.3% (our alignment is end-to-end and the shim doesn't trim). This matches our ~82% kept vs minibwa ~98%: the
