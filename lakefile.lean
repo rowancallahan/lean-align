@@ -261,6 +261,15 @@ lean_exe bam_write where              -- BAM writer prototype with stored BGZF b
   srcDir := "Testing/benches"
   root := `BamWrite
 
+@[default_target]
+lean_lib UniqueGenome where           -- unique-genome proofs: k-mers once ⇒ 150-windows far apart; proved k-mer checker
+  srcDir := "Testing/unique"
+  roots := #[`UniqueGenome]
+
+lean_exe kmer_check where             -- runs the proved checker UniqueGenome.checkUnique on a FASTA (the IO is unproved)
+  srcDir := "Testing/unique"
+  root := `KmerCheck
+
 lean_exe tie_prof where                   -- benchmark only: shim CPU by router stage, tier and reason (unproved IO)
   srcDir := "Testing/benches"
   root := `TieProf
