@@ -108,3 +108,15 @@ callgrind on 2000 pairs vs 88bde0a, SAM byte-identical, CI_check passes:
 |---|---|---|---|
 | hg38 mason | 3.7821G | 3.6415G | −3.7% |
 | HiSeq HG002 | 2.0318G | 2.0113G | −1.0% |
+
+## 7. Item 2: the per-diagonal window load on machine words (`loadGU`, csimp `loadG_eqU`)
+`loadG` built the 16 genome words of each diagonal's window with a boxed `i < k` test and `gword`'s
+`17·(u/2) + 1 + 8·(u%2)` in `Nat` per word. `loadGU` checks once that `u0 + 16 < 2^28` and `k < 2^28`, then reads
+each word with the existing proved `gwordU` (`USize` offsets, one bounds check per word); otherwise `loadG`.
+`ldwU_eq` + `gwordU_eq` prove it equal. SAM byte-identical (2000 mason + 2000 HiSeq vs 88bde0a); CI_check passes.
+| set | 88bde0a | + lanesAnyV + stageKSPN | + loadGU | total vs 88bde0a |
+|---|---|---|---|---|
+| hg38 mason | 3.7821G | 3.6415G | 3.4696G | −8.3% |
+| HiSeq HG002 | 2.0318G | 2.0113G | 1.9737G | −2.9% |
+The rest of the per-diagonal `Nat` math (`wordWin`, `a = P.o + (D − n − r)`, `% 32`, `/ 32`) is a few operations per
+diagonal and was left as is.
