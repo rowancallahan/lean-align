@@ -250,7 +250,13 @@ def pairCfgZ (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteAr
 -- `alignOneC` with each mate prepared once (`prepMz`): its bucket sizes give `capFor` and the router's costs, and
 -- the router (`tierPairBP`) and the reporter (`answerOfPairP`: reverse complements, packed strands) get the
 -- preparations (`alignOneP_eq`)
-def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option Setup)
+-- the setup with `Report.monoOk` of its chromosome offsets, computed once per chunk (the reporter's chromosome
+-- lookup stops early when it holds: `Report.chromOfM_eq`)
+abbrev SetupP := Setup × Bool
+
+def withMono (st : Setup) : SetupP := (st, Report.monoOk st.2.2.2.2.1 st.2.2.2.2.2)
+
+def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option SetupP)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
   match bytes1, bytes2 with
   | none, _ => .trimmedAway .one
@@ -258,7 +264,7 @@ def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
   | some read1, some read2 =>
       match setup with
       | none => .aligned (LastResort.finalize insertSettings (LastResort.fitNs lens) read1 read2 noIndexAnswer)
-      | some (insertSettings, cfg, pk, pgs, offs, ns) =>
+      | some ((insertSettings, cfg, pk, pgs, offs, ns), ok) =>
           let s1 := MapSpec.Fast.prepMz pk read1
           let s2 := MapSpec.Fast.prepMz pk read2
           let za1 := s1.ps.map (MapSpec.Fast.LookG.size pk)
@@ -274,7 +280,7 @@ def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
           let cb := capForS (cfg.rcfg.cap1 read2) read2 sb1 sb2
           let cfg' := pairCfgZ cfg pk read1 read2 ca cb
           .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
-            (Report.answerOfPairP reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
+            (Report.answerOfPairP reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns ok read1 read2
               s1 s2 (MapSpec.Fast.tierUp cfg' pk #[0] pgs read1 read2
                 (MapSpec.Fast.tierPairBP.tierPairBQ cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2
                   (MapSpec.Fast.costZS ca sa1 sa2) (MapSpec.Fast.costZS cb sb1 sb2)))))
@@ -293,11 +299,12 @@ theorem pairCfgZ_cap (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b 
 
 theorem alignOneP_eq (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option Setup)
     (bytes1 bytes2 : Option ByteArray) :
-    alignOneP insertSettings lens setup bytes1 bytes2 = alignOneC insertSettings lens setup bytes1 bytes2 := by
+    alignOneP insertSettings lens (setup.map withMono) bytes1 bytes2 = alignOneC insertSettings lens setup bytes1 bytes2 := by
   rcases bytes1 with _ | a <;> rcases bytes2 with _ | b <;> rcases setup with _ | ⟨iS, cfg, pk, pgs, offs, ns⟩
   all_goals try rfl
   have hc := pairCfgZ_cap cfg pk a b (fun R => capFor pk (cfg.rcfg.cap1 R) R)
-  simp only [alignOneP, alignOneC, capForS_eq, capForZ_eq, Report.answerOfPairP_eq, ← MapSpec.Fast.costZ_eqS]
+  simp only [Option.map, withMono, alignOneP, alignOneC, capForS_eq, capForZ_eq, Report.answerOfPairP_eq,
+    ← MapSpec.Fast.costZ_eqS]
   have hq : ∀ (s1 s2 : MapSpec.Fast.PrepM MapSpec.Fast.MzP) (za1 za2 zb1 zb2 : Array Nat),
       MapSpec.Fast.tierPairBP.tierPairBQ (pairCfg cfg pk a b) pk #[0] pgs a b s1 s2 za1 za2 zb1 zb2
         (MapSpec.Fast.costZ (capFor pk (cfg.rcfg.cap1 a) a) za1 za2) (MapSpec.Fast.costZ (capFor pk (cfg.rcfg.cap1 b) b) zb1 zb2) =
@@ -318,7 +325,7 @@ theorem alignOneP_eq (insertSettings : InsertSettings) (lens : Array Nat) (setup
 def alignPairsC (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   let lens := ((readIndex index).1.getD []).toArray
-  (ParMap.parMapS parTasks (fun _ => chunkSetup insertSettings (readIndex index).2)
+  (ParMap.parMapS parTasks (fun _ => (chunkSetup insertSettings (readIndex index).2).map withMono)
     (fun setup (bytes1, bytes2) => alignOneP insertSettings lens setup bytes1 bytes2) pairs.toArray).toList
 
 theorem alignOneC_eq (insertSettings : InsertSettings) (lens : Array Nat) (loaded : Option LoadedIndex)
