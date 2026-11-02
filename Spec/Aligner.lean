@@ -10,6 +10,7 @@ namespace Spec
 structure InsertSettings where
   range         : Nat × Nat  -- allowed fragment length: min and max, both included
   dovetailSlack : Nat := 0
+  junkScore : Int := -17
 
 inductive Mate where
   | one
@@ -112,7 +113,9 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
        ∃ report, answer.found = some report ∧
        ∃ pair other : PairAlignment genome mate1 mate2, pair.report = report ∧
          pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
-   | .unknown => True)
+   | .unknown => 
+       answer.found = none → answer.bestPossibleScore < insertSettings.junkScore
+   )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)
 def PairResult.Correct (insertSettings : InsertSettings) (genome : Genome) (trimmed1 trimmed2 : Option Read) :
