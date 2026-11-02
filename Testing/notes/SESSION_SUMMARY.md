@@ -1342,6 +1342,14 @@ vs 99.57/92.50 · NovaSeq 92.87/0.97/6.16/81.97 vs 99.08/91.23 · mason 96.81/0.
 Gap to minibwa's mapping rate: untrimmed reads (shim doesn't trim; +22.7k HiSeq with trimming) and pairs the mapper
 gives up on (O2's low-repeat short-seed second pass recovers about half of them).
 
+### Short-seed second pass (O2, measured on ALL pairs the shim leaves unmapped, per 200k; C prototype, unproved)
+k=21 w=4 index (5.8 GB, 512 s build), cap 32, seeds with >20 hits skipped: mason +14,968 at truth (+7.5%), low +3,246
+(+1.6%), HiSeq trimmed +9,776 unique (+4.9%), NovaSeq trimmed +11,164 (+5.6%). k=18 adds nothing at 2x cost. 1/4–2/3 of
+the recovered pairs have both mates within −16: the proved mapper gives up on them (gate/repeats), not the cap.
+Blocker: 5.8 GB + the main index held twice (file + heap) doesn't fit 15 GB → build-time low-repeat filter or mmap of the
+main index (Main.lean). O2's order: (1) trimming in Spec/Shim, (2) low-repeat k=21 find-only extra index, (3) deepCaps.
+All Opus boxes archived after the night (O1–O6).
+
 ### Later (Rowan)
 - **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
   maybe force reporting it whenever one exists.
