@@ -2772,7 +2772,8 @@ def main (args : List String) : IO UInt32 := do
       -- WG_XHCHK=0: no `chkAln` inside the heuristic (the router re-checks its picks)
       let xhC ← envN "WG_XHC" 1000000
       let xhChk := (← IO.getEnv "WG_XHCHK").getD "1" == "1"
-      let hcfg : HCfg := { w := xhW, r := xhR, ck := xhCK, np := xhP, dl := xhD, seeds := xhS, near := xhN, band := xhB, sv := xhV, seedAll := xhA, bl := xhL, ge := xhG, kx := xhK, vf := xhVF, nk := xhNK, cmax := xhC, chk := xhChk }
+      let xhWfa := (← IO.getEnv "WG_XHWFA").getD "0" == "1"   -- the banded step by wavefronts (bandWfa)
+      let hcfg : HCfg := { wfa := xhWfa, w := xhW, r := xhR, ck := xhCK, np := xhP, dl := xhD, seeds := xhS, near := xhN, band := xhB, sv := xhV, seedAll := xhA, bl := xhL, ge := xhG, kx := xhK, vf := xhVF, nk := xhNK, cmax := xhC, chk := xhChk }
       -- the mate the guarantee enumerates when both are on the fast path at G0: the smaller rarest-seed buckets
       let gPref := fun (G0 : Nat) (a b : ByteArray) (s1 s2 : PrepM MzP) =>
         let k := sbound G0 + 2
