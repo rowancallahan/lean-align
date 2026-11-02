@@ -301,6 +301,29 @@ def bandCells (X W : @& ByteArray) (K c0s m lim : UInt32) :
           bandCells X W K c0s m lim f i (k + 1) INF (if ev < lim then ev else INF) pa pb nlo nhi
             H F (tb.set! jc byte)
 
+/-- Doubling `b` `f` times (`b ++ b` is one `memcpy`). -/
+def zerosGo : Nat → ByteArray → ByteArray
+  | 0, b => b
+  | f + 1, b => zerosGo f (b ++ b)
+
+theorem zerosGo_data : ∀ f (c : Nat) (b : ByteArray), b.data = Array.replicate c 0 →
+    (zerosGo f b).data = Array.replicate (2 ^ f * c) 0
+  | 0, c, b, h => by simp [zerosGo, h]
+  | f + 1, c, b, h => by
+    rw [zerosGo, zerosGo_data f (c + c) (b ++ b) (by rw [ByteArray.data_append, h, Array.replicate_append_replicate]),
+      Nat.pow_succ]
+    congr 1; rw [Nat.mul_assoc, Nat.two_mul]
+
+/-- `n` zero bytes by doubling (`zerosB_eq`: `⟨Array.replicate n 0⟩`, which builds a boxed array first). -/
+def zerosB (n : Nat) : ByteArray := (zerosGo (Nat.log2 n + 1) ⟨#[0]⟩).extract 0 n
+
+theorem zerosB_eq (n : Nat) : zerosB n = ⟨Array.replicate n 0⟩ := by
+  apply ByteArray.ext
+  rw [zerosB, ByteArray.data_extract, zerosGo_data _ 1 ⟨#[0]⟩ rfl, Array.extract_replicate, Nat.mul_one]
+  congr 1
+  have : n < 2 ^ (Nat.log2 n + 1) := Nat.lt_log2_self
+  omega
+
 /-- First diagonal of row `i` that `bandCells` computes (the cells before it are skipped there: window
 column `< 0`, or left of the previous row's live cells `[pa, pb)`), at most `K`. -/
 @[inline] def rowStart (K c0s i pa : UInt32) : UInt32 :=
@@ -380,7 +403,7 @@ def bandDPg (jump : Bool) (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (N
   if pa == K then return none
   -- (`INF − 1`: an array distinct from `H0`, not shared)
   let F0 : Array UInt32 := Array.replicate ((n + 1) * K) (INF.toUInt32 - 1)
-  let tb0 : ByteArray := ByteArray.mk (Array.replicate ((n + 1) * K) 0)
+  let tb0 : ByteArray := zerosB ((n + 1) * K)
   let c0s := (c0 + SH).toNat.toUInt32
   let (H, tb, ok) := if jump then
       bandCellsJ X W K.toUInt32 c0s m.toUInt32 lim.toUInt32 n.toUInt32 (n * (K + 1))
@@ -620,7 +643,7 @@ def voteD (X W : ByteArray) (k : Nat) : Option (Nat × Nat) :=
   let sh : UInt32 := (32 - lg).toUInt32
   let msk : UInt32 := ((1 : UInt32) <<< (2 * k).toUInt32) - 1
   let (keys, offs) := vIns X k.toUInt32 sh msk TM n 0 0 0 (Array.replicate (1 <<< lg) 0) (Array.replicate (1 <<< lg) 1)
-  let votes := vScan W keys offs n.toUInt32 k.toUInt32 sh msk TM m 0 0 0 (ByteArray.mk (Array.replicate (m + n + 1) 0))
+  let votes := vScan W keys offs n.toUInt32 k.toUInt32 sh msk TM m 0 0 0 (zerosB (m + n + 1))
   let (bt, bv) := argMaxB votes votes.size 0 0 0
   if bv == 0 then none else some (bt.toNat, bv.toNat)
 
