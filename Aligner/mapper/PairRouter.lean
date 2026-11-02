@@ -720,7 +720,7 @@ theorem mateKP_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m)
   have eb : mapChromsGBKGT P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (cutAll G offs ns) R =
       mapChromsGBT P ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R := by
     rw [mapChromsGBKGT_unpack, mapChromsGBKT_eq_rep P _ _ offs _ _ (repAllK_unpack _)]
-    simp only [mapChromsGBT, ilG_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) hG]
+    simp only [mapChromsGBT, ilGT_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) hG]
   have e1 : (mateKP P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R (prepMate ((ix, G) : PkMz) R)) =
       (decodeP (cutAll G offs ns).size P (mapChromsGBKGT P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns)
         (cutAll G offs ns) R),

@@ -32,6 +32,157 @@ theorem tieCut_congr (P : Nat) (gap gap' : Nat → Best → Best) (h : ∀ Q b, 
     tieCut P gap b1 = tieCut P gap' b1 := by
   unfold tieCut; simp only [h]
 
+/-! ## Phase 1 with the tie cut's stop rule
+
+After a tie at `p`, the gapped stages only look for windows below `p` (cap `p − 1`), and their cover
+theorem needs only `sbound (p − 1) + 1` seeds looked up per strand: phase 1 stops on `effP` (the best's
+penalty, minus one when it is a tie). -/
+
+/-- The penalty the search still has to beat: one less than a tie's. -/
+@[inline] def effP (b : Best) : Nat := if b.amb && decide (0 < b.pen) then b.pen - 1 else b.pen
+
+/-- `GS.live` on `effP`. -/
+@[inline] def GS.liveT (P : Nat) (s : GS) (b : Best) : Bool :=
+  !s.ord.isEmpty && !decide (sbound (min (effP b) P) < s.J.length)
+
+/-- `ilG` stopping on `GS.liveT`. -/
+@[specialize] def ilGT {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    Nat → GS → GS → Best → GS × GS × Best
+  | 0, s1, s2, b => (s1, s2, b)
+  | f + 1, s1, s2, b =>
+    let l2 := s2.liveT P b
+    if s1.liveT P b && (!l2 || decide (s1.J.length ≤ s2.J.length)) then
+      let r := s1.adv ix G R1 gbs2 offs n 0 P Ls ps1 b
+      ilGT ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f r.1 s2 r.2
+    else if l2 then
+      let r := s2.adv ix G R2 gbs2 offs n n P Ls ps2 b
+      ilGT ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
+    else (s1, s2, b)
+
+/-- `ilGF` (kernels as parameters) stopping on `GS.liveT`. -/
+@[specialize] def ilGFT {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array ByteArray) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    Nat → GS → GS → Best → GS × GS × Best
+  | 0, s1, s2, b => (s1, s2, b)
+  | f + 1, s1, s2, b =>
+    let l2 := s2.liveT P b
+    if s1.liveT P b && (!l2 || decide (s1.J.length ≤ s2.J.length)) then
+      let r := s1.advF kf1 ix G R1 gbs2 offs n 0 P Ls ps1 b
+      ilGFT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f r.1 s2 r.2
+    else if l2 then
+      let r := s2.advF kf2 ix G R2 gbs2 offs n n P Ls ps2 b
+      ilGFT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
+    else (s1, s2, b)
+
+/-- `ilGFG` (any chromosome representation) stopping on `GS.liveT`. -/
+@[specialize] def ilGFGT {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    Nat → GS → GS → Best → GS × GS × Best
+  | 0, s1, s2, b => (s1, s2, b)
+  | f + 1, s1, s2, b =>
+    let l2 := s2.liveT P b
+    if s1.liveT P b && (!l2 || decide (s1.J.length ≤ s2.J.length)) then
+      let r := s1.advFG kf1 ix G R1 gbs2 offs n 0 P Ls ps1 b
+      ilGFGT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f r.1 s2 r.2
+    else if l2 then
+      let r := s2.advFG kf2 ix G R2 gbs2 offs n n P Ls ps2 b
+      ilGFGT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 r.2
+    else (s1, s2, b)
+
+/-- `ilGFGT` with the strands' lookup counts carried (`ilGFGNT_eq`). -/
+@[specialize] def ilGFGNT {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    Nat → GS → GS → Nat → Nat → Best → GS × GS × Best
+  | 0, s1, s2, _, _, b => (s1, s2, b)
+  | f + 1, s1, s2, k1, k2, b =>
+    let sb := sbound (min (effP b) P)
+    let l2 := !s2.ord.isEmpty && !decide (sb < k2)
+    if (!s1.ord.isEmpty && !decide (sb < k1)) && (!l2 || decide (k1 ≤ k2)) then
+      let r := s1.advFG kf1 ix G R1 gbs2 offs n 0 P Ls ps1 b
+      ilGFGNT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f r.1 s2 (k1 + 1) k2 r.2
+    else if l2 then
+      let r := s2.advFG kf2 ix G R2 gbs2 offs n n P Ls ps2 b
+      ilGFGNT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 k1 (k2 + 1) r.2
+    else (s1, s2, b)
+
+theorem ilGFGNT_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) : ∀ (f : Nat) (s1 s2 : GS) (b : Best),
+    ilGFGNT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 s1.J.length s2.J.length b =
+      ilGFGT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b
+  | 0, _, _, _ => rfl
+  | f + 1, s1, s2, b => by
+    unfold ilGFGNT ilGFGT GS.liveT
+    simp only []
+    split
+    · next h =>
+      have h1 : s1.ord.isEmpty = false := by
+        cases he : s1.ord.isEmpty <;> simp_all
+      rw [← GS.advFG_J kf1 ix G R1 gbs2 offs n 0 P Ls ps1 s1 b h1]
+      exact ilGFGNT_eq kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f _ _ _
+    · split
+      · next h =>
+        have h2 : s2.ord.isEmpty = false := by
+          cases he : s2.ord.isEmpty <;> simp_all
+        rw [← GS.advFG_J kf2 ix G R2 gbs2 offs n n P Ls ps2 s2 b h2]
+        exact ilGFGNT_eq kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f _ _ _
+      · rfl
+
+/-- `ilGFGNT` from the strands' own counts. -/
+@[inline] def ilGFGWT {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) (f : Nat) (s1 s2 : GS) (b : Best) :
+    GS × GS × Best :=
+  ilGFGNT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 s1.J.length s2.J.length b
+
+/-- Compiled code runs `ilGFGWT`. -/
+@[csimp] theorem ilGFGT_eqN : @ilGFGT = @ilGFGWT := by
+  funext
+  simp only [ilGFGWT, ilGFGNT_eq]
+
+theorem ilGFT_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array ByteArray) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    ∀ f s1 s2 b, ilGFT (kerH R1 gbs2) (kerH R2 gbs2) ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b =
+      ilGT ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b := by
+  intro f
+  induction f with
+  | zero => intro s1 s2 b; rfl
+  | succ f ih =>
+    intro s1 s2 b
+    simp only [ilGFT, ilGT, advF_eq, ih]
+
+theorem ilGFGT_bytes {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
+    (gbs2 : Array ByteArray) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    ∀ f s1 s2 b, ilGFGT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b =
+      ilGFT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b := by
+  intro f
+  induction f with
+  | zero => intro s1 s2 b; rfl
+  | succ f ih => intro s1 s2 b; simp only [ilGFGT, ilGFT, advFG_bytes, ih]
+
+theorem ilGFGT_same {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] [GPk G1] [GPk G2]
+    {xs : Array G1} {ys : Array G2} (h : SameA xs ys) {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+    (kf1 kf2 : Ker) (ix : L) (G : ByteArray) (R1 R2 : ByteArray) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
+    ∀ f s1 s2 b, ilGFGT kf1 kf2 ix G R1 R2 xs offs n P Ls ps1 ps2 f s1 s2 b =
+      ilGFGT kf1 kf2 ix G R1 R2 ys offs n P Ls ps1 ps2 f s1 s2 b := by
+  intro f
+  induction f with
+  | zero => intro s1 s2 b; rfl
+  | succ f ih => intro s1 s2 b; simp only [ilGFGT, advFG_same h, ih]
+
+theorem ilGT_congrG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G G' : ByteArray)
+    (hG : ∀ R s base p, LookG.look ix G R s base p = LookG.look ix G' R s base p)
+    (R1 R2 : ByteArray) (gbs2 : Array ByteArray) (offs : Array Nat) (n P Ls : Nat)
+    (ps1 ps2 : Array Pp) : ∀ f s1 s2 b,
+      ilGT ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b = ilGT ix G' R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 b := by
+  intro f
+  induction f with
+  | zero => intro s1 s2 b; rfl
+  | succ f ih => intro s1 s2 b; simp only [ilGT, GS.adv, hG, ih]
+
 /-- `mapChromsGB` with the tie cut. -/
 @[specialize] def mapChromsGBT {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
     (P : Nat) (ix : L) (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R : ByteArray) : Best :=
@@ -42,7 +193,7 @@ theorem tieCut_congr (P : Nat) (gap gap' : Nat → Best → Best) (h : ∀ Q b, 
   let Ls := R.size / m
   let ps := prepG ix R m Ls
   let pr := prepG ix Rr m Ls
-  let x := ilG ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+  let x := ilGT ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
   tieCut P (fun Q b =>
@@ -74,6 +225,74 @@ theorem gsOk_cap (P Q : Nat) (g : Genome) (gbs : Array ByteArray) {L Pp : Type} 
   have hS' := h.2.2.2 c hc j hj e he w ⟨h1, h2, h3, by omega⟩
   rw [h3] at hS' e' h4
   exact hS c hc _ _ hS' (by omega)
+
+
+section bothT
+variable (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (hg : GenomeBytes gbs g)
+  {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
+  (R1 R2 : ByteArray) (reads1 reads2 : List Char) (h1 : Encodes R1 reads1) (h2 : Encodes R2 reads2)
+  (hcw1 : ∀ c, c < gbs.size → ∀ st len, cwB P read g ⟨0 + c, st, len⟩ = cwT P reads1 (g ++ g) ⟨0 + c, st, len⟩)
+  (hcw2 : ∀ c, c < gbs.size → ∀ st len,
+    cwB P read g ⟨gbs.size + c, st, len⟩ = cwT P reads2 (g ++ g) ⟨gbs.size + c, st, len⟩)
+  (Ls : Nat) (ps1 ps2 : Array Pp) (ord1 ord2 : List Nat)
+
+include hg h1 h2 hcw1 hcw2
+
+theorem ilGT_ok : ∀ (f : Nat) (s1 s2 : GS) (b : Best) (S : Window → Prop),
+    GSok P g gbs ix G offs R1 reads1 0 Ls ps1 S ord1 s1 →
+    GSok P g gbs ix G offs R2 reads2 gbs.size Ls ps2 S ord2 s2 →
+    InvP P (cwB P read g) S b → s1.ord.length + s2.ord.length < f →
+    ∃ S', InvP P (cwB P read g) S' (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).2.2 ∧
+      (∀ w, S w → S' w) ∧ (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).2.2.pen ≤ b.pen ∧
+      GSok P g gbs ix G offs R1 reads1 0 Ls ps1 S' ord1 (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).1 ∧
+      GSok P g gbs ix G offs R2 reads2 gbs.size Ls ps2 S' ord2
+        (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).2.1 ∧
+      (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).1.liveT P
+        (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).2.2 = false ∧
+      (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).2.1.liveT P
+        (ilGT ix G R1 R2 (gbs ++ gbs) offs gbs.size P Ls ps1 ps2 f s1 s2 b).2.2 = false := by
+  intro f
+  induction f with
+  | zero => intro s1 s2 b S _ _ _ hf; omega
+  | succ f ih =>
+    intro s1 s2 b S o1 o2 hi hf
+    unfold ilGT
+    simp only []
+    split
+    · next hc =>
+      simp only [Bool.and_eq_true] at hc
+      have hne : s1.ord ≠ [] := by
+        intro he; unfold GS.liveT at hc; simp [he] at hc
+      obtain ⟨j, rest, hjr⟩ : ∃ j rest, s1.ord = j :: rest := by
+        cases h : s1.ord with
+        | nil => exact absurd h hne
+        | cons j rest => exact ⟨j, rest, rfl⟩
+      obtain ⟨S1, i1, e1, p1, k1, r1, -⟩ := advG_ok P read g gbs hg ix G offs R1 reads1 h1 0 hcw1 Ls ps1
+        (Or.inl rfl) ord1 s1 j rest hjr S b o1 hi
+      obtain ⟨S2, i2, e2, p2, k2, k3, l1, l2⟩ := ih _ s2 _ S1 k1 (o2.mono P g gbs ix G offs R2 reads2 gbs.size Ls ps2 e1) i1
+        (by rw [r1]; rw [hjr] at hf; simp at hf; omega)
+      exact ⟨S2, i2, fun w hw => e2 w (e1 w hw), Nat.le_trans p2 p1, k2, k3, l1, l2⟩
+    · next hc1 =>
+      split
+      · next hc =>
+        have hne : s2.ord ≠ [] := by
+          intro he; unfold GS.liveT at hc; simp [he] at hc
+        obtain ⟨j, rest, hjr⟩ : ∃ j rest, s2.ord = j :: rest := by
+          cases h : s2.ord with
+          | nil => exact absurd h hne
+          | cons j rest => exact ⟨j, rest, rfl⟩
+        obtain ⟨S1, i1, e1, p1, k1, r1, -⟩ := advG_ok P read g gbs hg ix G offs R2 reads2 h2 gbs.size hcw2 Ls ps2
+          (Or.inr rfl) ord2 s2 j rest hjr S b o2 hi
+        obtain ⟨S2, i2, e2, p2, k2, k3, l1, l2⟩ := ih s1 _ _ S1 (o1.mono P g gbs ix G offs R1 reads1 0 Ls ps1 e1) k1 i1
+          (by rw [r1]; rw [hjr] at hf; simp at hf; omega)
+        exact ⟨S2, i2, fun w hw => e2 w (e1 w hw), Nat.le_trans p2 p1, k2, k3, l1, l2⟩
+      · next hc2 =>
+        simp only [Bool.not_eq_true] at hc2
+        refine ⟨S, hi, fun w hw => hw, Nat.le_refl _, o1, o2, ?_, hc2⟩
+        simp only [hc2, Bool.not_false, Bool.true_or, Bool.and_true, Bool.not_eq_true] at hc1
+        exact hc1
+
+end bothT
 
 /-! ## The invariant -/
 
@@ -168,19 +387,28 @@ theorem mapChromsGBT_inv (hm : 0 < R.size / 25) (hsb : sbound P < R.size / 25) :
   obtain ⟨nd2, lt2, len2⟩ := ordG_spec (pr.map (LookG.size ix)) (R.size / 25)
   generalize ordG (ps.map (LookG.size ix)) (R.size / 25) = ord1 at nd1 lt1 len1
   generalize ordG (pr.map (LookG.size ix)) (R.size / 25) = ord2 at nd2 lt2 len2
-  obtain ⟨S1, i1, -, -, o1, o2, l1, l2⟩ := ilG_ok P read g gbs hg ix G offs R (revCompB R) read (revComp read)
+  obtain ⟨S1, i1, -, -, o1, o2, l1, l2⟩ := ilGT_ok P read g gbs hg ix G offs R (revCompB R) read (revComp read)
     hr hrr hcw1 hcw2 Ls ps pr ord1 ord2 (2 * (R.size / 25) + 1) _ _ (initP P) (fun _ => False)
     (gsInit_ok P g gbs ix G offs R read 0 Ls ps ord1) (gsInit_ok P g gbs ix G offs (revCompB R) (revComp read) gbs.size Ls pr ord2)
     (inv_initP P (cwB P read g)) (by simp only []; omega)
-  generalize ilG ix G R (revCompB R) (gbs ++ gbs) offs gbs.size P Ls ps pr (2 * (R.size / 25) + 1) _ _ (initP P) = x
+  generalize ilGT ix G R (revCompB R) (gbs ++ gbs) offs gbs.size P Ls ps pr (2 * (R.size / 25) + 1) _ _ (initP P) = x
     at i1 o1 o2 l1 l2
-  have stop : ∀ (s : GS) (b : Best), s.live P b = false → sbound (min b.pen P) < s.J.length ∨ s.ord = [] := by
+  have stopE : ∀ (s : GS) (b : Best), s.liveT P b = false → sbound (min (effP b) P) < s.J.length ∨ s.ord = [] := by
     intro s b h
-    unfold GS.live at h
+    unfold GS.liveT at h
     cases ho : s.ord with
     | nil => right; rfl
     | cons j rest =>
       left; rw [ho] at h; simpa using h
+  -- no tie within `P`: `effP` stops as `GS.live` does
+  have stop : ∀ (s : GS), s.liveT P x.2.2 = false → ¬ (x.2.2.amb = true ∧ x.2.2.pen ≤ P) →
+      sbound (min x.2.2.pen P) < s.J.length ∨ s.ord = [] := by
+    intro s h hn
+    have e : min (effP x.2.2) P = min x.2.2.pen P := by
+      unfold effP; split
+      · next ha => simp only [Bool.and_eq_true, decide_eq_true_eq] at ha; have := not_and.mp hn ha.1; omega
+      · rfl
+    rw [← e]; exact stopE s _ h
   have gap := fun Q (hQ : sbound Q < R.size / 25) =>
     gapBoth_inv read g gbs R hg hr ix G offs hcat hlk Q hm hQ ps pr (by rw [← hps, hLs]) (by rw [← hpr, hLs])
       ord1 ord2 nd1 lt1 len1 nd2 lt2 len2 x.1 x.2.1
@@ -214,17 +442,19 @@ theorem mapChromsGBT_inv (hm : 0 < R.size / 25) (hsb : sbound P < R.size / 25) :
         (fun c hc st len hw h => no1 _ hw (by rw [hcw1 c hc st len]; exact h))
       have o2' := gsOk_cap P Q g gbs ix G offs (revCompB R) (revComp read) gbs.size _ pr S1 ord2 x.2.1 hQP o2
         (fun c hc st len hw h => no1 _ hw (by rw [hcw2 c hc st len]; exact h))
-      have hst : ∀ s : GS, (sbound (min x.2.2.pen P) < s.J.length ∨ s.ord = []) →
+      have hst : ∀ s : GS, (sbound (min (effP x.2.2) P) < s.J.length ∨ s.ord = []) →
           sbound (min (initP Q).pen Q) < s.J.length ∨ s.ord = [] := by
         intro s h
+        have e : min (effP x.2.2) P = Q := by
+          unfold effP; rw [if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact ⟨ha, by omega⟩)]; omega
+        rw [e] at h
         rcases h with h | h
         · left
           have : min (initP Q).pen Q = Q := by simp [initP]
-          rw [this]
-          have := sbound_mono Q (min x.2.2.pen P) (by omega); omega
+          rw [this]; exact h
         · right; exact h
       obtain ⟨S', i', c'⟩ := gap Q hsQ (fun _ => False) (initP Q) o1' o2' (inv_initP Q (cwB Q read g))
-        (hst _ (stop _ _ l1)) (hst _ (stop _ _ l2))
+        (hst _ (stopE _ _ l1)) (hst _ (stopE _ _ l2))
       simp only []
       generalize ((List.range gbs.size).foldl (fun b c => chromKBS (revCompB R) (gbs ++ gbs) (gbs.size + c) Q x.2.1.acc[c]! x.2.1.J b)
           ((List.range gbs.size).foldl (fun b c => chromKBS R (gbs ++ gbs) c Q x.1.acc[c]! x.1.J b) (initP Q))) = b at i' c'
@@ -253,7 +483,9 @@ theorem mapChromsGBT_inv (hm : 0 < R.size / 25) (hsb : sbound P < R.size / 25) :
         apply Classical.byContradiction; intro hlt
         obtain ⟨hs, e⟩ := low w (by omega)
         have := i'.min w hs; omega
-  · exact gap P hsb S1 x.2.2 o1 o2 i1 (stop _ _ l1) (stop _ _ l2)
+  · next hc =>
+    have hn : ¬ (x.2.2.amb = true ∧ x.2.2.pen ≤ P) := fun h => hc (by simp [h.1, h.2])
+    exact gap P hsb S1 x.2.2 o1 o2 i1 (stop _ l1 hn) (stop _ l2 hn)
 
 end top
 
@@ -270,7 +502,7 @@ stages passed to `tieCut`; the equalities are the originals' proofs, under the b
   let gbs2 := gbs ++ gbs
   let m := R.size / 25
   let Ls := R.size / m
-  let x := ilGF kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+  let x := ilGFT kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
   tieCut P (fun Q b =>
@@ -285,7 +517,7 @@ stages passed to `tieCut`; the equalities are the originals' proofs, under the b
   let gbs2 := gbs ++ gbs
   let m := R.size / 25
   let Ls := R.size / m
-  let x := ilGFG kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+  let x := ilGFGT kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨ordG (ps.map (LookG.size ix)) m, [], Array.replicate n []⟩
     ⟨ordG (pr.map (LookG.size ix)) m, [], Array.replicate n []⟩ (initP P)
   tieCut P (fun Q b =>
@@ -301,7 +533,7 @@ compiled search of `mateKPPO`. -/
   let gbs2 := gbs ++ gbs
   let m := R.size / 25
   let Ls := R.size / m
-  let x := ilGFG kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
+  let x := ilGFGT kf1 kf2 ix G R Rr gbs2 offs n P Ls ps pr (2 * m + 1)
     ⟨o1, [], Array.replicate n []⟩ ⟨o2, [], Array.replicate n []⟩ (initP P)
   tieCut P (fun Q b =>
     let b := foldUpN (fun b c => chromKBFGK K1 kf1 R gbs2 c Q x.1.acc[c]! x.1.J b) n 0 b
@@ -350,12 +582,12 @@ theorem mapChromsGBFT_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix
       (prepG ix (revCompB R) (R.size / 25) (R.size / (R.size / 25))) =
       mapChromsGBT P ix G offs gbs R := by
   unfold mapChromsGBFT mapChromsGBT
-  simp only [ilGF_eq, chromKBF_eq, revCompB2_eq]
+  simp only [ilGFT_eq, chromKBF_eq, revCompB2_eq]
 
 theorem mapChromsGBFGT_bytes {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array ByteArray) (R Rr : ByteArray) (ps pr : Array Pp) :
     mapChromsGBFGT kf1 kf2 P ix G offs gbs R Rr ps pr = mapChromsGBFT kf1 kf2 P ix G offs gbs R Rr ps pr := by
-  simp only [mapChromsGBFGT, mapChromsGBFT, ilGFG_bytes, chromKBFG_eq]
+  simp only [mapChromsGBFGT, mapChromsGBFT, ilGFGT_bytes, chromKBFG_eq]
   rfl
 
 theorem mapChromsGBKGT_unpack {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
@@ -366,7 +598,7 @@ theorem mapChromsGBKGT_unpack {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat
   unfold mapChromsGBKGT mapChromsGBKT mapChromsGBFGT
   have ek : ∀ R K, kerHKG R K (pgs ++ pgs) (pgs ++ pgs) = kerHK R K (pgs.map Mz.unpack ++ pgs.map Mz.unpack) (pgs ++ pgs) := by
     intro R K; funext c st len l; rw [kerHKG_same h2, kerHKG_bytes]
-  simp only [ek, hs.1, ilGFG_same h2, chromKBFG_same h2]
+  simp only [ek, hs.1, ilGFGT_same h2, chromKBFG_same h2]
   rw [← mapChromsGBFGT_bytes]
   rfl
 

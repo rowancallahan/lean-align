@@ -53,6 +53,17 @@ def probeMate (pk : PkMz) (pgs : Array PGen) (P : Nat) (R : ByteArray) : IO (Nat
     else b)).get
   let t3 ← IO.monoNanosNow
   assert! (decodeP n P b == decodeP n P bT && decide (b.pen ≤ P) == decide (bT.pen ≤ P))
+  let t4 ← IO.monoNanosNow
+  let y ← (← IO.mkRef (if t4 == 0 then (default, default, initP P) else ilGFGT kf1 kf2 pk ByteArray.empty R s.Rr gbs2 #[0] n P Ls s.ps s.pr (2 * m + 1)
+    ⟨ordG (s.ps.map (LookG.size pk)) m, [], Array.replicate n []⟩
+    ⟨ordG (s.pr.map (LookG.size pk)) m, [], Array.replicate n []⟩ (initP P))).get
+  let t5 ← IO.monoNanosNow
+  let bY ← (← IO.mkRef (if t5 == 0 then initP P else tieCut P (fun Q b =>
+      let b := (List.range n).foldl (fun b c => chromKBFG kf1 R gbs2 c Q y.1.acc[c]! y.1.J b) b
+      (List.range n).foldl (fun b c => chromKBFG kf2 s.Rr gbs2 (n + c) Q y.2.1.acc[c]! y.2.1.J b) b) y.2.2)).get
+  let t6 ← IO.monoNanosNow
+  assert! (decodeP n P b == decodeP n P bY && decide (b.pen ≤ P) == decide (bY.pen ≤ P))
+  IO.println s!"PH1T\t{x.2.2.amb}\t{y.2.2.amb}\t{t1 - t0}\t{t3 - t2}\t{t5 - t4}\t{t6 - t5}\t{y.1.J.length + y.2.1.J.length}"
   if b1.amb then IO.println s!"TIEGAP\t{b1.pen}\t{t2 - t1}\t{t3 - t2}\t{b.pen}\t{bT.pen}"
   let anc := (x.1.acc.toList ++ x.2.1.acc.toList).foldl (fun a l => a + l.foldl (fun a v => a + v.size) 0) 0
   return (t1 - t0, t2 - t1, b, x.1.J.length + x.2.1.J.length, anc, x.2.2)
