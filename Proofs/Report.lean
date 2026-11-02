@@ -159,6 +159,49 @@ def chromOf (offs ns : Array Nat) (s e : Nat) : Option Nat :=
   | [c] => some c
   | _ => none
 
+-- `chromOf` without the list: chromosomes `c, c + 1, …` (`k` of them), `r` = the one match so far
+-- (a second match ends the scan with `none`).  Compiled code runs it (`chromOf_eqL`).
+def chromGo (offs ns : Array Nat) (s e : Nat) : Nat → Nat → Option Nat → Option Nat
+  | 0, _, r => r
+  | k + 1, c, none =>
+    if decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!) then chromGo offs ns s e k (c + 1) (some c)
+    else chromGo offs ns s e k (c + 1) none
+  | k + 1, c, some d =>
+    if decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!) then none
+    else chromGo offs ns s e k (c + 1) (some d)
+
+-- the one element of `r` and `l` together (none: no or several)
+def onlyOf : Option Nat → List Nat → Option Nat
+  | none, [c] => some c
+  | some d, [] => some d
+  | _, _ => none
+
+theorem chromGo_eq (offs ns : Array Nat) (s e : Nat) : ∀ k c r,
+    chromGo offs ns s e k c r =
+      onlyOf r ((List.range' c k).filter (fun c => decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)))
+  | 0, c, none => rfl
+  | 0, c, some d => rfl
+  | k + 1, c, none => by
+    rw [List.range'_succ, List.filter_cons, chromGo]
+    by_cases h : (decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) = true
+    · rw [if_pos h, if_pos h, chromGo_eq offs ns s e k (c + 1)]
+      cases (List.range' (c + 1) k).filter _ <;> rfl
+    · rw [if_neg h, if_neg h, chromGo_eq offs ns s e k (c + 1)]
+  | k + 1, c, some d => by
+    rw [List.range'_succ, List.filter_cons, chromGo]
+    by_cases h : (decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) = true
+    · rw [if_pos h, if_pos h]; rfl
+    · rw [if_neg h, if_neg h, chromGo_eq offs ns s e k (c + 1)]
+
+@[inline] def chromOfL (offs ns : Array Nat) (s e : Nat) : Option Nat := chromGo offs ns s e ns.size 0 none
+
+@[csimp] theorem chromOf_eqL : @chromOf = @chromOfL := by
+  funext offs ns s e
+  rw [chromOfL, chromGo_eq, chromOf, List.range_eq_range']
+  cases (List.range' 0 ns.size).filter _ with
+  | nil => rfl
+  | cons a t => cases t <;> rfl
+
 /-! ### The gap-free check as a byte compare (`chkCandD_ok`: it implies `chkCand` on `[(diag, n)]`) -/
 
 -- penalty sum of `k` read letters `X[i ..]` against `G[st + i ..]`, mismatch −4
