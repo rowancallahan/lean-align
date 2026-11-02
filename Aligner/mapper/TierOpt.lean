@@ -172,6 +172,25 @@ def tierPair (O1 O2 : Option ByteArray) : TierOut :=
   | some a, some b => tierUp cfg pk offs pgs a b (tierPairB cfg pk offs pgs (some a) (some b))
   | _, _ => tierPairB cfg pk offs pgs O1 O2
 
+/-- The `sbound P + 1` seeds of `R` with the smallest buckets (what the router looks up first). -/
+def rareSel (pk : PkMz) (R : ByteArray) (P : Nat) : List Nat :=
+  let m := R.size / 25
+  let Ls := R.size / m
+  (((List.range m).map fun j => (j, LookG.size pk (LookG.prep pk (seedHashAt R (j * Ls)) : MzP))).toArray.qsort
+    (fun x y => x.2 < y.2)).toList.take (sbound P + 1) |>.map (·.1)
+
+/-- (report floor) A pair with no proper pair at pair score `≥ −c` (`c ≤ 16`), proved by the anchor join of the
+rarest seeds at caps `c` / `c` (`noPairJS`: no proper pair of hits at all) or by the exact pair search at `c`
+(`pairGXE`, nothing seen): a `T3` with `pf = some c` (bound `−(c + 1)`); `none` when neither proves it. `sw`: the
+mate the exact search enumerates; `full`: run the exact search (else the join only). -/
+def tierNo (c : Nat) (sw full : Bool) (a b : ByteArray) : Option TierOut :=
+  if c ≤ 16 && noPairJS c c cfg.hi pk ByteArray.empty a b (rareSel pk a c) (rareSel pk (revCompK a) c)
+      (rareSel pk b c) (rareSel pk (revCompK b) c) then some { tag := .t3, pf := some c } else
+  if !full then none else
+  match pairGXE dcost0 cfg.usl cfg.lo cfg.hi c sw pk offs pgs a b with
+  | some (_, false) => if c ≤ 16 then some { tag := .t3, pf := some c } else none
+  | _ => none
+
 end up
 
 section main
@@ -227,6 +246,63 @@ theorem tierUp_ok {a b : ByteArray} (ha : Encodes a m1) (hb : Encodes b m2) {t :
       unfold TierOk
       exact ⟨hc, fun P1 P2 h1 h2 => ⟨x, y, rfl, rfl, ((S P1 P2 h1 h2).1 rfl).symm⟩⟩
   · rw [if_neg ht]; exact hT
+
+include hcut hg hchk in
+/-- **`tierNo` proves its `T3`**: no proper pair of hits at caps `≥ c` scores `≥ −c`. -/
+theorem tierNo_ok {a b : ByteArray} (ha : Encodes a m1) (hb : Encodes b m2) (c : Nat) (sw full : Bool) {t : TierOut}
+    (h : tierNo cfg ((ix, G) : PkMz) offs (cutAll G offs ns) c sw full a b = some t) :
+    TierOk cfg.usl cfg.lo cfg.hi g m1 m2 (some a) (some b) t := by
+  have goal : (∀ P1 P2 : Nat, c ≤ P1 → c ≤ P2 →
+      ∀ w ∈ properPairs cfg.usl cfg.lo cfg.hi (hitsBoth sc0 (-(P1 : Int)) g m1) (hitsBoth sc0 (-(P2 : Int)) g m2),
+        pairScoreD dcost0 w < -(c : Int)) →
+      TierOk cfg.usl cfg.lo cfg.hi g m1 m2 (some a) (some b) { tag := .t3, pf := some c } := by
+    intro hp
+    refine ⟨mateFloor_zero g m1, mateFloor_zero g m2, fun G0 hG0 => ?_⟩
+    simp only [Option.some.injEq] at hG0
+    subst hG0
+    exact hp
+  unfold tierNo at h
+  split at h
+  · rename_i hj
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hj
+    cases h
+    apply goal
+    intro P1 P2 h1 h2 w hw
+    obtain ⟨⟨p1, s1⟩, ⟨p2, s2⟩⟩ := w
+    rw [mem_properPairs] at hw
+    obtain ⟨hw1, hw2, hpp⟩ := hw
+    have n1 := hitsBoth_nonpos _ _ _ _ hw1
+    have n2 := hitsBoth_nonpos _ _ _ _ hw2
+    simp only at n1 n2 hpp ⊢
+    show s1 + s2 - ((dcost0 (fragLen p1 p2) : Nat) : Int) < _
+    unfold dcost0
+    apply Classical.byContradiction; intro hc
+    have e1 := (mem_hitsBoth_T _ _ _ _ _).mp hw1
+    have e2 := (mem_hitsBoth_T _ _ _ _ _).mp hw2
+    have l1 : (p1, s1) ∈ hitsBoth sc0 (-(c : Int)) g m1 := (mem_hitsBoth_T _ _ _ _ _).mpr ⟨e1.1, e1.2.1, by omega⟩
+    have l2 : (p2, s2) ∈ hitsBoth sc0 (-(c : Int)) g m2 := (mem_hitsBoth_T _ _ _ _ _).mpr ⟨e2.1, e2.2.1, by omega⟩
+    have hf := noPairJS_ok ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) g hg
+      (catOk_cut G offs ns hcut) (lookOk_pk ix G hchk) cfg.lo cfg.hi c c m1 m2 a b ha hb _ _ _ _ hj.2 (p1, s1) l1 (p2, s2) l2
+    unfold properPairU at hpp
+    simp only [Bool.and_eq_true] at hpp
+    rw [hpp.1.1] at hf
+    cases hf
+  · split at h
+    · cases h
+    · split at h
+      · rename_i r hx
+        split at h
+        · rename_i hc16
+          cases h
+          apply goal
+          intro P1 P2 h1 h2 w hw
+          have S := pairGXE_sound dcost0 cfg.usl cfg.lo cfg.hi c g m1 m2 ix G offs ns a b hcut hg ha hb hchk
+            hc16 sw P1 P2 h1 h2 r false hx
+          apply Classical.byContradiction; intro hc
+          have := S.1.mpr ⟨w, hw, by omega⟩
+          cases this
+        · cases h
+      · cases h
 
 include hcut hg hchk in
 /-- **The tier router is sound**: what each tag claims holds (`TierOk`), for any gate, preference,

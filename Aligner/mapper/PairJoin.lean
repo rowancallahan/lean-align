@@ -101,6 +101,32 @@ def noPairJ {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : Byte
         let f2 := anchAll ix G R2
         !nearAnyF W (r1.length + f2.length + 1) r1 f2))
 
+/-- `anchAll` over the seeds `sel` only. -/
+def anchSel {L Pp : Type} [LookG L Pp] (ix : L) (G R : ByteArray) (sel : List Nat) : List Nat :=
+  let m := R.size / 25
+  let Ls := R.size / m
+  sel.foldl (fun acc j => List.merge acc
+    ((LookG.look ix G R (j * Ls) (R.size - j * Ls) (LookG.prep ix (seedHashAt R (j * Ls)))).toList.map (· / 16))
+    (fun a b => decide (a ≤ b))) []
+
+/-- A seed choice the pigeonhole covers at cap `P`: distinct seeds of `R`, more than `sbound P` of them. -/
+def selOk (P : Nat) (R : ByteArray) (sel : List Nat) : Bool :=
+  decide sel.Nodup && sel.all (fun j => decide (j < R.size / 25)) && decide (sbound P < sel.length)
+
+/-- **`noPairJ` on chosen seeds** (`s1`, `sr1`: mate 1 and its reverse complement; `s2`, `sr2` likewise), e.g. the
+`sbound P + 1` rarest per strand: any choice passing `selOk` is sound (`noPairJS_ok`). -/
+def noPairJS {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : ByteArray)
+    (s1 sr1 s2 sr2 : List Nat) : Bool :=
+  fastT P1 R1 && fastT P2 R2 &&
+    selOk P1 R1 s1 && selOk P1 R1 sr1 && selOk P2 R2 s2 && selOk P2 R2 sr2 &&
+    (let W := joinW P1 P2 hi R1.size R2.size
+     let f1 := anchSel ix G R1 s1
+     let r2 := anchSel ix G (revCompK R2) sr2
+     !nearAnyF W (f1.length + r2.length + 1) f1 r2 &&
+       (let r1 := anchSel ix G (revCompK R1) sr1
+        let f2 := anchSel ix G R2 s2
+        !nearAnyF W (r1.length + f2.length + 1) r1 f2))
+
 /-! ## Proofs -/
 
 section fold
@@ -202,6 +228,64 @@ theorem anch_of_hit (P : Nat) (read : List Char) (R : ByteArray) (hr : Encodes R
     omega
   · omega
 
+include hlk in
+theorem anchSel_sorted (R : ByteArray) (hm : 0 < R.size / 25) (sel : List Nat) (hsel : ∀ j ∈ sel, j < R.size / 25) :
+    (anchSel ix G R sel).Pairwise (· ≤ ·) := by
+  unfold anchSel
+  apply foldMerge_sorted _ _ _ _ List.Pairwise.nil
+  intro j hj
+  have hl := hlk R (j * (R.size / (R.size / 25))) (R.size - j * (R.size / (R.size / 25)))
+    (seed_fits R.size j hm (hsel j hj))
+  rw [List.pairwise_map]
+  exact hl.1.imp fun {a b} hab => Nat.div_le_div_right (Nat.le_of_lt hab)
+
+include hg hcat hlk in
+/-- `anch_of_hit` for the anchors of chosen seeds `sel` (distinct, more than `sbound P`). -/
+theorem anch_of_hit_sel (P : Nat) (read : List Char) (R : ByteArray) (hr : Encodes R read) (hf : fastT P R = true)
+    (sel : List Nat) (hsel : selOk P R sel = true)
+    (w : Window) (s : Int) (hs : windowScore sc0 read g w = some s) (hS : -(P : Int) ≤ s) :
+    ∃ x ∈ anchSel ix G R sel, ∃ a b : Int, a.natAbs + b.natAbs ≤ gapBound sc0 (-(P : Int)) ∧
+      (x : Int) = (offs[w.chr]! : Int) + w.start + a + R.size ∧ (w.len : Int) = R.size + a + b := by
+  unfold fastT at hf
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hf
+  obtain ⟨hm, -⟩ := hf
+  unfold selOk at hsel
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at hsel
+  obtain ⟨⟨hnd, hlt⟩, hlen⟩ := hsel
+  have hn : R.size = read.length := hr.1
+  generalize hM : R.size / 25 = m at hm hlt
+  have hk1 : m - 1 + 1 = m := by omega
+  have hLs : read.length / (m - 1 + 1) = R.size / m := by rw [hk1, hn]
+  have h25 := le_div_seeds R.size (by omega)
+  rw [hM] at h25
+  obtain ⟨j, hj, p, a, b, hc, hmatch, hshape, ha1, hnn, hst, hwl⟩ :=
+    coverLE g read gbs R hg hr (-(P : Int)) q (by decide) (m - 1) (by rw [hLs]; exact h25)
+      (by rw [hLs]; have : q = 25 := rfl; omega)
+      sel hnd (fun j hj => by have := hlt j hj; omega)
+      (by rw [← sbound_def]; exact hlen) w s hs hS
+  rw [hLs] at hmatch ha1 hst
+  rw [← hn] at hwl
+  have hjm := hlt j hj
+  generalize hL : R.size / m = Ls at hmatch ha1 hst
+  have hfit : j * Ls + q ≤ R.size := by
+    have := seed_fits R.size j (by omega) (by omega); rw [hM, hL] at this; exact this
+  obtain ⟨hcs, hce⟩ := catOk_spec G offs gbs hcat w.chr hc
+  have hmG : MatchAt G (offs[w.chr]! + p) R (j * Ls) := ⟨by have := hmatch.1; omega, fun k hk => by
+    rw [Nat.add_assoc, hce _ (by have := hmatch.1; omega)]; exact hmatch.2 k hk⟩
+  have hl := hlk R (j * Ls) (R.size - j * Ls) hfit
+  have he : (offs[w.chr]! + p + (R.size - j * Ls)) * 16 + 0 ∈
+      (LookG.look ix G R (j * Ls) (R.size - j * Ls) (LookG.prep ix (seedHashAt R (j * Ls)))).toList :=
+    (hl.2 _).mpr ⟨_, hmG, rfl⟩
+  refine ⟨offs[w.chr]! + p + (R.size - j * Ls), ?_, a, b, hshape.1, ?_, ?_⟩
+  · unfold anchSel
+    simp only [hM, hL]
+    apply foldMerge_mem
+    right
+    exact ⟨j, hj, List.mem_map.2 ⟨_, he, by omega⟩⟩
+  · have : q = 25 := rfl
+    omega
+  · omega
+
 end anch
 
 section main
@@ -280,6 +364,79 @@ theorem noPairJ_ok (lo hi P1 P2 : Nat) (m1 m2 : List Char) (R1 R2 : ByteArray) (
         w1 s1 hsa hTa
     obtain ⟨x2, hx2, a2, b2, hab2, hx2e, -⟩ :=
       anch_of_hit ix G offs gbs g hg hcat hlk P2 m2 R2 h2 hf2 w2 s2 hsb hTb
+    rw [hs1] at hx1e hl1
+    rw [hc] at hx2e
+    have := hd2 x1 hx1 x2 hx2
+    have := absB a1; have := absB b1; have := absB a2; have := absB b2
+    generalize a1.natAbs = A1 at *; generalize b1.natAbs = B1 at *
+    generalize a2.natAbs = A2 at *; generalize b2.natAbs = B2 at *
+    omega
+  · simp [properPair] at hp
+
+theorem sel_lt {P : Nat} {R : ByteArray} {sel : List Nat} (h : selOk P R sel = true) : ∀ j ∈ sel, j < R.size / 25 := by
+  unfold selOk at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
+  exact h.1.2
+
+theorem selOk_size (P : Nat) (R R' : ByteArray) (sel : List Nat) (h : R'.size = R.size) :
+    selOk P R' sel = selOk P R sel := by
+  unfold selOk; rw [h]
+
+set_option maxHeartbeats 1000000 in
+include hg hcat hlk in
+/-- **`noPairJS` proves `noPair`** (any seeds passing `selOk`): no hit of mate 1 (cap `P1`) and hit of mate 2 (cap
+`P2`) form a proper pair. -/
+theorem noPairJS_ok (lo hi P1 P2 : Nat) (m1 m2 : List Char) (R1 R2 : ByteArray) (h1 : Encodes R1 m1)
+    (h2 : Encodes R2 m2) (s1 sr1 s2 sr2 : List Nat) (h : noPairJS P1 P2 hi ix G R1 R2 s1 sr1 s2 sr2 = true) :
+    ∀ a ∈ hitsBoth sc0 (-(P1 : Int)) g m1, ∀ b ∈ hitsBoth sc0 (-(P2 : Int)) g m2,
+      properPair lo hi a.1 b.1 = false := by
+  unfold noPairJS at h
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨⟨⟨⟨⟨⟨hf1, hf2⟩, ho1⟩, hor1⟩, ho2⟩, hor2⟩, hj1, hj2⟩ := h
+  have hm1 : 0 < R1.size / 25 := by unfold fastT at hf1; simp at hf1; omega
+  have hm2 : 0 < R2.size / 25 := by unfold fastT at hf2; simp at hf2; omega
+  have hs1 := revCompK_size R1 m1 h1
+  have hs2 := revCompK_size R2 m2 h2
+  have hfr1 : fastT P1 (revCompK R1) = true := by rw [fastT_size P1 R1 _ hs1]; exact hf1
+  have hfr2 : fastT P2 (revCompK R2) = true := by rw [fastT_size P2 R2 _ hs2]; exact hf2
+  have hmr1 : 0 < (revCompK R1).size / 25 := by rw [hs1]; exact hm1
+  have hmr2 : 0 < (revCompK R2).size / 25 := by rw [hs2]; exact hm2
+  have hd1 := nearAnyF_false _ _ _ _ (anchSel_sorted ix G hlk R1 hm1 s1 (sel_lt ho1)) (anchSel_sorted ix G hlk _ hmr2 sr2 (by rw [hs2]; exact sel_lt hor2)) hj1
+  have hd2 := nearAnyF_false _ _ _ _ (anchSel_sorted ix G hlk _ hmr1 sr1 (by rw [hs1]; exact sel_lt hor1)) (anchSel_sorted ix G hlk R2 hm2 s2 (sel_lt ho2)) hj2
+  intro ⟨⟨w1, st1⟩, s1'⟩ ha ⟨⟨w2, st2⟩, s2'⟩ hb
+  rw [mem_hitsBoth_T] at ha hb
+  obtain ⟨-, hsa, hTa⟩ := ha
+  obtain ⟨-, hsb, hTb⟩ := hb
+  apply Classical.byContradiction
+  intro hp
+  simp only [Bool.not_eq_false] at hp
+  unfold joinW at hd1 hd2
+  cases st1 <;> cases st2
+  · simp [properPair] at hp
+  · -- mate 1 forward, mate 2 reverse
+    simp only [properPair, if_true, Bool.and_eq_true, decide_eq_true_eq] at hp
+    obtain ⟨⟨⟨⟨⟨hc, -⟩, -⟩, hle⟩, -⟩, hhi⟩ := hp
+    obtain ⟨x1, hx1, a1, b1, hab1, hx1e, -⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P1 m1 R1 h1 hf1 s1 ho1 w1 s1' hsa hTa
+    obtain ⟨x2, hx2, a2, b2, hab2, hx2e, hl2⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P2 (revComp m2) (revCompK R2) (revCompK_encodes R2 m2 h2) hfr2
+        sr2 (by rw [selOk_size _ _ _ _ hs2]; exact hor2) w2 s2' hsb hTb
+    rw [hs2] at hx2e hl2
+    rw [← hc] at hx2e
+    have := hd1 x1 hx1 x2 hx2
+    have := absB a1; have := absB b1; have := absB a2; have := absB b2
+    generalize a1.natAbs = A1 at *; generalize b1.natAbs = B1 at *
+    generalize a2.natAbs = A2 at *; generalize b2.natAbs = B2 at *
+    omega
+  · -- mate 1 reverse, mate 2 forward
+    simp only [properPair, Bool.and_eq_true, decide_eq_true_eq] at hp
+    simp only [reduceCtorEq, if_false, Bool.and_eq_true, decide_eq_true_eq] at hp
+    obtain ⟨⟨⟨⟨⟨hc, -⟩, -⟩, hle⟩, -⟩, hhi⟩ := hp
+    obtain ⟨x1, hx1, a1, b1, hab1, hx1e, hl1⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P1 (revComp m1) (revCompK R1) (revCompK_encodes R1 m1 h1) hfr1
+        sr1 (by rw [selOk_size _ _ _ _ hs1]; exact hor1) w1 s1' hsa hTa
+    obtain ⟨x2, hx2, a2, b2, hab2, hx2e, -⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P2 m2 R2 h2 hf2 s2 ho2 w2 s2' hsb hTb
     rw [hs1] at hx1e hl1
     rw [hc] at hx2e
     have := hd2 x1 hx1 x2 hx2
