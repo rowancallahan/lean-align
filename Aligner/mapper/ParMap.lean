@@ -34,6 +34,15 @@ def parMap {α β : Type} (n : Nat) (f : α → β) (xs : Array α) : Array β :
     Task.spawn (prio := .dedicated) fun _ => (batch b xs t).map f
   joinTasks tasks
 
+/-- `parMap` whose function is built inside each task from `mk ()` (`parMapS_eq`): what `mk`
+builds is then owned by that task alone, not shared across threads, so its reference counts
+stay single-threaded (plain increments, no shared cache lines). -/
+def parMapS {σ α β : Type} (n : Nat) (mk : Unit → σ) (f : σ → α → β) (xs : Array α) : Array β :=
+  let b := batchSize n xs.size
+  let tasks := (List.range (max n 1)).map fun t =>
+    Task.spawn (prio := .dedicated) fun _ => (batch b xs t).map (f (mk ()))
+  joinTasks tasks
+
 end ParMap
 
 namespace MapSpec
@@ -92,6 +101,11 @@ theorem parMap_eq_map {α β : Type} (n : Nat) (f : α → β) (xs : Array α) :
   simp only
   rw [joinTasks_range_spawn, Array.extract_eq_self_of_le (size_le_batches n xs.size)]
 
+/-- **Per-task setup is map** with the setup built once. -/
+theorem parMapS_eq {σ α β : Type} (n : Nat) (mk : Unit → σ) (f : σ → α → β) (xs : Array α) :
+    parMapS n mk f xs = xs.map (f (mk ())) :=
+  parMap_eq_map n (f (mk ())) xs
+
 end ParMap
 
 namespace MapSpec
@@ -117,5 +131,6 @@ theorem mapReadsParArray_eq_mapSpec (n l0 : Nat) (sc : Scoring) (hv : ValidScori
 end MapSpec
 
 #print axioms ParMap.parMap_eq_map
+#print axioms ParMap.parMapS_eq
 #print axioms MapSpec.parMap_eq_mapSpec
 #print axioms MapSpec.mapReadsParArray_eq_mapSpec
