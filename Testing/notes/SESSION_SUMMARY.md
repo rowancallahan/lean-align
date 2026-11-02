@@ -1360,7 +1360,10 @@ ngi-igenomes.s3.amazonaws.com · 15 dedup / heuristic (off).
 Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
 
 #### Decision questions in detail (Rowan is thinking these over)
-1. **Trimming in the shim?** → DECIDED (Rowan): yes, he will add it later.
+1. **Trimming in the shim?** → DONE (38fa84a, Rowan approved): Spec/Fastq trimRecord (proved ReadTrim.trimRead) on
+   every mate as read; Spec/Shim chunkPairs: no letters → none; Spec/Sam: empty mate prints *. Rowan will write the full
+   FASTQ spec later. RULE (Rowan): Spec/Fastq and Spec/Sam are loose; ANY Spec/Shim (and Main.lean) edit must be checked
+   with Rowan first.
    Rowan: also ADAPTER trimming (linear; the proved trimmer today is quality-window only — no adapter code exists yet).
    Also later maybe: switch to LOCAL alignment (clip step with a fixed clip penalty at read ends, like BWA/minibwa):
    uniqueness/bound definitions carry over (different score); needs clipped-end kernels + certificates, pigeonhole bound
