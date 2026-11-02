@@ -490,7 +490,7 @@ theorem mapChromsGBFGPO_eq {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [
 /-- `mateKPP` with the seed orders given (`mateKPPO_eq`). -/
 def mateKPPO {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) (o1 o2 : List Nat) : MateR :=
-  let b := mapChromsGBFGPO (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+  let b := mapChromsGBFGPOT (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
     (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) s.K1 s.K2 P ix G offs pgs R s.Rr s.ps s.pr o1 o2
   (decodeP pgs.size P b, decide (b.pen ≤ P))
 
@@ -517,15 +517,16 @@ theorem regionPenKPSO_eq (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Arr
 /-- `mateKP` reading the packed reads from the preparation (`mateKP_eqP`: the same for `prepMate`). -/
 def mateKPP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : MateR :=
-  let b := mapChromsGBFGP (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+  let b := mapChromsGBFGPOT (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
     (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) s.K1 s.K2 P ix G offs pgs R s.Rr s.ps s.pr
+    (ordG (s.ps.map (LookG.size ix)) (R.size / 25)) (ordG (s.pr.map (LookG.size ix)) (R.size / 25))
   (decodeP pgs.size P b, decide (b.pen ≤ P))
 
 theorem mateKP_eqP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
     mateKP P ix G offs pgs R (prepMate ix R : PrepM Pp) = mateKPP P ix G offs pgs R (prepMate ix R : PrepM Pp) := by
   unfold mateKP mateKPP
-  simp only [mapChromsGBFG_eqP]
+  rw [mapChromsGBFGT_eqPO]
   rfl
 
 theorem mateKPPO_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)

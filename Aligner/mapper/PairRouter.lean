@@ -1,4 +1,5 @@
 import PairJoin
+import TieCut
 
 /-!
 # Codec `routeKP`: pass kernels in sequence, unmapped pairs with a reason
@@ -70,6 +71,36 @@ theorem pen_le_iff (hf : fastT P R = true) :
     rw [cwB_encB P read g p h1] at this
     omega
 
+/-- (Tie cut) The search's best penalty is within the cap exactly when the read has a hit. -/
+theorem pen_le_iffT (hf : fastT P R = true) :
+    (mapChromsGBT P ix G offs gbs R).pen ≤ P ↔ hitsBoth sc0 (-(P : Int)) g read ≠ [] := by
+  unfold fastT at hf
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hf
+  obtain ⟨S, hi, hall⟩ := mapChromsGBT_inv P read g gbs R hg hr ix G offs hcat hlk hf.1 hf.2
+  have key : ∀ (st : Strand) w' s', (strandScore g read st w' = some s' ∧ -(P : Int) ≤ s') ↔
+      (cwS P read g st w' ≤ P ∧ s' = -(cwS P read g st w' : Int)) := by
+    intro st w' s'
+    cases st with
+    | fwd => exact cwT_iff P read g w' s'
+    | rev => exact cwT_iff P (revComp read) g w' s'
+  constructor
+  · intro hp hn
+    have hw := hi.hit hp
+    have hb : cwB P read g (mapChromsGBT P ix G offs gbs R).win ≤ P := by omega
+    have hd := cwS_decB P read g (mapChromsGBT P ix G offs gbs R).win
+    generalize decB g.length (mapChromsGBT P ix G offs gbs R).win = p at hd
+    have h2 := (key p.2 p.1 _).mpr ⟨by omega, rfl⟩
+    have hm : (p, -(cwS P read g p.2 p.1 : Int)) ∈ hitsBoth sc0 (-(P : Int)) g read :=
+      (mem_hitsBoth_T _ _ _ _ _).mpr ⟨strandScore_allWindows g read p.2 p.1 _ h2.1, h2.1, h2.2⟩
+    rw [hn] at hm; cases hm
+  · intro hn
+    obtain ⟨⟨p, s⟩, hm⟩ := List.exists_mem_of_ne_nil _ hn
+    rw [mem_hitsBoth_T] at hm
+    obtain ⟨h1, -⟩ := (key p.2 p.1 s).mp ⟨hm.2.1, hm.2.2⟩
+    have := hi.min _ (hall _ (by rw [cwB_encB P read g p h1]; exact h1))
+    rw [cwB_encB P read g p h1] at this
+    omega
+
 end top
 
 /-! ## Algorithm -/
@@ -80,7 +111,7 @@ abbrev MateR := Option (Placement × Int) × Bool
 /-- `mapFastGBKPp` (fast path) with the any-hit flag. -/
 def mateKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : MateR :=
-  let b := mapChromsGBFG (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
+  let b := mapChromsGBFGT (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
     (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) P ix G offs pgs R s.Rr s.ps s.pr
   (decodeP pgs.size P b, decide (b.pen ≤ P))
 
@@ -686,26 +717,26 @@ theorem mateKP_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m)
       LookG.look ((ix, G) : PkMz) (Mz.unpack G) R s base p := fun _ _ _ _ => rfl
   have hcat := catOk_cut G offs ns hcut
   have hlk := lookOk_pk ix G hchk
-  have eb : mapChromsGBKG P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (cutAll G offs ns) R =
-      mapChromsGB P ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R := by
-    rw [mapChromsGBKG_unpack, mapChromsGBK_eq_rep P _ _ offs _ _ (repAllK_unpack _)]
-    simp only [mapChromsGB, ilG_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) hG]
-  have em : mapFastGBKP P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R = mapSpecBoth sc0 (-(P : Int)) g m := by
-    rw [mapFastGBKP_eq, mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) hG]
-    exact mapFastGB_eq_mapSpecBoth P g m _ R _ _ offs hg hr hcat hlk
+  have eb : mapChromsGBKGT P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (cutAll G offs ns) R =
+      mapChromsGBT P ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R := by
+    rw [mapChromsGBKGT_unpack, mapChromsGBKT_eq_rep P _ _ offs _ _ (repAllK_unpack _)]
+    simp only [mapChromsGBT, ilG_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) hG]
   have e1 : (mateKP P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R (prepMate ((ix, G) : PkMz) R)) =
-      (decodeP (cutAll G offs ns).size P (mapChromsGBKG P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns)
+      (decodeP (cutAll G offs ns).size P (mapChromsGBKGT P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns)
         (cutAll G offs ns) R),
-       decide ((mapChromsGBKG P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (cutAll G offs ns) R).pen ≤ P)) := rfl
-  have e2 : mapFastGBKP P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R =
-      decodeP (cutAll G offs ns).size P (mapChromsGBKG P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns)
-        (cutAll G offs ns) R) := by
-    unfold mapFastGBKP; rw [if_pos hf]
-  rw [e1]
-  refine ⟨by simp only []; rw [← e2, em], fun _ => ?_⟩
-  simp only [decide_eq_true_eq]
-  rw [eb]
-  exact pen_le_iff P m g _ R hg hr _ _ offs hcat hlk hf
+       decide ((mapChromsGBKGT P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (cutAll G offs ns) R).pen ≤ P)) := rfl
+  have hf' := hf
+  unfold fastT at hf'
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hf'
+  rw [e1, eb]
+  refine ⟨?_, fun _ => ?_⟩
+  · obtain ⟨S, hi, hall⟩ := mapChromsGBT_inv P m g _ R hg hr ((ix, G) : PkMz) (Mz.unpack G) offs hcat hlk hf'.1 hf'.2
+    have hn : (cutAll G offs ns).size = g.length := by simpa using hg.1
+    simp only []
+    rw [hn]
+    exact decodeP_eq P g m S _ hi hall
+  · simp only [decide_eq_true_eq]
+    exact pen_le_iffT P m g _ R hg hr _ _ offs hcat hlk hf
 
 /-- Region miss: no hit of the read (cap `P`) is a proper partner of `a`. -/
 theorem regionKP_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m)

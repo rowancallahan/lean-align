@@ -126,7 +126,7 @@ lean_lib IndexSketch where   -- seed sketches
 @[default_target]
 lean_lib Mapper where   -- tier router, pair search, batching: the code alignPairs runs
   srcDir := "Aligner/mapper"
-  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TierHeur, `TierOpt, `TierRouter]
+  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TieCut, `TierHeur, `TierOpt, `TierRouter]
 
 @[default_target]
 lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
@@ -260,3 +260,7 @@ lean_exe seed_lab where               -- seed lookup cost on the whole genome (b
 lean_exe bam_write where              -- BAM writer prototype with stored BGZF blocks vs SAM text (benchmark only, unproved)
   srcDir := "Testing/benches"
   root := `BamWrite
+
+lean_exe tie_prof where                   -- benchmark only: shim CPU by router stage, tier and reason (unproved IO)
+  srcDir := "Testing/benches"
+  root := `TieProf
