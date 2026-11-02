@@ -238,7 +238,8 @@ def pairCfgZ (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteAr
     gate := (fun a b _ _ c1 c2 => budOf a.size < c1 || budOf b.size < c2) }
 
 -- `alignOneC` with each mate prepared once (`prepMz`): its bucket sizes give `capFor` and the router's costs, and
--- the router (`tierPairBP`) gets the preparations (`alignOneP_eq`)
+-- the router (`tierPairBP`) and the reporter (`answerOfPairP`: reverse complements, packed strands) get the
+-- preparations (`alignOneP_eq`)
 def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option Setup)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
   match bytes1, bytes2 with
@@ -257,8 +258,8 @@ def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
           let cfg' := pairCfgZ cfg pk read1 read2 (capForZ (cfg.rcfg.cap1 read1) read1 za1 za2)
             (capForZ (cfg.rcfg.cap1 read2) read2 zb1 zb2)
           .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
-            (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
-              (MapSpec.Fast.tierUp cfg' pk #[0] pgs read1 read2
+            (Report.answerOfPairP reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
+              s1 s2 (MapSpec.Fast.tierUp cfg' pk #[0] pgs read1 read2
                 (MapSpec.Fast.tierPairBP cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2))))
 
 theorem alignOneP_eq (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option Setup)
@@ -266,7 +267,7 @@ theorem alignOneP_eq (insertSettings : InsertSettings) (lens : Array Nat) (setup
     alignOneP insertSettings lens setup bytes1 bytes2 = alignOneC insertSettings lens setup bytes1 bytes2 := by
   rcases bytes1 with _ | a <;> rcases bytes2 with _ | b <;> rcases setup with _ | ⟨iS, cfg, pk, pgs, offs, ns⟩
   all_goals try rfl
-  simp only [alignOneP, alignOneC, capForZ_eq]
+  simp only [alignOneP, alignOneC, capForZ_eq, Report.answerOfPairP_eq]
   show _ = PairResult.aligned (LastResort.finalize iS (LastResort.fitNs ns) a b
     (Report.answerOfPair reportTies (fallbackFrom iS) mateRescue pk iS pgs offs ns a b
       (MapSpec.Fast.tierUp (pairCfg cfg pk a b) pk #[0] pgs a b (MapSpec.Fast.tierPairB (pairCfg cfg pk a b) pk #[0] pgs (some a) (some b)))))
