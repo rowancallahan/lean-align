@@ -2,6 +2,7 @@ import Proofs.Index
 import Proofs.Whole
 import TierHeur
 import ParMap
+import ParGroup
 
 /-! # 3. The aligner, proved. `Spec/Aligner.lean`'s types are in `Proofs/Answer.lean` (unchanged);
 this file fills in the two holes, `buildIndex` and `alignPairs`, and proves `alignPairs_correct`
@@ -142,10 +143,39 @@ theorem alignOneC_eq (insertSettings : InsertSettings) (loaded : Option LoadedIn
     alignOneC (chunkSetup insertSettings loaded) bytes1 bytes2 = alignOne insertSettings loaded bytes1 bytes2 := by
   rcases bytes1 with _ | _ <;> rcases bytes2 with _ | _ <;> rcases loaded with _ | ⟨ix, G, _, _⟩ <;> rfl
 
--- compiled code runs `alignPairsC`
-@[csimp] theorem alignPairs_eqC : @alignPairs = @alignPairsC := by
+theorem alignPairs_eqC' : @alignPairs = @alignPairsC := by
   funext insertSettings index pairs
   simp only [alignPairs, alignPairsC, alignOneC_eq]
+
+instance : LawfulBEq ByteArray where
+  rfl {a} := by show a.data == a.data; simp
+  eq_of_beq {a b} h := ByteArray.ext (by change a.data == b.data at h; simpa using h)
+
+-- identical pairs of a chunk (PCR / optical duplicates) are aligned once: the distinct pairs are
+-- mapped in 16 tasks, every pair (each keeps its own place) looks its result up
+def alignPairsD (insertSettings : InsertSettings) (index : ByteArray)
+    (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
+  let setup := chunkSetup insertSettings (loadIndex index)
+  let f := fun (p : Option ByteArray × Option ByteArray) => alignOneC setup p.1 p.2
+  let xs := pairs.toArray
+  let tbl := ParMap.buildTable (ParMap.parMap 16 (fun k => (k, f k)) (ParMap.distinct xs))
+  (xs.map (ParMap.lookupOr f tbl)).toList
+
+theorem alignPairsD_eq : @alignPairsD = @alignPairsC := by
+  funext insertSettings index pairs
+  simp only [alignPairsD, alignPairsC, ParMap.parMap_eq_map]
+  congr 1
+  apply Array.map_congr_left
+  intro x _
+  apply ParMap.lookupOr_eq
+  apply ParMap.buildTable_sound
+  intro p hp
+  obtain ⟨k, _, rfl⟩ := Array.mem_map.mp hp
+  rfl
+
+-- compiled code runs `alignPairsD`
+@[csimp] theorem alignPairs_eqC : @alignPairs = @alignPairsD := by
+  rw [alignPairsD_eq, alignPairs_eqC']
 
 /-! ## The proof -/
 
