@@ -218,6 +218,61 @@ def alignOneC (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
             (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
               (MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2))))
 
+-- `capFor` from the mate's bucket sizes (`capForZ_eq`: the sizes of `prepMate`'s seeds)
+def capForZ (c0 : Nat) (R : ByteArray) (z1 z2 : Array Nat) : Nat :=
+  if 200 ≤ R.size then c0
+  else if MapSpec.Fast.costZ c0 z1 z2 ≤ capBudget then c0
+  else if MapSpec.Fast.costZ (min c0 15) z1 z2 ≤ capBudget then min c0 15
+  else min c0 11
+
+theorem capForZ_eq (pk : MapSpec.Fast.PkMz) (c0 : Nat) (R : ByteArray) :
+    capForZ c0 R ((MapSpec.Fast.prepMz pk R).ps.map (MapSpec.Fast.LookG.size pk))
+      ((MapSpec.Fast.prepMz pk R).pr.map (MapSpec.Fast.LookG.size pk)) = capFor pk c0 R := by
+  unfold capForZ capFor
+  simp only [MapSpec.Fast.prepMz_eq, MapSpec.Fast.costZ_eq]
+
+-- `pairCfg` with the two mates' caps given (`pairCfg cfg pk a b = pairCfgZ cfg pk a b (capFor …) (capFor …)`)
+def pairCfgZ (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArray) (ca cb : Nat) : MapSpec.Fast.TierCfg :=
+  { cfg with
+    rcfg := { cfg.rcfg with cap1 := fun R => if R == a then ca else if R == b then cb else capFor pk (cfg.rcfg.cap1 R) R }
+    gate := (fun a b _ _ c1 c2 => budOf a.size < c1 || budOf b.size < c2) }
+
+-- `alignOneC` with each mate prepared once (`prepMz`): its bucket sizes give `capFor` and the router's costs, and
+-- the router (`tierPairBP`) gets the preparations (`alignOneP_eq`)
+def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option Setup)
+    (bytes1 bytes2 : Option ByteArray) : PairResult :=
+  match bytes1, bytes2 with
+  | none, _ => .trimmedAway .one
+  | some _, none => .trimmedAway .two
+  | some read1, some read2 =>
+      match setup with
+      | none => .aligned (LastResort.finalize insertSettings (LastResort.fitNs lens) read1 read2 noIndexAnswer)
+      | some (insertSettings, cfg, pk, pgs, offs, ns) =>
+          let s1 := MapSpec.Fast.prepMz pk read1
+          let s2 := MapSpec.Fast.prepMz pk read2
+          let za1 := s1.ps.map (MapSpec.Fast.LookG.size pk)
+          let za2 := s1.pr.map (MapSpec.Fast.LookG.size pk)
+          let zb1 := s2.ps.map (MapSpec.Fast.LookG.size pk)
+          let zb2 := s2.pr.map (MapSpec.Fast.LookG.size pk)
+          let cfg' := pairCfgZ cfg pk read1 read2 (capForZ (cfg.rcfg.cap1 read1) read1 za1 za2)
+            (capForZ (cfg.rcfg.cap1 read2) read2 zb1 zb2)
+          .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
+            (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
+              (MapSpec.Fast.tierUp cfg' pk #[0] pgs read1 read2
+                (MapSpec.Fast.tierPairBP cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2))))
+
+theorem alignOneP_eq (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option Setup)
+    (bytes1 bytes2 : Option ByteArray) :
+    alignOneP insertSettings lens setup bytes1 bytes2 = alignOneC insertSettings lens setup bytes1 bytes2 := by
+  rcases bytes1 with _ | a <;> rcases bytes2 with _ | b <;> rcases setup with _ | ⟨iS, cfg, pk, pgs, offs, ns⟩
+  all_goals try rfl
+  simp only [alignOneP, alignOneC, capForZ_eq]
+  show _ = PairResult.aligned (LastResort.finalize iS (LastResort.fitNs ns) a b
+    (Report.answerOfPair reportTies (fallbackFrom iS) mateRescue pk iS pgs offs ns a b
+      (MapSpec.Fast.tierUp (pairCfg cfg pk a b) pk #[0] pgs a b (MapSpec.Fast.tierPairB (pairCfg cfg pk a b) pk #[0] pgs (some a) (some b)))))
+  rw [MapSpec.Fast.tierPairB_eqP]
+  rfl
+
 -- each task loads the index and builds the setup itself (`ParMap.parMapS`): its structures are
 -- then that task's own, so their reference counts are not shared across threads; only the
 -- index bytes are
@@ -225,7 +280,7 @@ def alignPairsC (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   let lens := ((readIndex index).1.getD []).toArray
   (ParMap.parMapS parTasks (fun _ => chunkSetup insertSettings (readIndex index).2)
-    (fun setup (bytes1, bytes2) => alignOneC insertSettings lens setup bytes1 bytes2) pairs.toArray).toList
+    (fun setup (bytes1, bytes2) => alignOneP insertSettings lens setup bytes1 bytes2) pairs.toArray).toList
 
 theorem alignOneC_eq (insertSettings : InsertSettings) (lens : Array Nat) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) :
@@ -236,7 +291,7 @@ theorem alignOneC_eq (insertSettings : InsertSettings) (lens : Array Nat) (loade
 -- compiled code runs `alignPairsC`
 @[csimp] theorem alignPairs_eqC : @alignPairs = @alignPairsC := by
   funext insertSettings index pairs
-  simp only [alignPairs, alignPairsC, ParMap.parMapS_eq, ParMap.parMap_eq_map, alignOneC_eq]
+  simp only [alignPairs, alignPairsC, ParMap.parMapS_eq, ParMap.parMap_eq_map, alignOneP_eq, alignOneC_eq]
 
 /-! ## The proof -/
 
