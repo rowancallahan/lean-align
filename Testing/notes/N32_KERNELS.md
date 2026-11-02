@@ -73,3 +73,26 @@ tools interleaved was worse (empty runs up to 500 s, negative differences) and i
 | HiSeq | 121.2 | 42.6 | 38.0 | 0.89 |
 head / base user CPU matches the Ir changes (−12% NovaSeq, −7% mason). For a wall A/B on this box, run the index load
 outside the timed region (e.g. a bench that loads once) rather than subtracting an empty run.
+
+## 5. Second round on bb1a7f6 (trimming + per-mate caps + chunk 20000)
+| commit | change | NovaSeq Ir | mason Ir |
+|---|---|---|---|
+| bb1a7f6 | base | 1406.0M | 1657.7M |
+| 5634ddd | g1 `anchorsOf` (fallback): its seed lookup stops once its `k` anchors are found (`lookupPWk`, `lookupPWk_extract`: the same first `k` as the whole lookup) | 1189.6M (−15.4%) | 1655.5M (−0.1%) |
+| d941d5e | g2 `TierHeur.hamD` = the machine-word `hamming` (same count, `lim + 1` once above `lim`) | 1171.9M (−1.5%) | 1648.9M (−0.4%) |
+| 8bed788 | g3 `wlU`: the trimmer loop with `USize` counters and `uget` reads (`wlU_eq`) | 1142.1M (−2.5%) | 1618.1M (−1.9%) |
+Total NovaSeq −18.8%, mason −2.4%. `anchorsOf` scanned whole repeat buckets (14% of NovaSeq Ir in `scanAWF`/`nextK`) to
+keep 16 anchors. `kerGKG` is 1.6% of NovaSeq after the caps, so its USize rewrite was not done.
+Left on NovaSeq: `bandCells` 6% (nearY / alignAt DP), frozen FASTQ/SAM code ~12% (`reverseMapBytes`, `findNewline`,
+UTF-8 checks), `hammingU` 4.9%, refcount/alloc ~9%.
+
+CPU of the map part (user + sys, full − empty-FASTQ run right before), 4 threads, median of 6, one tool at a time,
+runs sequential, nothing else on the box. minibwa c07de5c; base bb1a7f6; head 8bed788. Full-set SAM head = base.
+| set | minibwa CPU s | base CPU s | head CPU s | minibwa / head | minibwa / base |
+|---|---|---|---|---|---|
+| NovaSeq 200k | 55.5 | 32.5 | 20.8 | **2.67x** | 1.71x |
+| sim mason 200k | 66.3 | 32.2 | 28.7 | 2.31x | 2.06x |
+| sim low 200k | 41.4 | 15.7 | 17.7 | 2.33x | 2.63x |
+| HiSeq 200k | 120.2 | 34.4 | 28.9 | 4.15x | 3.50x |
+Run-to-run spread of these differences is about ±20% (e.g. NovaSeq head 20.0–27.6 s, low head 11.5–27.8 s); low's
+head > base is inside it (Ir −2%). Wall (full − empty, same caveat as §4): NovaSeq minibwa 10.6 s / head 5.2 s = 2.03x.
