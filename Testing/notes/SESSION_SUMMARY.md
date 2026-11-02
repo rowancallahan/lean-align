@@ -1368,7 +1368,7 @@ Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
    doesn't trim (it soft-clips); our scoring is end to end, so trimming plays that role. Trim time counts in our runs.
 2. **Merge claude/festive-fermi-mf9mo6 into main?** CI green; includes Rowan's spec (junkScore −16), M2, speed work,
    proved index builder.
-3. **Main.lean I/O overlap?** 200k sets = 2 chunks of 100k: first-chunk read and last-chunk format/write don't overlap
+3. **Main.lean I/O overlap?** → DECIDED (Rowan): yes, he will make the change (Spec/Shim + Main mirror). 200k sets = 2 chunks of 100k: first-chunk read and last-chunk format/write don't overlap
    mapping → mason/low don't scale 2→4 threads. Proposal: small first chunk (~10k), samChunk inside the background write.
 4. **Low-repeat k=21 extra index?** Find-only second pass (checked pair, proper, .unknown): mason +7.5%, low +1.6%,
    HiSeq +4.9%, NovaSeq +5.6%. Needs a build-time filter (positions whose k-mer occurs ≤ N times) or mmap to fit 15 GB.
