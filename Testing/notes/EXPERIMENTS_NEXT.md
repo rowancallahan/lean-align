@@ -41,6 +41,20 @@ byte-identical unless the change is meant to add mapped pairs (then count gains 
   Measure pairs gained at truth and the cost (more hits per shorter seed, mostly in repeats). Needs a proved index
   for the new seed shape (or a second index), and the bound proof for the new cap.
 
+## 4. Faster sorting than List.mergeSort (Rowan, 2026-11)
+`List.mergeSort` is 5–6% of hg38 time (mostly `diags`: anchors → diagonals, sorted, duplicates dropped). Sorting
+Nats with duplicates removed has exactly one correct answer, so any faster method is proved equal by the standard
+"sorted + same elements ⇒ equal" argument (`List.eq_of_perm_of_sorted`), as an @[csimp]. Candidates, in order:
+(a) **no sort at all — k-way merge**: each seed lookup returns its anchors in slot order; if those are already
+    sorted by position (check: index slots ordered by position within a key), `diags` is a merge of k sorted arrays
+    plus adjacent-dedup, O(n log k) or a linear merge for small k — likely the biggest win;
+(b) **radix / counting sort** on the diagonal values (bounded by genome size < 2^32): two 16-bit passes over an
+    Array, no comparisons, no list cells;
+(c) **in-place Array sort** (insertion sort for small n — already used for ≤ 16 diagonals since n28 — and an
+    introsort/qsort above that) instead of building a List;
+(d) **fewer elements to sort**: dedup identical anchors (§2) or bucket by high bits first.
+Measure each against `List.mergeSort` on hg38 (Ir per pair, CPU), output byte-identical.
+
 ## Also queued (from PAUSE_2026-10-30.md)
 Multithreading overhead (~40% extra CPU with 4 tasks in one process), danger regions and WFA on full hg38, the
 heuristic's best settings for M2, glibc allocations and the bignum on the hg38 path.
