@@ -273,3 +273,7 @@ lean_exe kmer_check where             -- runs the proved checker UniqueGenome.ch
 lean_exe tie_prof where                   -- benchmark only: shim CPU by router stage, tier and reason (unproved IO)
   srcDir := "Testing/benches"
   root := `TieProf
+
+lean_exe index_load where             -- benchmark only: ways to read the index file (unproved IO)
+  srcDir := "Testing/benches"
+  root := `IndexLoad
