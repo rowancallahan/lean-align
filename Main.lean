@@ -4,12 +4,15 @@ import Proofs.Sam
 /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
 then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
 Everything here except the boxed `alignPairs` call is unproved plumbing (reading, writing).
-Stand-ins for now: no trimming (every mate is `some`). -/
+Mates are quality-trimmed as they are read (`Spec.trimRecord`, the proved trimmer); a mate with no
+letters left is trimmed away (`none`). -/
 
 -- a chunk of read pairs, as `alignPairs` takes them
 def Spec.chunkPairs (chunk : Array (Spec.FastqRecord × Spec.FastqRecord)) :
     List (Option ByteArray × Option ByteArray) :=
-  chunk.toList.map fun (record1, record2) => (some record1.letters, some record2.letters)
+  chunk.toList.map fun (record1, record2) =>
+    (if record1.letters.isEmpty then none else some record1.letters,
+     if record2.letters.isEmpty then none else some record2.letters)
 
 def main (args : List String) : IO UInt32 := do
   match args with
