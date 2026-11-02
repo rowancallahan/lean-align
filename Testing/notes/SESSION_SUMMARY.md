@@ -1437,3 +1437,11 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - Pipelining with one extra core needs a ≥5-core box (and a 4-task cap on alignPairs' parMap).
 - Index read is 5–30 s when the page cache is cold: mmap needs a Main.lean change (Rowan's file).
 - BAM later if faster; compression via Rowan's lean-zip.
+
+### reportFloor decision (Rowan, 2026-11-02 evening)
+- Rowan will add a score floor to the Spec (closes audit HIGH 1 and 2, `SPEC_AUDIT_2026-11-02.md`): every reported pair, under any label (`.unique`, `.multimapper`, `.unknown`), has pair score (mate 1 + mate 2) >= `reportFloor`, about -50 for 2x150. `junkScore` stays -16 (`none` needs a proved bound < -16; the free bound is -17).
+- Must hold: `reportFloor <= junkScore`, else some reads have no valid answer.
+- Zones: bound >= -16 → must map; -50..-16 → either (we map); < -50 → must be unmapped.
+- chr21 share of mapped non-degenerate pairs below the floor: mason <-16 28.5%, <-32 1.94%, <-50 0.98%, <-100 0.77%; low <-50 0.61%. NovaSeq/HiSeq numbers requested from S-B.
+- **Open: "gave up" reads.** When the search stops early (`stoppedEarly`, fallback, mate rescue, ties), the best pair found can be below -50 while the bound is NOT proved below -16. Under the floor they can't be reported and `none` is not provable either, so they have no valid answer. Need something for them: more search, or a "gave up" answer in the Spec (unmapped, no bound claim). Count them when the proofs are updated to the floor.
+- Still open after the floor: the gap clause `bestPossibleScore <= pair score + slack` (audit MED 3).
