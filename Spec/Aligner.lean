@@ -10,7 +10,7 @@ namespace Spec
 structure InsertSettings where
   range         : Nat × Nat  -- allowed fragment length: min and max, both included
   dovetailSlack : Nat := 0
-  junkScore : Int := -17
+  junkScore : Int := -16
 
 inductive Mate where
   | one
