@@ -104,7 +104,7 @@ lean_lib IndexKmer where   -- k-mer index
 @[default_target]
 lean_lib IndexMinimizer where   -- minimizer index (MzIndex) and its checkers
   srcDir := "Aligner/index/minimizer"
-  roots := #[`MapperMzWords, `MzCheckFast, `MzCheckPar, `MzIndex, `MzView, `MzWord]
+  roots := #[`MapperMzWords, `MzBuildOk, `MzCheckFast, `MzCheckPar, `MzIndex, `MzView, `MzWord]
 
 @[default_target]
 lean_lib IndexPackedGenome where   -- 2-bit packed genome
