@@ -128,3 +128,20 @@ all other rules zero. Observations:
    in the printed alignment; this removes all 640-10 872 violations per set without touching `alignPairs_correct`.
 2. Decide the trimmer's floor: today a read with any A/C/G/T is never trimmed away; a minimum kept length would stop 1-letter mates from being aligned and printed.
 3. TLEN/PNEXT/MAPQ differences against minibwa are consequences of trimming and our MAPQ policy (0/60), not of inconsistent output: our own output is internally consistent (section 2 of the Summary).
+
+## CI regression: `Testing/scripts/fuzz_ci.sh` (branch test/fuzz-ci)
+
+A small version of the output fuzz that needs no hg38 and runs in about 20 s (16 s measured here, 2 917 pairs): it generates a 2 Mb two-chromosome genome with repeats,
+segmental copies, tandem arrays and N runs (`sim_genome_dup.py`, fixed seed), runs `lean-align build`, simulates 3 x 700 pairs (`sim_pairs.py` mason/low/high) plus the edge-case set
+(`fuzz_reads.py`, 40 pairs per category), maps them and runs `sam_fuzz_check.py`. Nothing large is committed; everything is generated into a temp directory that is removed afterwards.
+Zero hard violations are required (exit 1 otherwise); the checks are the ones in this note's Summary item 2. Checked to fail: clearing 0x2 on one record, changing one TLEN, dropping one SEQ letter,
+shifting one POS and replacing one SEQ by `*` are each caught (exit 1).
+
+**Wiring:** a separate script, called from `CI_check.sh` only when `FUZZ=1` (`FUZZ=1 sh Testing/scripts/CI_check.sh`), so the default developer check keeps its current length. The
+other CI steps print into the same `== step` format and `fail=1` on error.
+
+**Two expected failures** (`--xfail=` flags in `fuzz_ci.sh`; they print `XFAIL` with the count and do not fail the run):
+- `no-aligned-base`: no mapped record may have a CIGAR with zero aligned bases (the `150I` placeholders): currently 616 records in the 5 834.
+- `short-mate`: no mapped mate that had 20 or more letters in the FASTQ may be printed with fewer than 20 (the all-`#` read trimmed to one letter): currently 251 mates.
+When a fix lands the rule has no hits and the script prints `XPASS ... delete the flag so this rule is enforced`; deleting the flag from `fuzz_ci.sh` turns it into a hard check.
+(An input read that is itself shorter than 20 letters is not flagged.)

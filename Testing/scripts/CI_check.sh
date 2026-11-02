@@ -3,6 +3,7 @@
 # Exit 0 = frozen files match their checksums, everything builds, every
 # certificate and spec file elaborates with standard axioms only and no sorry,
 # and the executable cross-codec check passes.
+# FUZZ=1 sh Testing/scripts/CI_check.sh  also runs the output-fuzz regression (fuzz_ci.sh: tiny generated genome, ~20 s, no hg38).
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 fail=0
@@ -68,6 +69,11 @@ if grep -nE "IO\." Aligner/LeanAlign/*.lean; then echo "FAIL: IO in the pure lib
 if grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Fastq.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean; then fail=1; else echo "shim files: no sorry / native_decide / extern / unsafe / implemented_by"; fi
 for f in Fasta Fastq Sam; do sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean && echo "Proofs/$f.lean mirrors Spec/$f.lean" || { echo "FAIL: Proofs/$f.lean differs from Spec/$f.lean"; fail=1; }; done
 sed "1d; s/^import Proofs.Sam$/import Spec.Sam/" Main.lean | cmp -s - Spec/Shim.lean && echo "Main.lean mirrors Spec/Shim.lean" || { echo "FAIL: Main.lean differs from Spec/Shim.lean"; fail=1; }
+
+if [ "${FUZZ:-0}" = 1 ]; then
+  step "output fuzz (tiny generated genome; known problems print XFAIL and do not fail)"
+  sh Testing/scripts/fuzz_ci.sh || fail=1
+fi
 
 step "result"
 [ $fail -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"

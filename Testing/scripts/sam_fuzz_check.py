@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Malformed-output check of lean-align's SAM against its own inputs. Zero violations tolerated (exit 1 otherwise).
-   python3 -I sam_fuzz_check.py OURS.sam R1.fq R2.fq CHROMOSOMES [CALMD.sam]
+   python3 -I sam_fuzz_check.py [--xfail=no-aligned-base] [--xfail=short-mate] OURS.sam R1.fq R2.fq CHROMOSOMES [CALMD.sam]
 Per record: FLAG bits, '*'/0 fields of unmapped records, CIGAR syntax (M I D only, no zero length, no adjacent equal
 ops), CIGAR query length == len(SEQ), len(QUAL) == len(SEQ), alphabet and quality range, position inside the chromosome.
 Per pair: order and QNAME against the FASTQ, mate flags (0x20 vs mate strand, 0x8 vs mate unmapped, 0x40/0x80), RNEXT/PNEXT
@@ -11,8 +11,16 @@ read with the matching qualities, A/C/G/T only (the trimmer's proved property).
 CALMD.sam (optional, `samtools calmd` output of the same records): mapped records with only M ops and no N: AS == -4*NM
 (counts reported as information, not as violations)."""
 import re, sys, collections
-sam, f1, f2, chrfile = sys.argv[1:5]
-calmd = sys.argv[5] if len(sys.argv) > 5 else None
+# --xfail=KEY: a rule known to fail until a fix lands. Its hits are reported as XFAIL and do not fail the run; when it has no hits the run
+# prints XPASS (the fix landed: delete the flag). KEYs: no-aligned-base (a mapped CIGAR with no aligned base, the 150I placeholders),
+# short-mate (a mapped mate trimmed below 20 letters from an input of 20 or more, e.g. the all-'#' read cut to 1 letter).
+XFAIL_RULES = {'no-aligned-base': 'mapped record whose CIGAR has no aligned base (no M)',
+               'short-mate': 'mapped mate trimmed to fewer than 20 letters (input had 20 or more)'}
+xfail = [a[8:] for a in sys.argv[1:] if a.startswith('--xfail=')]
+assert all(k in XFAIL_RULES for k in xfail), f'unknown --xfail key; known: {sorted(XFAIL_RULES)}'
+args = [a for a in sys.argv[1:] if not a.startswith('--')]
+sam, f1, f2, chrfile = args[:4]
+calmd = args[4] if len(args) > 4 else None
 chroms = {l.split('\t')[0]: int(l.split('\t')[1]) for l in open(chrfile).read().split('\n') if l}
 def fastq(p):
     L = open(p).read().split('\n'); assert len(L) % 4 == 1 and L[-1] == '', p
@@ -72,6 +80,7 @@ for i in range(min(len(R[1]), len(recs) // 2)):
             if len(d['qual']) != len(d['seq']): bad('len(QUAL) != len(SEQ)', qn, f"{len(d['qual'])} {len(d['seq'])}")
             if not re.fullmatch('[ACGTN]+', d['seq']): bad('SEQ outside ACGTN', qn)
             if len(d['seq']) < 20: warn['mate shortened to fewer than 20 letters by trimming (still aligned/printed)'] += 1; wex2.append(f"{qn} len {len(d['seq'])} {d['cigar']}") if len(wex2) < 3 else None
+            if d['mapped'] and len(d['seq']) < 20 <= len(o_seq): bad(XFAIL_RULES['short-mate'], qn, f"len {len(d['seq'])} of {len(o_seq)} {d['cigar']}")
             if not all(33 <= ord(c) <= 126 for c in d['qual']): bad('QUAL outside 33..126', qn)
         # provenance and trimming
         if d['seq'] == '*':
@@ -93,7 +102,7 @@ for i in range(min(len(R[1]), len(recs) // 2)):
                 if any(n == 0 for n, _ in c): bad('zero-length CIGAR op', qn, d['cigar'])
                 if any(o not in 'MID' for _, o in c): bad('CIGAR op outside M/I/D', qn, d['cigar'])
                 if any(c[k][1] == c[k + 1][1] for k in range(len(c) - 1)): bad('adjacent equal CIGAR ops', qn, d['cigar'])
-                if not any(o in 'M=X' for _, o in c): bad('mapped record whose CIGAR has no aligned base (no M)', qn, f"{d['rname']}:{d['pos']} {d['cigar']} MAPQ {d['mapq']} {d['tags'].get('XT')}")
+                if not any(o in 'M=X' for _, o in c): bad(XFAIL_RULES['no-aligned-base'], qn, f"{d['rname']}:{d['pos']} {d['cigar']} MAPQ {d['mapq']} {d['tags'].get('XT')}")
                 elif c[0][1] != 'M' or c[-1][1] != 'M':
                     warn['CIGAR starts or ends with I/D (legal SAM, validators dislike it)'] += 1
                     if len(wex) < 3: wex.append(f"{qn} {d['cigar']}")
@@ -163,11 +172,16 @@ for i in range(min(len(R[1]), len(recs) // 2)):
                 elif int(d['tags']['AS']) == -4 * n_m: info['calmd: M-only, AS == -4*NM'] += 1
                 else: info['calmd: M-only, AS != -4*NM'] += 1; ex['info AS != -4*NM'].append(f"{d['qn']} AS {d['tags']['AS']} NM {n_m}") if len(ex['info AS != -4*NM']) < 3 else None
 print(f'{pairs} pairs, {len(recs)} records checked against {f1.split("/")[-1]} / {f2.split("/")[-1]}')
+expected = {r: viol.pop(r) for r in list(viol) if r in [XFAIL_RULES[k] for k in xfail]}
 if viol:
     print('VIOLATIONS (must be zero):')
     for r, n in viol.most_common(): print(f'  {n:8d}  {r}   e.g. {ex[r][0] if ex[r] else ""}')
 else:
     print('VIOLATIONS: none')
+for k in xfail:
+    r = XFAIL_RULES[k]
+    if r in expected: print(f'  XFAIL (expected until the fix lands, --xfail={k}): {expected[r]} x "{r}"   e.g. {ex[r][0]}')
+    else: print(f'  XPASS (--xfail={k}): "{r}" has no hits any more: the fix landed, delete the flag so this rule is enforced')
 for k, v in sorted(warn.items()): print(f'  WARNING: {k}: {v}   e.g. {wex2 if "fewer" in k else wex}')
 for k, v in sorted(info.items()): print(f'  info: {k}: {v}')
 for k in ex:
