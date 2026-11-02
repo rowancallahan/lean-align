@@ -60,4 +60,6 @@ def main (args : List String) : IO Unit := do
     | none => IO.println "not a router index"
     | some (ix, G, offs, ns) =>
       IO.println s!"file {b.size}; genome G.w {G.w.size} (n {G.n}), G.ex {G.ex.size}; slots ix.sl {ix.sl.size} (sw {ix.sw}, {ix.sl.size / ix.sw} slots), bucket offsets {4 * (2 ^ ix.B + 1)} (B {ix.B}); k {ix.k} w {ix.w} c {ix.c} T {ix.T}; runs {ix.runs.size}; chromosomes {offs.size} {ns.size}"
+      let nSlots := (MapSpec.Mz.rd4 ix.offs (4 * (ix.ob + 2 ^ ix.B))).toNat
+      IO.println s!"genome bytes from {G.o}: {(G.n + 3) / 4}; slots {nSlots} x {ix.sw} B = {nSlots * ix.sw}; bucket offsets from byte {4 * ix.ob}: {4 * (2 ^ ix.B + 1)}"
   | _ => IO.println "usage: see the module comment"
