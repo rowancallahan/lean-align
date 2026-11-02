@@ -1220,3 +1220,32 @@ See the branch tips' commit messages for what is finished on each.
 ### Pause 2026-10-30 — see Testing/notes/PAUSE_2026-10-30.md (what worked, rollback points, hg38 profile, next steps)
 - 2026-10-27 (speed/loop-shape, cloud prep for the loop-shape campaign): @[csimp] USize versions of hamW, fwdW, bwdW (MapperK250), seedLE (MzWord), revCompLoop (FastGenK250), Mz.miniGo (MzIndex), each = USize loop + wrapper with a once-per-call bound test + verbatim slow copy, proved equal for all inputs (standard axioms; statements unchanged; check.sh passes). Synthetic 8 Mb genome, 2×150 pairs, dumps identical: tierPair Ir −7.4% with the spec's tierCfg settings (AB_PROD=1) / −4.9% in bench RTX; 20k pairs wall −10.6% / −5.9%. Harness: scripts/sim_genome.py, bench_data.sh, ab_kernel.sh, ab_pair.sh, ab_ir.sh (callgrind inside tierPair), cscan.py. Notes: notes/LOOP_SHAPE_PLAN.md (ranked candidates; bench RTX ≠ production settings; loadIndex per-chunk copies first for hg38), notes/GENERATED_C_SCAN_2026-10-27.txt. Pitfall: Nat literals ≥ 2^32 are parsed by GMP on every evaluation (pscanD still has one). Not measured: chr21/hg38, -march/LTO.
 - 2026-10-28 (speed/n28-loop-shape): speed/loop-shape ported onto 6a5ab23 and extended on chr21 with @[csimp] machine-word loops for PGen.raw, fwdMis/bwdMis/hamming (generic GRead), lanesAny, svAny, flagsOk, plus @[inline] wrappers. callgrind per 1000 chr21 mason pairs 391.6 M → 344.0 M Ir (−12.2%; the port alone −6.6%); SAM byte-identical on the four chr21 sets; CI_check passes. Details and what did not help: Testing/notes/LOOP_SHAPE_PLAN.md §6.
+
+### Branches deleted 2026-11 — what the 9 undocumented ones held (read through before deletion)
+Code on main was checked by identifier (`git grep` on main); only the ideas below were not already on main.
+- **archive/full-history, speed/guarq-b, speed/guarq-c, speed/guarq-wip** — the pre-reorganisation history
+  (450+ commits up to 2026-10-06). All their Lean code is on main under the new layout (pairGQ / pairGQC_sound /
+  PairGuarQB rejW_ker, pscanQ_eq / PairGuarQC goP_spec / pairGF_sound / pairGK / MateFloor / hitsAtQ); missing are
+  only the deleted PNG plots, the old FROZEN_SPEC.sha256 and wip/PairGuarQStubs.lean (open-lemma stubs, since
+  proved). The last commits there: candsC tried and reverted (no speed gain; also noted under archive/150-stage),
+  and the "freeze timing" table (already in this file): mapping-only bench RTX vs minibwa on 2026-10-06, HiSeq
+  3.57×, NovaSeq 1.98×, mason 1.66× (index load excluded; different box).
+- **speed/band-kernel** — proved capped banded score-only kernel `bandEnd`/`bandEnd2` (one pass per window end,
+  in-place Int rows, early exit when a row is dead), `bandScore_faithful`, `mapWith_eq_mapSpec_of_faithful` (any
+  scorer faithful at threshold T gives a mapper equal to mapSpec), `band_bench` vs wfaAlignU3. All on main.
+- **speed/bounds-v2** — sharper seed/window bounds: 4 seeds and 19 candidate windows per seed hit instead of 169
+  (`exists_clean_seed2`, MapperWalk2, SeedMapper2 = mapSpec). All on main.
+- **archive/bounds** (design only, empty commit): the reasoning behind bounds-v2 — charge each mismatch, each
+  gapX run and each gapY column once; e = max((−T)/min(−mismatch, −(gapOpen+gapExtend)), (−T+gapOpen)/min(−mismatch,
+  −gapExtend)) spoiled seeds (default scoring, T=−12: e=3, so 4 seeds); total gap columns ≤ d = (−T+gapOpen)/−gapExtend
+  (default 3), ≤ d2 = (−T+2·gapOpen)/−gapExtend (default 0) when both kinds occur; start/end shifts |s|+|t| ≤ d with
+  the same sign unless ≤ d2 → 19 windows. Useful again if deeper caps (5–7 errors) are attempted.
+- **archive/arrays** (WIP, never compiled, NOT on main): seed mapper over `Array Char` chromosomes with a hashed
+  index — UInt64 polynomial hash of each l0-letter word (h·0x9E3779B97F4A7C15 + c), filled in one pass; hash
+  collisions only add windows to score, so the proof needs just `LookupComplete` (every true occurrence reported).
+  Superseded by the packed genome + minimizer index, but the "collisions are harmless, completeness is all you
+  prove" argument applies to any faster index (e.g. a bucket-lookup rewrite for hg38).
+- **archive/dedup-parallel** (WIP, did not build, partly on main): `mapWithDedup` — drop windows that don't fit
+  the chromosome (by length) and remove repeated windows with a HashSet before scoring, with `mapWithDedup_eq_mapSpec`;
+  and `mapReadsPar` (chunks, one Task each, `mapReadsPar_eq_map`) — the parallel part is on main (ParMap), the
+  dedup is not. Idea worth keeping: dedup candidate windows before the expensive kernels.
