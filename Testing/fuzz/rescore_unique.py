@@ -71,16 +71,17 @@ def align(read, ref):
     j = max(range(m + 1), key=lambda j: H[n][j])
     return H[n][j], S[n][j], j
 
-def score_at(read_fwd, strand, fwd_start, fwd_len, rec):
+def score_at(read_fwd, strand, fwd_start, fwd_len, rec, off):
     """Score read_fwd[fwd_start:fwd_start+fwd_len] aligned end to end near minibwa/our placement `rec` in orientation `strand`.
     Returns (score, ref_lo, ref_hi) 0-based half open."""
     L = len(read_fwd)
     seq = read_fwd[fwd_start:fwd_start + fwd_len]
     if strand == '-': seq = rc(seq); start = L - (fwd_start + fwd_len)      # offset in alignment orientation
     else: start = fwd_start
-    diag = rec['pos'] - 1 - rec['lead']                                          # ref pos of read base 0 along minibwa's first M segment
+    diag = rec['pos'] - 1 - rec['lead'] - off                                          # ref pos of read base 0 along minibwa's first M segment
     # rec's ops: use the diagonal of its first M segment; indels in the clipped/trimmed part shift it, window +-10 + indel total covers most
-    lo = max(0, diag + start - 10); hi = diag + start + len(seq) + 10
+    slack = 10 + sum(n for n, o in rec['ops'] if o in 'ID')
+    lo = max(0, diag + start - slack); hi = diag + start + len(seq) + slack
     g = genome[rec['chr']]; hi = min(len(g), hi)
     sc, a, b = align(seq, g[lo:hi])
     return sc, lo + a, lo + b
@@ -91,6 +92,7 @@ def mate_info(q, i):
     orig_al = full if o['strand'] == '+' else rc(full)
     s0 = orig_al.find(seq_al); assert s0 >= 0
     fwd_start = s0 if o['strand'] == '+' else len(full) - (s0 + len(seq_al))
+    o['off'] = s0                                                          # trimmed bases before SEQ, alignment orientation
     return o, full, fwd_start, len(seq_al)
 
 out = []
@@ -101,11 +103,11 @@ for q in scope:
     for i in (1, 2):
         o, full, fs, ln = mate_info(q, i); m = mb[(q, i)]
         # ours at our own placement (sanity): must reach at least our AS
-        so, lo_o, hi_o = score_at(full, o['strand'], fs, ln, o)
+        so, lo_o, hi_o = score_at(full, o['strand'], fs, ln, o, o['off'])
         assert so >= int(o['tags']['AS']), (q, i, so, o['tags']['AS'])
-        sm, lo_m, hi_m = score_at(full, m['strand'], fs, ln, m)
-        fo, _, _ = score_at(full, o['strand'], 0, len(full), o)
-        fm, _, _ = score_at(full, m['strand'], 0, len(full), m)
+        sm, lo_m, hi_m = score_at(full, m['strand'], fs, ln, m, 0)
+        fo, _, _ = score_at(full, o['strand'], 0, len(full), o, o['off'])
+        fm, _, _ = score_at(full, m['strand'], 0, len(full), m, 0)
         row[i] = dict(ours_as=int(o['tags']['AS']), ours_re=so, mb_trim=sm, ours_full=fo, mb_full=fm, ours=(o['chr'], o['strand'], lo_o, hi_o),
                       mb=(m['chr'], m['strand'], lo_m, hi_m), trim=(fs, len(full) - fs - ln), mbmapq=m['mapq'], xa='XA' in m['tags'], mbcig=m['line'].split('\t')[5],
                       ocig=o['line'].split('\t')[5])

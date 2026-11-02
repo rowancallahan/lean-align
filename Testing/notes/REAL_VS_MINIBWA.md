@@ -90,3 +90,29 @@ tier (the label is `unknown`, so no proof is violated). Counts: NovaSeq 28 and H
 - Disjoint-unique rescoring (both tools unique, disjoint intervals): the class above counts 5 / 12 mates; the genome (3 GB `genome.fa`) was not downloaded, so not rescored.
 - minibwa's score uses NM; N bases and clipped mates are not comparable (counts above).
 - The release `shim.idx` is from f7ab094; it loaded and ran at e384063 without complaint.
+
+## 6. Rescoring minibwa's placement in our model (alarming class and both-unique disjoint pairs)
+
+Script `Testing/fuzz/rescore_unique.py`; per-pair detail in `Testing/notes/real_vs_minibwa/SET.rescore.md`. In scope: both mates mapped by both tools, ours
+`XU:Z:unique`, minibwa MAPQ >= 30 on both mates, and at least one mate whose reference interval is disjoint from minibwa's: **2 NovaSeq pairs, 5 HiSeq pairs**
+(the other alarming mates have a partner that is not unique for us or not confident for minibwa, e.g. `16648:42181`, where minibwa's pair is 1 Mb apart at MAPQ 29).
+Each mate: our trimmed SEQ aligned end to end (0 / -4 / -(6+2k), ends free in hg38 `genome.fa`, SHA-256 verified) in a window of +-10 (plus minibwa's indel
+total) around minibwa's placement; pair proper = opposite strands, outer fragment 100-1000. Sanity: at our own placement the recomputed score is >= our AS (asserted, held for all 14 mates).
+
+**Result: 0 of 7 where minibwa's placement scores >= ours.** All 7 are proper pairs at minibwa's placement and score lower than ours:
+
+| pair | ours | minibwa's placement (our model) | margin | what differs |
+|---|---|---|---|---|
+| NovaSeq 29414:28573 | -16 | -48 | 32 | near-identical copy ~280 kb away (minibwa MAPQ 48/50, XA); minibwa has 3 mismatches per mate |
+| NovaSeq 5421:23343 | -12 | -16 | 4 | tandem copy 9.5 kb away; one mate tied, the other 4 worse (one mismatch) |
+| HiSeq 10257:52325 | -22 | -30 | 8 | chr22 KI270733v1_random vs chr21 copy (minibwa MAPQ 38/39, XA lists ours); 1 extra mismatch per mate |
+| HiSeq 17914:59681 | -12 | -16 | 4 | mate 2 at a copy 196 bp away (minibwa 168M82S, MAPQ 56, XA lists ours); one mismatch |
+| HiSeq 4517:62498 | -16 | -36 | 20 | copy 12 Mb away (minibwa 237M13S / 246M4S, MAPQ 49, XA lists ours) |
+| HiSeq 8802:50180 | 0 | -4 | 4 | tandem copy 1.6 Mb away, minibwa MAPQ 39/41; mate 2 tied, mate 1 one mismatch worse |
+| HiSeq 9614:58907 | -8 | -32 | 24 | mate 2: 16 clipped bases and 4 mismatches at minibwa's place |
+
+Margins of 4 are one mismatch: ours is only strictly better by a single base in 3 pairs (5421:23343, 17914:59681, 8802:50180), so the unique claim there rests on the trimmed bases.
+**Did trimming remove the separating letters?** Scoring the FULL original read at both places (not the trimmed one): in 4 of the 7 pairs minibwa's copy wins on the full read
+(sum of both mates): 8802:50180 ours -56 vs minibwa -40; 4517:62498 -160 vs -88; 9614:58907 -90 vs -64; 17914:59681 -188 vs -180 (tie-ish). In 29414, 10257 and 5421 ours wins on the full read too.
+So in four pairs we call unique on a trimmed read where the discarded 3' bases (47-175 bases cut, all low quality) point to the other copy. Per our model these claims are correct on the trimmed
+read, as the proof states, but their uniqueness depends on the trimming choice; if trimming should not change which copy is called unique, this is where it does.
