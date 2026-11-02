@@ -55,12 +55,8 @@ def hamD (R Rr : ByteArray) (pgs : Array PGen) (v D lim : Nat) : Nat := Id.run d
   let Rx := if v < nc then R else Rr
   let G := pgs[v % nc]!
   let st := D - n
-  let mut mm := 0
-  for i in [0:n] do
-    if Rx.get! i != G.get (st + i) then
-      mm := mm + 1
-      if mm > lim then return mm
-  return mm
+  -- mismatches of `Rx[0, n)` against `G[st ..]`, `lim + 1` once above `lim`: the machine-word `hamming`
+  MapSpec.Fast.hamming Rx G st lim 0 n 0
 
 
 def interS (a b : Array Nat) : Array Nat := Id.run do
