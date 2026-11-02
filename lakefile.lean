@@ -169,6 +169,10 @@ lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWith
   srcDir := "Testing/benches"
   root := `MapBench2
 
+lean_exe bandcells_ab where           -- check only: bandDPg true = bandDPg false (TierHeur.bandCellsJ) on random cases
+  srcDir := "Testing/benches"
+  root := `BandCellsAB
+
 lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark only)
   srcDir := "Testing/benches"
   root := `BandBench
