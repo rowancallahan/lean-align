@@ -89,6 +89,13 @@ def buildIndex (byteGenome : GenomeFile) : ByteArray :=
 -- Any setting is sound (`tierPair_sound` holds for every `TierCfg`).
 def deepCaps : Bool := false
 
+-- ties (T1gm / T1um): print one pair in hand, uniqueness unknown (false: unmapped, as M1)
+def reportTies : Bool := true
+
+-- (stage 5) no proper pair from the router: a fallback pair (anchor + mate aligned near it, re-checked) when
+-- the bound is at least this (none: off)
+def fallbackFrom : Option Int := some (-16)
+
 -- pass-2 cap by mate length (a mate keeps its pass-1 cap where this is not deeper: `cap2Of`)
 def deepCap2 (n : Nat) : Nat := if 250 ≤ n then 28 else if 150 ≤ n then 20 else 0
 
@@ -119,7 +126,7 @@ def alignOne (insertSettings : InsertSettings) (loaded : Option LoadedIndex)
           -- the router searches the packed genome as ONE sequence (offsets `#[0]`, lengths `#[G.n]`):
           -- its seed loop then does not pay per chromosome; `Proofs/Whole.lean` moves the answer
           -- back to the chromosomes, `Proofs/Report.lean` the found pair
-          .aligned (Report.answerOfPair insertSettings (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
+          .aligned (Report.answerOfPair reportTies fallbackFrom (ix, G) insertSettings (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
             (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
               (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2)))
 
@@ -148,7 +155,7 @@ def alignOneC (setup : Option Setup)
       match setup with
       | none => .aligned noIndexAnswer
       | some (insertSettings, cfg, pk, pgs, offs, ns) =>
-          .aligned (Report.answerOfPair insertSettings pgs offs ns read1 read2 (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2)))
+          .aligned (Report.answerOfPair reportTies fallbackFrom pk insertSettings pgs offs ns read1 read2 (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2)))
 
 -- each task loads the index and builds the setup itself (`ParMap.parMapS`): its structures are
 -- then that task's own, so their reference counts are not shared across threads; only the
@@ -241,7 +248,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
         simp only [Array.size_map, oldGenome, List.length_map, MapSpec.Fast.cutAll, Array.size_range] at hsz
         omega
       -- moved to the chromosomes: each is a slice of the whole; the found pair re-checked (`Report`)
-      exact Report.answerOfPair_correct hslice hchr hlen insertSettings read1 read2 _ hok
+      exact Report.answerOfPair_correct hslice hchr hlen reportTies fallbackFrom (ix, G) insertSettings read1 read2 _ hok
         (Whole.correct_of_whole insertSettings _ _ hslice _ rfl rfl
           (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok))
 

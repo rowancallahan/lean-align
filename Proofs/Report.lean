@@ -135,14 +135,15 @@ def mateOf (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray) (m : MateX) 
       (mateRuns pgs R m x).bind (checkMove pgs offs ns R x)
 
 -- tags whose mates' placements form the pair in hand (T1gm: one tied best pair; T1um: the T2 pair)
-def reportable : Tag → Bool
-  | .t1 | .t1g | .t1u | .t2b | .t2 | .t1gm | .t1um => true
+def reportable (ties : Bool) : Tag → Bool
+  | .t1 | .t1g | .t1u | .t2b | .t2 => true
+  | .t1gm | .t1um => ties
   | _ => false
 
 -- the pair in hand, printed, when both mates re-check and the pair is proper
-def foundOf (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
+def foundOf (ties : Bool) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
     (t : TierOut) : Option PairReport :=
-  if reportable t.tag then
+  if reportable ties t.tag then
     match mateOf pgs offs ns R1 t.m1, mateOf pgs offs ns R2 t.m2 with
     | some a, some b =>
       if MapSpec.properPairU slack lo hi (oldPlacement a.placement) (oldPlacement b.placement) then
@@ -150,6 +151,60 @@ def foundOf (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 
       else none
     | _, _ => none
   else none
+
+/-! ## Stage 5: a fallback pair when the router has no proper pair in hand (unproved search) -/
+
+-- a proper pair of two printed mates
+def pairOf (slack lo hi : Nat) (a b : Option MateReport) : Option PairReport :=
+  match a, b with
+  | some a, some b =>
+    if MapSpec.properPairU slack lo hi (oldPlacement a.placement) (oldPlacement b.placement) then some ⟨a, b⟩
+    else none
+  | _, _ => none
+
+-- an anchor for a mate: the router's placement, else the best gap-free placement among the first hits of
+-- the mate's rarest seed (`ceilX`; whole sequence: chromosome 0, strand index = `v`)
+def anchorOf (pk : PkMz) (pgs : Array PGen) (R : ByteArray) (s : PrepM MzP) (m : MateX) :
+    Option (MapSpec.Placement × Int) :=
+  match m.pl with
+  | some x => some x
+  | none =>
+    match TierHeur.ceilX pk #[0] pgs R s 1000000 8 with
+    | some (v, D, mm) =>
+      some ((⟨0, D - R.size, R.size⟩, if v == 0 then .fwd else .rev), -((4 * mm : Nat) : Int))
+    | none => none
+
+-- the other mate aligned inside the proper-pair window of `x` (seed vote, banded DP: `TierHeur.nearY`)
+def nearOf (pk : PkMz) (pgs : Array PGen) (hi : Nat) (R : ByteArray) (s : PrepM MzP) (x : MapSpec.Placement) :
+    Option ((MapSpec.Placement × Int) × List (AlignmentSpec.Step × Nat)) :=
+  let fwd := x.2 == .rev
+  let ws := if fwd then x.1.start + x.1.len - min (x.1.start + x.1.len) hi else x.1.start
+  let we := if fwd then x.1.start + x.1.len else x.1.start + hi
+  let X := if fwd then R else s.Rr
+  let sv := TierHeur.seedVote pk #[0] 0 ws we X (if fwd then s.ps else s.pr)
+  (TierHeur.nearY X pgs[0]! ws we 8 1000000 1000000 12 sv true false).map fun (st, len, pen, runs) =>
+    (((⟨0, st, len⟩, if fwd then .fwd else .rev), -(pen : Int)), runs)
+
+-- one try with mate `R` as the anchor: (the anchor's line, the other mate's line)
+def tryAnchor (pk : PkMz) (pgs : Array PGen) (offs ns : Array Nat) (hi : Nat) (R : ByteArray) (s : PrepM MzP)
+    (m : MateX) (R' : ByteArray) (s' : PrepM MzP) : Option MateReport × Option MateReport :=
+  match anchorOf pk pgs R s m with
+  | none => (none, none)
+  | some x =>
+    (mateOf pgs offs ns R { m with pl := some x },
+     (nearOf pk pgs hi R' s' x.1).bind fun (h, runs) => checkMove pgs offs ns R' h runs)
+
+-- the fallback: mate 1 as the anchor, else mate 2
+def fallbackOf (pk : PkMz) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
+    (t : TierOut) : Option PairReport :=
+  let s1 : PrepM MzP := prepMate pk R1
+  let s2 : PrepM MzP := prepMate pk R2
+  let (a1, b1) := tryAnchor pk pgs offs ns hi R1 s1 t.m1 R2 s2
+  match pairOf slack lo hi a1 b1 with
+  | some p => some p
+  | none =>
+    let (a2, b2) := tryAnchor pk pgs offs ns hi R2 s2 t.m2 R1 s1
+    pairOf slack lo hi b2 a2
 
 /-! ## The reporter is sound -/
 
@@ -250,7 +305,7 @@ theorem foundOf_sound
       chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
     (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut) (rep : PairReport)
-    (h : foundOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+    (ties : Bool) (h : foundOf ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
       (cutAll G #[0] #[G.n]) offs ns R1 R2 t = some rep) :
     ∃ pair : PairAlignment genome (decodeRead R1) (decodeRead R2),
       pair.report = rep ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack ∧
@@ -274,6 +329,75 @@ theorem foundOf_sound
       · cases h
     · cases h
   · cases h
+
+theorem pairOf_sound (insertSettings : InsertSettings) {m1 m2 : Read} {a b : Option MateReport} {p : PairReport}
+    (ha : ∀ r, a = some r → ∃ x : GenomicAlignment genome m1, x.report = r)
+    (hb : ∀ r, b = some r → ∃ y : GenomicAlignment genome m2, y.report = r)
+    (h : pairOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 a b = some p) :
+    ∃ pair : PairAlignment genome m1 m2,
+      pair.report = p ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
+  unfold pairOf at h
+  split at h
+  · rename_i a b
+    split at h
+    · rename_i hp
+      cases h
+      obtain ⟨x, hx⟩ := ha a rfl
+      obtain ⟨y, hy⟩ := hb b rfl
+      refine ⟨⟨x, y⟩, by simp only [PairAlignment.report, hx, hy], ?_⟩
+      rw [isProper_iff]
+      have px : x.placement = a.placement := by rw [← hx]; rfl
+      have py : y.placement = b.placement := by rw [← hy]; rfl
+      simp only [px, py]
+      exact hp
+    · cases h
+  · cases h
+
+theorem tryAnchor_sound
+    (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
+      offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
+      chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (pk : PkMz) (hi : Nat) (R : ByteArray) (s : PrepM MzP) (m : MateX) (R' : ByteArray) (s' : PrepM MzP) :
+    (∀ r, (tryAnchor pk (cutAll G #[0] #[G.n]) offs ns hi R s m R' s').1 = some r →
+      ∃ x : GenomicAlignment genome (decodeRead R), x.report = r) ∧
+    (∀ r, (tryAnchor pk (cutAll G #[0] #[G.n]) offs ns hi R s m R' s').2 = some r →
+      ∃ y : GenomicAlignment genome (decodeRead R'), y.report = r) := by
+  unfold tryAnchor
+  split
+  · exact ⟨fun _ h => by simp at h, fun _ h => by simp at h⟩
+  · rename_i x _
+    refine ⟨fun r h => ?_, fun r h => ?_⟩
+    · dsimp only at h
+      obtain ⟨_, -, a, ha, -⟩ := mateOf_sound hslice hchr R _ r h
+      exact ⟨a, ha⟩
+    · simp only at h
+      cases hn : nearOf pk (cutAll G #[0] #[G.n]) hi R' s' x.1 with
+      | none => rw [hn] at h; cases h
+      | some q =>
+        rw [hn] at h
+        obtain ⟨a, ha, -⟩ := checkMove_sound hslice hchr R' q.1 q.2 r h
+        exact ⟨a, ha⟩
+
+theorem fallbackOf_sound
+    (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
+      offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
+      chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (pk : PkMz) (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut) (p : PairReport)
+    (h : fallbackOf pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+      (cutAll G #[0] #[G.n]) offs ns R1 R2 t = some p) :
+    ∃ pair : PairAlignment genome (decodeRead R1) (decodeRead R2),
+      pair.report = p ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
+  unfold fallbackOf at h
+  simp only at h
+  have T1 := tryAnchor_sound hslice hchr pk insertSettings.range.2 R1 (prepMate pk R1) t.m1 R2 (prepMate pk R2)
+  have T2 := tryAnchor_sound hslice hchr pk insertSettings.range.2 R2 (prepMate pk R2) t.m2 R1 (prepMate pk R1)
+  split at h
+  · rename_i q hq
+    cases h
+    exact pairOf_sound insertSettings T1.1 T1.2 hq
+  · exact pairOf_sound insertSettings T2.2 T2.1 h
 
 end sound
 
@@ -464,10 +588,17 @@ def uniqOf (t : TierOut) (f : Option PairReport) : Uniqueness :=
   | _, _ => .unknown
 
 -- the router's answer with the pair in hand printed when it re-checks
-def answerOfPair (insertSettings : InsertSettings) (pgs : Array PGen) (offs ns : Array Nat)
-    (R1 R2 : ByteArray) (t : TierOut) : PairAnswer :=
-  let f := foundOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
-  { Bridge.answerOf t with found := f, uniqueness := uniqOf t f }
+-- (stage 5) with no proper pair from the router, the fallback runs when the bound is at least `fb`
+def answerOfPair (ties : Bool) (fb : Option Int) (pk : PkMz) (insertSettings : InsertSettings) (pgs : Array PGen)
+    (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) : PairAnswer :=
+  let f := foundOf ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+  let g := match f, fb with
+    | none, some T =>
+      if T ≤ Bridge.boundOf t then
+        fallbackOf pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+      else none
+    | _, _ => f
+  { Bridge.answerOf t with found := g, uniqueness := uniqOf t f }
 
 theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
@@ -475,24 +606,35 @@ theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
       chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
     (hlen : genome.length = ns.size)
-    (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut)
+    (ties : Bool) (fb : Option Int) (pk : PkMz) (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut)
     (hok : TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
       (oldGenome (Whole.wholeOf G)) (decodeRead R1) (decodeRead R2) (some R1) (some R2) t)
     (ha : (Bridge.answerOf t).Correct insertSettings genome (decodeRead R1) (decodeRead R2)) :
-    (answerOfPair insertSettings (cutAll G #[0] #[G.n]) offs ns R1 R2 t).Correct insertSettings genome
+    (answerOfPair ties fb pk insertSettings (cutAll G #[0] #[G.n]) offs ns R1 R2 t).Correct insertSettings genome
       (decodeRead R1) (decodeRead R2) := by
   unfold answerOfPair
-  generalize hf : foundOf insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+  generalize hf : foundOf ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
     (cutAll G #[0] #[G.n]) offs ns R1 R2 t = f
   refine ⟨fun rep h => ?_, ha.2.1, ?_⟩
-  · have h' : f = some rep := h
-    rw [h'] at hf
-    obtain ⟨pair, hr, hp, -⟩ := foundOf_sound hslice hchr insertSettings R1 R2 t rep hf
-    exact ⟨pair, hr, hp⟩
+  · simp only at h
+    cases f with
+    | some f0 =>
+      have h' : f0 = rep := by cases fb <;> simpa using h
+      subst h'
+      obtain ⟨pair, hr, hp, -⟩ := foundOf_sound hslice hchr insertSettings R1 R2 t _ ties hf
+      exact ⟨pair, hr, hp⟩
+    | none =>
+      cases fb with
+      | none => simp at h
+      | some T =>
+        simp only at h
+        split at h
+        · exact fallbackOf_sound hslice hchr pk insertSettings R1 R2 t rep h
+        · cases h
   · cases f with
     | none => simp [uniqOf]
     | some rep =>
-      obtain ⟨pair, hr, hp, x, y, hx, hy, h1, h2⟩ := foundOf_sound hslice hchr insertSettings R1 R2 t rep hf
+      obtain ⟨pair, hr, hp, x, y, hx, hy, h1, h2⟩ := foundOf_sound hslice hchr insertSettings R1 R2 t rep ties hf
       have hu : t.tag = .t1 ∨ t.tag = .t1g ∨ t.tag = .t1u → pair.IsUniqueBestProper insertSettings := fun ht =>
         unique_of_uniqHits hslice hchr hlen insertSettings (uniqHits_of_tierOk hok ht hx hy) pair hp h1 h2
       cases htag : t.tag <;> simp only [uniqOf, htag]
