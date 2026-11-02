@@ -925,4 +925,74 @@ theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
       · exact ⟨rep, rfl, pair, hr, hu (.inr (.inl htag))⟩
       · exact ⟨rep, rfl, pair, hr, hu (.inr (.inr htag))⟩
 
+/-! ## The reporter from prepared mates (compiled code: Proofs/Aligner.lean `alignOneP`)
+
+`answerOfPairP` is `answerOfPair` with each mate's reverse complement and packed strands taken from the router's
+preparation (`answerOfPairP_eq`, at `prepMz`); the fallback is unchanged. -/
+
+-- `chkCandD` with the packed strands given (the gap-free penalty by `TierHeur.hamPK`)
+def chkCandDK (pgs : Array PGen) (R Rr : ByteArray) (K1 K2 : RP) (h : MapSpec.Placement × Int) : Bool :=
+  let X := if h.1.2 = .fwd then R else Rr
+  let K := if h.1.2 = .fwd then K1 else K2
+  decide (h.1.1.chr < pgs.size) && decide (h.1.1.start + h.1.1.len ≤ pgs[h.1.1.chr]!.n) && decide (h.2 ≤ 0) &&
+    X.size == R.size && h.1.1.len == R.size &&
+    ((0 : Int) - 4 * (TierHeur.hamPK X K pgs[h.1.1.chr]! h.1.1.start R.size R.size : Nat)) == h.2
+
+theorem chkCandDK_eq (pgs : Array PGen) (R : ByteArray) (h : MapSpec.Placement × Int) :
+    chkCandDK pgs R (revCompK R) (packRP R) (packRP (revCompK R)) h = chkCandD pgs R (revCompK R) h := by
+  have e : ∀ X : ByteArray, ((0 : Int) - 4 * (TierHeur.hamPK X (packRP X) pgs[h.1.1.chr]! h.1.1.start R.size R.size : Nat)) =
+      diagPen X pgs[h.1.1.chr]! h.1.1.start R.size 0 0 := fun X => by
+    rw [TierHeur.hamPK_eq, diagPen_ham X _ _ R.size R.size 0 0 0 (by omega)]; simp
+  unfold chkCandDK chkCandD
+  by_cases hs : h.1.2 = .fwd
+  · simp only [hs, if_true, e]
+  · simp only [hs, if_false, e]
+
+def checkMoveDK (pgs : Array PGen) (offs ns : Array Nat) (R Rr : ByteArray) (K1 K2 : RP) (x : MapSpec.Placement × Int) :
+    Option MateReport :=
+  if chkCandDK pgs R Rr K1 K2 x then moveTo offs ns x [(AlignmentSpec.Step.diag, R.size)] else none
+
+def mateOfK (pgs : Array PGen) (offs ns : Array Nat) (R Rr : ByteArray) (K1 K2 : RP) (m : MateX) : Option MateReport :=
+  m.pl.bind fun x =>
+    (if x.1.1.len == R.size then checkMoveDK pgs offs ns R Rr K1 K2 x else none) <|>
+      ((if m.cg then some m.runs else alignAt pgs[0]! R Rr x).bind fun runs =>
+        if chkCand pgs R Rr x runs then moveTo offs ns x runs else none)
+
+theorem mateOfK_eq (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray) (m : MateX) :
+    mateOfK pgs offs ns R (revCompK R) (packRP R) (packRP (revCompK R)) m = mateOf pgs offs ns R m := by
+  unfold mateOfK mateOf checkMoveDK checkMoveD mateRuns checkMove
+  simp only [chkCandDK_eq]
+
+def foundOfK (ties : Bool) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
+    (s1 s2 : PrepM MzP) (t : TierOut) : Option PairReport :=
+  if reportable ties t.tag then
+    match mateOfK pgs offs ns R1 s1.Rr s1.K1 s1.K2 t.m1, mateOfK pgs offs ns R2 s2.Rr s2.K1 s2.K2 t.m2 with
+    | some a, some b =>
+      if MapSpec.properPairU slack lo hi (oldPlacement a.placement) (oldPlacement b.placement) then
+        some ⟨a, b⟩
+      else none
+    | _, _ => none
+  else none
+
+def answerOfPairP (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+    (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (s1 s2 : PrepM MzP) (t : TierOut) : PairAnswer :=
+  let f := foundOfK ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2
+    s1 s2 t
+  let g := match f, fb with
+    | none, some T =>
+      if T ≤ Bridge.boundOf t || (rescue && (t.m1.pl.isSome || t.m2.pl.isSome)) then
+        fallbackOf 16 pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+      else none
+    | _, _ => f
+  { Bridge.answerOf t with found := g, uniqueness := uniqOf t f }
+
+theorem answerOfPairP_eq (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+    (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) :
+    answerOfPairP ties fb rescue pk insertSettings pgs offs ns R1 R2 (prepMz pk R1) (prepMz pk R2) t =
+      answerOfPair ties fb rescue pk insertSettings pgs offs ns R1 R2 t := by
+  have h1 : ∀ R, (prepMz pk R).Rr = revCompK R ∧ (prepMz pk R).K1 = packRP R ∧ (prepMz pk R).K2 = packRP (revCompK R) :=
+    fun R => by rw [prepMz_eq]; exact ⟨rfl, rfl, rfl⟩
+  unfold answerOfPairP answerOfPair foundOfK foundOf
+  simp only [(h1 R1).1, (h1 R1).2.1, (h1 R1).2.2, (h1 R2).1, (h1 R2).2.1, (h1 R2).2.2, mateOfK_eq]
+
 end Spec.Report

@@ -76,6 +76,16 @@ theorem hamP_eq (R : ByteArray) (P : PGen) (st lim stop : Nat) :
     exact (hamming_same' (Rep.same (MapSpec.Mz.rep_unpack P)) R st lim 0 stop 0).symm
   · rfl
 
+/-- `hamP` with the packed read given (`hamPK_eq`: with `K = packRP R` it is `hamP`). -/
+def hamPK (R : ByteArray) (K : RP) (P : PGen) (st lim stop : Nat) : Nat :=
+  if K.ok && decide (0 < stop) && decide (stop ≤ R.size) && winOk P st stop then
+    hamA K.w P.w (P.o + st) lim stop
+  else hamming R P st lim 0 stop 0
+
+theorem hamPK_eq (R : ByteArray) (P : PGen) (st lim stop : Nat) :
+    hamPK R (packRP R) P st lim stop = hamming R P st lim 0 stop 0 := by
+  rw [← hamP_eq]; rfl
+
 def hamD (R Rr : ByteArray) (pgs : Array PGen) (v D lim : Nat) : Nat := Id.run do
   let nc := pgs.size
   let n := R.size

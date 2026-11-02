@@ -1028,6 +1028,33 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
         m2 := { st := "U", cap := cfg.rcfg.cap1 b, cd := cfg.rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
     | .unmapped rs k => tierRestS cfg pk offs pgs a b s1 s2 (some (rs, k)) r.c1 r.c2
 
+/-- `tierPairBS` with the two prepared mates and their bucket sizes given (`tierPairBP_eq`): the caller
+prepares each mate once and shares the preparation (Proofs/Aligner.lean `alignOneP`). -/
+def tierPairBP (a b : ByteArray) (s1 s2 : PrepM MzP) (za1 za2 zb1 zb2 : Array Nat) : TierOut :=
+    let c1 := costZ (cfg.rcfg.cap1 a) za1 za2
+    let c2 := costZ (cfg.rcfg.cap1 b) zb1 zb2
+    if cfg.gate a b s1 s2 c1 c2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
+    let oa1 := ordG za1 (a.size / 25)
+    let oa2 := ordG za2 (a.size / 25)
+    let ob1 := ordG zb1 (b.size / 25)
+    let ob2 := ordG zb2 (b.size / 25)
+    let r := routeGS cfg.rcfg (tierKer cfg pk offs pgs cfg.j1) (tierKer cfg pk offs pgs cfg.j2) cfg.lo cfg.hi a b c1 c2
+      (fun Q => mateKPPO Q pk ByteArray.empty offs pgs a s1 oa1 oa2) (fun Q => mateKPPO Q pk ByteArray.empty offs pgs b s2 ob1 ob2)
+      (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs a s1.Rr s1.K1 s1.K2 s1.ps s1.pr oa1 oa2)
+      (fun Q => regionPenKPSO Q cfg.lo cfg.hi pk ByteArray.empty offs pgs b s2.Rr s2.K1 s2.K2 s2.ps s2.pr ob1 ob2)
+    match r.out with
+    | .mapped (x, y) =>
+      { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
+        m1 := { st := "U", cap := cfg.rcfg.cap1 a, cd := cfg.rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+        m2 := { st := "U", cap := cfg.rcfg.cap1 b, cd := cfg.rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
+    | .unmapped rs k => tierRestS cfg pk offs pgs a b s1 s2 (some (rs, k)) r.c1 r.c2
+
+theorem tierPairBS_eqP (a b : ByteArray) :
+    tierPairBS cfg pk offs pgs (some a) (some b) =
+      tierPairBP cfg pk offs pgs a b (prepMz pk a) (prepMz pk b) ((prepMz pk a).ps.map (LookG.size pk))
+        ((prepMz pk a).pr.map (LookG.size pk)) ((prepMz pk b).ps.map (LookG.size pk))
+        ((prepMz pk b).pr.map (LookG.size pk)) := rfl
+
 end router
 
 /-- Compiled code runs `tierPairBS`. -/
@@ -1058,6 +1085,14 @@ end router
       simp only [tierPairBS, prepMz_eq, costZ_eq]
       rw [hm a, hm b, hr a, hr b]
       rfl
+
+/-- `tierPairB` on two reads from shared preparations (`prepMate`, here as `prepMz`) and their bucket sizes. -/
+theorem tierPairB_eqP (cfg : TierCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (a b : ByteArray) :
+    tierPairB cfg pk offs pgs (some a) (some b) =
+      tierPairBP cfg pk offs pgs a b (prepMz pk a) (prepMz pk b) ((prepMz pk a).ps.map (LookG.size pk))
+        ((prepMz pk a).pr.map (LookG.size pk)) ((prepMz pk b).ps.map (LookG.size pk))
+        ((prepMz pk b).pr.map (LookG.size pk)) := by
+  rw [tierPairB_eqS]; exact tierPairBS_eqP cfg pk offs pgs a b
 
 /-! ## What the tags mean -/
 
