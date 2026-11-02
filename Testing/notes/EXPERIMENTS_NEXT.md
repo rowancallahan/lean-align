@@ -24,8 +24,9 @@ byte-identical unless the change is meant to add mapped pairs (then count gains 
   exist (HashSet dedup, map each distinct item once) but are not on the alignPairs path.
 - **Experiments:** (a) replace diags' list sort with an Array sort or HashSet distinct (@[csimp], same list up to
   order where order matters — check `diags` users); (b) dedup identical read pairs within a chunk (PCR/optical
-  duplicates) with `dedupMap` inside alignPairs (`alignPairs_eq_map` still holds since each pair's result is the same
-  function of the pair); (c) drop candidates outside the chromosome before kernels.
+  duplicates) with `dedupMap` inside alignPairs: each distinct pair is mapped ONCE and its result is copied to every
+  identical pair, so every pair still gets its own output lines, in order (`alignPairs_eq_map` still holds since each
+  pair's result is the same function of the pair); (c) drop candidates outside the chromosome before kernels.
 
 ## 3. Deeper error caps (idea from archive/bounds + bounds-v2)
 - **Then:** sharp bounds: charge each mismatch, each gapX run and each gapY column once;
