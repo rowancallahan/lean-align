@@ -16,7 +16,7 @@ structure InsertSettings where
   --End up getting more seeds etc it taks the minimum length in seeds, subtracts -1
   --Then it tops out at -16 where it is min 4 etc we can change these all later
   requiredMapBound : Read -> Read -> Int := fun mate1 mate2 => 
-   -4 * (((min 4 ((min mate1.length mate2.length)/25)-1) : Nat) : Int)
+   -4 * ((min 4 ((min mate1.length mate2.length)/25-1) : Nat) : Int)
 
 inductive Mate where
   | one
