@@ -127,13 +127,16 @@ def mateRuns (pgs : Array PGen) (R : ByteArray) (m : MateX) (x : MapSpec.Placeme
     Option (List (AlignmentSpec.Step × Nat)) :=
   if m.cg then some m.runs else alignAt pgs[0]! R (revCompK R) x
 
--- one mate's line, at the router's placement and score
+-- one mate's line, at the router's placement and score: first a CIGAR without gaps (when the window
+-- has the read's length), else `mateRuns` (`<|>` is lazy: the banded DP runs only when needed)
 def mateOf (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray) (m : MateX) : Option MateReport :=
-  m.pl.bind fun x => (mateRuns pgs R m x).bind (checkMove pgs offs ns R x)
+  m.pl.bind fun x =>
+    (if x.1.1.len == R.size then checkMove pgs offs ns R x [(AlignmentSpec.Step.diag, R.size)] else none) <|>
+      (mateRuns pgs R m x).bind (checkMove pgs offs ns R x)
 
--- tags whose mates' placements form the pair in hand
+-- tags whose mates' placements form the pair in hand (T1gm: one tied best pair; T1um: the T2 pair)
 def reportable : Tag → Bool
-  | .t1 | .t1g | .t1u | .t2b | .t2 => true
+  | .t1 | .t1g | .t1u | .t2b | .t2 | .t1gm | .t1um => true
   | _ => false
 
 -- the pair in hand, printed, when both mates re-check and the pair is proper
@@ -224,11 +227,22 @@ theorem mateOf_sound
   | some x =>
     rw [hp] at h
     simp only [Option.bind_some] at h
-    cases hr : mateRuns (cutAll G #[0] #[G.n]) R m x with
-    | none => rw [hr] at h; cases h
-    | some runs =>
-      rw [hr] at h
-      exact ⟨x, rfl, checkMove_sound hslice hchr R x runs r h⟩
+    refine ⟨x, rfl, ?_⟩
+    cases h0 : (if x.1.1.len == R.size then checkMove (cutAll G #[0] #[G.n]) offs ns R x
+        [(AlignmentSpec.Step.diag, R.size)] else none) with
+    | some r0 =>
+      rw [h0] at h
+      cases h
+      split at h0
+      · exact checkMove_sound hslice hchr R x _ r h0
+      · cases h0
+    | none =>
+      rw [h0] at h
+      cases hr : mateRuns (cutAll G #[0] #[G.n]) R m x with
+      | none => rw [hr] at h; cases h
+      | some runs =>
+        rw [hr] at h
+        exact checkMove_sound hslice hchr R x runs r h
 
 theorem foundOf_sound
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
