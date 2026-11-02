@@ -76,6 +76,16 @@ theorem hamP_eq (R : ByteArray) (P : PGen) (st lim stop : Nat) :
     exact (hamming_same' (Rep.same (MapSpec.Mz.rep_unpack P)) R st lim 0 stop 0).symm
   · rfl
 
+/-- `hamP` with the packed read given (`hamPK_eq`: with `K = packRP R` it is `hamP`). -/
+def hamPK (R : ByteArray) (K : RP) (P : PGen) (st lim stop : Nat) : Nat :=
+  if K.ok && decide (0 < stop) && decide (stop ≤ R.size) && winOk P st stop then
+    hamA K.w P.w (P.o + st) lim stop
+  else hamming R P st lim 0 stop 0
+
+theorem hamPK_eq (R : ByteArray) (P : PGen) (st lim stop : Nat) :
+    hamPK R (packRP R) P st lim stop = hamming R P st lim 0 stop 0 := by
+  rw [← hamP_eq]; rfl
+
 def hamD (R Rr : ByteArray) (pgs : Array PGen) (v D lim : Nat) : Nat := Id.run do
   let nc := pgs.size
   let n := R.size
@@ -332,8 +342,8 @@ column `< 0`, or left of the previous row's live cells `[pa, pb)`), at most `K`.
   let b := if i + c0s < SH then SH - (i + c0s) else 0
   min K (max a b)
 
-/-- `bandCells` with the skipped cells jumped over (`bandDPg true`; Testing/benches/BandCellsAB.lean checks
-`bandDPg true = bandDPg false` on random cases): each row starts at `rowStart` (the cells before it are skipped
+/-- `bandCells` with the skipped cells jumped over (`bandDPg true`; proved `bandDPg true = bandDPg false`:
+BandCellsJProof.lean `bandDPg_jump`; Testing/benches/BandCellsAB.lean also checks it on random cases): each row starts at `rowStart` (the cells before it are skipped
 by `bandCells`: window column `< 0`, or left of the previous row's live cells), and once a cell is skipped for
 lying right of the window, or right of `pb` with `hl`, `e` both `≥ lim`, the rest of the row is skipped too (the
 column only grows; a skip sets `hl`, `e` to `INF ≥ lim`), so the row ends there.  Rows `1 … n` (`n` = read
@@ -378,6 +388,16 @@ def bandCellsJ (X W : @& ByteArray) (K c0s m lim n : UInt32) :
           bandCellsJ X W K c0s m lim n f i (k + 1) INF (if ev < lim then ev else INF) pa pb nlo nhi
             H F (tb.set! jc byte)
 
+/-- The cells of `bandDPg` from row 1: `bandCellsJ` when `jump` and no counter can overflow (always, for
+`bandDPg`'s inputs: `n, m < 2^20` and `c0s ≤ 2^21` by its guard, `lim ≤ 2^23`, `K < 2^30` unless `w ≥ 2^29`),
+else `bandCells`. `bandCellsG true = bandCellsG false` (BandCellsJProof.lean, `bandCellsG_jump`). -/
+def bandCellsG (jump : Bool) (X W : @& ByteArray) (K c0s m lim n : UInt32) (fuel : Nat) (pa pb : UInt32)
+    (H F : Array UInt32) (tb : ByteArray) : Array UInt32 × ByteArray × Bool :=
+  if jump && K.toNat < 2 ^ 30 && c0s.toNat ≤ 2 ^ 22 && n.toNat < 2 ^ 20 && m.toNat < 2 ^ 20 && lim.toNat ≤ 2 ^ 23 &&
+      fuel == n.toNat * (K.toNat + 1) then
+    bandCellsJ X W K c0s m lim n fuel 1 (rowStart K c0s 1 pa) 16777216 16777216 pa pb K 0 H F tb
+  else bandCells X W K c0s m lim fuel 1 0 16777216 16777216 pa pb K 0 H F tb
+
 /-- Banded semi-global affine DP (sc0 penalties: mismatch 4, gap 6 + 2L) of the whole read `X` in the
 window letters `W` (free window ends), on the diagonals `s0 − w … s0 + w` (`s0` = read start in `W`):
 (start in `W`, length, penalty, runs) when the penalty is `< lim`; stops once a whole row is `≥ lim`. -/
@@ -405,11 +425,8 @@ def bandDPg (jump : Bool) (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (N
   let F0 : Array UInt32 := Array.replicate ((n + 1) * K) (INF.toUInt32 - 1)
   let tb0 : ByteArray := zerosB ((n + 1) * K)
   let c0s := (c0 + SH).toNat.toUInt32
-  let (H, tb, ok) := if jump then
-      bandCellsJ X W K.toUInt32 c0s m.toUInt32 lim.toUInt32 n.toUInt32 (n * (K + 1))
-        1 (rowStart K.toUInt32 c0s 1 pa.toUInt32) INF.toUInt32 INF.toUInt32 pa.toUInt32 pb.toUInt32 K.toUInt32 0 H0 F0 tb0
-    else bandCells X W K.toUInt32 c0s m.toUInt32 lim.toUInt32 (n * (K + 1))
-      1 0 INF.toUInt32 INF.toUInt32 pa.toUInt32 pb.toUInt32 K.toUInt32 0 H0 F0 tb0
+  let (H, tb, ok) := bandCellsG jump X W K.toUInt32 c0s m.toUInt32 lim.toUInt32 n.toUInt32 (n * (K + 1))
+    pa.toUInt32 pb.toUInt32 H0 F0 tb0
   if !ok || H.size != (n + 1) * K then return none
   let cl : Int := c0 + (n : Int)
   let mut bk := K

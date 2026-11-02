@@ -268,6 +268,95 @@ theorem chromGoU_eq (offs ns : Array Nat) (s e : Nat) (ho : offs.size < 42949672
   | nil => rfl
   | cons a t => cases t <;> rfl
 
+theorem chromOf_go (offs ns : Array Nat) (s e : Nat) : chromOf offs ns s e = chromGo offs ns s e ns.size 0 none := by
+  rw [chromGo_eq, chromOf, List.range_eq_range']
+  cases (List.range' 0 ns.size).filter _ with
+  | nil => rfl
+  | cons a t => cases t <;> rfl
+
+/-! ### `chromOf` with an early stop (chromosome offsets non-decreasing, checked once per chunk: `monoOk`) -/
+
+-- offsets `c, c + 1, …` (`k` steps) non-decreasing
+def monoGo (offs : Array Nat) : Nat → Nat → Bool
+  | 0, _ => true
+  | k + 1, c => decide (offs[c]! ≤ offs[c + 1]!) && monoGo offs k (c + 1)
+
+-- the chromosome offsets never decrease (so a scan can stop at the first chromosome starting after `s`)
+def monoOk (offs ns : Array Nat) : Bool := monoGo offs (ns.size - 1) 0
+
+theorem monoGo_le (offs : Array Nat) : ∀ k c, monoGo offs k c = true →
+    ∀ d₁ d₂, c ≤ d₁ → d₁ ≤ d₂ → d₂ ≤ c + k → offs[d₁]! ≤ offs[d₂]!
+  | 0, c, _, d₁, d₂, h1, h2, h3 => by rw [show d₁ = c by omega, show d₂ = c by omega]; exact Nat.le_refl _
+  | k + 1, c, h, d₁, d₂, h1, h2, h3 => by
+    simp only [monoGo, Bool.and_eq_true, decide_eq_true_eq] at h
+    by_cases hd : d₁ = c
+    · by_cases he : d₂ = c
+      · rw [hd, he]; exact Nat.le_refl _
+      · rw [hd]; exact Nat.le_trans h.1 (monoGo_le offs k (c + 1) h.2 (c + 1) d₂ (by omega) (by omega) (by omega))
+    · exact monoGo_le offs k (c + 1) h.2 d₁ d₂ (by omega) h2 (by omega)
+
+-- `chromGo` stopping at the first chromosome starting after `s`
+def chromGoE (offs ns : Array Nat) (s e : Nat) : Nat → Nat → Option Nat → Option Nat
+  | 0, _, r => r
+  | k + 1, c, r =>
+    if s < offs[c]! then r
+    else match r with
+      | none =>
+        if decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!) then chromGoE offs ns s e k (c + 1) (some c)
+        else chromGoE offs ns s e k (c + 1) none
+      | some d =>
+        if decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!) then none
+        else chromGoE offs ns s e k (c + 1) (some d)
+
+-- no chromosome from `c` on holds `s` when they all start after it
+theorem chromGo_past (offs ns : Array Nat) (s e : Nat) (b : Nat) (hb : s < b) :
+    ∀ k c r, (∀ d, c ≤ d → d < c + k → b ≤ offs[d]!) → chromGo offs ns s e k c r = r
+  | 0, _, r, _ => by cases r <;> rfl
+  | k + 1, c, r, h => by
+    have hn : (decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) = false := by
+      have := h c (by omega) (by omega); simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not]; omega
+    cases r with
+    | none => rw [chromGo, hn]; exact chromGo_past offs ns s e b hb k (c + 1) none (fun d h1 h2 => h d (by omega) (by omega))
+    | some x => rw [chromGo, hn]; exact chromGo_past offs ns s e b hb k (c + 1) (some x) (fun d h1 h2 => h d (by omega) (by omega))
+
+theorem chromGoE_eq (offs ns : Array Nat) (s e : Nat) :
+    ∀ k c r, (∀ d₁ d₂, c ≤ d₁ → d₁ ≤ d₂ → d₂ < c + k → offs[d₁]! ≤ offs[d₂]!) →
+      chromGoE offs ns s e k c r = chromGo offs ns s e k c r
+  | 0, _, r, _ => by cases r <;> rfl
+  | k + 1, c, r, hm => by
+    have hm' : ∀ d₁ d₂, c + 1 ≤ d₁ → d₁ ≤ d₂ → d₂ < c + 1 + k → offs[d₁]! ≤ offs[d₂]! :=
+      fun d₁ d₂ h1 h2 h3 => hm d₁ d₂ (by omega) h2 (by omega)
+    simp only [chromGoE]
+    by_cases hs : s < offs[c]!
+    · rw [if_pos hs]
+      exact (chromGo_past offs ns s e offs[c]! hs (k + 1) c r (fun d h1 h2 => hm c d (by omega) h1 h2)).symm
+    · rw [if_neg hs]
+      cases r with
+      | none =>
+        rw [chromGo]
+        by_cases hh : (decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) = true
+        · simp only [hh, ↓reduceIte]; exact chromGoE_eq offs ns s e k (c + 1) _ hm'
+        · simp only [hh, Bool.false_eq_true, ↓reduceIte]; exact chromGoE_eq offs ns s e k (c + 1) _ hm'
+      | some x =>
+        rw [chromGo]
+        by_cases hh : (decide (offs[c]! ≤ s) && decide (e ≤ offs[c]! + ns[c]!)) = true
+        · simp only [hh, ↓reduceIte]
+        · simp only [hh, Bool.false_eq_true, ↓reduceIte]; exact chromGoE_eq offs ns s e k (c + 1) _ hm'
+
+-- `chromOf` with the early stop when `ok` (`chromOfM_eq` at `ok = monoOk offs ns`)
+def chromOfM (offs ns : Array Nat) (ok : Bool) (s e : Nat) : Option Nat :=
+  if ok && decide (ns.size ≤ offs.size) then chromGoE offs ns s e ns.size 0 none else chromOf offs ns s e
+
+theorem chromOfM_eq (offs ns : Array Nat) (s e : Nat) : chromOfM offs ns (monoOk offs ns) s e = chromOf offs ns s e := by
+  unfold chromOfM
+  split
+  · rename_i h
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    rw [chromOf_go, chromGoE_eq]
+    intro d₁ d₂ h1 h2 h3
+    exact monoGo_le offs _ 0 h.1 d₁ d₂ h1 h2 (by omega)
+  · rfl
+
 /-! ### The gap-free check as a byte compare (`chkCandD_ok`: it implies `chkCand` on `[(diag, n)]`) -/
 
 -- penalty sum of `k` read letters `X[i ..]` against `G[st + i ..]`, mismatch −4
@@ -924,5 +1013,88 @@ theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
       · exact ⟨rep, rfl, pair, hr, hu (.inl htag)⟩
       · exact ⟨rep, rfl, pair, hr, hu (.inr (.inl htag))⟩
       · exact ⟨rep, rfl, pair, hr, hu (.inr (.inr htag))⟩
+
+/-! ## The reporter from prepared mates (compiled code: Proofs/Aligner.lean `alignOneP`)
+
+`answerOfPairP` is `answerOfPair` with each mate's reverse complement and packed strands taken from the router's
+preparation (`answerOfPairP_eq`, at `prepMz`); the fallback is unchanged. -/
+
+-- `chkCandD` with the packed strands given (the gap-free penalty by `TierHeur.hamPK`)
+def chkCandDK (pgs : Array PGen) (R Rr : ByteArray) (K1 K2 : RP) (h : MapSpec.Placement × Int) : Bool :=
+  let X := if h.1.2 = .fwd then R else Rr
+  let K := if h.1.2 = .fwd then K1 else K2
+  decide (h.1.1.chr < pgs.size) && decide (h.1.1.start + h.1.1.len ≤ pgs[h.1.1.chr]!.n) && decide (h.2 ≤ 0) &&
+    X.size == R.size && h.1.1.len == R.size &&
+    ((0 : Int) - 4 * (TierHeur.hamPK X K pgs[h.1.1.chr]! h.1.1.start R.size R.size : Nat)) == h.2
+
+theorem chkCandDK_eq (pgs : Array PGen) (R : ByteArray) (h : MapSpec.Placement × Int) :
+    chkCandDK pgs R (revCompK R) (packRP R) (packRP (revCompK R)) h = chkCandD pgs R (revCompK R) h := by
+  have e : ∀ X : ByteArray, ((0 : Int) - 4 * (TierHeur.hamPK X (packRP X) pgs[h.1.1.chr]! h.1.1.start R.size R.size : Nat)) =
+      diagPen X pgs[h.1.1.chr]! h.1.1.start R.size 0 0 := fun X => by
+    rw [TierHeur.hamPK_eq, diagPen_ham X _ _ R.size R.size 0 0 0 (by omega)]; simp
+  unfold chkCandDK chkCandD
+  by_cases hs : h.1.2 = .fwd
+  · simp only [hs, if_true, e]
+  · simp only [hs, if_false, e]
+
+-- `moveTo` with `chromOfM` (`moveToM_eq`)
+def moveToM (offs ns : Array Nat) (ok : Bool) (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) :
+    Option MateReport :=
+  let r := mateReportOf x runs
+  match chromOfM offs ns ok r.placement.start r.placement.stop with
+  | some c => some { r with placement := unshiftP c offs[c]! r.placement }
+  | none => none
+
+theorem moveToM_eq (offs ns : Array Nat) (x : MapSpec.Placement × Int) (runs : List (AlignmentSpec.Step × Nat)) :
+    moveToM offs ns (monoOk offs ns) x runs = moveTo offs ns x runs := by
+  unfold moveToM moveTo; simp only [chromOfM_eq]
+
+def checkMoveDK (pgs : Array PGen) (offs ns : Array Nat) (ok : Bool) (R Rr : ByteArray) (K1 K2 : RP)
+    (x : MapSpec.Placement × Int) : Option MateReport :=
+  if chkCandDK pgs R Rr K1 K2 x then moveToM offs ns ok x [(AlignmentSpec.Step.diag, R.size)] else none
+
+def mateOfK (pgs : Array PGen) (offs ns : Array Nat) (ok : Bool) (R Rr : ByteArray) (K1 K2 : RP) (m : MateX) :
+    Option MateReport :=
+  m.pl.bind fun x =>
+    (if x.1.1.len == R.size then checkMoveDK pgs offs ns ok R Rr K1 K2 x else none) <|>
+      ((if m.cg then some m.runs else alignAt pgs[0]! R Rr x).bind fun runs =>
+        if chkCand pgs R Rr x runs then moveToM offs ns ok x runs else none)
+
+theorem mateOfK_eq (pgs : Array PGen) (offs ns : Array Nat) (R : ByteArray) (m : MateX) :
+    mateOfK pgs offs ns (monoOk offs ns) R (revCompK R) (packRP R) (packRP (revCompK R)) m = mateOf pgs offs ns R m := by
+  unfold mateOfK mateOf checkMoveDK checkMoveD mateRuns checkMove
+  simp only [chkCandDK_eq, moveToM_eq]
+
+def foundOfK (ties : Bool) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (ok : Bool) (R1 R2 : ByteArray)
+    (s1 s2 : PrepM MzP) (t : TierOut) : Option PairReport :=
+  if reportable ties t.tag then
+    match mateOfK pgs offs ns ok R1 s1.Rr s1.K1 s1.K2 t.m1, mateOfK pgs offs ns ok R2 s2.Rr s2.K1 s2.K2 t.m2 with
+    | some a, some b =>
+      if MapSpec.properPairU slack lo hi (oldPlacement a.placement) (oldPlacement b.placement) then
+        some ⟨a, b⟩
+      else none
+    | _, _ => none
+  else none
+
+def answerOfPairP (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+    (pgs : Array PGen) (offs ns : Array Nat) (ok : Bool) (R1 R2 : ByteArray) (s1 s2 : PrepM MzP) (t : TierOut) : PairAnswer :=
+  let f := foundOfK ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns ok R1 R2
+    s1 s2 t
+  let g := match f, fb with
+    | none, some T =>
+      if T ≤ Bridge.boundOf t || (rescue && (t.m1.pl.isSome || t.m2.pl.isSome)) then
+        fallbackOf 16 pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+      else none
+    | _, _ => f
+  { Bridge.answerOf t with found := g, uniqueness := uniqOf t f }
+
+theorem answerOfPairP_eq (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+    (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) :
+    answerOfPairP ties fb rescue pk insertSettings pgs offs ns (monoOk offs ns) R1 R2 (prepMz pk R1) (prepMz pk R2) t =
+      answerOfPair ties fb rescue pk insertSettings pgs offs ns R1 R2 t := by
+  have h1 : ∀ R, (prepMz pk R).Rr = revCompK R ∧ (prepMz pk R).K1 = packRP R ∧ (prepMz pk R).K2 = packRP (revCompK R) :=
+    fun R => by rw [prepMz_eq]; exact ⟨rfl, rfl, rfl⟩
+  unfold answerOfPairP answerOfPair foundOfK foundOf
+  simp only [(h1 R1).1, (h1 R1).2.1, (h1 R1).2.2, (h1 R2).1, (h1 R2).2.1, (h1 R2).2.2, mateOfK_eq]
 
 end Spec.Report

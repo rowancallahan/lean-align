@@ -39,6 +39,103 @@ def exFind (ex : ByteArray) (i : Nat) : (f lo hi : Nat) → Nat
       if u32 ex (3 * m) ≤ i then exFind ex i f (m + 1) hi else exFind ex i f lo m
     else lo
 
+/-! `exFind` on machine words (compiled code only): `exFind_eq_exFindF` (`@[csimp]`). The run starts are read by
+`pgGet` at a `USize` offset and compared as `UInt32`; taken when the letter index is below `2^32` and the run
+count below `2^28` (the guard uses `2^32 − 1`: a literal ≥ `2^32` would be rebuilt by GMP at every call). -/
+
+theorem exLit (n : Nat) (h : n < 4294967296) : (OfNat.ofNat n : USize).toNat = n := by
+  have : 4294967296 ≤ USize.size := by rcases USize.size_eq with e | e <;> omega
+  exact USize.toNat_ofNat_of_lt' (by omega)
+
+/-- `u32 B k` at a machine-word index (`u32W_eq`). -/
+@[inline] def u32W (B : ByteArray) (k : USize) : UInt32 :=
+  let j := 4 * k
+  (pgGet B j).toUInt32 ||| ((pgGet B (j + 1)).toUInt32 <<< 8) ||| ((pgGet B (j + 2)).toUInt32 <<< 16) |||
+    ((pgGet B (j + 3)).toUInt32 <<< 24)
+
+theorem u32W_eq (B : ByteArray) (k : USize) (hk : k.toNat < 2 ^ 30) : (u32W B k).toNat = u32 B k.toNat := by
+  have h4 : (4 * k).toNat = 4 * k.toNat := by
+    rw [USize.toNat_mul, show (4 : USize).toNat = 4 from exLit 4 (by omega),
+      Nat.mod_eq_of_lt (by have := pgu_pow; omega)]
+  have e : ∀ c : Nat, c < 4 → (4 * k + (OfNat.ofNat c : USize)).toNat = 4 * k.toNat + c := fun c hc => by
+    rw [pgu_add _ _ (by rw [h4, exLit c (by omega)]; omega), h4, exLit c (by omega)]
+  unfold u32W u32
+  simp only [pgGet_eq, h4, e 1 (by omega), e 2 (by omega), e 3 (by omega)]
+
+/-- `exFind` with `lo`, `hi` in `USize` and the letter index in `UInt32` (`exFindU_eq`). -/
+def exFindU (ex : ByteArray) (i : UInt32) : (f : Nat) → (lo hi : USize) → USize
+  | 0, lo, _ => lo
+  | f + 1, lo, hi =>
+    if lo < hi then
+      let m := (lo + hi) / 2
+      if u32W ex (3 * m) ≤ i then exFindU ex i f (m + 1) hi else exFindU ex i f lo m
+    else lo
+
+theorem exFindU_eq (ex : ByteArray) (iU : UInt32) (i : Nat) (hi : iU.toNat = i) :
+    ∀ f (loU hiU : USize), hiU.toNat < 2 ^ 28 → loU.toNat ≤ hiU.toNat →
+      (exFindU ex iU f loU hiU).toNat = exFind ex i f loU.toNat hiU.toNat
+  | 0, _, _, _, _ => rfl
+  | f + 1, loU, hiU, hh, hl => by
+    have hN := pgu_pow
+    rw [exFindU, exFind]
+    by_cases hlt : loU.toNat < hiU.toNat
+    · have hlt' : loU < hiU := hlt
+      rw [if_pos hlt', if_pos hlt]
+      simp only []
+      have em : ((loU + hiU) / 2).toNat = (loU.toNat + hiU.toNat) / 2 := by
+        rw [USize.toNat_div, pgu_add _ _ (by omega), show (2 : USize).toNat = 2 from exLit 2 (by omega)]
+      have e3 : (3 * ((loU + hiU) / 2)).toNat = 3 * ((loU.toNat + hiU.toNat) / 2) := by
+        rw [USize.toNat_mul, em, show (3 : USize).toNat = 3 from exLit 3 (by omega),
+          Nat.mod_eq_of_lt (by omega)]
+      have ec : (u32W ex (3 * ((loU + hiU) / 2)) ≤ iU) = (u32 ex (3 * ((loU.toNat + hiU.toNat) / 2)) ≤ i) := by
+        rw [← e3, ← u32W_eq ex _ (by rw [e3]; omega), ← hi]
+        exact propext UInt32.le_iff_toNat_le
+      by_cases hc : u32 ex (3 * ((loU.toNat + hiU.toNat) / 2)) ≤ i
+      · have hc' : u32W ex (3 * ((loU + hiU) / 2)) ≤ iU := by rw [ec]; exact hc
+        rw [if_pos hc', if_pos hc]
+        have e1 : ((loU + hiU) / 2 + 1).toNat = (loU.toNat + hiU.toNat) / 2 + 1 := by
+          rw [pgu_add _ _ (by rw [em, pgu_one]; omega), em, pgu_one]
+        rw [exFindU_eq ex iU i hi f _ _ hh (by rw [e1]; omega), e1]
+      · have hc' : ¬ u32W ex (3 * ((loU + hiU) / 2)) ≤ iU := by rw [ec]; exact hc
+        rw [if_neg hc', if_neg hc, exFindU_eq ex iU i hi f _ _ (by rw [em]; omega) (by rw [em]; omega), em]
+    · have hlt' : ¬ loU < hiU := hlt
+      rw [if_neg hlt', if_neg hlt]
+
+/-- `exFind` for the compiled code (`exFind_eq_exFindF`). -/
+@[inline] def exFindF (ex : ByteArray) (i f lo hi : Nat) : Nat :=
+  if i < 4294967295 ∧ hi < 268435456 ∧ lo ≤ hi then
+    (exFindU ex i.toUInt32 f lo.toUSize hi.toUSize).toNat
+  else exFindS ex i f lo hi
+where
+  /-- `exFind` (its slow path; not rewritten by `csimp`). -/
+  exFindS (ex : ByteArray) (i : Nat) : (f lo hi : Nat) → Nat
+    | 0, lo, _ => lo
+    | f + 1, lo, hi =>
+      if lo < hi then
+        let m := (lo + hi) / 2
+        if u32 ex (3 * m) ≤ i then exFindS ex i f (m + 1) hi else exFindS ex i f lo m
+      else lo
+
+theorem exFindS_eq (ex : ByteArray) (i : Nat) : ∀ f lo hi, exFindF.exFindS ex i f lo hi = exFind ex i f lo hi
+  | 0, _, _ => rfl
+  | f + 1, lo, hi => by
+    rw [exFindF.exFindS, exFind]
+    simp only []
+    split
+    · split
+      · exact exFindS_eq ex i f _ _
+      · exact exFindS_eq ex i f _ _
+    · rfl
+
+@[csimp] theorem exFind_eq_exFindF : @exFind = @exFindF := by
+  funext ex i f lo hi
+  unfold exFindF
+  split
+  · rename_i h
+    rw [exFindU_eq ex i.toUInt32 i (UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le h.1 (by decide))) f _ _ (by rw [pgu_n _ (by omega)]; omega)
+      (by rw [pgu_n _ (by omega), pgu_n _ (by omega)]; omega), pgu_n _ (by omega), pgu_n _ (by omega)]
+  · exact (exFindS_eq ex i f lo hi).symm
+
 /-- 2-bit code of letter `i`. -/
 @[inline] def PGen.code (P : PGen) (i : Nat) : UInt8 :=
   (P.w.get! (17 * (i >>> 6) + 1 + ((i >>> 2) &&& 15)) >>> ((i.toUInt8 &&& 3) <<< 1)) &&& 3
