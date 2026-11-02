@@ -109,6 +109,9 @@ def reportTies : Bool := true
 -- pair (anchor + mate aligned near it, re-checked); false: straight to the last resort (`LastResort.finalize`)
 def fallbackOn : Bool := true
 
+-- mate rescue: the fallback also runs on junk answers where a mate has a placement in hand
+def mateRescue : Bool := true
+
 def fallbackFrom (insertSettings : InsertSettings) : Option Int :=
   if fallbackOn then some insertSettings.junkScore else none
 
@@ -147,7 +150,7 @@ def alignOne (insertSettings : InsertSettings) (lens : Array Nat) (loaded : Opti
           -- its seed loop then does not pay per chromosome; `Proofs/Whole.lean` moves the answer
           -- back to the chromosomes, `Proofs/Report.lean` the found pair, `Proofs/LastResort.lean` the rest
           .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
-            (Report.answerOfPair reportTies (fallbackFrom insertSettings) (ix, G) insertSettings (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
+            (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue (ix, G) insertSettings (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
               (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
                 (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2))))
 
@@ -178,7 +181,7 @@ def alignOneC (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
       | none => .aligned (LastResort.finalize insertSettings (LastResort.fitNs lens) read1 read2 noIndexAnswer)
       | some (insertSettings, cfg, pk, pgs, offs, ns) =>
           .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
-            (Report.answerOfPair reportTies (fallbackFrom insertSettings) pk insertSettings pgs offs ns read1 read2
+            (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
               (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2))))
 
 -- each task loads the index and builds the setup itself (`ParMap.parMapS`): its structures are
@@ -312,7 +315,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
       -- moved to the chromosomes: each is a slice of the whole; the found pair re-checked (`Report`);
       -- an answer without a pair is junk or gets one (`LastResort`)
       exact LastResort.finalize_correct (LastResort.fitNs ns) hfit hnone
-        (Report.answerOfPair_correct hslice hchr hlen reportTies (fallbackFrom insertSettings) (ix, G) insertSettings read1 read2 _ hok
+        (Report.answerOfPair_correct hslice hchr hlen reportTies (fallbackFrom insertSettings) mateRescue (ix, G) insertSettings read1 read2 _ hok
           (Whole.correct_of_whole insertSettings _ _ hslice _ rfl rfl
             (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok)))
 

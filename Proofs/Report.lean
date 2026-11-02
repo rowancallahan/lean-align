@@ -649,12 +649,13 @@ def uniqOf (t : TierOut) (f : Option PairReport) : Uniqueness :=
 
 -- the router's answer with the pair in hand printed when it re-checks
 -- (stage 5) with no proper pair from the router, the fallback runs when the bound is at least `fb`
-def answerOfPair (ties : Bool) (fb : Option Int) (pk : PkMz) (insertSettings : InsertSettings) (pgs : Array PGen)
-    (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) : PairAnswer :=
+-- `rescue`: also when the bound is junk but a mate has a placement in hand (mate rescue)
+def answerOfPair (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+    (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) : PairAnswer :=
   let f := foundOf ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
   let g := match f, fb with
     | none, some T =>
-      if T ≤ Bridge.boundOf t then
+      if T ≤ Bridge.boundOf t || (rescue && (t.m1.pl.isSome || t.m2.pl.isSome)) then
         fallbackOf 16 pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
       else none
     | _, _ => f
@@ -666,12 +667,12 @@ theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
       chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
     (hlen : genome.length = ns.size)
-    (ties : Bool) (fb : Option Int) (pk : PkMz) (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut)
+    (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut)
     (hok : TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
       (oldGenome (Whole.wholeOf G)) (decodeRead R1) (decodeRead R2) (some R1) (some R2) t)
     (ha : CorrectU insertSettings genome (decodeRead R1) (decodeRead R2) (Bridge.answerOf t)) :
     CorrectU insertSettings genome (decodeRead R1) (decodeRead R2)
-      (answerOfPair ties fb pk insertSettings (cutAll G #[0] #[G.n]) offs ns R1 R2 t) := by
+      (answerOfPair ties fb rescue pk insertSettings (cutAll G #[0] #[G.n]) offs ns R1 R2 t) := by
   unfold answerOfPair
   generalize hf : foundOf ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
     (cutAll G #[0] #[G.n]) offs ns R1 R2 t = f
