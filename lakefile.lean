@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
 
 @[default_target]
 lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.Index, `Proofs.Aligner, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
+  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.Index, `Proofs.Pack, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
 
 @[default_target]
 lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
@@ -104,12 +104,12 @@ lean_lib IndexKmer where   -- k-mer index
 @[default_target]
 lean_lib IndexMinimizer where   -- minimizer index (MzIndex) and its checkers
   srcDir := "Aligner/index/minimizer"
-  roots := #[`MapperMzWords, `MzCheckFast, `MzCheckPar, `MzIndex, `MzView, `MzWord]
+  roots := #[`MapperMzWords, `MzBuildOk, `MzCheckFast, `MzCheckPar, `MzIndex, `MzView, `MzWord]
 
 @[default_target]
 lean_lib IndexPackedGenome where   -- 2-bit packed genome
   srcDir := "Aligner/index/packed_genome"
-  roots := #[`MapperPGen, `MapperPacked, `MzPacked, `WgPacked]
+  roots := #[`MapperPGen, `MapperPacked, `MzBuildP, `MzPacked, `WgPacked]
 
 @[default_target]
 lean_lib IndexRepeatMask where   -- repeat masking
