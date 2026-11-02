@@ -1,4 +1,5 @@
 import Proofs.Sam
+import MapperK250
 
 /-! # BAM writer prototype (benchmark only, unproved IO; NOT part of Spec/).
 
@@ -31,7 +32,7 @@ def crcEntry (n : Nat) : UInt32 := Id.run do
   return c
 
 -- slice-by-8 tables: table k, entry i at 256 * k + i  (k = 0 is the plain byte table)
-def crcTables : Array UInt32 := Id.run do
+def crcTables32 : Array UInt32 := Id.run do
   let mut t : Array UInt32 := (Array.range 256).map crcEntry
   for k in [1:8] do
     for i in [0:256] do
@@ -39,22 +40,36 @@ def crcTables : Array UInt32 := Id.run do
       t := t.push (t[(prev &&& 0xFF).toNat]! ^^^ (prev >>> 8))
   return t
 
+def crcTables : Array UInt64 := crcTables32.map (·.toUInt64)
+
+-- table entry `i` with one machine-word bounds check (the `else` branch is unreachable)
+@[inline] def tabU (t : Array UInt64) (i : USize) : UInt32 := (MapSpec.Fast.rwAt t i).toUInt32
+
+-- 8 bytes per step from `i` while `i + 8 ≤ hi` (machine-word indices)
+def crcMain (data : ByteArray) (hi : USize) : (fuel : Nat) → (i : USize) → (c : UInt32) → UInt32 × USize
+  | 0, i, c => (c, i)
+  | f + 1, i, c =>
+    if i + 8 ≤ hi then
+      let g := fun (k : USize) => MapSpec.Fast.getU data (i + k)
+      let x := c ^^^ ((g 0).toUInt32 ||| ((g 1).toUInt32 <<< 8) ||| ((g 2).toUInt32 <<< 16) ||| ((g 3).toUInt32 <<< 24))
+      let c := tabU crcTables (((1792 : Nat).toUSize) + (x &&& 0xFF).toUSize) ^^^ tabU crcTables (((1536 : Nat).toUSize) + ((x >>> 8) &&& 0xFF).toUSize) ^^^
+               tabU crcTables (((1280 : Nat).toUSize) + ((x >>> 16) &&& 0xFF).toUSize) ^^^ tabU crcTables (((1024 : Nat).toUSize) + (x >>> 24).toUSize) ^^^
+               tabU crcTables (((768 : Nat).toUSize) + (g 4).toUSize) ^^^ tabU crcTables (((512 : Nat).toUSize) + (g 5).toUSize) ^^^
+               tabU crcTables (((256 : Nat).toUSize) + (g 6).toUSize) ^^^ tabU crcTables (g 7).toUSize
+      crcMain data hi f (i + 8) c
+    else (c, i)
+
+def crcTail (data : ByteArray) (hi : USize) : (fuel : Nat) → (i : USize) → (c : UInt32) → UInt32
+  | 0, _, c => c
+  | f + 1, i, c =>
+    if i < hi then crcTail data hi f (i + 1) (tabU crcTables (((c ^^^ (MapSpec.Fast.getU data i).toUInt32) &&& 0xFF).toUSize) ^^^ (c >>> 8))
+    else c
+
 -- CRC32 of `data[lo, hi)`, 8 bytes per step
-def crc32 (data : ByteArray) (lo hi : Nat) : UInt32 := Id.run do
+def crc32 (data : ByteArray) (lo hi : Nat) : UInt32 :=
   assert! hi ≤ data.size
-  let mut c : UInt32 := 0xFFFFFFFF
-  let mut i := lo
-  while i + 8 ≤ hi do
-    let x := c ^^^ (data[i]!.toUInt32 ||| (data[i + 1]!.toUInt32 <<< 8) ||| (data[i + 2]!.toUInt32 <<< 16) ||| (data[i + 3]!.toUInt32 <<< 24))
-    c := crcTables[1792 + (x &&& 0xFF).toNat]! ^^^ crcTables[1536 + ((x >>> 8) &&& 0xFF).toNat]! ^^^
-         crcTables[1280 + ((x >>> 16) &&& 0xFF).toNat]! ^^^ crcTables[1024 + (x >>> 24).toNat]! ^^^
-         crcTables[768 + data[i + 4]!.toNat]! ^^^ crcTables[512 + data[i + 5]!.toNat]! ^^^
-         crcTables[256 + data[i + 6]!.toNat]! ^^^ crcTables[data[i + 7]!.toNat]!
-    i := i + 8
-  while i < hi do
-    c := crcTables[((c ^^^ data[i]!.toUInt32) &&& 0xFF).toNat]! ^^^ (c >>> 8)
-    i := i + 1
-  return c ^^^ 0xFFFFFFFF
+  let (c, i) := crcMain data hi.toUSize ((hi - lo) / 8 + 1) lo.toUSize 0xFFFFFFFF
+  crcTail data hi.toUSize 8 i c ^^^ 0xFFFFFFFF
 
 /-! ## little-endian fields -/
 
@@ -62,10 +77,10 @@ def put8 (b : ByteArray) (v : Nat) : ByteArray := b.push v.toUInt8
 def put16 (b : ByteArray) (v : Nat) : ByteArray := (b.push v.toUInt8).push (v >>> 8).toUInt8
 def put32 (b : ByteArray) (v : UInt32) : ByteArray :=
   (((b.push v.toUInt8).push (v >>> 8).toUInt8).push (v >>> 16).toUInt8).push (v >>> 24).toUInt8
--- two's complement of an Int (must fit 32 bits)
+-- two's complement of an Int (must fit 32 bits; no literal above 2^32: it would be parsed at run time)
 def putI32 (b : ByteArray) (v : Int) : ByteArray :=
-  assert! -2147483648 ≤ v ∧ v < 4294967296
-  put32 b (v % 4294967296).toNat.toUInt32
+  assert! -2147483648 ≤ v ∧ v.natAbs >>> 32 == 0
+  put32 b (if 0 ≤ v then v.toNat.toUInt32 else (0 : UInt32) - v.natAbs.toUInt32)
 
 /-! ## BGZF with stored deflate blocks -/
 
@@ -127,36 +142,75 @@ def reg2bin (beg «end» : Nat) : Nat :=
 -- code of the complement of a base, 255 if not a base letter
 def seqCodesRc : Array UInt8 := (Array.range 256).map fun b => seqCodes[(complementByte b.toUInt8).toNat]!
 
--- SEQ as on the forward strand: reversed and complemented on the reverse strand (`samSequence`), 4 bits per base
-def putSeq (out : ByteArray) (letters : ByteArray) (rev : Bool) : ByteArray := Id.run do
-  let n := letters.size
-  let tab := if rev then seqCodesRc else seqCodes
-  let base (i : Nat) : UInt8 := tab[(letters[if rev then n - 1 - i else i]!).toNat]!
-  let mut out := out
-  let mut bad : UInt8 := 0
-  for k in [0:n / 2] do
-    let hi := base (2 * k)
-    let lo := base (2 * k + 1)
-    bad := bad ||| hi ||| lo
-    out := out.push ((hi <<< 4) ||| lo)
-  if n % 2 == 1 then
-    let hi := base (n - 1)
-    bad := bad ||| hi
-    out := out.push (hi <<< 4)
-  assert! bad < 16   -- every letter was one of "=ACMGRSVTWYHKDBN" (invalid codes are 255)
+-- `b[i] := v` with one machine-word bounds check (the `else` branch is unreachable): `uset` is inline C, `push` is a call
+@[inline] def setU (b : ByteArray) (i : USize) (v : UInt8) : ByteArray :=
+  if h : i < b.usize then b.uset i v (Nat.lt_of_lt_of_le h (MapSpec.Fast.usize_le b)) else b
+
+-- 64 KiB of zeros: `n` bytes are appended to a buffer by one copy, then overwritten by indexed writes
+def zeros64k : ByteArray := ByteArray.mk (Array.replicate 65536 0)
+@[inline] def extendZ (out : ByteArray) (n : Nat) : ByteArray :=
+  assert! n ≤ 65536
+  zeros64k.copySlice 0 out out.size n false
+
+-- two bases at once: entry `2 (256 a + b)` = the packed pair of 4-bit codes, entry + 1 = 1 if a or b is not a base letter
+def seqPairTab (rc : Bool) : ByteArray := Id.run do
+  let t := if rc then seqCodesRc else seqCodes
+  let mut out := ByteArray.emptyWithCapacity (2 * 65536)
+  for a in [0:256] do
+    for b in [0:256] do
+      let ca := t[a]!
+      let cb := t[b]!
+      let bad := 16 ≤ (ca ||| cb)
+      out := (out.push (if bad then 0 else (ca <<< 4) ||| cb)).push (if bad then 1 else 0)
   return out
 
+def seqPairF : ByteArray := seqPairTab false
+def seqPairR : ByteArray := seqPairTab true
+
+-- the packed pairs from base pair `k` on, written at `base + k`; `bad` collects the invalid-letter flags
+def seqLoop (l : ByteArray) (n : USize) (rev : Bool) (tab : ByteArray) (base : USize) : (fuel : Nat) → (k : USize) →
+    (bad : UInt8) → ByteArray → ByteArray × UInt8
+  | 0, _, bad, out => (out, bad)
+  | f + 1, k, bad, out =>
+    if 2 * k + 1 < n then
+      let a := MapSpec.Fast.getU l (if rev then n - 1 - 2 * k else 2 * k)
+      let b := MapSpec.Fast.getU l (if rev then n - 2 - 2 * k else 2 * k + 1)
+      let e := 2 * (256 * a.toUSize + b.toUSize)
+      seqLoop l n rev tab base f (k + 1) (bad ||| MapSpec.Fast.getU tab (e + 1)) (setU out (base + k) (MapSpec.Fast.getU tab e))
+    else (out, bad)
+
+-- SEQ as on the forward strand: reversed and complemented on the reverse strand (`samSequence`), 4 bits per base
+def putSeq (out : ByteArray) (letters : ByteArray) (rev : Bool) : ByteArray :=
+  let n := letters.size
+  let base := out.size
+  let out := extendZ out ((n + 1) / 2)
+  let (out, bad) := seqLoop letters n.toUSize rev (if rev then seqPairR else seqPairF) base.toUSize (n / 2 + 1) 0 0 out
+  if n % 2 == 1 then
+    let hi := (if rev then seqCodesRc else seqCodes)[(letters[if rev then 0 else n - 1]!).toNat]!
+    assert! (bad ||| (if hi ≥ 16 then 1 else 0)) == 0   -- every letter was one of "=ACMGRSVTWYHKDBN"
+    setU out (base + n / 2).toUSize (hi <<< 4)
+  else
+    assert! bad == 0
+    out
+
+-- Phred = byte - 33 for `n` bytes from `i` on (reversed when `rev`), written at `base + i`, `low` the smallest byte
+def qualLoop (q : ByteArray) (n : USize) (rev : Bool) (base : USize) : (fuel : Nat) → (i : USize) → (low : UInt8) →
+    ByteArray → ByteArray × UInt8
+  | 0, _, low, out => (out, low)
+  | f + 1, i, low, out =>
+    if i < n then
+      let v := MapSpec.Fast.getU q (if rev then n - 1 - i else i)
+      qualLoop q n rev base f (i + 1) (if v < low then v else low) (setU out (base + i) (v - 33))
+    else (out, low)
+
 -- QUAL: Phred = byte - 33, reversed with the sequence
-def putQual (out : ByteArray) (quality : ByteArray) (rev : Bool) : ByteArray := Id.run do
+def putQual (out : ByteArray) (quality : ByteArray) (rev : Bool) : ByteArray :=
   let n := quality.size
-  let mut out := out
-  let mut low : UInt8 := 255
-  for i in [0:n] do
-    let q := quality[if rev then n - 1 - i else i]!
-    low := min low q
-    out := out.push (q - 33)
+  let base := out.size
+  let out := extendZ out n
+  let (out, low) := qualLoop quality n.toUSize rev base.toUSize (n + 1) 0 255 out
   assert! n == 0 || 33 ≤ low
-  return out
+  out
 
 -- an integer tag in the smallest BAM type that holds it
 def putIntTag (out : ByteArray) (tag : String) (v : Int) : ByteArray :=
