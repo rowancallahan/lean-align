@@ -231,6 +231,16 @@ theorem capForZ_eq (pk : MapSpec.Fast.PkMz) (c0 : Nat) (R : ByteArray) :
   unfold capForZ capFor
   simp only [MapSpec.Fast.prepMz_eq, MapSpec.Fast.costZ_eq]
 
+-- `capForZ` from the strands' sizes already sorted (`capForS_eq`)
+def capForS (c0 : Nat) (R : ByteArray) (l1 l2 : List Nat) : Nat :=
+  if 200 ≤ R.size then c0
+  else if MapSpec.Fast.costZS c0 l1 l2 ≤ capBudget then c0
+  else if MapSpec.Fast.costZS (min c0 15) l1 l2 ≤ capBudget then min c0 15
+  else min c0 11
+
+theorem capForS_eq (c0 : Nat) (R : ByteArray) (z1 z2 : Array Nat) :
+    capForS c0 R (z1.foldr MapSpec.Fast.insN []) (z2.foldr MapSpec.Fast.insN []) = capForZ c0 R z1 z2 := rfl
+
 -- `pairCfg` with the two mates' caps given (`pairCfg cfg pk a b = pairCfgZ cfg pk a b (capFor …) (capFor …)`)
 def pairCfgZ (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArray) (ca cb : Nat) : MapSpec.Fast.TierCfg :=
   { cfg with
@@ -255,24 +265,52 @@ def alignOneP (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
           let za2 := s1.pr.map (MapSpec.Fast.LookG.size pk)
           let zb1 := s2.ps.map (MapSpec.Fast.LookG.size pk)
           let zb2 := s2.pr.map (MapSpec.Fast.LookG.size pk)
-          let cfg' := pairCfgZ cfg pk read1 read2 (capForZ (cfg.rcfg.cap1 read1) read1 za1 za2)
-            (capForZ (cfg.rcfg.cap1 read2) read2 zb1 zb2)
+          -- each strand's sizes sorted once: the caps tried by `capFor` and the router's pass-1 costs
+          let sa1 := za1.foldr MapSpec.Fast.insN []
+          let sa2 := za2.foldr MapSpec.Fast.insN []
+          let sb1 := zb1.foldr MapSpec.Fast.insN []
+          let sb2 := zb2.foldr MapSpec.Fast.insN []
+          let ca := capForS (cfg.rcfg.cap1 read1) read1 sa1 sa2
+          let cb := capForS (cfg.rcfg.cap1 read2) read2 sb1 sb2
+          let cfg' := pairCfgZ cfg pk read1 read2 ca cb
           .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
             (Report.answerOfPairP reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
               s1 s2 (MapSpec.Fast.tierUp cfg' pk #[0] pgs read1 read2
-                (MapSpec.Fast.tierPairBP cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2))))
+                (MapSpec.Fast.tierPairBP.tierPairBQ cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2
+                  (MapSpec.Fast.costZS ca sa1 sa2) (MapSpec.Fast.costZS cb sb1 sb2)))))
+
+-- the router's caps under `pairCfgZ` are the given ones (equal reads have equal caps)
+theorem pairCfgZ_cap (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArray) (f : ByteArray → Nat) :
+    (pairCfgZ cfg pk a b (f a) (f b)).rcfg.cap1 a = f a ∧ (pairCfgZ cfg pk a b (f a) (f b)).rcfg.cap1 b = f b := by
+  have hs : ∀ x : ByteArray, (x == x) = true := fun x => by
+    show (x.data == x.data) = true; exact beq_self_eq_true _
+  refine ⟨by simp [pairCfgZ, hs], ?_⟩
+  simp only [pairCfgZ]
+  by_cases h : (b == a) = true
+  · have : b = a := ByteArray.ext (eq_of_beq (show (b.data == a.data) = true from h))
+    subst this; simp [hs]
+  · simp [h, hs]
 
 theorem alignOneP_eq (insertSettings : InsertSettings) (lens : Array Nat) (setup : Option Setup)
     (bytes1 bytes2 : Option ByteArray) :
     alignOneP insertSettings lens setup bytes1 bytes2 = alignOneC insertSettings lens setup bytes1 bytes2 := by
   rcases bytes1 with _ | a <;> rcases bytes2 with _ | b <;> rcases setup with _ | ⟨iS, cfg, pk, pgs, offs, ns⟩
   all_goals try rfl
-  simp only [alignOneP, alignOneC, capForZ_eq, Report.answerOfPairP_eq]
+  have hc := pairCfgZ_cap cfg pk a b (fun R => capFor pk (cfg.rcfg.cap1 R) R)
+  simp only [alignOneP, alignOneC, capForS_eq, capForZ_eq, Report.answerOfPairP_eq, ← MapSpec.Fast.costZ_eqS]
+  have hq : ∀ (s1 s2 : MapSpec.Fast.PrepM MapSpec.Fast.MzP) (za1 za2 zb1 zb2 : Array Nat),
+      MapSpec.Fast.tierPairBP.tierPairBQ (pairCfg cfg pk a b) pk #[0] pgs a b s1 s2 za1 za2 zb1 zb2
+        (MapSpec.Fast.costZ (capFor pk (cfg.rcfg.cap1 a) a) za1 za2) (MapSpec.Fast.costZ (capFor pk (cfg.rcfg.cap1 b) b) zb1 zb2) =
+      MapSpec.Fast.tierPairBP (pairCfg cfg pk a b) pk #[0] pgs a b s1 s2 za1 za2 zb1 zb2 := by
+    intro s1 s2 za1 za2 zb1 zb2
+    unfold MapSpec.Fast.tierPairBP
+    rw [show pairCfg cfg pk a b = pairCfgZ cfg pk a b (capFor pk (cfg.rcfg.cap1 a) a) (capFor pk (cfg.rcfg.cap1 b) b) from rfl,
+      hc.1, hc.2]
+  rw [show pairCfgZ cfg pk a b (capFor pk (cfg.rcfg.cap1 a) a) (capFor pk (cfg.rcfg.cap1 b) b) = pairCfg cfg pk a b from rfl, hq]
   show _ = PairResult.aligned (LastResort.finalize iS (LastResort.fitNs ns) a b
     (Report.answerOfPair reportTies (fallbackFrom iS) mateRescue pk iS pgs offs ns a b
       (MapSpec.Fast.tierUp (pairCfg cfg pk a b) pk #[0] pgs a b (MapSpec.Fast.tierPairB (pairCfg cfg pk a b) pk #[0] pgs (some a) (some b)))))
   rw [MapSpec.Fast.tierPairB_eqP]
-  rfl
 
 -- each task loads the index and builds the setup itself (`ParMap.parMapS`): its structures are
 -- then that task's own, so their reference counts are not shared across threads; only the

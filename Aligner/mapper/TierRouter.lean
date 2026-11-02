@@ -664,6 +664,13 @@ theorem costPF_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
 @[inline] def costZ (P : Nat) (z1 z2 : Array Nat) : Nat :=
   max (sumTake (sbound P + 1) (z1.foldr insN []) 0) (sumTake (sbound P + 1) (z2.foldr insN []) 0)
 
+/-- `costZ` from the two strands' sizes already sorted (`costZ P z1 z2 = costZS P (z1.foldr insN []) (z2.foldr insN [])`,
+by `rfl`): the sort does not depend on `P`, so a caller trying several `P` sorts once. -/
+@[inline] def costZS (P : Nat) (l1 l2 : List Nat) : Nat :=
+  max (sumTake (sbound P + 1) l1 0) (sumTake (sbound P + 1) l2 0)
+
+theorem costZ_eqS (P : Nat) (z1 z2 : Array Nat) : costZ P z1 z2 = costZS P (z1.foldr insN []) (z2.foldr insN []) := rfl
+
 theorem costZ_eq {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) :
     costZ P (s.ps.map (LookG.size ix)) (s.pr.map (LookG.size ix)) = costP ix P s := by
   rw [costPF_eq]
@@ -1031,8 +1038,10 @@ def tierPairBS (O1 O2 : Option ByteArray) : TierOut :=
 /-- `tierPairBS` with the two prepared mates and their bucket sizes given (`tierPairBP_eq`): the caller
 prepares each mate once and shares the preparation (Proofs/Aligner.lean `alignOneP`). -/
 def tierPairBP (a b : ByteArray) (s1 s2 : PrepM MzP) (za1 za2 zb1 zb2 : Array Nat) : TierOut :=
-    let c1 := costZ (cfg.rcfg.cap1 a) za1 za2
-    let c2 := costZ (cfg.rcfg.cap1 b) zb1 zb2
+  tierPairBQ a b s1 s2 za1 za2 zb1 zb2 (costZ (cfg.rcfg.cap1 a) za1 za2) (costZ (cfg.rcfg.cap1 b) zb1 zb2)
+where
+  /-- `tierPairBP` with the two mates' pass-1 costs given. -/
+  tierPairBQ (a b : ByteArray) (s1 s2 : PrepM MzP) (za1 za2 zb1 zb2 : Array Nat) (c1 c2 : Nat) : TierOut :=
     if cfg.gate a b s1 s2 c1 c2 then tierRestS cfg pk offs pgs a b s1 s2 none 0 0 else
     let oa1 := ordG za1 (a.size / 25)
     let oa2 := ordG za2 (a.size / 25)
