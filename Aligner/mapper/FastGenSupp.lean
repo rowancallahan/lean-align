@@ -83,6 +83,70 @@ def suppCntC (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
     let b := if kfiltVF pk K R G acc us Ls lim b D s then body D b else b
     stageKSP pk body K R G acc us Ls lim r0 cnt ds (k + 1) b
 
+/-! ### Per-diagonal work without `Int`s or list walks
+
+`gapBound sc0 (−Q)` is `(Q − 6) / 2` (`gb0`), and the anchor list's length is passed in once per
+stage; `stageKSP_eqN` (csimp) runs `stageKSPN`. -/
+
+theorem gb0 (x : Nat) : gapBound sc0 (-(x : Int)) = (x - 6) / 2 := by
+  unfold gapBound sc0; simp only [Int.neg_neg]; omega
+
+/-- `kfiltVF` with `acc.length = aL` given (`kfiltVN_eq`). -/
+@[inline] def kfiltVN {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D s aL : Nat) : Bool :=
+  let Q := min lim b.pen
+  let r := 2 * ((Q - 6) / 2)
+  let n := R.size
+  let fJ := aL - s
+  let sb := sbound Q
+  if fJ ≤ sb then
+    match pk with
+    | some P =>
+      if wordWin K n r D P then
+        let a := P.o + (D - n - r)
+        let o := a % 32
+        let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
+        unlookV K gs o Ls r sb us fJ &&
+          fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
+      else kfilt R G acc us Ls lim b D
+    | none => kfilt R G acc us Ls lim b D
+  else false
+
+theorem kfiltVN_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D s : Nat) :
+    kfiltVN pk K R G acc us Ls lim b D s acc.length = kfiltVF pk K R G acc us Ls lim b D s := by
+  unfold kfiltVN kfiltVF; simp only [gb0]
+
+/-- `stageKSP` with `acc.length = aL` given (`stageKSPN_eq`). -/
+@[specialize] def stageKSPN {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
+    (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
+    (aL : Nat) : List Nat → Nat → Best → Best
+  | [], _, b => b
+  | D :: ds, k, b =>
+    let r := 2 * ((min lim b.pen - 6) / 2)
+    let s := if r = r0 then cnt.getD k 0 else suppA acc D r
+    let b := if kfiltVN pk K R G acc us Ls lim b D s aL then body D b else b
+    stageKSPN pk body K R G acc us Ls lim r0 cnt aL ds (k + 1) b
+
+theorem stageKSPN_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
+    (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
+    ∀ ds k b, stageKSPN pk body K R G acc us Ls lim r0 cnt acc.length ds k b =
+      stageKSP pk body K R G acc us Ls lim r0 cnt ds k b := by
+  intro ds
+  induction ds with
+  | nil => intro k b; rfl
+  | cons D ds ih => intro k b; simp only [stageKSPN, stageKSP, gb0, kfiltVN_eq, ih]
+
+/-- `stageKSP` for the compiled code. -/
+@[inline] def stageKSPW {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
+    (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
+    (ds : List Nat) (k : Nat) (b : Best) : Best :=
+  stageKSPN pk body K R G acc us Ls lim r0 cnt acc.length ds k b
+
+@[csimp] theorem stageKSP_eqN : @stageKSP = @stageKSPW := by
+  funext Gt _ pk body K R G acc us Ls lim r0 cnt ds k b
+  exact (stageKSPN_eq pk body K R G acc us Ls lim r0 cnt ds k b).symm
+
 /-- `stageKSV` over `ds` (from index `k` of the counts `cnt`, supports at radius `r0`). -/
 @[inline] def stageKSS {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
     (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
