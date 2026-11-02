@@ -1293,7 +1293,16 @@ SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not
 - T: likely free at −(cap+1) per read length (junk pairs come out at XB −17 for ≥150 bp); budget-stopped repeat answers
   (e.g. s24, XB 0) are the cost. Measure on hg38 before fixing T.
 
+### Decision (Rowan, later 2026-11-02): report the pair in hand
+- `.unknown` with no pair only for junk: `found = none → bestPossibleScore < T` (Rowan adds to Spec/). Everything
+  else reports a pair. Repeats/ties where the router stops early: depth-first fallback (one candidate, aligned,
+  chkCand-checked), reported `.unknown` with the bound left wide — like minibwa's MAPQ 0. M2 stage 5 (O3).
+- A pair-agnostic "two pairs close to each other" claim is vacuous (any read has many terrible pairs with near-equal
+  scores); a near-tie claim must be anchored to the bound: both pairs ≥ bestPossibleScore − x.
+
 ### Later (Rowan)
+- **Near-tie labels for MAPQ:** a proved near-tie (two placements within x of bestPossibleScore) so every reported pair
+  gets a real MAPQ; ties are the x = 0 case.
 - **Error caps for longer reads:** make caps relative to read length (not fixed −12/−16 by length band), seeds and
   bounds to match, so long-read matching works. Long reads are mostly single-end, so the spec may change for them too
   (single-end / unpaired answers next to the paired ones; see IO_PAIRED_UNPAIRED_TRIM.md). WFA (bandWfa) is there for
