@@ -1358,6 +1358,11 @@ All Opus boxes archived after the night (O1–O6).
 default · 11 graded MAPQ + NM/MD in Spec/Sam · 12 BAM default · 13 parTasks ≥ cores for 32-thread servers · 14 allow
 ngi-igenomes.s3.amazonaws.com · 15 dedup / heuristic (off).
 Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
+**Before writing (Rowan):** close check of the Lean code; samtools checks that our SAM/BAM output is close to
+minibwa's (fuzzing, since FASTQ/SAM/BAM aren't proved yet: S3); a constructed "unique genome" where every 150-window is
+far (edit distance) from every other, with a Lean theorem (k-mer uniqueness ⇒ distance) + proved checker, reads simulated
+sliding across it, and ours must match minibwa exactly (POS/CIGAR/flags, all unique, no clipping): S-C. Later: read the
+minibwa paper and add long reads.
 **Stopping point (Rowan):** NovaSeq at 2x vs minibwa (same box, load subtracted, FASTQ+SAM included). Then Rowan moves to
 formalizing FASTQ and SAM (Spec) and writing the blog post.
 
