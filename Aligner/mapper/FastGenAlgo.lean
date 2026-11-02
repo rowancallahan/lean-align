@@ -145,58 +145,58 @@ theorem srtN_perm (l : List Nat) : (srtN l).Perm l := by
   · exact List.mergeSort_perm l _
 
 /-- One round: neighbours merged. -/
-def mergePairs : List (List Nat) → List (List Nat)
-  | a :: b :: rest => List.merge a b leN :: mergePairs rest
+def dgMergePairs : List (List Nat) → List (List Nat)
+  | a :: b :: rest => List.merge a b leN :: dgMergePairs rest
   | l => l
 
-theorem mergePairs_len : ∀ l : List (List Nat), (mergePairs l).length ≤ l.length
-  | a :: b :: rest => by simp only [mergePairs, List.length_cons]; have := mergePairs_len rest; omega
-  | [] => by simp [mergePairs]
-  | [_] => by simp [mergePairs]
+theorem dgMergePairs_len : ∀ l : List (List Nat), (dgMergePairs l).length ≤ l.length
+  | a :: b :: rest => by simp only [dgMergePairs, List.length_cons]; have := dgMergePairs_len rest; omega
+  | [] => by simp [dgMergePairs]
+  | [_] => by simp [dgMergePairs]
 
-/-- All lists merged, rounds of neighbours (`mergeAll_sorted`, `mergeAll_perm`). -/
-def mergeAll : List (List Nat) → List Nat
+/-- All lists merged, rounds of neighbours (`dgMergeAll_spec`). -/
+def dgMergeAll : List (List Nat) → List Nat
   | [] => []
   | [a] => a
-  | a :: b :: rest => mergeAll (List.merge a b leN :: mergePairs rest)
+  | a :: b :: rest => dgMergeAll (List.merge a b leN :: dgMergePairs rest)
 termination_by l => l.length
-decreasing_by simp only [List.length_cons]; have := mergePairs_len rest; omega
+decreasing_by simp only [List.length_cons]; have := dgMergePairs_len rest; omega
 
-theorem mergePairs_sorted : ∀ l : List (List Nat), (∀ x ∈ l, x.Pairwise (fun a b => decide (a ≤ b) = true)) →
-    ∀ x ∈ mergePairs l, x.Pairwise (fun a b => decide (a ≤ b) = true)
+theorem dgMergePairs_sorted : ∀ l : List (List Nat), (∀ x ∈ l, x.Pairwise (fun a b => decide (a ≤ b) = true)) →
+    ∀ x ∈ dgMergePairs l, x.Pairwise (fun a b => decide (a ≤ b) = true)
   | a :: b :: rest, h => by
-    simp only [mergePairs, List.mem_cons, forall_eq_or_imp]
+    simp only [dgMergePairs, List.mem_cons, forall_eq_or_imp]
     refine ⟨List.pairwise_merge (fun a b c h1 h2 => by simp only [decide_eq_true_eq] at h1 h2 ⊢; omega)
       (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega)
       a b (h a (by simp)) (h b (by simp)), ?_⟩
-    exact mergePairs_sorted rest (fun x hx => h x (by simp [hx]))
-  | [], h => by simp [mergePairs]
-  | [_], h => by simpa [mergePairs] using h
+    exact dgMergePairs_sorted rest (fun x hx => h x (by simp [hx]))
+  | [], h => by simp [dgMergePairs]
+  | [_], h => by simpa [dgMergePairs] using h
 
-theorem mergePairs_perm : ∀ l : List (List Nat), (mergePairs l).flatten.Perm l.flatten
+theorem dgMergePairs_perm : ∀ l : List (List Nat), (dgMergePairs l).flatten.Perm l.flatten
   | a :: b :: rest => by
-    simp only [mergePairs, List.flatten_cons, ← List.append_assoc]
-    exact List.Perm.append (List.merge_perm_append _) (mergePairs_perm rest)
-  | [] => by simp [mergePairs]
-  | [_] => by simp [mergePairs]
+    simp only [dgMergePairs, List.flatten_cons, ← List.append_assoc]
+    exact List.Perm.append (List.merge_perm_append _) (dgMergePairs_perm rest)
+  | [] => by simp [dgMergePairs]
+  | [_] => by simp [dgMergePairs]
 
-theorem mergeAll_spec : ∀ l : List (List Nat), (∀ x ∈ l, x.Pairwise (fun a b => decide (a ≤ b) = true)) →
-    (mergeAll l).Pairwise (fun a b => decide (a ≤ b) = true) ∧ (mergeAll l).Perm l.flatten
-  | [], _ => by simp [mergeAll]
-  | [a], h => by simp only [mergeAll, List.flatten_cons, List.flatten_nil, List.append_nil]; exact ⟨h a (by simp), List.Perm.refl _⟩
+theorem dgMergeAll_spec : ∀ l : List (List Nat), (∀ x ∈ l, x.Pairwise (fun a b => decide (a ≤ b) = true)) →
+    (dgMergeAll l).Pairwise (fun a b => decide (a ≤ b) = true) ∧ (dgMergeAll l).Perm l.flatten
+  | [], _ => by simp [dgMergeAll]
+  | [a], h => by simp only [dgMergeAll, List.flatten_cons, List.flatten_nil, List.append_nil]; exact ⟨h a (by simp), List.Perm.refl _⟩
   | a :: b :: rest, h => by
-    rw [mergeAll]
-    have hs := mergePairs_sorted (a :: b :: rest) h
-    have ih := mergeAll_spec (List.merge a b leN :: mergePairs rest) (by simpa [mergePairs] using hs)
+    rw [dgMergeAll]
+    have hs := dgMergePairs_sorted (a :: b :: rest) h
+    have ih := dgMergeAll_spec (List.merge a b leN :: dgMergePairs rest) (by simpa [dgMergePairs] using hs)
     refine ⟨ih.1, ih.2.trans ?_⟩
-    have := mergePairs_perm (a :: b :: rest)
-    simpa [mergePairs] using this
+    have := dgMergePairs_perm (a :: b :: rest)
+    simpa [dgMergePairs] using this
 termination_by l => l.length
-decreasing_by simp only [List.length_cons]; have := mergePairs_len rest; omega
+decreasing_by simp only [List.length_cons]; have := dgMergePairs_len rest; omega
 
 /-- `diags` by merging each anchor array's (increasing) diagonals (`diags_eqM`). -/
 def diagsM (acc : List (Array Nat)) : List Nat :=
-  dedupAdj (mergeAll (acc.map fun arr => srtN (runD arr)))
+  dedupAdj (dgMergeAll (acc.map fun arr => srtN (runD arr)))
 
 theorem runD_eq (arr : Array Nat) : runD arr = arr.toList.map (· / 16) := by
   rw [runD, ← Array.foldr_toList]
@@ -219,7 +219,7 @@ increasing, as the index's slot order makes them; the arrays are then merged). -
   congr 1
   have hs : ∀ x ∈ acc.map (fun arr => srtN (runD arr)), x.Pairwise (fun a b => decide (a ≤ b) = true) := by
     intro x hx; simp only [List.mem_map] at hx; obtain ⟨arr, _, rfl⟩ := hx; exact srtN_sorted _
-  have hm := mergeAll_spec _ hs
+  have hm := dgMergeAll_spec _ hs
   apply List.Perm.eq_of_pairwise (le := fun a b => decide (a ≤ b) = true)
   · intro a b _ _ h1 h2; simp only [decide_eq_true_eq] at h1 h2; omega
   · exact List.pairwise_mergeSort (le := leN)
