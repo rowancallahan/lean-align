@@ -96,6 +96,10 @@ def reportTies : Bool := true
 -- the bound is at least this (none: off)
 def fallbackFrom : Option Int := some (-16)
 
+-- the router's lookup budget per mate: a pair over it is given up at once (T3, bound 0) and, with the
+-- fallback, printed as a pair in hand (uniqueness unknown); lower = less time on repeats and ties
+def gateBudget : Nat := 60000
+
 -- pass-2 cap by mate length (a mate keeps its pass-1 cap where this is not deeper: `cap2Of`)
 def deepCap2 (n : Nat) : Nat := if 250 ≤ n then 28 else if 150 ≤ n then 20 else 0
 
@@ -108,7 +112,7 @@ def tierCfg (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (offs : A
                     gate2 := fun a b =>
                       MapSpec.Fast.costP pk (deepCap2 a.size) (MapSpec.Fast.prepMate pk a : MapSpec.Fast.PrepM MapSpec.Fast.MzP) ≤ 3000 &&
                       MapSpec.Fast.costP pk (deepCap2 b.size) (MapSpec.Fast.prepMate pk b : MapSpec.Fast.PrepM MapSpec.Fast.MzP) ≤ 3000 }
-    pk offs pgs insertSettings.range.1 insertSettings.range.2 insertSettings.dovetailSlack
+    pk offs pgs insertSettings.range.1 insertSettings.range.2 insertSettings.dovetailSlack false gateBudget
 
 -- the bound that always holds: every score is ≤ 0
 def noIndexAnswer : PairAnswer :=
