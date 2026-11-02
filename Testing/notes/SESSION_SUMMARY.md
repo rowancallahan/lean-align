@@ -1249,3 +1249,5 @@ Code on main was checked by identifier (`git grep` on main); only the ideas belo
   the chromosome (by length) and remove repeated windows with a HashSet before scoring, with `mapWithDedup_eq_mapSpec`;
   and `mapReadsPar` (chunks, one Task each, `mapReadsPar_eq_map`) — the parallel part is on main (ParMap), the
   dedup is not. Idea worth keeping: dedup candidate windows before the expensive kernels.
+
+### Next experiments — see Testing/notes/EXPERIMENTS_NEXT.md (index lookup, dedup, deeper error caps)
