@@ -76,7 +76,7 @@ def main (args : List String) : IO Unit := do
   let some (ix, G, offs, ns) := (readIndex index).2 | throw (IO.userError "index")
   let pgs := cutAll G #[0] #[G.n]
   let pk : PkMz := (ix, G)
-  let cfg := tierCfg insertSettings pk #[0] pgs
+  let cfg0 := tierCfg insertSettings pk #[0] pgs
   let r1 ← FastqReader.ofHandle (← IO.FS.Handle.mk f1 .read)
   let r2 ← FastqReader.ofHandle (← IO.FS.Handle.mk f2 .read)
   let chunk ← readChunk r1 r2 lim
@@ -89,10 +89,11 @@ def main (args : List String) : IO Unit := do
     let a := a0.letters
     let b := b0.letters
     let t0 ← IO.monoNanosNow
+    let cfg := pairCfg cfg0 pk a b
     let s1 : PrepM MzP := prepMate pk a
     let s2 : PrepM MzP := prepMate pk b
-    let gated ← (← IO.mkRef (if t0 == 0 then false else
-      cfg.gate a b s1 s2 (costP pk (cfg.rcfg.cap1 a.size) s1) (costP pk (cfg.rcfg.cap1 b.size) s2))).get
+    let cmax ← (← IO.mkRef (if t0 == 0 then 0 else max (costP pk (cfg.rcfg.cap1 a) s1) (costP pk (cfg.rcfg.cap1 b) s2))).get
+    let gated := cfg.gate a b s1 s2 (costP pk (cfg.rcfg.cap1 a) s1) (costP pk (cfg.rcfg.cap1 b) s2)
     let t1 ← IO.monoNanosNow
     let rt ← (← IO.mkRef (if gated || t1 == 0 then none else some (tierRT cfg pk #[0] pgs a b))).get
     let t2 ← IO.monoNanosNow
@@ -101,8 +102,8 @@ def main (args : List String) : IO Unit := do
       | some r => match r.out with
         | .mapped (x, y) =>
           { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
-            m1 := { st := "U", cap := cfg.rcfg.cap1 a.size, cd := cfg.rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
-            m2 := { st := "U", cap := cfg.rcfg.cap1 b.size, cd := cfg.rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+            m1 := { st := "U", cap := cfg.rcfg.cap1 a, cd := cfg.rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+            m2 := { st := "U", cap := cfg.rcfg.cap1 b, cd := cfg.rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
         | .unmapped rs k => tierRest cfg pk #[0] pgs a b (some (rs, k)) r.c1 r.c2 : TierOut)).get
     let t3 ← IO.monoNanosNow
     let t ← (← IO.mkRef (if t3 == 0 then tb else tierUp cfg pk #[0] pgs a b tb)).get
@@ -115,19 +116,20 @@ def main (args : List String) : IO Unit := do
     if check then
       let ref := alignOne insertSettings #[] (some (ix, G, offs, ns)) (some a) (some b)
       assert! (match ref with | .aligned r => reprStr r == reprStr fin | _ => false)
-    let key := s!"{t.tagStr}\t{reasonStr t.why}\t{if gated then "gated" else ""}\t{if fin.found.isSome then "found" else "none"}\t{repr fin.uniqueness}"
+    let cb := if cmax ≤ 2000 then "c<=2k" else if cmax ≤ 5000 then "c<=5k" else if cmax ≤ 10000 then "c<=10k" else if cmax ≤ 15000 then "c<=15k" else if cmax ≤ 30000 then "c<=30k" else if cmax ≤ 60000 then "c<=60k" else "c>60k"
+    let key := s!"{cb}\t{t.tagStr}\t{reasonStr t.why}\t{if gated then "gated" else ""}\t{if fin.found.isSome then "found" else "none"}\t{repr fin.uniqueness}"
     let ds := #[t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5]
     let ac := accs.getD key {}
     accs := accs.insert key { n := ac.n + 1, t := (ac.t.zip ds).map fun (x, y) => x + y }
     tot := (tot.zip ds).map fun (x, y) => x + y
     if probe && (t.why.isSome || allM) then
       for (R, c) in [(a, t.c1), (b, t.c2)] do
-        let c := if c == 0 then cfg.rcfg.cap1 R.size else c
+        let c := if c == 0 then cfg.rcfg.cap1 R else c
         let (ta, tb, bb, nl, na, b1) ← probeMate pk pgs c R
         IO.println s!"MATE\t{reasonStr t.why}\t{t.tagStr}\t{c}\t{bb.pen}\t{bb.amb}\t{nl}\t{na}\t{ta / 1000}\t{tb / 1000}\t{b1.pen}\t{b1.amb}"
   let all := tot.foldl (· + ·) 0
   IO.println s!"pairs {chunk.size}  total {all / 1000000} ms  stages gate/RT/rest/up/answer/finalize ms: {tot.map (· / 1000000)}"
-  IO.println "tag\twhy\tgated\tfound\tuniq\tpairs\tms_total\tshare%\tus/pair\tgate\tRT\trest\tup\tanswer\tfinal (ms)"
+  IO.println "cost\ttag\twhy\tgated\tfound\tuniq\tpairs\tms_total\tshare%\tus/pair\tgate\tRT\trest\tup\tanswer\tfinal (ms)"
   let rows := accs.toArray.qsort fun x y => x.2.t.foldl (· + ·) 0 > y.2.t.foldl (· + ·) 0
   for (k, ac) in rows do
     let s := ac.t.foldl (· + ·) 0

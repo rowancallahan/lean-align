@@ -122,16 +122,45 @@ def gateBudget : Nat := 60000
 -- pass-2 cap by mate length (a mate keeps its pass-1 cap where this is not deeper: `cap2Of`)
 def deepCap2 (n : Nat) : Nat := if 250 ≤ n then 28 else if 150 ≤ n then 20 else 0
 
+-- pass-1 cap by mate length
+def capOfLen (n : Nat) : Nat := if 150 ≤ n then 16 else if 100 ≤ n then 12 else if 75 ≤ n then 11 else 12
+
 -- the router's settings for these insert settings (any settings are sound; these are for speed)
 def tierCfg (insertSettings : InsertSettings) (pk : MapSpec.Fast.PkMz) (offs : Array Nat)
     (pgs : Array MapSpec.Fast.PGen) : MapSpec.Fast.TierCfg :=
-  TierHeur.rtxCfg { cap1 := fun n => if 150 ≤ n then 16 else if 100 ≤ n then 12 else if 75 ≤ n then 11 else 12
+  TierHeur.rtxCfg { cap1 := fun R => capOfLen R.size
                     pass2 := deepCaps
                     cap2 := deepCap2
                     gate2 := fun a b =>
                       MapSpec.Fast.costP pk (deepCap2 a.size) (MapSpec.Fast.prepMate pk a : MapSpec.Fast.PrepM MapSpec.Fast.MzP) ≤ 3000 &&
                       MapSpec.Fast.costP pk (deepCap2 b.size) (MapSpec.Fast.prepMate pk b : MapSpec.Fast.PrepM MapSpec.Fast.MzP) ≤ 3000 }
     pk offs pgs insertSettings.range.1 insertSettings.range.2 insertSettings.dovetailSlack false gateBudget
+
+-- (n32) per-pair caps for short reads (< 200 letters): a mate whose rarest `sbound c + 1` seed buckets per
+-- strand (`costP`) hold more than `capBudget` places is searched at a lower cap, 15 (one seed fewer), else 11
+-- (two fewer); the gate then skips RT when even cap 11 is over `capBudget`. A lower cap only weakens what
+-- RT claims (any `TierCfg` is sound): a unique best within 15 is still the unique best. Reads ≥ 200 letters
+-- keep `cap1` and the gate as before.
+def capBudget : Nat := 10000
+
+-- the gate's budget by mate length
+def budOf (n : Nat) : Nat := if n < 200 then capBudget else gateBudget
+
+def capFor (pk : MapSpec.Fast.PkMz) (c0 : Nat) (R : ByteArray) : Nat :=
+  if 200 ≤ R.size then c0 else
+  let s : MapSpec.Fast.PrepM MapSpec.Fast.MzP := MapSpec.Fast.prepMate pk R
+  if MapSpec.Fast.costP pk c0 s ≤ capBudget then c0
+  else if MapSpec.Fast.costP pk (min c0 15) s ≤ capBudget then min c0 15
+  else min c0 11
+
+-- the router's settings for one pair: each mate's cap lowered by `capFor` (computed once per mate), the gate by
+-- `budOf`
+def pairCfg (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArray) : MapSpec.Fast.TierCfg :=
+  let ca := capFor pk (cfg.rcfg.cap1 a) a
+  let cb := capFor pk (cfg.rcfg.cap1 b) b
+  { cfg with
+    rcfg := { cfg.rcfg with cap1 := fun R => if R == a then ca else if R == b then cb else capFor pk (cfg.rcfg.cap1 R) R }
+    gate := (fun a b _ _ c1 c2 => budOf a.size < c1 || budOf b.size < c2) }
 
 -- the bound that always holds: every score is ≤ 0
 def noIndexAnswer : PairAnswer :=
@@ -151,7 +180,7 @@ def alignOne (insertSettings : InsertSettings) (lens : Array Nat) (loaded : Opti
           -- back to the chromosomes, `Proofs/Report.lean` the found pair, `Proofs/LastResort.lean` the rest
           .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
             (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue (ix, G) insertSettings (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
-              (MapSpec.Fast.tierPair (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
+              (MapSpec.Fast.tierPair (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
                 (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2))))
 
 -- tasks per chunk (any value gives the same results: `ParMap.parMap_eq_map`). Use at least the
@@ -187,7 +216,7 @@ def alignOneC (insertSettings : InsertSettings) (lens : Array Nat) (setup : Opti
       | some (insertSettings, cfg, pk, pgs, offs, ns) =>
           .aligned (LastResort.finalize insertSettings (LastResort.fitNs ns) read1 read2
             (Report.answerOfPair reportTies (fallbackFrom insertSettings) mateRescue pk insertSettings pgs offs ns read1 read2
-              (MapSpec.Fast.tierPair cfg pk #[0] pgs (some read1) (some read2))))
+              (MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2))))
 
 -- each task loads the index and builds the setup itself (`ParMap.parMapS`): its structures are
 -- then that task's own, so their reference counts are not shared across threads; only the
@@ -294,7 +323,8 @@ theorem alignOne_correct (insertSettings : InsertSettings) (genome : Genome)
         simp only [MapSpec.Fast.cutOk, Bool.and_eq_true, beq_iff_eq] at hcut; exact hcut.1
       -- the router's answer, for the whole genome as one chromosome
       have hok := MapSpec.Fast.tierPair_sound
-        (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (oldGenome (Whole.wholeOf G))
+        (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
+        (oldGenome (Whole.wholeOf G))
         (decodeRead read1) (decodeRead read2) ix G #[0] #[G.n] (Whole.cutOk_whole h0)
         (Whole.genomeBytes_whole G) hchk (some read1) (some read2)
         (fun R h => by cases h; exact encodes_decodeRead _) (fun R h => by cases h; exact encodes_decodeRead _)

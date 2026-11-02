@@ -260,12 +260,12 @@ def kpKerB {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inha
 
 /-! ## Router -/
 
-/-- Router settings.  `cap1` / `cap2`: penalty cap by mate length for pass 1 / pass 2;
+/-- Router settings.  `cap1` / `cap2`: penalty cap by mate (pass 1) and by mate length (pass 2);
 `goOn`: unmapped reasons that get pass 2 (default `noHit`, `noPartner`, `tooShort`).
 Hook: ties and non-proper pairs keep their reason today; a later option can send them on
 (`goOn`) or to another kernel. -/
 structure RouteCfg where
-  cap1 : Nat → Nat
+  cap1 : ByteArray → Nat
   pass2 : Bool := false
   cap2 : Nat → Nat := fun _ => 0
   goOn : Reason → Bool := fun r => match r with
@@ -293,7 +293,7 @@ deriving Inhabited
 /-- Pass-2 cap of a mate: the pass-2 cap when it is deeper and on the fast path, else the
 pass-1 cap. -/
 def cap2Of (cfg : RouteCfg) (R : ByteArray) : Nat :=
-  let c1 := cfg.cap1 R.size
+  let c1 := cfg.cap1 R
   let c2 := cfg.cap2 R.size
   if c1 ≤ c2 && fastT c2 R then c2 else c1
 
@@ -325,8 +325,8 @@ def routeG (cfg : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (O1 O2 : Option Byte
   | none, _ => ⟨.unmapped (.trimmedAway .one) none, 0, 0, 0⟩
   | _, none => ⟨.unmapped (.trimmedAway .two) none, 0, 0, 0⟩
   | some R1, some R2 =>
-    let A1 := cfg.cap1 R1.size
-    let A2 := cfg.cap1 R2.size
+    let A1 := cfg.cap1 R1
+    let A2 := cfg.cap1 R2
     let o := passLenG K1 A1 A2 (cfg.ord1 R1 R2) lo hi R1 R2
     match o with
     | .mapped _ => ⟨o, 1, A1, A2⟩
@@ -685,10 +685,10 @@ mapped = `pairSpecT` there, a search reason holds of the specification there (so
 `pairSpecT = none`, `settled_none`), `tooShort` = off the fast path there. -/
 theorem routeG_ok (cfg : RouteCfg) (K1 K2 : PassKer) (hK1 : KerOk lo hi g K1) (hK2 : KerOk lo hi g K2) :
     Settled lo hi g m1 m2 R1 R2 (routeG cfg K1 K2 lo hi (some R1) (some R2)) := by
-  have hp := passLenG_ok lo hi g m1 m2 R1 R2 h1 h2 K1 hK1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) (cfg.ord1 R1 R2) 1
+  have hp := passLenG_ok lo hi g m1 m2 R1 R2 h1 h2 K1 hK1 (cfg.cap1 R1) (cfg.cap1 R2) (cfg.ord1 R1 R2) 1
   unfold routeG
   simp only []
-  generalize passLenG K1 (cfg.cap1 R1.size) (cfg.cap1 R2.size) (cfg.ord1 R1 R2) lo hi R1 R2 = o at hp ⊢
+  generalize passLenG K1 (cfg.cap1 R1) (cfg.cap1 R2) (cfg.ord1 R1 R2) lo hi R1 R2 = o at hp ⊢
   cases o with
   | mapped x => exact hp
   | unmapped r k =>
