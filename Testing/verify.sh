@@ -52,8 +52,9 @@ if want 3; then
   step 3 "hg38 fuzz vs minibwa, 3 seeds x 3 modes (~5 min)"
   INDEX="$IDX" MBINDEX="$MBI" MINIBWA="$MB" bash Testing/repro/fuzz_audit.sh "$O/fuzz" > "$O/fuzz.log" 2>&1 || { tail -20 "$O/fuzz.log"; fail "fuzz_audit.sh"; }
   grep -E 'HARD' "$O/fuzz.log" | sort | uniq -c | sed 's/^/  /'
-  if grep -qE 'HARD [A-D]: [1-9]' "$O/fuzz.log"; then fail "a HARD rule is nonzero (see $O/fuzz.log)"; fi
-  [ "$(grep -cE 'HARD [A-D]: 0' "$O/fuzz.log")" -gt 0 ] || fail "no HARD lines found (did the audit run?)"
+  # lines read "HARD A: <rule>: <count>"
+  if grep -qE 'HARD [A-D]:.*: [1-9][0-9]*$' "$O/fuzz.log"; then fail "a HARD rule is nonzero (see $O/fuzz.log)"; fi
+  [ "$(grep -cE 'HARD [A-D]:.*: 0$' "$O/fuzz.log")" -gt 0 ] || fail "no HARD lines found (did the audit run?)"
   echo "ok: rules A-D are 0 on every seed and mode"
 fi
 
