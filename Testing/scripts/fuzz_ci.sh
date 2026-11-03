@@ -2,8 +2,8 @@
 # Output-fuzz regression on a tiny generated genome: no hg38, no download, about a minute.   sh Testing/scripts/fuzz_ci.sh
 # 1. a 2 Mb genome with repeats and N runs from a fixed seed (sim_genome_dup.py), `lean-align build`;
 # 2. ~2 100 simulated pairs (mason, low, high) + ~800 edge-case pairs (fuzz_reads.py) with fixed seeds;
-# 3. `lean-align map`, then sam_fuzz_check.py: flags, mate fields, TLEN, CIGAR/SEQ/QUAL lengths, '*' handling, provenance... must be 0.
-# One rule (no-aligned-base) is expected to fail until the report floor lands; short-mate is enforced since adapter-trim minLength 25 (--xfail): they print XFAIL now and XPASS (delete the flag) afterwards.
+# 3. `lean-align map`, then sam_fuzz_check.py: flags, mate fields, TLEN, CIGAR/SEQ/QUAL lengths, '*' handling,
+#    provenance, no CIGAR without an aligned base, no mapped mate under 20 letters: every count must be 0.
 # Needs lake build (lean-align) and python3. Wired into CI_check.sh as `FUZZ=1 sh Testing/scripts/CI_check.sh`.
 set -eu
 cd "$(dirname "$0")/../.."
@@ -20,5 +20,4 @@ for r in 1 2; do
 done
 echo "$(($(wc -l < "$d/R1.fq") / 4)) pairs"
 "$lean" map "$d/idx" "$d/R1.fq" "$d/R2.fq" "$d/out.sam" 100 1000
-# XFAIL: (a) a mapped CIGAR with no aligned base (the 150I placeholder pairs); (b) a mapped mate trimmed to under 20 letters (an all-'#' read cut to 1 letter)
 python3 -I Testing/scripts/sam_fuzz_check.py "$d/out.sam" "$d/R1.fq" "$d/R2.fq" "$d/idx.chromosomes"
