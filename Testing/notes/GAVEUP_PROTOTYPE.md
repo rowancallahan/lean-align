@@ -57,3 +57,11 @@ warm runs, base − prototype on the subset; the VM's load time makes small numb
 | low | 107 | 97 | 69 | ~2.0 s | ~600 s |
 | NovaSeq | 1,260 | 143 (all ≥ −50, none unique) | – | ~20 s | ~829 s |
 | HiSeq | 832 | 119 (all ≥ −50, none unique) | – | ~18 s | ~260 s |
+
+## K = 2 option (`gaveUpSeeds`, prototype Spec default 2)
+Spec copy (PROTOTYPE, not Rowan's): `gaveUpSeeds : Nat := 2`; `RepeatWitness` = a list of `gaveUpSeeds` starts,
+pairwise non-overlapping (`a + seedLength ≤ b`), each window occurring ≥ `gaveUpRepeats` times. `repeatSeeds` lists
+the mate's grid seeds with ≥ 500 in-chromosome hits; `repeatMate` = `gaveUpSeeds ≤ length`. `seed_sound` (one seed) +
+`repeatMate_sound` (the first `gaveUpSeeds` of them: grid starts are 25 apart). CI + FUZZ green, standard axioms.
+NovaSeq 200k (one run): gaveUp 2,096 pairs (as predicted), mapped 186,332 (+143 vs K = 1), unique unchanged,
+wall 26.3 s / CPU 83.1 s (K = 1: 15.1 / 44.5 s; one run each, load noise included).

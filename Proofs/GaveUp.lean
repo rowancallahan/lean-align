@@ -106,9 +106,14 @@ def seedPlaces (pk : MapSpec.Fast.PkMz) (R : ByteArray) (s : Nat) : Array Nat :=
 def seedCount (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) (s : Nat) : Nat :=
   (seedPlaces pk R s).toList.countP fun e => inChrom offs ns (e / 16)
 
--- some seed of the mate (at `0, 25, 50, …`) lies inside chromosomes at least `gaveUpRepeats` times
+-- the grid seeds of the mate (starts `0, 25, 50, …`) that lie inside chromosomes at least `gaveUpRepeats` times
+def repeatSeeds (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : List Nat :=
+  ((List.range (R.size / seedLength)).filter fun j => gaveUpRepeats ≤ seedCount pk offs ns R (seedLength * j)).map
+    (seedLength * ·)
+
+-- the mate has at least `gaveUpSeeds` repeat grid seeds
 def repeatMate (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
-  (List.range (R.size / seedLength)).any fun j => gaveUpRepeats ≤ seedCount pk offs ns R (seedLength * j)
+  gaveUpSeeds ≤ (repeatSeeds pk offs ns R).length
 
 /-! ## Soundness -/
 
@@ -140,24 +145,16 @@ theorem placeOf_nodup (offs ns : Array Nat) : ∀ F : List Nat, F.Pairwise (· <
     rw [he.1] at he
     omega
 
-/-- **The check is sound**: a mate that `repeatMate` flags has a seed occurring at least `gaveUpRepeats` times. -/
-theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
+/-- One seed: `gaveUpRepeats` counted places make it occur at least `gaveUpRepeats` times. -/
+theorem seed_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
     (hchk : MapSpec.Mz.check2P ix G = true)
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
       offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
       chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
-    (R : ByteArray) (h : repeatMate (ix, G) offs ns R = true) : genome.RepeatWitness (decodeRead R) := by
-  unfold repeatMate at h
-  obtain ⟨j, hj, hcnt⟩ := List.any_eq_true.mp h
-  rw [List.mem_range] at hj
-  simp only [decide_eq_true_eq] at hcnt
-  generalize hs : seedLength * j = s at hcnt
-  have hsR : s + 25 ≤ R.size := by
-    have : seedLength = 25 := rfl
-    rw [this] at hj hs
-    have := Nat.lt_div_iff_mul_lt (by decide : 0 < 25) |>.mp hj
-    omega
+    (R : ByteArray) (s : Nat) (hsR : s + 25 ≤ R.size)
+    (hcnt : gaveUpRepeats ≤ seedCount (ix, G) offs ns R s) :
+    gaveUpRepeats ≤ genome.occurrences (((decodeRead R).drop s).take seedLength) := by
   have hc : MapSpec.Mz.check ix (MapSpec.Mz.unpack G) = true := by
     rw [← MapSpec.Mz.check2_eq, ← MapSpec.Mz.check2P_eq (MapSpec.Mz.rep_unpack G) ix]; exact hchk
   -- the counted places
@@ -216,7 +213,38 @@ theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs n
     simp [hwin]
   have hle := count_le_occurrences genome word (F.map (placeOf offs)) hnd hocc
   rw [List.length_map] at hle
-  exact ⟨s, by show s + 25 ≤ _; rw [decodeRead_length]; exact hsR, Nat.le_trans hcnt hle⟩
+  exact Nat.le_trans hcnt hle
+
+/-- **The check is sound**: a mate that `repeatMate` flags has `gaveUpSeeds` non-overlapping seeds, each
+occurring at least `gaveUpRepeats` times. -/
+theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
+    (hchk : MapSpec.Mz.check2P ix G = true)
+    (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
+      offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
+      chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (R : ByteArray) (h : repeatMate (ix, G) offs ns R = true) : genome.RepeatWitness (decodeRead R) := by
+  unfold repeatMate at h
+  simp only [decide_eq_true_eq] at h
+  have hsl : seedLength = 25 := rfl
+  refine ⟨(repeatSeeds (ix, G) offs ns R).take gaveUpSeeds, by simp; omega, ?_, ?_⟩
+  · refine List.Pairwise.sublist (List.take_sublist _ _) ?_
+    unfold repeatSeeds
+    rw [List.pairwise_map]
+    exact (List.pairwise_lt_range.filter _).imp fun {a b} hab => by rw [hsl]; omega
+  · intro start hm
+    have hm' := List.mem_of_mem_take hm
+    unfold repeatSeeds at hm'
+    obtain ⟨j, hj, rfl⟩ := List.mem_map.mp hm'
+    obtain ⟨hjr, hjc⟩ := List.mem_filter.mp hj
+    rw [List.mem_range] at hjr
+    simp only [decide_eq_true_eq] at hjc
+    have hsR : seedLength * j + 25 ≤ R.size := by
+      rw [hsl] at hjr ⊢
+      have := Nat.lt_div_iff_mul_lt (by decide : 0 < 25) |>.mp hjr
+      omega
+    exact ⟨by rw [decodeRead_length, hsl]; rw [hsl] at hsR; exact hsR,
+      seed_sound hchk hslice hchr R _ hsR hjc⟩
 
 #print axioms repeatMate_sound
 
