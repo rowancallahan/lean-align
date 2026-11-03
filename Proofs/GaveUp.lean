@@ -74,13 +74,26 @@ theorem length_le_of_nodup_sub {α : Type} [DecidableEq α] : ∀ (l1 l2 : List 
     have : 0 < l2.length := List.length_pos_of_mem ha
     simp only [List.length_cons]; omega
 
+/-- Distinct occurring windows are at most the forward occurrences. -/
+theorem count_le_occList (genome : Genome) (word : Read) (L : List (Nat × Nat)) (hn : L.Nodup)
+    (hL : ∀ x ∈ L, ∃ chr, genome[x.1]? = some chr ∧ x.2 ∈ occOf word chr) :
+    L.length ≤ (occList word 0 genome).length := by
+  refine length_le_of_nodup_sub L _ hn fun x hx => ?_
+  obtain ⟨chr, hg, hs⟩ := hL x hx
+  exact mem_occList word 0 genome x chr (Nat.zero_le _) (by rw [Nat.sub_zero]; exact hg) hs
+
 /-- Distinct occurring windows are at most `occurrences`. -/
 theorem count_le_occurrences (genome : Genome) (word : Read) (L : List (Nat × Nat)) (hn : L.Nodup)
     (hL : ∀ x ∈ L, ∃ chr, genome[x.1]? = some chr ∧ x.2 ∈ occOf word chr) :
-    L.length ≤ genome.occurrences word := by
-  refine Nat.le_trans (length_le_of_nodup_sub L _ hn fun x hx => ?_) (occurrences_ge genome word)
-  obtain ⟨chr, hg, hs⟩ := hL x hx
-  exact mem_occList word 0 genome x chr (Nat.zero_le _) (by rw [Nat.sub_zero]; exact hg) hs
+    L.length ≤ genome.occurrences word :=
+  Nat.le_trans (count_le_occList genome word L hn hL) (occurrences_ge genome word)
+
+/-- `occurrences` is exactly the forward occurrences of the word plus those of its reverse complement. -/
+theorem occurrences_eq (genome : Genome) (word : Read) :
+    genome.occurrences word = (occList word 0 genome).length + (occList (reverseComplement word) 0 genome).length := by
+  rw [occList_length, occList_length]
+  unfold Genome.occurrences
+  simp only [occOf, List.countP_eq_length_filter]
 
 /-! ## The check -/
 
@@ -148,15 +161,14 @@ theorem placeOf_nodup (offs ns : Array Nat) : ∀ F : List Nat, F.Pairwise (· <
     omega
 
 /-- One seed: `gaveUpRepeats` counted places make it occur at least `gaveUpRepeats` times. -/
-theorem seed_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
+theorem seedCount_le_occList {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
     (hchk : MapSpec.Mz.check2P ix G = true)
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
       offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
       chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
-    (R : ByteArray) (s : Nat) (hsR : s + 25 ≤ R.size)
-    (hcnt : gaveUpRepeats ≤ seedCount (ix, G) offs ns R s) :
-    gaveUpRepeats ≤ genome.occurrences (((decodeRead R).drop s).take seedLength) := by
+    (R : ByteArray) (s : Nat) (hsR : s + 25 ≤ R.size) :
+    seedCount (ix, G) offs ns R s ≤ (occList (((decodeRead R).drop s).take seedLength) 0 genome).length := by
   have hc : MapSpec.Mz.check ix (MapSpec.Mz.unpack G) = true := by
     rw [← MapSpec.Mz.check2_eq, ← MapSpec.Mz.check2P_eq (MapSpec.Mz.rep_unpack G) ix]; exact hchk
   -- the counted places
@@ -170,7 +182,7 @@ theorem seed_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Ar
     congr 2
     funext p
     simp [MapSpec.Fast.anc]
-  rw [hcount] at hcnt
+  rw [hcount]
   have hsorted : F.Pairwise (· < ·) := (MapSpec.Mz.lookupSeed_sorted hc R s).filter _
   have hinF : ∀ p ∈ F, inChrom offs ns p = true := fun p hp => (List.mem_filter.mp hp).2
   have hnd := placeOf_nodup offs ns F hsorted hinF
@@ -215,9 +227,20 @@ theorem seed_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Ar
     refine ⟨by omega, ?_⟩
     rw [List.isPrefixOf_iff_prefix, ← hwin]
     exact List.take_prefix _ _
-  have hle := count_le_occurrences genome word (F.map (placeOf offs)) hnd hocc
+  have hle := count_le_occList genome word (F.map (placeOf offs)) hnd hocc
   rw [List.length_map] at hle
-  exact Nat.le_trans hcnt hle
+  exact hle
+
+theorem seed_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
+    (hchk : MapSpec.Mz.check2P ix G = true)
+    (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
+      offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
+      chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (R : ByteArray) (s : Nat) (hsR : s + 25 ≤ R.size)
+    (hcnt : gaveUpRepeats ≤ seedCount (ix, G) offs ns R s) :
+    gaveUpRepeats ≤ genome.occurrences (((decodeRead R).drop s).take seedLength) :=
+  Nat.le_trans hcnt (Nat.le_trans (seedCount_le_occList hchk hslice hchr R s hsR) (occurrences_ge _ _))
 
 /-- **The check is sound**: a mate that `repeatMate` flags is `highlyRepetitiveIn` the genome: each grid seed it
 counts occurs at least `gaveUpRepeats` times. -/
