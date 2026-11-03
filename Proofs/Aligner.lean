@@ -306,8 +306,8 @@ def afterRouter (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (
     fun _ =>
   orElse req (if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
     fun _ =>
-  orElse req (gaveUp req pk offs ns read1 read2 a1) fun _ =>
-  lookAt insertSettings req pk offs ns read1 read2
+  -- the gave-up answer is taken as it is (it has no pair and no bound below `requiredMapBound`: a leftover)
+  (gaveUp req pk offs ns read1 read2 a1).getD (lookAt insertSettings req pk offs ns read1 read2)
 
 -- the pipeline: (1) the router with the per-pair settings, its pair re-checked; (2) the walk; (3) the
 -- rarest-seed join; (4) short mates: the second look; (5) the gave-up hook; (6) the second look (`lookAt`).
@@ -683,23 +683,29 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
         · cases ha; exact .inl hlook
         · cases ha
       -- (5) the gave-up hook (a no-op for now)
-      refine orElse_ok _ _ _ (fun a ha => ?_) ?_
-      · unfold gaveUp at ha
+      cases hgv : gaveUp (reqOf insertSettings read1 read2) (ix, G) offs ns read1 read2
+          (answerWith insertSettings (reqOf insertSettings read1 read2) (fallbackFrom (reqOf insertSettings read1 read2))
+            (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
+            (MapSpec.Fast.tierPair (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
+              (ix, G) read1 read2) (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2))) with
+      | none => exact hlook
+      | some a =>
+        show PairAnswer.Correct _ _ _ _ a
+        have ha := hgv
+        unfold gaveUp at ha
         split at ha
         · rename_i hg
           cases ha
           obtain ⟨hleft, hrep⟩ := hg
           have hb := (key (fallbackFrom (reqOf insertSettings read1 read2)) _ hok0).elim (fun h => h.2.1) (fun h => h.2.2.1)
           simp only [Bool.and_eq_true, Bool.or_eq_true] at hrep
-          refine .inl ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
+          refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
           have hw : genome.RepeatWitness (decodeRead read1) ∨ genome.RepeatWitness (decodeRead read2) := by
             rcases hrep.2 with h | h
             · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 (repeatMateK_one (by decide) h))
             · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 (repeatMateK_one (by decide) h))
           exact ⟨hleft.1, hw⟩
         · cases ha
-      -- (6) the second look
-      exact hlook
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.

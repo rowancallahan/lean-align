@@ -1,5 +1,6 @@
 import Proofs.Aligner
 import Proofs.Fastq
+import Proofs.Sam
 
 /-! # pipe_prof: where the report-floor pipeline (`answerOfReads`) spends its time (benchmark only, unproved IO)
 
@@ -46,6 +47,19 @@ def main (args : List String) : IO Unit := do
     cnt := clock "2 join" (t2 - t1) cnt
     if (j.map fun x => !decide (LastResort.Leftover req x)) == some true then cnt := add cnt "closed 2 join" 1; continue
     let s := shortOk pk c a b
+    if !s then
+      let g0 ← IO.monoNanosNow
+      let g ← (← IO.mkRef (if g0 == 0 then none else gaveUp req pk offs ns a b a1)).get
+      let g1 ← IO.monoNanosNow
+      cnt := clock "4 gaveUp check" (g1 - g0) cnt
+      if g.isSome then
+        cnt := add cnt "closed 4 gaveUp" 1
+        let viaA := match answerOfReads insertSettings cfg pk pgs offs ns a b with
+          | x => uniquenessText x.uniqueness
+        let viaP := match alignPairs insertSettings index [(some a, some b)] with
+          | [.aligned x] => uniquenessText x.uniqueness | _ => "?"
+        cnt := add cnt s!"  gaveUp: answerOfReads {viaA}, alignPairs {viaP}" 1
+        continue
     let t3 ← IO.monoNanosNow
     let l ← (← IO.mkRef (if t3 == 0 then default else lookAt insertSettings req pk offs ns a b)).get
     let t4 ← IO.monoNanosNow
