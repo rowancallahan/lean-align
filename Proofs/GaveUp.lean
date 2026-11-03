@@ -315,13 +315,43 @@ theorem countGE_eq {α : Type} (p : α → Bool) : ∀ (k : Nat) (l : List α), 
     rw [List.countP_cons]
     split <;> rename_i hp <;> simp [hp, countGE_eq p _ xs]
 
+-- the seed's bucket can hold `gaveUpRepeats` places (always true without a word prep)
+def bigB (pk : MapSpec.Fast.PkMz) (R : ByteArray) (s : Nat) : Bool :=
+  let p := MapSpec.Fast.mzPrep pk.1 (MapSpec.Fast.seedHashAt R s)
+  !p.ok || decide (gaveUpRepeats ≤ pk.1.hiB p.b - pk.1.loB p.b)
+
+theorem bigB_of (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) (s : Nat)
+    (h : seedRepF pk offs ns R s = true) : bigB pk R s = true := by
+  unfold seedRepF at h
+  unfold bigB
+  simp only [] at h ⊢
+  split at h
+  · rename_i hok
+    split at h
+    · cases h
+    · rename_i hb; simp [hok]; omega
+  · rename_i hok; simp [hok]
+
+-- fewer than `gaveUpSeeds` buckets that can hold `gaveUpRepeats` places: no lookup at all (`repeatMate_eqF`)
 def repeatMateF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
+  countGE (fun j => bigB pk R (seedLength * j)) gaveUpSeeds (List.range (R.size / seedLength)) &&
   countGE (fun j => seedRepF pk offs ns R (seedLength * j)) gaveUpSeeds (List.range (R.size / seedLength))
 
 @[csimp] theorem repeatMate_eqF : @repeatMate = @repeatMateF := by
   funext pk offs ns R
-  unfold repeatMate repeatMateF repeatSeeds
-  simp only [countGE_eq, seedRepF_eq, List.length_map, List.countP_eq_length_filter]
+  unfold repeatMateF
+  have hm := List.countP_mono_left (l := List.range (R.size / seedLength))
+    (p := fun j => seedRepF pk offs ns R (seedLength * j)) (q := fun j => bigB pk R (seedLength * j))
+    (fun j _ h => bigB_of pk offs ns R _ h)
+  rw [countGE_eq, countGE_eq]
+  have e : repeatMate pk offs ns R =
+      decide (gaveUpSeeds ≤ (List.range (R.size / seedLength)).countP fun j => seedRepF pk offs ns R (seedLength * j)) := by
+    unfold repeatMate repeatSeeds
+    simp only [seedRepF_eq, List.length_map, List.countP_eq_length_filter]
+  rw [e]
+  by_cases h : gaveUpSeeds ≤ (List.range (R.size / seedLength)).countP fun j => seedRepF pk offs ns R (seedLength * j)
+  · simp only [h, decide_true, Bool.and_true]; simp; omega
+  · simp [h]
 
 #print axioms repeatMate_eqF
 
