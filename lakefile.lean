@@ -165,6 +165,10 @@ lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "Testing/benches"
   root := `Proto
 
+lean_exe second_look_bench where     -- measurement only: pairs reaching the second look, per-mate search cost
+  srcDir := "Testing/benches"
+  root := `SecondLookBench
+
 lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
   srcDir := "Testing/benches"
   root := `MapBench2
