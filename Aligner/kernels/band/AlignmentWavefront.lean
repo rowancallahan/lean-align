@@ -657,6 +657,49 @@ def bMkMain (sc : Scoring) (x y : Char) (lo hi : Int)
     , afterGapY := pick oe sc.gapExtend }
   else bCellNone
 
+/-- `bMkMain`'s three-way pick with the scores compared first (one cons for the winner; `pick3_eq`). -/
+@[inline] def pick3 (a gx gy : Option (List Step × Int)) (cx cy : Int) : Option (List Step × Int) :=
+  match a, gx, gy with
+  | none, none, none => none
+  | some a, none, none => some a
+  | none, some x, none => some (.gapX :: x.1, cx + x.2)
+  | none, none, some y => some (.gapY :: y.1, cy + y.2)
+  | some a, some x, none => if cx + x.2 ≤ a.2 then some a else some (.gapX :: x.1, cx + x.2)
+  | some a, none, some y => if cy + y.2 ≤ a.2 then some a else some (.gapY :: y.1, cy + y.2)
+  | none, some x, some y =>
+    if cy + y.2 ≤ cx + x.2 then some (.gapX :: x.1, cx + x.2) else some (.gapY :: y.1, cy + y.2)
+  | some a, some x, some y =>
+    if cx + x.2 ≤ a.2 then (if cy + y.2 ≤ a.2 then some a else some (.gapY :: y.1, cy + y.2))
+    else if cy + y.2 ≤ cx + x.2 then some (.gapX :: x.1, cx + x.2) else some (.gapY :: y.1, cy + y.2)
+
+theorem pick3_eq (a gx gy : Option (List Step × Int)) (cx cy : Int) :
+    Option.merge (maxOn fun item : List Step × Int => item.2)
+        (Option.merge (maxOn fun item : List Step × Int => item.2) a
+          (gx.map fun t => (Step.gapX :: t.1, cx + t.2)))
+        (gy.map fun t => (Step.gapY :: t.1, cy + t.2)) = pick3 a gx gy cx cy := by
+  rcases a with _ | a <;> rcases gx with _ | x <;> rcases gy with _ | y <;>
+    simp only [pick3, Option.merge, Option.map, maxOn_eq_ite] <;>
+    repeat (first | rfl | (split <;> try rfl) | omega)
+
+/-- `bMkMain` by `pick3`. -/
+def bMkMainF (sc : Scoring) (x y : Char) (lo hi : Int) (nj nj1 cur1 : BCell) : BCell :=
+  if lo ≤ 0 ∧ 0 ≤ hi then
+    let dCand := nj1.neutral.map fun t => (Step.diag :: t.1, diagCost sc x y + t.2)
+    let gx := cur1.afterGapX
+    let gy := nj.afterGapY
+    let oe := sc.gapOpen + sc.gapExtend
+    { neutral   := pick3 dCand gx gy oe oe
+    , afterGapX := pick3 dCand gx gy sc.gapExtend oe
+    , afterGapY := pick3 dCand gx gy oe sc.gapExtend }
+  else bCellNone
+
+@[csimp] theorem bMkMain_eqF : @bMkMain = @bMkMainF := by
+  funext sc x y lo hi nj nj1 cur1
+  unfold bMkMain bMkMainF
+  simp only [pick3_eq]
+
+#print axioms bMkMain_eqF
+
 -- ── Cell builders compute the right cells ──
 
 theorem bMkBase_spec (sc : Scoring) (lo hi : Int) :
@@ -1068,6 +1111,87 @@ theorem certified_global (sc : Scoring) (xs ys : List Char) (w : Nat)
   have hqvalid := isMonotoneWalk_of_mem_allPaths xs ys q hqmem
   have hbound := two_score_le_offBandBound sc q xs ys w hr hqvalid hout
   omega
+
+-- ══════════════════════════════════════════════════════════════════
+-- PART 5b: compiled `bandedRun` without the rows' dead prefixes
+-- ══════════════════════════════════════════════════════════════════
+
+/-- `List.replicate k bCellNone ++ r`, dropped by `k`. -/
+def dropK (k' : Nat) (r : List BCell) (k : Nat) : List BCell :=
+  if k ≤ k' then List.replicate (k' - k) bCellNone ++ r else r.drop (k - k')
+
+theorem dropK_eq (k' : Nat) (r : List BCell) (k : Nat) :
+    (List.replicate k' bCellNone ++ r).drop k = dropK k' r k := by
+  unfold dropK
+  split
+  · rw [List.drop_append, List.drop_replicate, List.length_replicate, show k - k' = 0 by omega, List.drop_zero]
+  · rw [List.drop_append, List.drop_replicate, List.length_replicate, show k' - k = 0 by omega]; rfl
+
+/-- How many leading cells of a row are outside the band (`lo > 0`). -/
+def deadK (ys : List Char) (lo hi : Int) : Nat :=
+  if 0 < lo ∧ lo ≤ hi then min lo.toNat ys.length else 0
+
+/-- `bTable` as (dead prefix length, the rest). -/
+def bTableK (sc : Scoring) : List Char → List Char → Int → Int → Nat × List BCell
+  | [], ys, lo, hi => (0, bLastRow sc ys lo hi)
+  | x :: xs, ys, lo, hi =>
+      let nx := bTableK sc xs ys (lo + 1) (hi + 1)
+      let k := deadK ys lo hi
+      (k, bRowUp sc x (ys.drop k) (dropK nx.1 nx.2 k) (lo - k) (hi - k))
+
+theorem bRowUp_dead (sc : Scoring) (x : Char) : ∀ (k : Nat) (ys : List Char) (next : List BCell) (lo hi : Int),
+    k ≤ ys.length → (k : Int) ≤ lo → lo ≤ hi →
+    bRowUp sc x ys next lo hi =
+      List.replicate k bCellNone ++ bRowUp sc x (ys.drop k) (next.drop k) (lo - k) (hi - k) := by
+  intro k
+  induction k with
+  | zero => intro ys next lo hi _ _ _; simp
+  | succ k ih =>
+    intro ys next lo hi hk hl hh
+    match ys with
+    | [] => simp at hk
+    | y :: ys' =>
+      simp only [List.length_cons] at hk
+      rw [bRowUp, if_neg (by omega)]
+      simp only []
+      rw [ih ys' next.tail (lo - 1) (hi - 1) (by omega) (by omega) (by omega)]
+      have hm : bMkMain sc x y lo hi (bCellHead next) (bCellHead next.tail)
+          (bCellHead (List.replicate k bCellNone ++
+            bRowUp sc x (ys'.drop k) (next.tail.drop k) (lo - 1 - k) (hi - 1 - k))) = bCellNone := by
+        rw [bMkMain, if_neg (by omega)]
+      rw [hm, List.replicate_succ, List.cons_append, List.drop_succ_cons, List.drop_tail,
+        show lo - 1 - (k : Int) = lo - ((k + 1 : Nat) : Int) by push_cast; omega,
+        show hi - 1 - (k : Int) = hi - ((k + 1 : Nat) : Int) by push_cast; omega]
+
+theorem bTableK_eq (sc : Scoring) : ∀ (xs ys : List Char) (lo hi : Int),
+    bTable sc xs ys lo hi = List.replicate (bTableK sc xs ys lo hi).1 bCellNone ++ (bTableK sc xs ys lo hi).2
+  | [], ys, lo, hi => by simp [bTable, bTableK]
+  | x :: xs, ys, lo, hi => by
+    rw [bTable, bTableK_eq sc xs ys (lo + 1) (hi + 1)]
+    simp only [bTableK]
+    unfold deadK
+    split
+    · rename_i h
+      rw [bRowUp_dead sc x (min lo.toNat ys.length) ys _ lo hi (Nat.min_le_right _ _) (by omega) h.2, dropK_eq]
+    · simp [dropK]
+
+/-- Compiled `bandedRun`. -/
+def bandedRunK (sc : Scoring) (xs ys : List Char) (lo hi : Int) : Option (List Step × Int) :=
+  let t := bTableK sc xs ys lo hi
+  if t.1 = 0 then (bCellHead t.2).neutral else none
+
+@[csimp] theorem bandedRun_eqK : @bandedRun = @bandedRunK := by
+  funext sc xs ys lo hi
+  unfold bandedRun bandedRunK
+  rw [bTableK_eq]
+  simp only []
+  split
+  · rename_i h; rw [h]; rfl
+  · rename_i h
+    obtain ⟨k, hk⟩ := Nat.exists_eq_succ_of_ne_zero h
+    rw [hk, List.replicate_succ, List.cons_append]; rfl
+
+#print axioms bandedRun_eqK
 
 -- ══════════════════════════════════════════════════════════════════
 -- PART 6: the band-doubling driver and the unconditional theorem

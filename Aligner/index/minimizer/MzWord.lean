@@ -917,6 +917,42 @@ theorem lookupPWk_extract (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p :
   · exact scanAWKk_extract _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl
   · rw [lookupPW_eqK]; unfold lookupPWK; simp only []; rw [if_neg (by assumption)]
 
+/-- A result shorter than `k` is the whole result. -/
+theorem scanAWKk_small (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit k : Nat) : ∀ n t (acc : Array Nat), hi - t = n →
+    (scanAWKk ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit k t acc).size < k →
+    scanAWKk ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit k t acc =
+      scanAWK ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro t acc hn hs
+    rw [scanAWKk] at hs ⊢
+    split
+    · rename_i h
+      rw [if_pos h] at hs
+      rcases h with h | h
+      · omega
+      · rw [scanAWK.eq_def, if_neg (by omega)]
+    · rename_i h
+      rw [if_neg h] at hs
+      rw [ih (hi - min hi (t + 256)) (by omega) _ _ rfl hs,
+        scanAWK_split ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 hi base bit (min hi (t + 256))
+          (Nat.min_le_left _ _) _ t acc rfl, show max t (min hi (t + 256)) = min hi (t + 256) by omega]
+
+theorem lookupPWk_small (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base bit k : Nat)
+    (h : (lookupPWk ix G R s p base bit k).size < k) :
+    lookupPWk ix G R s p base bit k = lookupPW ix G R s p base bit := by
+  rw [lookupPW_eqK]
+  unfold lookupPWk at h ⊢
+  unfold lookupPWK
+  simp only [] at h ⊢
+  split
+  · rename_i hc
+    rw [if_pos hc] at h
+    exact scanAWKk_small _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl h
+  · rw [lookupPW_eqK]; unfold lookupPWK; simp only []; rw [if_neg (by assumption)]
+
 end MzWU
 
 
