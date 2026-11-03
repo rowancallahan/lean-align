@@ -65,8 +65,11 @@ theorem indexOk_loaded (g : GenomeFile) (hf : Fits g)
   have BO := buildMz_ok g hN32
   generalize hG : Index.packAll (g.map (·.2)) = G at Pn Po Praw Pw Pex BO
   generalize hix : Index.buildMz (g.map (·.2)) G = ix at BO
-  have hL : buildLoaded g = (ix, G, Index.offsOf (g.map (·.2)), (g.map (·.2)).map (·.size)) := by
+  have hL : buildLoaded g = (ix, G, Index.offsOf (g.map (·.2)), (g.map (·.2)).map (·.size), heavyTable (g.map (·.2)),
+      Heavy.heavyMask (ix, G) (Index.offsOf (g.map (·.2))) ((g.map (·.2)).map (·.size)) (heavyTable (g.map (·.2)))) := by
     rw [← hix, ← hG]; rfl
+  have hHv := heavyTable_size (g.map (·.2))
+  generalize heavyTable (g.map (·.2)) = Hv at hL hHv
   rw [hL] at h3 ⊢
   simp only at h3
   have GC := genomeChecks g
@@ -122,18 +125,19 @@ theorem indexOk_loaded (g : GenomeFile) (hf : Fits g)
   obtain ⟨s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16⟩ := BO.small
   have hfits : MzFits ix (obOf ix G) := ⟨s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16,
     by rw [hobd]; exact hob64, by omega, by have := BO.runsSz; omega, fun x hx => by have := BO.runsLe x hx; omega⟩
-  have LS := loadIndex_saveIndex ix G offs ns hfits (by omega) (by omega) (by omega) (by omega) hoffle (by omega)
-    hnsle hbig64
+  have hMv := Heavy.heavyMask_size (ix, G) offs ns Hv
+  have LS := loadIndex_saveIndex ix G offs ns Hv (Heavy.heavyMask (ix, G) offs ns Hv) hfits (by omega) (by omega)
+    (by omega) (by omega) hoffle (by omega) hnsle (by omega) (by omega) hbig64
   refine ⟨_, LS, ?_⟩
-  have PW := save_w ix G offs ns
-  have SL := save_sl ix G offs ns (by omega)
-  have SO := save_offs ix G offs ns
-  have PBg := pre_big_save ix G offs ns
-  have PP : Pre (Index.pad G.w ix.sw ++ ix.sl) (saveIndex (ix, G, offs, ns)) :=
+  have PW := save_w ix G offs ns Hv (Heavy.heavyMask (ix, G) offs ns Hv)
+  have SL := save_sl ix G offs ns Hv (Heavy.heavyMask (ix, G) offs ns Hv) (by omega)
+  have SO := save_offs ix G offs ns Hv (Heavy.heavyMask (ix, G) offs ns Hv)
+  have PBg := pre_big_save ix G offs ns Hv (Heavy.heavyMask (ix, G) offs ns Hv)
+  have PP : Pre (Index.pad G.w ix.sw ++ ix.sl) (saveIndex (ix, G, offs, ns, Hv, Heavy.heavyMask (ix, G) offs ns Hv)) :=
     (pre_pad _ 4).trans ((pre_pad2_big ix G).trans PBg)
   rw [hm] at SL SO
   rw [hobd] at SO ⊢
-  generalize saveIndex (ix, G, offs, ns) = S at PW SL SO PBg PP ⊢
+  generalize saveIndex (ix, G, offs, ns, Hv, Heavy.heavyMask (ix, G) offs ns Hv) = S at PW SL SO PBg PP ⊢
   -- the packed genome read from `S`
   have hraw : ∀ i, i < G.n → ({ G with w := S } : PGen).raw i = G.raw i := fun i hi =>
     raw_congr G _ i rfl (PW.2 _ (Praw i hi).2.1) (PW.2 _ (Praw i hi).2.2)
@@ -167,12 +171,16 @@ theorem indexOk_loaded (g : GenomeFile) (hf : Fits g)
       simp only [Nat.add_zero] at e0
       rw [e0, e1, e2, e3, e4]
     · have := PBg.1; rw [hbig] at this; omega
+  have hu := unpack_congr G { G with w := S } rfl hget
+  have h2b : check2P ix G = true := by rw [← check3P_eq]; exact h3
+  have h2l : check2P { ix with offs := S, ob := ob, sl := S } { G with w := S } = true := by
+    rw [check2P_eq (rep_unpack _), hu]
+    rw [check3P_eq, check2P_eq (rep_unpack _)] at h3
+    exact check2_sh H _ h3
   unfold indexOk
   simp only [Bool.and_eq_true]
-  refine ⟨⟨hcut, ?_⟩, hchr⟩
-  rw [check3P_eq, check2P_eq (rep_unpack _), unpack_congr G { G with w := S } rfl hget]
-  rw [check3P_eq, check2P_eq (rep_unpack _)] at h3
-  exact check2_sh H _ h3
+  refine ⟨⟨⟨hcut, ?_⟩, hchr⟩, Heavy.heavyOk_mask h2b h2l hu.symm offs ns Hv⟩
+  rw [check3P_eq]; exact h2l
 
 
 theorem saveIndex_size (L : LoadedIndex) : 16 ≤ (saveIndex L).size := by

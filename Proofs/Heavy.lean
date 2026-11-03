@@ -1,4 +1,5 @@
 import Proofs.GaveUp
+import ParMap
 
 /-! # The heavy 25-mer table: an O(log n) `highlyRepetitiveIn` witness
 
@@ -152,6 +153,10 @@ theorem entryOk_congr {ix1 ix2 : MapSpec.Mz.MzIdx} {G1 G2 : MapSpec.Fast.PGen}
   unfold entryOk capCount
   rw [seedPlaces_congr h1 h2 hu, seedPlaces_congr h1 h2 hu]
 
+theorem heavyMask_size (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (H : ByteArray) :
+    (heavyMask pk offs ns H).size = H.size / 25 := by
+  simp [heavyMask, List.size_toByteArray]
+
 theorem heavyMask_get (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (H : ByteArray) (i : Nat)
     (hi : i < H.size / 25) :
     (heavyMask pk offs ns H).get! i = if entryOk pk offs ns H i then 1 else 0 := by
@@ -237,6 +242,29 @@ def seedHeavy (H M R : ByteArray) (s : Nat) : Bool :=
 def heavyMate (H M R : ByteArray) : Bool :=
   gaveUpSeeds ≤ (List.range (R.size / seedLength)).countP fun j => seedHeavy H M R (seedLength * j)
 
+/-! ## Compiled forms: the entries checked in parallel (`ParMap.parMap`, the same as a plain map) -/
+
+def heavyMaskP (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (H : ByteArray) : ByteArray :=
+  ⟨ParMap.parMap 16 (fun i => if entryOk pk offs ns H i then (1 : UInt8) else 0) (Array.range (H.size / 25))⟩
+
+@[csimp] theorem heavyMask_eqP : @heavyMask = @heavyMaskP := by
+  funext pk offs ns H
+  unfold heavyMask heavyMaskP
+  rw [ParMap.parMap_eq_map]
+  apply ByteArray.ext
+  rw [List.data_toByteArray]
+  apply Array.toList_inj.mp
+  simp [Array.toList_map, Array.toList_range]
+
+def heavyOkP (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (H M : ByteArray) : Bool :=
+  (ParMap.parMap 16 (fun i => M.get! i != 1 || entryOk pk offs ns H i) (Array.range (H.size / 25))).all id
+
+@[csimp] theorem heavyOk_eqP : @heavyOk = @heavyOkP := by
+  funext pk offs ns H M
+  unfold heavyOk heavyOkP
+  rw [ParMap.parMap_eq_map, ← Array.all_toList]
+  simp [Array.toList_map, Array.toList_range, List.all_map]
+
 /-! ## Soundness -/
 
 theorem seedHeavy_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
@@ -317,3 +345,5 @@ end Spec.Heavy
 
 #print axioms Spec.Heavy.heavyMate_sound
 #print axioms Spec.Heavy.heavyOk_mask
+#print axioms Spec.Heavy.heavyMask_eqP
+#print axioms Spec.Heavy.heavyOk_eqP

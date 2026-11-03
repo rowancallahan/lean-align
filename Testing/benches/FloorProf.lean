@@ -47,7 +47,7 @@ def main (args : List String) : IO Unit := do
   let floor : Int := -((args[4]?.getD "50").toNat! : Int)
   let index ← IO.FS.readBinFile idx
   let insertSettings : InsertSettings := { range := (100, 1000) }
-  let some (ix, G, offs, ns) := (readIndex index).2 | throw (IO.userError "index")
+  let some (ix, G, offs, ns, H, M) := (readIndex index).2 | throw (IO.userError "index")
   let pgs := cutAll G #[0] #[G.n]
   let pk : PkMz := (ix, G)
   let cfg := tierCfg insertSettings pk #[0] pgs
@@ -59,7 +59,7 @@ def main (args : List String) : IO Unit := do
     let a := a0.letters
     let b := b0.letters
     if a.isEmpty || b.isEmpty then cnt := cnt.alter "trimmedAway" (fun v => some ((v.getD (0,0)).1 + 1, 0)); continue
-    let ans := match alignOne insertSettings [] (some (ix, G, offs, ns)) (some a) (some b) with
+    let ans := match alignOne insertSettings [] (some (ix, G, offs, ns, H, M)) (some a) (some b) with
       | .aligned x => x | _ => default
     let bad := match ans.found with
       | some r => decide (repScore r < floor)

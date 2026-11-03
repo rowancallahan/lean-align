@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
 
 @[default_target]
 lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Heavy, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam, `Proofs.TrimRecord]
+  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Heavy, `Proofs.HeavyBuild, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam, `Proofs.TrimRecord]
 
 @[default_target]
 lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
@@ -301,3 +301,7 @@ lean_exe adapter_bench where              -- benchmark only: CPU and cut counts 
 lean_exe gaveup_k where               -- benchmark only: repeat grid seeds per mate of named pairs (unproved IO)
   srcDir := "Testing/benches"
   root := `GaveUpK
+
+lean_exe heavy_bench where            -- benchmark only: build the heavy 25-mer table from a FASTA, time it, write it (unproved IO)
+  srcDir := "Testing/benches"
+  root := `HeavyBench

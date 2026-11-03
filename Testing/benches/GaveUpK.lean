@@ -8,7 +8,7 @@ def main (args : List String) : IO Unit := do
   let [indexPath, r1, r2, namesPath] := args | throw (IO.userError "usage: gaveup_k INDEX R1 R2 NAMES")
   let names := (← IO.FS.lines namesPath).foldl (fun s n => s.insert n) (Std.HashSet.emptyWithCapacity 1024)
   let index ← IO.FS.readBinFile indexPath
-  let some (ix, G, offs, ns) := (Spec.readIndex index).2 | throw (IO.userError "no router index")
+  let some (ix, G, offs, ns, H, M) := (Spec.readIndex index).2 | throw (IO.userError "no router index")
   let kOf (R : ByteArray) : Nat :=
     (List.range (R.size / Spec.seedLength)).countP fun j =>
       Spec.gaveUpRepeats ≤ Spec.GaveUp.seedCount (ix, G) offs ns R (Spec.seedLength * j)

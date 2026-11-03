@@ -73,7 +73,7 @@ def main (args : List String) : IO Unit := do
   let lim := (args[3]?.getD "100000000").toNat!
   let index ← IO.FS.readBinFile idx
   let insertSettings : InsertSettings := { range := (100, 1000) }
-  let some (ix, G, offs, ns) := (readIndex index).2 | throw (IO.userError "index")
+  let some (ix, G, offs, ns, H, M) := (readIndex index).2 | throw (IO.userError "index")
   let pgs := cutAll G #[0] #[G.n]
   let pk : PkMz := (ix, G)
   let cfg0 := tierCfg insertSettings pk #[0] pgs
@@ -114,7 +114,7 @@ def main (args : List String) : IO Unit := do
     let fin ← (← IO.mkRef (if t5 == 0 then default else LastResort.finalize insertSettings (LastResort.fitNs ns) a b ans)).get
     let t6 ← IO.monoNanosNow
     if check then
-      let ref := alignOne insertSettings #[] (some (ix, G, offs, ns)) (some a) (some b)
+      let ref := alignOne insertSettings #[] (some (ix, G, offs, ns, H, M)) (some a) (some b)
       assert! (match ref with | .aligned r => reprStr r == reprStr fin | _ => false)
     let cb := if cmax ≤ 2000 then "c<=2k" else if cmax ≤ 5000 then "c<=5k" else if cmax ≤ 10000 then "c<=10k" else if cmax ≤ 15000 then "c<=15k" else if cmax ≤ 30000 then "c<=30k" else if cmax ≤ 60000 then "c<=60k" else "c>60k"
     let key := s!"{cb}\t{t.tagStr}\t{reasonStr t.why}\t{if gated then "gated" else ""}\t{if fin.found.isSome then "found" else "none"}\t{repr fin.uniqueness}"
