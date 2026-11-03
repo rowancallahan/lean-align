@@ -1,0 +1,16 @@
+diff --git a/lakefile.lean b/lakefile.lean
+index 5d832a3..58b2616 100644
+--- a/lakefile.lean
++++ b/lakefile.lean
+@@ -305,3 +305,11 @@ lean_exe gaveup_k where               -- benchmark only: repeat grid seeds per m
+ lean_exe heavy_bench where            -- benchmark only: build the heavy 25-mer table from a FASTA, time it, write it (unproved IO)
+   srcDir := "Testing/benches"
+   root := `HeavyBench
++
++lean_lib IoFast where                  -- unproved I/O prototype used by io_bench
++  srcDir := "Testing/benches"
++  roots := #[`IoFast]
++
++lean_exe io_bench where                -- benchmark only: per-chunk read / align / format times of the shim's map loop
++  srcDir := "Testing/benches"
++  root := `IoBench
