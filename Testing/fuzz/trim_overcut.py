@@ -56,7 +56,7 @@ for (q, m), o in sorted(ours.items()):
     if not mr['mapped'] or mr['mapq'] < 30: continue
     # minibwa-aligned bases inside the cut regions, mismatches against the reference
     sa = mr['seq']; strand = mr['strand']; readal = sa
-    cutal = [(0, ws), (we, L)] if strand == '+' else [(L - we, L), (0, L - ws)]
+    cutal = [(0, ws), (we, L)] if strand == '+' else [(0, L - we), (L - ws, L)]   # read orientation -> alignment orientation
     cutal = [(a, b) for a, b in cutal if b > a]
     qp, rp, aligned = 0, mr['pos'] - 1, []
     for n, op in mr['ops']:
@@ -65,6 +65,7 @@ for (q, m), o in sorted(ours.items()):
         elif op in 'IS': qp += n
         elif op in 'DN': rp += n
     nal = nmm = 0
+    assert sum(b - a for a, b in cutal) == cut or we == ws
     for qs, rs, n in aligned:
         refseq = ref(mr['chr'], rs, n)
         if refseq is None: continue
