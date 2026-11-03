@@ -97,3 +97,21 @@ variants:
    independent of chunking.
 9. Task / channel behaviour of the runtime (dedicated threads, channel close semantics). Errors exit the process.
 `alignPairs` itself stays proved (`alignPairs_correct`) for each job's pairs.
+
+## 6. Job size and queue depth (pipeline variant A; 1 rep each; map wall / user+sys / util)
+| job pairs, depth | nova1M plain | nova1M FIFO | hg002_1M plain | hg002_1M FIFO |
+|---|---|---|---|---|
+| 4000, 2 | 30.4 / 115.3 / 0.95 | 32.9 / 119.3 / 0.91 | 36.7 / 140.3 / 0.95 | 41.6 / 142.1 / 0.85 |
+| 8000, 2 | 31.0 / 120.3 / 0.97 | 30.9 / 114.6 / 0.93 | 34.9 / 135.2 / 0.97 | 37.5 / 135.6 / 0.90 |
+| 16000, 2 | 31.2 / 120.6 / 0.97 | 31.7 / 118.0 / 0.93 | 33.8 / 130.7 / 0.97 | 35.8 / 128.7 / 0.90 |
+| 20000, 2 | 30.4 / 116.9 / 0.96 | 30.3 / 112.1 / 0.93 | 36.9 / 141.8 / 0.96 | 36.0 / 129.8 / 0.90 |
+| 8000, 4 | 29.9 / 115.2 / 0.96 | 31.9 / 119.1 / 0.93 | 34.2 / 132.4 / 0.97 | 35.5 / 128.2 / 0.90 |
+| 16000, 4 | 30.3 / 116.4 / 0.96 | 31.2 / 116.2 / 0.93 | 33.8 / 130.6 / 0.97 | 34.9 / 125.7 / 0.90 |
+- SAM is byte-identical to festive at 16000/2 on both sets.
+- hg002_1M: larger jobs cut CPU 7–12% (140 → 126–131 s) and map wall about 3 s. This matches the per-job `alignPairs`
+  setup cost (readIndex + 16 per-task setups per call).
+- nova1M: no CPU trend; all within ±2 s noise.
+- Depth 4 vs 2 makes no clear difference. Patch default is now 16000 pairs, depth 2.
+- Above 16000 pairs nothing improves, and the 20000 plain run is worse (noise, or fewer jobs than 4 workers can
+  balance near the end).
+- The remaining per-job CPU goes away only with variant B (per-worker setup), which needs a Spec-level interface.
