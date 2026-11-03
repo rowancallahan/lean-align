@@ -1472,3 +1472,16 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - Rowan will merge claude/festive-fermi-mf9mo6 with main.
 - Index RAM budget (Rowan, 2026-11-03): the loaded index may be up to just under 8 GB (today ~5.3 GB), e.g. for the heavy-25-mer table plus a combined longer/shorter-seed index.
 - Spec guide session ended (Rowan). Its README notes are on branch claude/spec-guide-notes (Proofs/README.md, commits 5067108, 29bf14c; main-based). Merge them when festive-fermi and main are merged. Open items for Rowan: Sam label (spec/sam-fix b8c773c), the requiredMapBound comment wording, the shim speed patch, the audit fail-fast patch.
+
+### Night of 2026-11-03 (log)
+- ~02:43 UTC: merged speed/floor-real-spec → festive 565d1e8. Rowan's exact Spec is proved (SettingsOk: junkScore <= -16); CI + FUZZ green; fuzz enforces no-aligned-base.
+- ~03:00: same-session headline, festive HEAD 565d1e8 + shim patch vs baseline 0e48158 + patch.
+  - NovaSeq: minibwa 12.9 s; baseline 4.6 s; HEAD 9.3 s (2.02x the baseline).
+  - HiSeq: minibwa 24.9 s; baseline 5.4 s; HEAD 9.9 s (1.83x).
+  - HEAD output: mapped 93.80 / 93.62%; unique unchanged; repetitiveUnknown 0.72 / 0.60%; degenerate 0.
+- Cause, from S-D's profile: the final lookAt runs mate 1 genome-wide even when it is the repeat-rich mate (713k candidate diagonals on 302 NovaSeq pairs). The fix in progress (S-D, speed/diag-count option 3): run genome-wide on the cheaper mate. Candidates -87% NovaSeq / -98% HiSeq; expected about -8 of the +13 s user gap.
+- The pigeonhole diagonal-count filter already exists and is proved (kfilt: suppA + unlook + fineOk); not a lever.
+- Notes merged:
+  - PROOF_MAP.md;
+  - INDEX_TRICKS.md: weighted minimizers / closed syncmers proved complete; LSH and strobemers are candidates only;
+  - SEMI_REPETITIVE_EXAMPLES.md: 2.6% / 1.4% of pairs; half are semi-repetitive, half short or error-rich. Where we answer none, minibwa maps 2,821 / 1,386 of them with MAPQ >= 30, mostly via soft clipping. S4 is measuring the clipping gap.
