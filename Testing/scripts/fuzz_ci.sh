@@ -21,4 +21,4 @@ done
 echo "$(($(wc -l < "$d/R1.fq") / 4)) pairs"
 "$lean" map "$d/idx" "$d/R1.fq" "$d/R2.fq" "$d/out.sam" 100 1000
 # XFAIL: (a) a mapped CIGAR with no aligned base (the 150I placeholder pairs); (b) a mapped mate trimmed to under 20 letters (an all-'#' read cut to 1 letter)
-python3 -I Testing/scripts/sam_fuzz_check.py --xfail=no-aligned-base "$d/out.sam" "$d/R1.fq" "$d/R2.fq" "$d/idx.chromosomes"
+python3 -I Testing/scripts/sam_fuzz_check.py "$d/out.sam" "$d/R1.fq" "$d/R2.fq" "$d/idx.chromosomes"

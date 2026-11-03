@@ -203,6 +203,7 @@ def hitsCKN (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Li
 /-- `hitsCKN` with the shapes taken once from the table (`hitsCKN_eqT`). -/
 def hitsCKNT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) (sel : Nat → Bool) : List (Window × Nat) :=
+  if acc.all fun a => a.isEmpty then [] else
   let shs := shapesT lim
   (diags acc).flatMap fun D =>
     if sel D && kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
@@ -215,9 +216,11 @@ def hitsCKNT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : L
 
 /-- Compiled code runs `hitsCKNT`. -/
 @[csimp] theorem hitsCKN_eqT : @hitsCKN = @hitsCKNT := by
-  funext
+  funext K R pgs2 c lim acc us Ls sel
   unfold hitsCKN hitsCKNT
-  simp only [shapesT_eq]
+  split
+  · rename_i h; rw [diags_empty acc h]; rfl
+  · simp only [shapesT_eq]
 
 theorem hitsCKN_sub (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) (sel : Nat → Bool) (x : Window × Nat)
@@ -426,6 +429,98 @@ def pairUKHN {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [In
   | some (a, b) => if properPairU sl lo hi a.1 b.1 && dc (fragLen a.1 b.1) == 0 then (some (a, b), true) else lad ()
   | none => lad ()
 
+/-! ### Compiled `hitsKPFN`: chromosomes without a hit of the other mate are skipped (`hitsKPFN_eqG`) -/
+
+/-- `hitsSKN`, a chromosome searched only when `gate` holds on it. -/
+def hitsSKNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
+    (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) (keep : Nat → Nat → Nat → Bool) (gate : Nat → Bool) :
+    List (Window × Nat) :=
+  if !(List.range n).any gate then [] else
+  let m := Rs.size / 25
+  let Ls := Rs.size / m
+  let K := packRP Rs
+  let ps := prepG ix Rs m Ls
+  let J := (ordG (ps.map (LookG.size ix)) m).take (sbound lim + 1)
+  let lk := J.map fun j => (j, LookG.look ix G Rs (j * Ls) (Rs.size - j * Ls) ps[j]!)
+  let us := unseen m J
+  (List.range n).flatMap fun c =>
+    if gate c then
+      hitsCKN K Rs pgs2 (t + c) lim (slicesAt lk Rs.size Ls offs[c]! (GRead.size pgs2[t + c]!)) us Ls
+        (keep (t + c) Rs.size)
+    else []
+
+theorem hitsCKN_none (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
+    (us : List Nat) (Ls : Nat) (sel : Nat → Bool) (h : ∀ D, sel D = false) :
+    hitsCKN K R pgs2 c lim acc us Ls sel = [] := by
+  unfold hitsCKN
+  simp [h]
+
+theorem hitsSKNG_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
+    (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) (keep : Nat → Nat → Nat → Bool) (gate : Nat → Bool)
+    (h : ∀ c D, c < n → gate c = false → keep (t + c) Rs.size D = false) :
+    hitsSKNG ix G offs pgs2 n t lim Rs keep gate = hitsSKN ix G offs pgs2 n t lim Rs keep := by
+  unfold hitsSKNG hitsSKN
+  split
+  · rename_i hn
+    simp only [Bool.not_eq_true', List.any_eq_false, List.mem_range] at hn
+    simp only []
+    symm
+    rw [List.flatMap_eq_nil_iff]
+    intro c hc
+    rw [List.mem_range] at hc
+    exact hitsCKN_none _ _ _ _ _ _ _ _ _ (fun D => h c D hc (by simpa using hn c hc))
+  simp only []
+  rw [List.flatMap_def, List.flatMap_def]
+  congr 1
+  apply List.map_congr_left
+  intro c hc
+  rw [List.mem_range] at hc
+  cases hg : gate c
+  · rw [hitsCKN_none _ _ _ _ _ _ _ _ _ (fun D => h c D hc hg)]; rfl
+  · rfl
+
+def hitsAtKPNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lim : Nat) (ix : L) (G : ByteArray)
+    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (keep : Nat → Nat → Nat → Bool) (gate : Nat → Bool) :
+    Option (List (Placement × Int)) :=
+  if fastT lim R then
+    let n := pgs.size
+    let pgs2 := pgs ++ pgs
+    some ((hitsSKNG ix G offs pgs2 n 0 lim R keep gate ++
+      hitsSKNG ix G offs pgs2 n n lim (revCompK R) keep gate).map fun x => (decB n x.1, -(x.2 : Int)))
+  else none
+
+/-- Compiled `hitsKPFN`: a chromosome is searched only when the other mate has a hit on it. -/
+def hitsKPFNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
+    (pgs : Array PGen) (R : ByteArray) (c : Nat) (ys : List (Placement × Int)) : List (Placement × Int) :=
+  match hitsAtKPNG c ix G offs pgs R (keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys)
+      (fun k => ys.any fun y => y.1.1.chr == k) with
+  | some l => l
+  | none => hitsKPF ix G offs pgs R c
+
+theorem keepN_gate (sl hi n gb : Nat) (ys : List (Placement × Int)) (t c nR D : Nat) (ht : t = 0 ∨ t = n)
+    (hc : c < n) (hg : (ys.any fun y => y.1.1.chr == c) = false) : keepN sl hi n gb ys (t + c) nR D = false := by
+  have hv : (if t + c < n then t + c else t + c - n) = c := by
+    rcases ht with h0 | hn
+    · rw [h0, if_pos (by omega)]; omega
+    · rw [hn, if_neg (by omega)]; omega
+  unfold keepN
+  rw [hv]
+  rw [List.any_eq_false] at hg ⊢
+  intro y hy h'
+  simp only [Bool.and_eq_true] at h'
+  exact hg y hy h'.1.1
+
+@[csimp] theorem hitsKPFN_eqG : @hitsKPFN = @hitsKPFNG := by
+  funext L Pp i1 i2 sl hi ix G offs pgs R c ys
+  have e0 := hitsSKNG_eq ix G offs (pgs ++ pgs) pgs.size 0 c R (keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys)
+    (fun k => ys.any fun y => y.1.1.chr == k)
+    (fun c' D hc hg => keepN_gate sl hi _ _ ys 0 c' _ D (Or.inl rfl) hc hg)
+  have e1 := hitsSKNG_eq ix G offs (pgs ++ pgs) pgs.size pgs.size c (revCompK R)
+    (keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys) (fun k => ys.any fun y => y.1.1.chr == k)
+    (fun c' D hc hg => keepN_gate sl hi _ _ ys _ c' _ D (Or.inr rfl) hc hg)
+  unfold hitsKPFN hitsKPFNG hitsAtKPNG hitsAtKPN
+  simp only [e0, e1]
+
 section topN
 variable (dc : Nat → Nat) (sl lo hi : Nat) (caps : List Nat) (a1 : Bool) (g : Genome)
   (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
@@ -479,5 +574,6 @@ end MapSpec.Fast
 
 #print axioms MapSpec.Fast.ladderUB_eq
 #print axioms MapSpec.Fast.hitsKPFN_near
+#print axioms MapSpec.Fast.hitsKPFN_eqG
 #print axioms MapSpec.Fast.pairUKHN_mz_eq
 #print axioms MapSpec.Fast.pairUKHN_tie

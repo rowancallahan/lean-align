@@ -1,13 +1,21 @@
 import Proofs.Report
+import AlignmentWavefront
 
-/-! # The last step: no answer without a pair unless it is junk
+/-! # The last step: the report floor
 
-Spec's `.unknown` clause: an answer without a pair must have `bestPossibleScore < junkScore`. The router and
-the fallback (`Proofs/Report.lean`) find a real proper pair for almost every pair; for the rest (`finalize`):
+Spec's `PairAnswer.Correct` asks two things the router's answers (`CorrectU`) do not:
+* every printed pair scores at least `junkScore` (clause 1, any uniqueness);
+* an answer without a pair (`.unknown`) has `bestPossibleScore < requiredMapBound`.
 
-* some chromosome has at least `lo` letters (and `lo ≤ hi`): the degenerate proper pair — mate 1 forward on
-  the empty window `[0, 0)`, mate 2 reverse on `[lo, lo)`, each aligned as insertions only (`degenerate_sound`);
-* else no proper pair exists at all (`no_proper`), so any bound holds: `junkScore - 1`.
+`finalize` checks the first on the pair in hand (its printed score is the pair's score, `score_of_report`) and
+drops a pair below `junkScore`. A pair that is `.unique` / `.multimapper` is a best proper pair, so its own score
+is then a proved bound (`provedBound`). Without a pair, the answer is correct when its bound is
+`< requiredMapBound`, or when no proper pair exists at all (`no_proper`: no chromosome has `range.1` letters, or
+the range is empty), where any bound holds: `requiredMapBound - 1`.
+
+What is left is the LEFTOVER (`Leftover`): no pair `≥ junkScore` in hand and no proved bound
+`< requiredMapBound` (closed by the second look below, `look_not_leftover`). `finalize_correct` proves: the answer is `Correct`, or it is
+a leftover and still `CorrectU` (its pair-free bound is true). The degenerate all-insertion pair is never printed.
 
 The chromosome lengths come from the index (`ns`), or from the lengths record `buildIndex` writes when its
 check fails (`Proofs/Aligner.lean`). -/
@@ -16,41 +24,14 @@ namespace Spec.LastResort
 
 open Bridge
 
-/-! ## The degenerate pair -/
+/-! ## A printed pair's score -/
 
--- insertions only: a path of the read against no letters
-def gapPath (q : Read) : Path q [] :=
-  ⟨List.replicate q.length .gapY, by simp [List.count_replicate], by simp [List.count_replicate]⟩
+-- the pair's score as printed (`score_of_report`)
+def repScore (rep : PairReport) : Int := rep.mate1.score + rep.mate2.score
 
--- a mate's line at the empty window `p` (its letters on `p`'s strand all inserted)
-def emptyReport (p : Placement) (read : Read) : MateReport :=
-  ⟨p, (gapPath (p.strand.orient read)).cigar, (gapPath (p.strand.orient read)).score defaultScoring⟩
-
--- mate 1 forward on `[0, 0)`, mate 2 reverse on `[lo, lo)`, chromosome `c`
-def degeneratePair (c lo : Nat) (m1 m2 : Read) : PairReport :=
-  ⟨emptyReport ⟨c, 0, 0, .forward⟩ m1, emptyReport ⟨c, lo, lo, .reverse⟩ m2⟩
-
-theorem empty_fits {genome : Genome} {c s : Nat} {chr : Chromosome} (hc : genome[c]? = some chr)
-    (hs : s ≤ chr.seq.length) (st : Strand) :
-    (⟨c, s, s, st⟩ : Placement).reference genome = some [] := by
-  unfold Placement.reference
-  simp [hc, hs]
-
--- the alignment printed by `emptyReport`
-def emptyAlignment {genome : Genome} (read : Read) (p : Placement) (h : p.reference genome = some []) :
-    GenomicAlignment genome read :=
-  ⟨p, [], h, gapPath (p.strand.orient read)⟩
-
-theorem degenerate_sound {genome : Genome} {m1 m2 : Read} (range : Nat × Nat) (slack c : Nat) (chr : Chromosome)
-    (hc : genome[c]? = some chr) (hlo : range.1 ≤ chr.seq.length) (hr : range.1 ≤ range.2) :
-    ∃ pair : PairAlignment genome m1 m2,
-      pair.report = degeneratePair c range.1 m1 m2 ∧ pair.IsProper range slack := by
-  refine ⟨⟨emptyAlignment m1 _ (empty_fits hc (Nat.zero_le _) .forward),
-    emptyAlignment m2 _ (empty_fits hc hlo .reverse)⟩, rfl, ?_⟩
-  obtain ⟨lo, hi⟩ := range
-  simp only at hlo hr
-  simp [PairAlignment.IsProper, emptyAlignment]
-  omega
+theorem score_of_report {genome : Genome} {m1 m2 : Read} {pair : PairAlignment genome m1 m2} {rep : PairReport}
+    (h : pair.report = rep) : pair.score = repScore rep := by
+  subst h; rfl
 
 /-! ## No proper pair at all -/
 
@@ -89,58 +70,508 @@ theorem no_proper {genome : Genome} {m1 m2 : Read} (range : Nat × Nat) (slack :
 
 /-! ## The last step -/
 
--- `fit lo`: a chromosome where the degenerate pair fits (none: no chromosome has `lo` letters); the mates
--- and `fit` are only used (decoded, searched) when the answer has no pair and is not junk
-def finalize (insertSettings : InsertSettings) (fit : Nat → Option Nat) (R1 R2 : ByteArray) (a : PairAnswer) :
-    PairAnswer :=
-  if a.found.isNone && decide (insertSettings.junkScore ≤ a.bestPossibleScore) then
-    match (if insertSettings.range.1 ≤ insertSettings.range.2 then fit insertSettings.range.1 else none) with
-    | some c => { a with found := some (degeneratePair c insertSettings.range.1 (decodeRead R1) (decodeRead R2)),
-                         uniqueness := .unknown }
-    | none => { a with bestPossibleScore := insertSettings.junkScore - 1, uniqueness := .unknown }
-  else a
+-- no proper pair exists at all: the range is empty, or no chromosome has `range.1` letters (`fit` finds none)
+def noPair (insertSettings : InsertSettings) (fit : Nat → Option Nat) : Bool :=
+  !(decide (insertSettings.range.1 ≤ insertSettings.range.2) && (fit insertSettings.range.1).isSome)
 
-theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {R1 R2 : ByteArray} {a : PairAnswer}
+-- a bound the answer proves: its own, or (a best proper pair in hand) the pair's score if lower
+def provedBound (a : PairAnswer) : Int :=
+  match a.found, a.uniqueness with
+  | some rep, .unique => min a.bestPossibleScore (repScore rep)
+  | some rep, .multimapper => min a.bestPossibleScore (repScore rep)
+  | _, _ => a.bestPossibleScore
+
+-- no pair, bound `b`: below `requiredMapBound`, or `requiredMapBound - 1` when no proper pair exists;
+-- otherwise the bound stays `b` (a leftover)
+def boundOnly (insertSettings : InsertSettings) (fit : Nat → Option Nat) (req b : Int) (a : PairAnswer) : PairAnswer :=
+  { a with found := none, uniqueness := .unknown,
+           bestPossibleScore :=
+             if b < req then b
+             else if noPair insertSettings fit then req - 1 else b }
+
+-- `fit lo`: a chromosome with at least `lo` letters (none: no chromosome has `lo` letters);
+-- `req`: the mates' `requiredMapBound`
+def finalize (insertSettings : InsertSettings) (fit : Nat → Option Nat) (req : Int) (a : PairAnswer) : PairAnswer :=
+  match a.found with
+  | some rep =>
+    if insertSettings.junkScore ≤ repScore rep then a
+    else boundOnly insertSettings fit req (provedBound a) a
+  | none => boundOnly insertSettings fit req a.bestPossibleScore a
+
+-- THE LEFTOVER: no pair and no proved bound below `req` (no correct answer in hand).
+def Leftover (req : Int) (a : PairAnswer) : Prop :=
+  a.found = none ∧ req ≤ a.bestPossibleScore
+
+instance (req : Int) (a : PairAnswer) : Decidable (Leftover req a) :=
+  inferInstanceAs (Decidable (_ ∧ _))
+
+theorem provedBound_ok {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read} {a : PairAnswer}
+    (ha : CorrectU insertSettings genome m1 m2 a) (pair : PairAlignment genome m1 m2)
+    (hp : pair.IsProper insertSettings.range insertSettings.dovetailSlack) : pair.score ≤ provedBound a := by
+  obtain ⟨-, hb, hu⟩ := ha
+  have h0 := hb pair hp
+  unfold provedBound
+  cases hf : a.found with
+  | none => exact h0
+  | some rep =>
+    cases hq : a.uniqueness with
+    | unknown => exact h0
+    | repetitiveUnknown => exact h0
+    | unique =>
+      rw [hq] at hu
+      obtain ⟨rep', hr', best, hbr, hbest⟩ := hu
+      rw [hf] at hr'; cases hr'
+      have := hbest.1.2 pair hp
+      rw [score_of_report hbr] at this
+      simp only; omega
+    | multimapper =>
+      rw [hq] at hu
+      obtain ⟨rep', hr', best, -, hbr, hbest, -⟩ := hu
+      rw [hf] at hr'; cases hr'
+      have := hbest.2 pair hp
+      rw [score_of_report hbr] at this
+      simp only; omega
+
+theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read}
     (fit : Nat → Option Nat)
-    (hfit : ∀ c, fit insertSettings.range.1 = some c → ∃ chr, genome[c]? = some chr ∧ insertSettings.range.1 ≤ chr.seq.length)
     (hnone : fit insertSettings.range.1 = none →
       ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr → chr.seq.length < insertSettings.range.1)
-    (ha : CorrectU insertSettings genome (decodeRead R1) (decodeRead R2) a) :
-    (finalize insertSettings fit R1 R2 a).Correct insertSettings genome (decodeRead R1) (decodeRead R2) := by
-  obtain ⟨hf, hb, hu⟩ := ha
+    (a : PairAnswer) (b : Int)
+    (hb : ∀ pair : PairAlignment genome m1 m2,
+      pair.IsProper insertSettings.range insertSettings.dovetailSlack → pair.score ≤ b) :
+    (boundOnly insertSettings fit (requiredMapBound m1 m2) b a).Correct insertSettings genome m1 m2 ∨
+      (Leftover (requiredMapBound m1 m2) (boundOnly insertSettings fit (requiredMapBound m1 m2) b a) ∧
+        CorrectU insertSettings genome m1 m2 (boundOnly insertSettings fit (requiredMapBound m1 m2) b a)) := by
+  have hno : noPair insertSettings fit = true →
+      ∀ pair : PairAlignment genome m1 m2, ¬ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
+    intro h
+    apply no_proper
+    simp only [noPair, Bool.not_eq_true', Bool.and_eq_false_iff, decide_eq_false_iff_not,
+      Option.isSome_eq_false_iff, Option.isNone_iff_eq_none] at h
+    rcases h with h | h
+    · exact .inl (by omega)
+    · exact .inr (hnone h)
+  unfold boundOnly
+  by_cases h1 : b < requiredMapBound m1 m2
+  · left
+    rw [if_pos h1]
+    exact ⟨fun _ h => by simp at h, hb, fun _ => h1⟩
+  · rw [if_neg h1]
+    by_cases h2 : noPair insertSettings fit = true
+    · left
+      rw [if_pos h2]
+      exact ⟨fun _ h => by simp at h, fun pair hp => absurd hp (hno h2 pair),
+        fun _ => show requiredMapBound m1 m2 - 1 < requiredMapBound m1 m2 by omega⟩
+    · right
+      rw [if_neg h2]
+      exact ⟨⟨rfl, show requiredMapBound m1 m2 ≤ b by omega⟩, fun _ h => by simp at h, hb, trivial⟩
+
+-- the answer is correct, or it is a leftover whose pair-free bound is still true
+theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read} {a : PairAnswer}
+    (fit : Nat → Option Nat)
+    (hnone : fit insertSettings.range.1 = none →
+      ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr → chr.seq.length < insertSettings.range.1)
+    (ha : CorrectU insertSettings genome m1 m2 a) :
+    (finalize insertSettings fit (requiredMapBound m1 m2) a).Correct insertSettings genome m1 m2 ∨
+      (Leftover (requiredMapBound m1 m2) (finalize insertSettings fit (requiredMapBound m1 m2) a) ∧
+        CorrectU insertSettings genome m1 m2 (finalize insertSettings fit (requiredMapBound m1 m2) a)) := by
   unfold finalize
-  by_cases hc : (a.found.isNone && decide (insertSettings.junkScore ≤ a.bestPossibleScore)) = true
-  · rw [if_pos hc]
-    simp only [Bool.and_eq_true, Option.isNone_iff_eq_none, decide_eq_true_eq] at hc
-    split
-    · rename_i c hcf
-      have hr : insertSettings.range.1 ≤ insertSettings.range.2 := by
-        by_cases hn : insertSettings.range.1 ≤ insertSettings.range.2
-        · exact hn
-        · rw [if_neg hn] at hcf; cases hcf
-      rw [if_pos hr] at hcf
-      obtain ⟨chr, hg, hl⟩ := hfit c hcf
-      obtain ⟨pair, hrep, hprop⟩ := degenerate_sound (m1 := decodeRead R1) (m2 := decodeRead R2) insertSettings.range
-        insertSettings.dovetailSlack c chr hg hl hr
-      refine ⟨fun rep h => ?_, hb, fun h => by cases h⟩
-      cases h
-      exact ⟨pair, hrep, hprop⟩
-    · rename_i hcf
-      have hno : ∀ pair : PairAlignment genome (decodeRead R1) (decodeRead R2), ¬ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
-        apply no_proper
-        by_cases hr : insertSettings.range.1 ≤ insertSettings.range.2
-        · rw [if_pos hr] at hcf
-          exact .inr (hnone hcf)
-        · exact .inl (by omega)
-      refine ⟨fun rep h => hf rep h, fun pair hp => absurd hp (hno pair), fun _ => by simp only; omega⟩
-  · rw [if_neg hc]
-    refine ⟨hf, hb, ?_⟩
-    simp only [Bool.and_eq_true, Option.isNone_iff_eq_none, decide_eq_true_eq, not_and] at hc
-    cases hq : a.uniqueness with
-    | unique => rw [hq] at hu; exact hu
-    | multimapper => rw [hq] at hu; exact hu
-    | unknown => intro h0; have := hc h0; omega
-    | repetitiveUnknown => rw [hq] at hu; exact hu
+  cases hf : a.found with
+  | none => exact boundOnly_correct fit hnone a _ ha.2.1
+  | some rep =>
+    simp only
+    by_cases hj : insertSettings.junkScore ≤ repScore rep
+    · rw [if_pos hj]
+      left
+      obtain ⟨h1, h2, h3⟩ := ha
+      refine ⟨fun rep' h => ?_, h2, ?_⟩
+      · obtain ⟨pair, hr, hp⟩ := h1 rep' h
+        rw [hf] at h; cases h
+        exact ⟨pair, hr, hp, by rw [score_of_report hr]; exact hj⟩
+      · cases hq : a.uniqueness with
+        | unique => rw [hq] at h3; exact h3
+        | multimapper => rw [hq] at h3; exact h3
+        | unknown => intro h; rw [hf] at h; cases h
+        | repetitiveUnknown => rw [hq] at h3; rw [hf] at h3; cases h3
+    · rw [if_neg hj]
+      exact boundOnly_correct fit hnone a _ (provedBound_ok ha)
+
+/-! ## Two genomes with the same letters (names aside) have the same answers -/
+
+theorem reference_congr {g g' : Genome} (h : g.map (·.seq) = g'.map (·.seq)) (p : Placement) :
+    p.reference g = p.reference g' := by
+  have hc : (g[p.chromosome]?).map (·.seq) = (g'[p.chromosome]?).map (·.seq) := by
+    rw [← List.getElem?_map, ← List.getElem?_map, h]
+  unfold Placement.reference
+  cases h1 : g[p.chromosome]? <;> cases h2 : g'[p.chromosome]? <;> rw [h1, h2] at hc <;> simp_all
+
+def transferG {g g' : Genome} (h : g.map (·.seq) = g'.map (·.seq)) {r : Read}
+    (a : GenomicAlignment g r) : GenomicAlignment g' r :=
+  ⟨a.placement, a.reference, (reference_congr h _).symm.trans a.fits, a.path⟩
+
+def transferP {g g' : Genome} (h : g.map (·.seq) = g'.map (·.seq)) {m1 m2 : Read}
+    (p : PairAlignment g m1 m2) : PairAlignment g' m1 m2 :=
+  ⟨transferG h p.first, transferG h p.second⟩
+
+theorem correct_transfer {insertSettings : InsertSettings} {g g' : Genome} (h : g.map (·.seq) = g'.map (·.seq))
+    {m1 m2 : Read} {a : PairAnswer} (hu : a.uniqueness = .unknown)
+    (ha : a.Correct insertSettings g m1 m2) : a.Correct insertSettings g' m1 m2 := by
+  obtain ⟨h1, h2, h3⟩ := ha
+  refine ⟨fun rep hr => ?_, fun pair hp => ?_, ?_⟩
+  · obtain ⟨pair, hrep, hp, hs⟩ := h1 rep hr
+    exact ⟨transferP h pair, hrep, hp, hs⟩
+  · exact h2 (transferP h.symm pair) hp
+  · rw [hu] at h3 ⊢; exact h3
+
+theorem finalize_unknown {insertSettings : InsertSettings} {fit : Nat → Option Nat} {req : Int} {a : PairAnswer}
+    (hu : a.uniqueness = .unknown) : (finalize insertSettings fit req a).uniqueness = .unknown := by
+  unfold finalize
+  split
+  · split
+    · exact hu
+    · rfl
+  · rfl
+
+/-! ## A second look at a leftover: every proper pair within the cap, printed without a re-check
+
+`pairsAt` lists every proper pair of the mates' hits within the cap `c ≤ 16` (`pairsAt_mem`: the seed pigeonhole
+`hitsKPF_mem` and the near-partner list `hitsKPFN`, as in `pairGXE_sound`) scoring `≥ -c`. `lookAnswer`: none
+listed proves every proper pair `< -c` (bound `-(c + 1)`); else the top one is a best proper pair (bound: its
+score), printed at its placements with the CIGAR of the proved optimal aligner (`bandDoublingAlign` =
+`getBestAlignment`), which is a real alignment by construction (`cigarOk_of_hit`): nothing is re-checked. -/
+
+section look
+open MapSpec MapSpec.Fast AlignmentSpec
+
+-- the CIGAR (unit runs) of the optimal alignment of `xs` against `ys`
+def runsOf (xs ys : List Char) : List (AlignmentSpec.Step × Nat) :=
+  match bandDoublingAlign sc0 xs ys with
+  | some (path, _) => path.map fun st => (st, 1)
+  | none => []
+
+theorem expand_units : ∀ path : List AlignmentSpec.Step, expandCigar (path.map fun st => (st, 1)).toArray = path
+  | [] => rfl
+  | a :: rest => by
+    have := expand_units rest
+    simp only [expandCigar, List.map_cons, List.toList_toArray, List.flatMap_cons, List.replicate_one,
+      List.singleton_append] at this ⊢
+    rw [this]
+
+-- a hit's window, aligned optimally, is a real alignment with the hit's score
+theorem cigarOk_of_hit {g : MapSpec.Genome} {m : List Char} {T : Int} {x : MapSpec.Placement × Int}
+    (hx : x ∈ hitsBoth sc0 T g m) {ys : List Char} (hys : windowSeq g x.1.1 = some ys) :
+    CigarOk g m x (runsOf (strandRead m x.1.2) ys) := by
+  obtain ⟨⟨w, st⟩, sx⟩ := x
+  rw [mem_hitsBoth_T] at hx
+  obtain ⟨-, hsc, -⟩ := hx
+  have hws : windowScore sc0 (strandRead m st) g w = some sx := by
+    cases st <;> exact hsc
+  simp only at hys ⊢
+  unfold windowScore at hws
+  rw [hys] at hws
+  simp only at hws
+  obtain ⟨⟨path, bs⟩, hb⟩ := getBestAlignment_returns_some sc0 (strandRead m st) ys
+  rw [hb] at hws
+  simp only [Option.some.injEq] at hws
+  subst hws
+  obtain ⟨hw, hs⟩ := getBestAlignment_returns_a_valid_walk sc0 _ _ path _ hb
+  have hr : runsOf (strandRead m st) ys = path.map fun st => (st, 1) := by
+    unfold runsOf; rw [bandDoublingAlign_equals_getBestAlignment, hb]
+  refine ⟨ys, hys, ?_, ?_⟩ <;> rw [hr, expand_units] <;> assumption
+
+-- the pair printed for `w`
+def pairOfHit (runs1 runs2 : MapSpec.Placement × Int → List (AlignmentSpec.Step × Nat)) (w : PairHit) : PairReport :=
+  ⟨Report.mateReportOf w.1 (runs1 w.1), Report.mateReportOf w.2 (runs2 w.2)⟩
+
+theorem old_new (x : MapSpec.Placement) : oldPlacement (newPlacement x) = x := by
+  obtain ⟨⟨c, st, len⟩, sd⟩ := x
+  cases sd <;> simp [oldPlacement, newPlacement, oldStrand, newStrand]
+
+theorem pairOfHit_sound {genome : Genome} {m1 m2 : Read} {sl lo hi : Nat} {T1 T2 : Int}
+    {runs1 runs2 : MapSpec.Placement × Int → List (AlignmentSpec.Step × Nat)}
+    (hr1 : ∀ x ∈ hitsBoth sc0 T1 (oldGenome genome) m1, CigarOk (oldGenome genome) m1 x (runs1 x))
+    (hr2 : ∀ x ∈ hitsBoth sc0 T2 (oldGenome genome) m2, CigarOk (oldGenome genome) m2 x (runs2 x))
+    {w : PairHit} (hw : w ∈ properPairs sl lo hi (hitsBoth sc0 T1 (oldGenome genome) m1)
+      (hitsBoth sc0 T2 (oldGenome genome) m2)) :
+    ∃ pair : PairAlignment genome m1 m2, pair.report = pairOfHit runs1 runs2 w ∧
+      pair.IsProper (lo, hi) sl ∧ pair.score = pairScoreD dcost0 w := by
+  rw [mem_properPairs] at hw
+  obtain ⟨h1, h2, hp⟩ := hw
+  obtain ⟨a, ha⟩ := Report.alignment_of_cigar (hr1 _ h1)
+  obtain ⟨b, hb⟩ := Report.alignment_of_cigar (hr2 _ h2)
+  refine ⟨⟨a, b⟩, by simp only [PairAlignment.report, pairOfHit, ha, hb], ?_, ?_⟩
+  · rw [isProper_iff]
+    have pa : a.placement = newPlacement w.1.1 := by
+      have := congrArg MateReport.placement ha; exact this
+    have pb : b.placement = newPlacement w.2.1 := by
+      have := congrArg MateReport.placement hb; exact this
+    simp only [pa, pb, old_new]
+    exact hp
+  · have sa : a.score = w.1.2 := congrArg MateReport.score ha
+    have sb : b.score = w.2.2 := congrArg MateReport.score hb
+    simp only [PairAlignment.score, sa, sb, pairScoreD, dcost0]
+    omega
+
+-- the answer from the list of every proper pair scoring `≥ -c`
+def lookAnswer (c : Nat) (runs1 runs2 : MapSpec.Placement × Int → List (AlignmentSpec.Step × Nat)) (ps : List PairHit) :
+    PairAnswer :=
+  match topW dcost0 ps with
+  | none => { found := none, bestPossibleScore := -((c : Int) + 1), uniqueness := .unknown, tier := .boundsOnly }
+  | some w => { found := some (pairOfHit runs1 runs2 w), bestPossibleScore := pairScoreD dcost0 w,
+                uniqueness := .unknown, tier := .bestUnchecked }
+
+theorem hit_at {g : MapSpec.Genome} {m : List Char} {T T' : Int} {x : MapSpec.Placement × Int}
+    (hx : x ∈ hitsBoth sc0 T g m) (h : T' ≤ x.2) : x ∈ hitsBoth sc0 T' g m := by
+  obtain ⟨p, sx⟩ := x
+  rw [mem_hitsBoth_T] at hx ⊢
+  exact ⟨hx.1, hx.2.1, h⟩
+
+theorem lookAnswer_correct (insertSettings : InsertSettings) (genome : Genome) (m1 m2 : Read) (c : Nat)
+    (runs1 runs2 : MapSpec.Placement × Int → List (AlignmentSpec.Step × Nat)) (ps : List PairHit)
+    (HP : ∀ p, p ∈ ps ↔ p ∈ properPairs insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+        (hitsBoth sc0 (-(c : Int)) (oldGenome genome) m1) (hitsBoth sc0 (-(c : Int)) (oldGenome genome) m2) ∧
+      -(c : Int) ≤ pairScoreD dcost0 p)
+    (hr1 : ∀ x ∈ hitsBoth sc0 (-(c : Int)) (oldGenome genome) m1, CigarOk (oldGenome genome) m1 x (runs1 x))
+    (hr2 : ∀ x ∈ hitsBoth sc0 (-(c : Int)) (oldGenome genome) m2, CigarOk (oldGenome genome) m2 x (runs2 x)) :
+    CorrectU insertSettings genome m1 m2 (lookAnswer c runs1 runs2 ps) := by
+  -- a proper pair of hits at any thresholds scoring `≥ -c` is listed
+  have listed : ∀ T1 T2 : Int, ∀ w ∈ properPairs insertSettings.dovetailSlack insertSettings.range.1
+      insertSettings.range.2 (hitsBoth sc0 T1 (oldGenome genome) m1) (hitsBoth sc0 T2 (oldGenome genome) m2),
+      -(c : Int) ≤ pairScoreD dcost0 w → w ∈ ps := by
+    intro T1 T2 w hw hs
+    rw [mem_properPairs] at hw
+    obtain ⟨h1, h2, hp⟩ := hw
+    have n1 := hitsBoth_nonpos _ _ _ _ h1
+    have n2 := hitsBoth_nonpos _ _ _ _ h2
+    simp only [pairScoreD, dcost0] at hs
+    exact (HP w).2 ⟨mem_properPairs.2 ⟨hit_at h1 (by omega), hit_at h2 (by omega), hp⟩, by
+      simp only [pairScoreD, dcost0]; omega⟩
+  unfold lookAnswer
+  cases ht : topW dcost0 ps with
+  | none =>
+    have hps : ps = [] := (topW_none_iff dcost0 ps).1 ht
+    let t : TierOut := { tag := .t3, pf := some c }
+    have hok : TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+        (oldGenome genome) m1 m2 (some ByteArray.empty) (some ByteArray.empty) t := by
+      show FloorOk _ _ _ _ _ _ _
+      refine ⟨mateFloor_zero _ _, mateFloor_zero _ _, fun G0 hG0 P1 P2 _ _ w hw => ?_⟩
+      cases hG0
+      rcases Int.lt_or_le (pairScoreD dcost0 w) (-((c : Nat) : Int)) with h | h
+      · exact h
+      · have := listed _ _ w hw h; rw [hps] at this; cases this
+    have A := answerOf_correct insertSettings genome m1 m2 _ _ t hok
+    refine ⟨fun _ h => by simp at h, fun pair hp => ?_, trivial⟩
+    have := A.2.1 pair hp
+    simp only [answerOf, boundOf, t] at this
+    show pair.score ≤ -((c : Int) + 1)
+    omega
+  | some w =>
+    have hw := topW_mem dcost0 ps w ht
+    have hmax := topW_max dcost0 ps w ht
+    obtain ⟨hwp, hws⟩ := (HP w).1 hw
+    have hwp' := hwp
+    rw [mem_properPairs] at hwp'
+    obtain ⟨h1, h2, hp⟩ := hwp'
+    let t : TierOut := { tag := .t2b, m1 := { pl := some w.1 }, m2 := { pl := some w.2 } }
+    have hok : TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+        (oldGenome genome) m1 m2 (some ByteArray.empty) (some ByteArray.empty) t := by
+      refine ⟨w.1, w.2, rfl, rfl, mem_properPairs.2 ⟨hit_at h1 (Int.le_refl _), hit_at h2 (Int.le_refl _), hp⟩,
+        fun T1 T2 w' hw' => ?_⟩
+      rcases Int.lt_or_le (pairScoreD dcost0 w') (-(c : Int)) with h | h
+      · exact Int.le_of_lt (Int.lt_of_lt_of_le h hws)
+      · exact hmax w' (listed T1 T2 w' hw' h)
+    have A := answerOf_correct insertSettings genome m1 m2 _ _ t hok
+    refine ⟨fun rep h => ?_, fun pair hpp => ?_, trivial⟩
+    · cases h
+      obtain ⟨pair, hr, hpr, -⟩ := pairOfHit_sound hr1 hr2 hwp
+      exact ⟨pair, hr, hpr⟩
+    · have := A.2.1 pair hpp
+      simp only [answerOf, boundOf, t] at this
+      simp only [pairScoreD, dcost0]
+      omega
+
+-- what keeps `finalize` from a leftover: a pair `≥ junkScore` in hand, or a proved bound `< requiredMapBound`
+theorem finalize_not_leftover {insertSettings : InsertSettings} {fit : Nat → Option Nat} {req : Int} {a : PairAnswer}
+    (h : (∃ rep, a.found = some rep ∧ insertSettings.junkScore ≤ repScore rep) ∨
+      provedBound a < req) :
+    ¬ Leftover req (finalize insertSettings fit req a) := by
+  have hbo : ∀ b, b < req → ¬ Leftover req (boundOnly insertSettings fit req b a) := by
+    intro b hb hl
+    have := hl.2
+    simp only [boundOnly, if_pos hb] at this
+    omega
+  unfold finalize
+  cases hf : a.found with
+  | none =>
+    simp only
+    have hp : provedBound a = a.bestPossibleScore := by unfold provedBound; rw [hf]
+    rcases h with ⟨rep, hr, -⟩ | h
+    · rw [hf] at hr; cases hr
+    · exact hbo _ (hp ▸ h)
+  | some rep =>
+    simp only
+    by_cases hj : insertSettings.junkScore ≤ repScore rep
+    · rw [if_pos hj]; intro hl; rw [hl.1] at hf; cases hf
+    · rw [if_neg hj]
+      rcases h with ⟨rep', hr, hj'⟩ | h
+      · rw [hf] at hr; cases hr; exact absurd hj' hj
+      · exact hbo _ h
+
+-- the second look leaves no leftover when its cap reaches `requiredMapBound` and `junkScore ≤ requiredMapBound`
+theorem look_not_leftover {insertSettings : InsertSettings} {fit : Nat → Option Nat} {req : Int} {c : Nat}
+    {runs1 runs2 : MapSpec.Placement × Int → List (AlignmentSpec.Step × Nat)} {ps : List PairHit}
+    (hc : -((c : Int) + 1) < req)
+    (hj : insertSettings.junkScore ≤ req) :
+    ¬ Leftover req (finalize insertSettings fit req (lookAnswer c runs1 runs2 ps)) := by
+  apply finalize_not_leftover
+  unfold lookAnswer
+  cases topW dcost0 ps with
+  | none => exact .inr (by simp only [provedBound]; exact hc)
+  | some w =>
+    simp only
+    have hs : repScore (pairOfHit runs1 runs2 w) = pairScoreD dcost0 w := by
+      simp only [repScore, pairOfHit, Report.mateReportOf, pairScoreD, dcost0]; omega
+    by_cases h : insertSettings.junkScore ≤ pairScoreD dcost0 w
+    · exact .inl ⟨_, rfl, hs ▸ h⟩
+    · exact .inr (by simp only [provedBound]; omega)
+
+/-! ### On the index: the hits from the seeds, the windows from the packed chromosomes -/
+
+-- the read's letters on a strand, and a window's letters (as `chkCand` reads them)
+def readChars (R : ByteArray) (st : MapSpec.Strand) : List Char :=
+  let X := if st = .fwd then R else revCompK R
+  ((List.range X.size).toArray.map fun i => Char.ofNat (X.get! i).toNat).toList
+
+def winChars (pgs : Array PGen) (w : Window) : List Char :=
+  ((List.range w.len).toArray.map fun i => Char.ofNat (pgs[w.chr]!.get (w.start + i)).toNat).toList
+
+def runsIx (pgs : Array PGen) (R : ByteArray) (x : MapSpec.Placement × Int) : List (AlignmentSpec.Step × Nat) :=
+  runsOf (readChars R x.1.2) (winChars pgs x.1.1)
+
+theorem runsIx_ok {pgs : Array PGen} {g : MapSpec.Genome} (hg : GenomeBytes (pgs.map Mz.unpack) g)
+    {R : ByteArray} {m : List Char} (hr : Encodes R m) {T : Int} {x : MapSpec.Placement × Int}
+    (hx : x ∈ hitsBoth sc0 T g m) : CigarOk g m x (runsIx pgs R x) := by
+  have hrc : readChars R x.1.2 = strandRead m x.1.2 := by
+    unfold readChars
+    cases hs : x.1.2
+    · exact chars_of_encodes R m hr
+    · exact chars_of_encodes _ _ (revCompK_encodes R m hr)
+  have hwin : windowSeq g x.1.1 = some (winChars pgs x.1.1) := by
+    obtain ⟨⟨w, st⟩, sx⟩ := x
+    have hx' := hx
+    rw [mem_hitsBoth_T] at hx'
+    have hws : windowScore sc0 (strandRead m st) g w = some sx := by cases st <;> exact hx'.2.1
+    obtain ⟨hc, hl⟩ := windowScore_fits g _ hg _ w sx hws
+    simp only [Array.size_map] at hc
+    have e : (pgs.map Mz.unpack)[w.chr]! = Mz.unpack pgs[w.chr]! := by
+      rw [getElem!_pos (pgs.map Mz.unpack) w.chr (by simpa using hc), getElem!_pos pgs w.chr hc]; simp
+    have hl' : w.start + w.len ≤ pgs[w.chr]!.n := by rw [e, unpack_size] at hl; exact hl
+    exact chars_of_genome pgs g hg w.chr w.start w.len hc hl'
+  unfold runsIx
+  rw [hrc]
+  exact cigarOk_of_hit hx hwin
+
+-- every proper pair of the mates' hits within `c` scoring `≥ -c` (as `pairGXE` lists them)
+def pairsAt (sl lo hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
+    List PairHit :=
+  let lX := hitsKPF pk ByteArray.empty offs pgs R1 c
+  (properPairsF sl lo hi lX (hitsKPFN sl hi pk ByteArray.empty offs pgs R2 c lX)).filter
+    fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
+
+theorem pairsAt_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 m2 : List Char} {ix : Mz.MzIdx}
+    {G : PGen} {offs ns : Array Nat} (hcut : cutOk G offs ns = true)
+    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (hchk : Mz.check2P ix G = true)
+    {R1 R2 : ByteArray} (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (p : PairHit) :
+    p ∈ pairsAt sl lo hi c ((ix, G) : PkMz) offs (cutAll G offs ns) R1 R2 ↔
+      p ∈ properPairs sl lo hi (hitsBoth sc0 (-(c : Int)) g m1) (hitsBoth sc0 (-(c : Int)) g m2) ∧
+        -(c : Int) ≤ pairScoreD dcost0 p := by
+  have K1 := hitsKPF_mem g ix G offs ns hcut hg hchk R1 m1 h1 c hc
+  have K2 := hitsKPF_mem g ix G offs ns hcut hg hchk R2 m2 h2 c hc
+  unfold pairsAt
+  rw [List.mem_filter, properPairsF_eq, pp_near_right (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
+    decide_eq_true_eq, mem_properPairs, mem_properPairs, K1, K2]
+
+/-! ### The length-scaled cap (for Rowan's coming `requiredMapBound`)
+
+`errorsChecked n = min 4 (n / 25 - 1)`; cap `c = 4 * errorsChecked (shorter mate)`. Every mate of at least 25
+letters has the seeds for it (`fastT_capOfLens`: `n / 25` seeds, more than the `c / 4` events within `c`), so the
+second look runs and `pairsAt_mem` (any `c ≤ 16`) decides "no proper pair `≥ -c`". -/
+
+def errorsChecked (n : Nat) : Nat := min 4 (n / 25 - 1)
+
+def capOfLens (n1 n2 : Nat) : Nat := 4 * errorsChecked (min n1 n2)
+
+theorem capOfLens_le (n1 n2 : Nat) : capOfLens n1 n2 ≤ 16 := by
+  unfold capOfLens errorsChecked; omega
+
+theorem fastT_capOfLens (R1 R2 : ByteArray) (h1 : 25 ≤ R1.size) (h2 : 25 ≤ R2.size) :
+    fastT (capOfLens R1.size R2.size) R1 = true ∧ fastT (capOfLens R1.size R2.size) R2 = true := by
+  unfold fastT capOfLens errorsChecked
+  simp only [sbound_eq, Bool.and_eq_true, decide_eq_true_eq]
+  have a1 : 1 ≤ R1.size / 25 := (Nat.le_div_iff_mul_le (by decide)).2 (by omega)
+  have a2 : 1 ≤ R2.size / 25 := (Nat.le_div_iff_mul_le (by decide)).2 (by omega)
+  have m1 : min R1.size R2.size / 25 ≤ R1.size / 25 := Nat.div_le_div_right (Nat.min_le_left _ _)
+  have m2 : min R1.size R2.size / 25 ≤ R2.size / 25 := Nat.div_le_div_right (Nat.min_le_right _ _)
+  have e : 4 * min 4 (min R1.size R2.size / 25 - 1) / 4 = min 4 (min R1.size R2.size / 25 - 1) := by omega
+  rw [e]
+  omega
+
+/-! ### Without an index: the hits of the whole genome, window by window (total; slow) -/
+
+-- `windowScore` with the proved banded aligner (`bandDoublingAlign` = `getBestAlignment`)
+def windowScoreF (read : List Char) (g : MapSpec.Genome) (w : Window) : Option Int :=
+  match windowSeq g w with
+  | some ys => (bandDoublingAlign sc0 read ys).map (·.2)
+  | none => none
+
+theorem windowScoreF_eq (read : List Char) (g : MapSpec.Genome) : windowScoreF read g = windowScore sc0 read g := by
+  funext w
+  unfold windowScoreF windowScore
+  cases windowSeq g w with
+  | none => rfl
+  | some ys =>
+    simp only
+    rw [bandDoublingAlign_equals_getBestAlignment]
+    cases getBestAlignment sc0 read ys <;> rfl
+
+-- `hitsBoth`, computed with `windowScoreF`
+def hitsF (T : Int) (g : MapSpec.Genome) (read : List Char) : List (MapSpec.Placement × Int) :=
+  (hitsOf (windowScoreF read g) T (allWindows g)).map (fun h => ((h.1, MapSpec.Strand.fwd), h.2)) ++
+  (hitsOf (windowScoreF (revComp read) g) T (allWindows g)).map (fun h => ((h.1, MapSpec.Strand.rev), h.2))
+
+theorem hitsF_eq (T : Int) (g : MapSpec.Genome) (read : List Char) : hitsF T g read = hitsBoth sc0 T g read := by
+  unfold hitsF hitsBoth; rw [windowScoreF_eq, windowScoreF_eq]
+
+def pairsSpec (sl lo hi c : Nat) (g : MapSpec.Genome) (m1 m2 : List Char) : List PairHit :=
+  (properPairs sl lo hi (hitsF (-(c : Int)) g m1) (hitsF (-(c : Int)) g m2)).filter
+    fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
+
+theorem pairsSpec_mem (sl lo hi c : Nat) (g : MapSpec.Genome) (m1 m2 : List Char) (p : PairHit) :
+    p ∈ pairsSpec sl lo hi c g m1 m2 ↔
+      p ∈ properPairs sl lo hi (hitsBoth sc0 (-(c : Int)) g m1) (hitsBoth sc0 (-(c : Int)) g m2) ∧
+        -(c : Int) ≤ pairScoreD dcost0 p := by
+  unfold pairsSpec; rw [List.mem_filter, hitsF_eq, hitsF_eq, decide_eq_true_eq]
+
+def runsSp (g : MapSpec.Genome) (m : List Char) (x : MapSpec.Placement × Int) : List (AlignmentSpec.Step × Nat) :=
+  runsOf (strandRead m x.1.2) ((windowSeq g x.1.1).getD [])
+
+theorem runsSp_ok {g : MapSpec.Genome} {m : List Char} {T : Int} {x : MapSpec.Placement × Int}
+    (hx : x ∈ hitsBoth sc0 T g m) : CigarOk g m x (runsSp g m x) := by
+  have hws : ∃ ys, windowSeq g x.1.1 = some ys := by
+    obtain ⟨⟨w, st⟩, sx⟩ := x
+    have hx' := hx
+    rw [mem_hitsBoth_T] at hx'
+    have h : windowScore sc0 (strandRead m st) g w = some sx := by cases st <;> exact hx'.2.1
+    unfold windowScore at h
+    cases hw : windowSeq g w with
+    | none => rw [hw] at h; cases h
+    | some ys => exact ⟨ys, rfl⟩
+  obtain ⟨ys, hys⟩ := hws
+  unfold runsSp
+  rw [hys]
+  exact cigarOk_of_hit hx hys
+
+end look
 
 /-! ## Chromosome lengths, from the index or from the lengths record -/
 

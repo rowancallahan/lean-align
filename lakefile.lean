@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
 
 @[default_target]
 lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.Index, `Proofs.Pack, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
+  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
 
 @[default_target]
 lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
@@ -278,6 +278,22 @@ lean_exe tie_prof where                   -- benchmark only: shim CPU by router 
   srcDir := "Testing/benches"
   root := `TieProf
 
+lean_exe floor_prof where                 -- benchmark only: pairs the report floor breaks and what fixes them (unproved IO)
+  srcDir := "Testing/benches"
+  root := `FloorProf
+
+lean_exe floor_pipe where                 -- benchmark only: the cheap report-floor pipeline and repeat witnesses (unproved IO)
+  srcDir := "Testing/benches"
+  root := `FloorPipe
+
+lean_exe pipe_prof where                  -- benchmark only: per-stage time of the report-floor pipeline (unproved IO)
+  srcDir := "Testing/benches"
+  root := `PipeProf
+
 lean_exe adapter_bench where              -- benchmark only: CPU and cut counts of AdapterTrim.cutTruSeq on a FASTQ (unproved IO)
   srcDir := "Testing/benches"
   root := `AdapterBench
+
+lean_exe gaveup_k where               -- benchmark only: repeat grid seeds per mate of named pairs (unproved IO)
+  srcDir := "Testing/benches"
+  root := `GaveUpK

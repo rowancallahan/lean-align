@@ -564,19 +564,25 @@ def tryAt (pk : PkMz) (pgs : Array PGen) (offs ns : Array Nat) (hi : Nat) (R : B
   (mateOf pgs offs ns R { m with pl := some x, cg := m.cg && m.pl == some x },
    (nearOf pk pgs hi R' s' x.1).bind fun (h, runs) => checkMove pgs offs ns R' h runs)
 
--- the fallback: mate 1 at its router placement or its anchors, then mate 2 likewise; the first proper pair
-def fallbackOf (k : Nat) (pk : PkMz) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
-    (t : TierOut) : Option PairReport :=
+-- the fallback (a walk): mate 1 at its router placement or its anchors, then mate 2 likewise; the first proper
+-- pair that `keep` accepts (e.g. one at or above the report floor: the walk goes on past worse pairs)
+def fallbackOfK (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (slack lo hi : Nat) (pgs : Array PGen)
+    (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) : Option PairReport :=
   let s1 : PrepM MzP := prepMate pk R1
   let s2 : PrepM MzP := prepMate pk R2
   let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
-  match c1.findSome? fun x => pairOf slack lo hi (tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).1
-      (tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).2 with
+  match c1.findSome? fun x => (pairOf slack lo hi (tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).1
+      (tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).2).filter keep with
   | some p => some p
   | none =>
     let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
-    c2.findSome? fun x => pairOf slack lo hi (tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).2
-      (tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).1
+    c2.findSome? fun x => (pairOf slack lo hi (tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).2
+      (tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).1).filter keep
+
+-- the first proper pair (no filter)
+def fallbackOf (k : Nat) (pk : PkMz) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
+    (t : TierOut) : Option PairReport :=
+  fallbackOfK (fun _ => true) k pk slack lo hi pgs offs ns R1 R2 t
 
 /-! ## The reporter is sound -/
 
@@ -748,6 +754,31 @@ theorem tryAt_sound
       obtain ⟨a, ha, -⟩ := checkMove_sound hslice hchr R' q.1 q.2 r h
       exact ⟨a, ha⟩
 
+theorem fallbackOfK_sound
+    (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
+      offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
+      chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
+    (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
+    (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (insertSettings : InsertSettings) (R1 R2 : ByteArray)
+    (t : TierOut) (p : PairReport)
+    (h : fallbackOfK keep k pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
+      (cutAll G #[0] #[G.n]) offs ns R1 R2 t = some p) :
+    keep p = true ∧ ∃ pair : PairAlignment genome (decodeRead R1) (decodeRead R2),
+      pair.report = p ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
+  unfold fallbackOfK at h
+  simp only at h
+  split at h
+  · rename_i q hq
+    cases h
+    obtain ⟨x, -, hx⟩ := List.exists_of_findSome?_eq_some hq
+    rw [Option.filter_eq_some_iff] at hx
+    have T := tryAt_sound hslice hchr pk insertSettings.range.2 R1 t.m1 R2 (prepMate pk R2) x
+    exact ⟨hx.2, pairOf_sound insertSettings T.1 T.2 hx.1⟩
+  · obtain ⟨x, -, hx⟩ := List.exists_of_findSome?_eq_some h
+    rw [Option.filter_eq_some_iff] at hx
+    have T := tryAt_sound hslice hchr pk insertSettings.range.2 R2 t.m2 R1 (prepMate pk R1) x
+    exact ⟨hx.2, pairOf_sound insertSettings T.2 T.1 hx.1⟩
+
 theorem fallbackOf_sound
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
       offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
@@ -758,17 +789,7 @@ theorem fallbackOf_sound
       (cutAll G #[0] #[G.n]) offs ns R1 R2 t = some p) :
     ∃ pair : PairAlignment genome (decodeRead R1) (decodeRead R2),
       pair.report = p ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
-  unfold fallbackOf at h
-  simp only at h
-  split at h
-  · rename_i q hq
-    cases h
-    obtain ⟨x, -, hx⟩ := List.exists_of_findSome?_eq_some hq
-    have T := tryAt_sound hslice hchr pk insertSettings.range.2 R1 t.m1 R2 (prepMate pk R2) x
-    exact pairOf_sound insertSettings T.1 T.2 hx
-  · obtain ⟨x, -, hx⟩ := List.exists_of_findSome?_eq_some h
-    have T := tryAt_sound hslice hchr pk insertSettings.range.2 R2 t.m2 R1 (prepMate pk R1) x
-    exact pairOf_sound insertSettings T.2 T.1 hx
+  exact (fallbackOfK_sound hslice hchr (fun _ => true) k pk insertSettings R1 R2 t p h).2
 
 end sound
 
@@ -961,13 +982,15 @@ def uniqOf (t : TierOut) (f : Option PairReport) : Uniqueness :=
 -- the router's answer with the pair in hand printed when it re-checks
 -- (stage 5) with no proper pair from the router, the fallback runs when the bound is at least `fb`
 -- `rescue`: also when the bound is junk but a mate has a placement in hand (mate rescue)
-def answerOfPair (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+-- `keep`, `k`: the walk keeps the first pair `keep` accepts, from up to `k` anchors per strand (`fallbackOfK`)
+def answerOfPair (ties : Bool) (fb : Option Int) (rescue : Bool) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
+    (insertSettings : InsertSettings)
     (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) : PairAnswer :=
   let f := foundOf ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
   let g := match f, fb with
     | none, some T =>
       if T ≤ Bridge.boundOf t || (rescue && (t.m1.pl.isSome || t.m2.pl.isSome)) then
-        fallbackOf 16 pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+        fallbackOfK keep k pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
       else none
     | _, _ => f
   { Bridge.answerOf t with found := g, uniqueness := uniqOf t f }
@@ -978,12 +1001,13 @@ theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
       chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
     (hlen : genome.length = ns.size)
-    (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut)
+    (ties : Bool) (fb : Option Int) (rescue : Bool) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
+    (insertSettings : InsertSettings) (R1 R2 : ByteArray) (t : TierOut)
     (hok : TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
       (oldGenome (Whole.wholeOf G)) (decodeRead R1) (decodeRead R2) (some R1) (some R2) t)
     (ha : CorrectU insertSettings genome (decodeRead R1) (decodeRead R2) (Bridge.answerOf t)) :
     CorrectU insertSettings genome (decodeRead R1) (decodeRead R2)
-      (answerOfPair ties fb rescue pk insertSettings (cutAll G #[0] #[G.n]) offs ns R1 R2 t) := by
+      (answerOfPair ties fb rescue keep k pk insertSettings (cutAll G #[0] #[G.n]) offs ns R1 R2 t) := by
   unfold answerOfPair
   generalize hf : foundOf ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
     (cutAll G #[0] #[G.n]) offs ns R1 R2 t = f
@@ -1001,7 +1025,7 @@ theorem answerOfPair_correct {genome : Genome} {G : PGen} {offs ns : Array Nat}
       | some T =>
         simp only at h
         split at h
-        · exact fallbackOf_sound hslice hchr 16 pk insertSettings R1 R2 t rep h
+        · exact (fallbackOfK_sound hslice hchr keep k pk insertSettings R1 R2 t rep h).2
         · cases h
   · cases f with
     | none => simp [uniqOf]
@@ -1076,22 +1100,24 @@ def foundOfK (ties : Bool) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Arr
     | _, _ => none
   else none
 
-def answerOfPairP (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+def answerOfPairP (ties : Bool) (fb : Option Int) (rescue : Bool) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
+    (insertSettings : InsertSettings)
     (pgs : Array PGen) (offs ns : Array Nat) (ok : Bool) (R1 R2 : ByteArray) (s1 s2 : PrepM MzP) (t : TierOut) : PairAnswer :=
   let f := foundOfK ties insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns ok R1 R2
     s1 s2 t
   let g := match f, fb with
     | none, some T =>
       if T ≤ Bridge.boundOf t || (rescue && (t.m1.pl.isSome || t.m2.pl.isSome)) then
-        fallbackOf 16 pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+        fallbackOfK keep k pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
       else none
     | _, _ => f
   { Bridge.answerOf t with found := g, uniqueness := uniqOf t f }
 
-theorem answerOfPairP_eq (ties : Bool) (fb : Option Int) (rescue : Bool) (pk : PkMz) (insertSettings : InsertSettings)
+theorem answerOfPairP_eq (ties : Bool) (fb : Option Int) (rescue : Bool) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
+    (insertSettings : InsertSettings)
     (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) :
-    answerOfPairP ties fb rescue pk insertSettings pgs offs ns (monoOk offs ns) R1 R2 (prepMz pk R1) (prepMz pk R2) t =
-      answerOfPair ties fb rescue pk insertSettings pgs offs ns R1 R2 t := by
+    answerOfPairP ties fb rescue keep k pk insertSettings pgs offs ns (monoOk offs ns) R1 R2 (prepMz pk R1) (prepMz pk R2) t =
+      answerOfPair ties fb rescue keep k pk insertSettings pgs offs ns R1 R2 t := by
   have h1 : ∀ R, (prepMz pk R).Rr = revCompK R ∧ (prepMz pk R).K1 = packRP R ∧ (prepMz pk R).K2 = packRP (revCompK R) :=
     fun R => by rw [prepMz_eq]; exact ⟨rfl, rfl, rfl⟩
   unfold answerOfPairP answerOfPair foundOfK foundOf

@@ -1,4 +1,4 @@
--- Proofs/Answer.lean: Spec/Aligner.lean up to the two holes, unchanged (split out so Proofs/Bridge.lean can use it).
+-- Proofs/Answer.lean: Spec/Aligner.lean up to the two holes, unchanged (split out so Proofs/Bridge.lean can use it). CI checks it with Testing/scripts/CI_check.sh.
 import Proofs.Mapping
 
 /-! # 3. The aligner: what each answer proves. Statements only.
@@ -11,7 +11,17 @@ namespace Spec
 structure InsertSettings where
   range         : Nat × Nat  -- allowed fragment length: min and max, both included
   dovetailSlack : Nat := 0
-  junkScore : Int := -16
+  junkScore : Int := -100
+--This makes it so that 26-49 bp reads have to map perfectly and
+--The number of mismatches goes up every 25bp we can change this later if we 
+--End up getting more seeds etc it taks the minimum length in seeds, subtracts -1
+--Then it tops out at -16 where it is min 4 etc we can change these all later
+def requiredMapBound : Read -> Read -> Int := fun mate1 mate2 => 
+ -4 * ((min 4 ((min mate1.length mate2.length)/25-1) : Nat) : Int)
+
+def seedLength : Nat := 25
+def gaveUpRepeats : Nat := 200
+def gaveUpSeeds : Nat := 2
 
 inductive Mate where
   | one
@@ -63,14 +73,27 @@ def PairAlignment.IsUniqueBestProper {genome : Genome} {mate1 mate2 : Read}
     other.IsProper insertSettings.range insertSettings.dovetailSlack →
     other.placements ≠ pair.placements → other.score < pair.score
 
+def Genome.occurrences (genome : Genome) (word : Read) : Nat :=
+  let countIn (reference query : List Char) : Nat :=
+    List.countP (query.isPrefixOf ∘ reference.drop) (List.range reference.length)
+  let forward  := genome.map fun chr => countIn chr.seq word
+  let backward := genome.map fun chr => countIn chr.seq (reverseComplement word)
+  forward.sum + backward.sum
+
+def Read.highlyRepetitiveIn (genome : Genome) (mate : Read) : Prop :=
+  let seedPositions := List.range (mate.length / seedLength)
+  let seed (i : Nat) : Read := mate.extract (i * seedLength) ((i + 1) * seedLength)
+  let isRepeat (i : Nat) : Bool := genome.occurrences (seed i) ≥ gaveUpRepeats
+  List.countP isRepeat seedPositions ≥ gaveUpSeeds
+
 /-! ## The answer -/
 
 -- what is known about whether the best proper pair is unique
 inductive Uniqueness where
   | unique       -- the reported pair is the unique best proper pair
   | multimapper  -- proved: the reported pair is a best proper pair, and another one ties with it
-  | unknown      -- not checked
-  | repetitiveUnknown -- never produced by this implementation yet (proved on speed/floor-real-spec)
+  | unknown      -- not checked but we get bounds and its mapped unless low qual
+  | repetitiveUnknown --not checked or able to return bc too many matches in repetitive region
 deriving DecidableEq, Repr
 
 -- which router path answered: a performance record only, no claim
@@ -102,7 +125,10 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
   -- the pair found is a real proper pair, printed exactly
   (∀ report, answer.found = some report →
     ∃ pair : PairAlignment genome mate1 mate2,
-      pair.report = report ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack) ∧
+      pair.report = report ∧
+      (pair.IsProper insertSettings.range insertSettings.dovetailSlack) ∧
+      pair.score >= insertSettings.junkScore
+      ) ∧
   -- the bound holds for every proper pair
   (∀ pair : PairAlignment genome mate1 mate2,
     pair.IsProper insertSettings.range insertSettings.dovetailSlack → pair.score ≤ answer.bestPossibleScore) ∧
@@ -110,15 +136,25 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
   (match answer.uniqueness with
    | .unique =>
        ∃ report, answer.found = some report ∧
-       ∃ pair : PairAlignment genome mate1 mate2, pair.report = report ∧ pair.IsUniqueBestProper insertSettings
+       ∃ pair : PairAlignment genome mate1 mate2, pair.report = report ∧
+       pair.IsUniqueBestProper insertSettings
    | .multimapper =>
        ∃ report, answer.found = some report ∧
        ∃ pair other : PairAlignment genome mate1 mate2, pair.report = report ∧
-         pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
+         pair.IsBestProper insertSettings ∧
+         other.IsBestProper insertSettings ∧
+         pair.placements ≠ other.placements
+
    | .unknown => 
-       answer.found = none → answer.bestPossibleScore < insertSettings.junkScore
-   | .repetitiveUnknown => False  -- not produced here; the real clause lands with speed/floor-real-spec
-   )
+       --if it doesn't give anything it must show it has no good mappings at all
+       answer.found = none → answer.bestPossibleScore < requiredMapBound mate1 mate2
+   | .repetitiveUnknown =>
+       --unless it can show that it can't prove bounds because the whole thing is super repetitive
+       --this cannot be used to return a found answer so you cannot sneak good pairs into here
+       --Even if they are in a repetitive region
+       --One of the most important parts of the whole spec and very important to think about
+       answer.found = none ∧  ( ( mate1.highlyRepetitiveIn genome ) ∨ ( mate2.highlyRepetitiveIn genome ) )
+     )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)
 def PairResult.Correct (insertSettings : InsertSettings) (genome : Genome) (trimmed1 trimmed2 : Option Read) :

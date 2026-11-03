@@ -149,7 +149,7 @@ for i in range(min(len(R[1]), len(recs) // 2)):
             elif d['tagorder'] != ['XB', 'XU', 'XT']: bad('unmapped record tags != XB XU XT (or XT trimmedAway)', qn, str(d['tagorder']))
             elif d['flag'] not in (77, 141): bad('unmapped record flag != 77/141', qn, str(d['flag']))
         if 'XB' in t and not (re.fullmatch(r'-?\d+', t['XB']) and int(t['XB']) <= 0): bad('XB not a non-positive integer', qn, t['XB'])
-        if 'XU' in t and t['XU'] not in ('unique', 'multimapper', 'unknown'): bad('XU value', qn, t['XU'])
+        if 'XU' in t and t['XU'] not in ('unique', 'multimapper', 'unknown', 'repetitiveUnknown'): bad('XU value', qn, t['XU'])
         if d['mapped'] and d['mapq'] != (60 if t.get('XU') == 'unique' else 0): bad('MAPQ != 60 iff XU unique', qn, f"{d['mapq']} {t.get('XU')}")
         if not d['mapped'] and 'XU' in t and t['XU'] == 'unique': bad('XU unique on an unmapped record', qn)
     if a['mapped'] and b['mapped'] and (a['tags'].get('XU'), a['tags'].get('XB'), a['tags'].get('XT')) != (b['tags'].get('XU'), b['tags'].get('XB'), b['tags'].get('XT')):
