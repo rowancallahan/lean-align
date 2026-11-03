@@ -71,3 +71,27 @@ What is left in the second look (NovaSeq 2k pairs, 1310.7M total; afterLeftover 
   needs an index-side count per bucket or key, or reuse of the router's own lookups of the same seeds. The
   router uses base `size − j·Ls` and keeps nothing after `tierPair`, so reuse means threading the arrays
   through `answerOfPairP`. Not attempted.
+
+## 7. Round 3: reusing the router's lookups for `repeatMate` (branch `speed/lookat-fast3`, off 239b15b)
+| commit | change | NovaSeq | HiSeq |
+|---|---|---|---|
+| 239b15b | base | 1310.7M | 1603.6M |
+| (this branch) | `seedRepF`: a bucket with fewer than `gaveUpRepeats` slots decides `false` without a scan; a lookup returns at most one place per slot (`scanAW_size`, `lookupPW_size`) | 1305.9M (−0.4%) | 1599.6M (−0.2%) |
+SAM identical on the four full sets and both 2k subsets; `CI_check.sh` passes; native CPU within noise.
+
+Findings (NovaSeq 2k pairs):
+- The bucket bound skips 522 of the 581 grid-seed lookups, but those cost ~6M in all. The remaining 59 lookups
+  cost 53.5M, ~900k Ir each. 43 of them reach 500 genome-checked places, which decides `true`. The other 16 are
+  full scans under 500 places. The in-chromosome count of the first 500 places costs 12.6M: `chromGo`, ~480 Ir
+  per place, already computed once per place.
+- The router's lookups (`mzLookSP`, 11,858 calls, 53M) average 4.5k Ir: it looks up only the
+  `sbound + 1` smallest buckets per strand, so it never touches the repeat seeds the witness needs.
+  Threading its results to `afterLeftover` would save nothing measurable.
+- Seeds: the router's prep `s.ps[j]` is `mzPrep (seedHashAt R (j·Ls))` with `m = size/25`, `Ls = size/m`.
+  It equals the grid seed `25·j` exactly when `Ls = 25`, i.e. when `size % 25 < size / 25`. All 150 and 250 bp
+  reads qualify; trimmed lengths such as 148 (5 seeds at stride 29) do not. Using `s.ps` in place of the grid
+  prep saves only the prep (~1k Ir per seed), so it was not threaded.
+- What would make the witness nearly free: a per-(bucket, key) count stored in the index. It needs build,
+  save/load and a proof that it bounds the matches. Its upper bound decides the 16 `false` seeds without a scan,
+  but `true` still needs 500 genome-checked places for `count_le_occurrences`. The other option is a cheaper
+  witness in Spec (e.g. bucket size alone); that is Rowan's decision.
