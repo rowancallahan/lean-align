@@ -1445,3 +1445,8 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - chr21 share of mapped non-degenerate pairs below the floor: mason <-16 28.5%, <-32 1.94%, <-50 0.98%, <-100 0.77%; low <-50 0.61%. NovaSeq/HiSeq numbers requested from S-B.
 - **Open: "gave up" reads.** When the search stops early (`stoppedEarly`, fallback, mate rescue, ties), the best pair found can be below -50 while the bound is NOT proved below -16. Under the floor they can't be reported and `none` is not provable either, so they have no valid answer. Need something for them: more search, or a "gave up" answer in the Spec (unmapped, no bound claim). Count them when the proofs are updated to the floor.
 - Still open after the floor: the gap clause `bestPossibleScore <= pair score + slack` (audit MED 3).
+
+### Report floor status (2026-11-02 night) — DON'T FORGET: the "gave up" decision (Rowan)
+- Rowan's Spec: junkScore (floor) -100; requiredMapBound scaled by the shorter mate (cap 4 errors, 25-letter seeds: 0 / -4 / -8 / -12 / -16 at 25 / 50 / 75 / 100 / 125+ bp). Needs junkScore <= requiredMapBound.
+- Proof branch speed/report-floor-proofs (cd00d2c): correct (S3 check: audits 0, no placeholders, no unique pair changed) but 20-60x slower: the complete search runs on repeat pairs. hNoLeftover is still needed for short mates (fixed by the scaled bound) and for pairs on real hg38 (NovaSeq 2.1%, HiSeq 1.3% of pairs end unmapped with XB >= -16).
+- To keep today's speed, Rowan must decide a "gave up" answer. Proposal: `.gaveUp` only with a repeat witness: a 25-letter piece of a mate occurs >= N times in the genome (N ~ 1000), so a non-repetitive pair is always decided at bounded cost. S-B is measuring witness coverage at N = 200/500/1000/5000.

@@ -177,6 +177,114 @@ def kerG3G (R : ByteArray) (G : Gt) (st len lim : Nat) : Nat :=
   let E3 := bwdLG R G K P st len skip 3
   if E1 - skip ≤ F3 || E2 - skip ≤ F2 || E3 - skip ≤ F1 then 14 + 2 * L else lim + 1
 
+/-! `gappedLG` with its prescans' guards checked once (compiled code only): `gappedLG_eq_gappedLGF` (`@[csimp]`).
+`fwdMis` / `bwdMis` each re-check `GRead.ok` and their bounds (`fwdMisF`, `bwdMisF`) at every call, up to six per
+`gappedLG`; under one check of `GRead.ok G`, `R.size ≤ st + len` and `st + len + R.size < 2^32 − 1`, the prescans
+call the machine-word loops directly. -/
+
+/-- `fwdLG` with its prescan on `fwdMisU` (`fwdLGW_eq`). -/
+@[inline] def fwdLGW (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st stop k : Nat) : Nat :=
+  let f := (fwdMisU R G st.toUSize (min stop pre).toUSize 0 k.toUSize).toNat
+  if f < min stop pre then f
+  else if K.ok && decide (stop ≤ R.size) && winOk P st stop then fwdA K.w P.w (P.o + st) stop k
+  else fwdMis R G st stop 0 k
+
+/-- `bwdLG` with its prescan on `bwdMisU` (`bwdLGW_eq`). -/
+@[inline] def bwdLGW (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st len lo k : Nat) : Nat :=
+  let n := R.size
+  let b := (bwdMisU R G (st + len - n).toUSize (max lo (n - pre)).toUSize n.toUSize k.toUSize).toNat
+  if max lo (n - pre) < b then b
+  else if K.ok && decide (n ≤ st + len) && decide (lo < n) && winOk P (st + len - n + lo) (n - lo) then
+    bwdA K.w P.w (P.o + (st + len - n)) lo n k
+  else bwdMis R G st len lo n k
+
+theorem fwdLGW_eq (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st stop k : Nat) (hg : GRead.ok G = true)
+    (hb : st + stop < 4294967295) (hk : k < 4294967295) : fwdLGW R G K P st stop k = fwdLG R G K P st stop k := by
+  have e : (fwdMisU R G st.toUSize (min stop pre).toUSize 0 k.toUSize).toNat = fwdMis R G st (min stop pre) 0 k :=
+    fwdMisU_eq R G hg _ _ st (min stop pre) (pgu_n _ (by omega)) (pgu_n _ (by omega)) (by omega) _ _ _ 0 k rfl rfl
+      (pgu_n _ (by omega)) (Nat.zero_le _)
+  unfold fwdLGW fwdLG; simp only []; rw [e]
+
+theorem bwdLGW_eq (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st len lo k : Nat) (hg : GRead.ok G = true)
+    (hr : R.size ≤ st + len) (hb : st + len + R.size < 4294967295) (hl : lo < 4294967295) (hk : k < 4294967295) :
+    bwdLGW R G K P st len lo k = bwdLG R G K P st len lo k := by
+  have e : (bwdMisU R G (st + len - R.size).toUSize (max lo (R.size - pre)).toUSize R.size.toUSize k.toUSize).toNat =
+      bwdMis R G st len (max lo (R.size - pre)) R.size k :=
+    bwdMisU_eq R G hg _ _ st len _ hr (pgu_n _ (by omega)) (pgu_n _ (by unfold pre; omega)) R.size _ _ k (by omega)
+      (pgu_n _ (by omega)) (pgu_n _ (by omega))
+  unfold bwdLGW bwdLG; simp only []; rw [e]
+
+/-- `gappedLG` on `fwdLGW` / `bwdLGW` (`gappedLGW_eq`, under `gappedLGF`'s guard). -/
+@[inline] def gappedLGW (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st len lim : Nat) : Nat :=
+  let n := R.size
+  let L := if len > n then len - n else n - len
+  if lim < 6 + 2 * L then lim + 1 else
+  let skip := if len < n then L else 0
+  let F1 := fwdLGW R G K P st (n - skip) 1
+  let E1 := bwdLGW R G K P st len skip 1
+  if E1 - skip ≤ F1 then 6 + 2 * L else
+  if lim < 10 + 2 * L then lim + 1 else
+  let F2 := fwdLGW R G K P st (n - skip) 2
+  let E2 := bwdLGW R G K P st len skip 2
+  if E1 - skip ≤ F2 || E2 - skip ≤ F1 then 10 + 2 * L else
+  if lim < 14 + 2 * L then lim + 1 else
+  let F3 := fwdLGW R G K P st (n - skip) 3
+  let E3 := bwdLGW R G K P st len skip 3
+  if E1 - skip ≤ F3 || E2 - skip ≤ F2 || E3 - skip ≤ F1 then 14 + 2 * L else lim + 1
+
+/-- `gappedLG` for the compiled code (`gappedLG_eq_gappedLGF`). -/
+@[inline] def gappedLGF (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st len lim : Nat) : Nat :=
+  if GRead.ok G = true ∧ R.size ≤ st + len ∧ st + len + R.size < 4294967295 then gappedLGW R G K P st len lim
+  else gappedLGS R G K P st len lim
+where
+  /-- `gappedLG` (its slow path; not rewritten by `csimp`). -/
+  gappedLGS (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st len lim : Nat) : Nat :=
+    let n := R.size
+    let L := if len > n then len - n else n - len
+    if lim < 6 + 2 * L then lim + 1 else
+    let skip := if len < n then L else 0
+    let F1 := fwdLG R G K P st (n - skip) 1
+    let E1 := bwdLG R G K P st len skip 1
+    if E1 - skip ≤ F1 then 6 + 2 * L else
+    if lim < 10 + 2 * L then lim + 1 else
+    let F2 := fwdLG R G K P st (n - skip) 2
+    let E2 := bwdLG R G K P st len skip 2
+    if E1 - skip ≤ F2 || E2 - skip ≤ F1 then 10 + 2 * L else
+    if lim < 14 + 2 * L then lim + 1 else
+    let F3 := fwdLG R G K P st (n - skip) 3
+    let E3 := bwdLG R G K P st len skip 3
+    if E1 - skip ≤ F3 || E2 - skip ≤ F2 || E3 - skip ≤ F1 then 14 + 2 * L else lim + 1
+
+theorem gappedLGW_eq (R : ByteArray) (G : Gt) (K : RP) (P : PGen) (st len lim : Nat) (hg : GRead.ok G = true)
+    (hr : R.size ≤ st + len) (hb : st + len + R.size < 4294967295) :
+    gappedLGW R G K P st len lim = gappedLG R G K P st len lim := by
+  unfold gappedLGW gappedLG
+  simp only []
+  by_cases hl : len < R.size
+  · have hg' : ¬ len > R.size := by omega
+    simp only [hl, hg', ↓reduceIte,
+      fwdLGW_eq R G K P st (R.size - (R.size - len)) 1 hg (by omega) (by decide),
+      fwdLGW_eq R G K P st (R.size - (R.size - len)) 2 hg (by omega) (by decide),
+      fwdLGW_eq R G K P st (R.size - (R.size - len)) 3 hg (by omega) (by decide),
+      bwdLGW_eq R G K P st len (R.size - len) 1 hg hr hb (by omega) (by decide),
+      bwdLGW_eq R G K P st len (R.size - len) 2 hg hr hb (by omega) (by decide),
+      bwdLGW_eq R G K P st len (R.size - len) 3 hg hr hb (by omega) (by decide)]
+  · simp only [hl, ↓reduceIte,
+      fwdLGW_eq R G K P st (R.size - 0) 1 hg (by omega) (by decide),
+      fwdLGW_eq R G K P st (R.size - 0) 2 hg (by omega) (by decide),
+      fwdLGW_eq R G K P st (R.size - 0) 3 hg (by omega) (by decide),
+      bwdLGW_eq R G K P st len 0 1 hg hr hb (by omega) (by decide),
+      bwdLGW_eq R G K P st len 0 2 hg hr hb (by omega) (by decide),
+      bwdLGW_eq R G K P st len 0 3 hg hr hb (by omega) (by decide)]
+
+@[csimp] theorem gappedLG_eq_gappedLGF : @gappedLG = @gappedLGF := by
+  funext Gt inst R G K P st len lim
+  unfold gappedLGF
+  split
+  · rename_i h
+    exact (gappedLGW_eq R G K P st len lim h.1 h.2.1 h.2.2).symm
+  · rfl
+
 def kerGKG (R : ByteArray) (K : RP) (G : Gt) (P : PGen) (st len lim : Nat) : Nat :=
   if len = R.size then
     if wordOk R K P st len then

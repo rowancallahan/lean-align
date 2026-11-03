@@ -126,7 +126,7 @@ lean_lib IndexSketch where   -- seed sketches
 @[default_target]
 lean_lib Mapper where   -- tier router, pair search, batching: the code alignPairs runs
   srcDir := "Aligner/mapper"
-  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TieCut, `TierHeur, `TierOpt, `TierRouter]
+  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TieCut, `TierHeur, `TierOpt, `TierRouter, `BandCellsJProof]
 
 @[default_target]
 lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
@@ -138,7 +138,7 @@ lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Trimmer where
   srcDir := "Aligner/trimmer"
-  roots := #[`ReadWindowTrimmer]
+  roots := #[`ReadWindowTrimmer, `AdapterTrim]
 
 -- ───────────────────────────── tool ─────────────────────────────
 
@@ -168,6 +168,10 @@ lean_exe proto where                  -- speed prototype only (unproved)
 lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
   srcDir := "Testing/benches"
   root := `MapBench2
+
+lean_exe bandcells_ab where           -- check only: bandDPg true = bandDPg false (TierHeur.bandCellsJ) on random cases
+  srcDir := "Testing/benches"
+  root := `BandCellsAB
 
 lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark only)
   srcDir := "Testing/benches"
@@ -285,3 +289,7 @@ lean_exe floor_pipe where                 -- benchmark only: the cheap report-fl
 lean_exe pipe_prof where                  -- benchmark only: per-stage time of the report-floor pipeline (unproved IO)
   srcDir := "Testing/benches"
   root := `PipeProf
+
+lean_exe adapter_bench where              -- benchmark only: CPU and cut counts of AdapterTrim.cutTruSeq on a FASTQ (unproved IO)
+  srcDir := "Testing/benches"
+  root := `AdapterBench
