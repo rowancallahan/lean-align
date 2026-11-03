@@ -1574,3 +1574,13 @@ minibwa paper: 135.8 Gbp/hr @32 threads = 4.24 Gbp/thread-hr (matches minibwa he
 - Soft clipping by quality: after adapter cutting, define match/mismatch cost from the base's quality score, so low-quality ends cost little and get clipped by the score itself (would close part of the clipping gap).
 - Cost: quality attached to every base in the search; memory/speed risk. Mitigation: bin qualities (a few levels), or one binned quality per seed.
 - Trimming could then shrink or move inside the alignment loop instead of being a separate pass.
+
+### Utilization investigation (overnight, Rowan's goal)
+- Overlap patch (2 chunks in flight): NO gain. S-D NovaSeq 5M medians 182.3 s / 73.0% without vs 180.4 s / 73.2% with; S-G nova1M + hg002_1M 88-90% either way; SAM identical. Not proposed.
+- S-G, ours only (minibwa build blocked on that box), 4 threads, map-only, 2 reps:
+  | set | plain files | zcat -> FIFO | map wall plain -> FIFO | zcat CPU |
+  |---|---|---|---|---|
+  | NovaSeq 1M (200k x5) | 0.89 / 0.88 | 0.83 / 0.84 | ~34 -> ~36 s | 4.8 s |
+  | HiSeq hg002_1M | 0.88 / 0.88 | 0.75 / 0.75 | 37 -> 44 s | 9.8 s |
+  Our own CPU is the same either way: the FIFO only adds idle time. Suspect: the single serial reader alternating two pipes (<= 64 KB per read, blocks on zcat) becomes the critical path. S-D's 5M runs (73% / 60%) used zcat FIFO input; minibwa held 98% on the same input.
+- Next: per-chunk instrumentation (S-G, local build), S-D plain vs FIFO for ours AND minibwa on its box.
