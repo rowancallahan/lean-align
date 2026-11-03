@@ -115,3 +115,78 @@ variants:
 - Above 16000 pairs nothing improves, and the 20000 plain run is worse (noise, or fewer jobs than 4 workers can
   balance near the end).
 - The remaining per-job CPU goes away only with variant B (per-worker setup), which needs a Spec-level interface.
+
+## 7. Byte pipeline (Testing/notes/byte_pipeline.patch, NOT applied; against festive a4d9f6f)
+
+Pipeline v2 (§5, job 16000, depth 2) plus four steps, each measured. 1 rep each. Cells are map wall s / user+sys s / util.
+SAM md5 is identical to festive in every cell.
+
+Steps:
+- 0. Pipeline plus shim_speed: quality becomes a `ByteArray`, and `findNewlineU` does the newline scan.
+- 1. `samChunkB`, the byte SAM writer from research/io2 `sam_bytes.patch`.
+- 2. Byte names in the workers.
+  - The parser is a structural recursion (`parseFrom`, fuel = slice size, 4 lines per record, calling `parseRecord`).
+  - `qnameBytes` finds the QNAME bytes with a structural `spaceAt` scan.
+  - `pairUp` compares those bytes, then applies `qnameOk` and the length checks.
+  - The reader appends `'\n'` at EOF, which matches the spec's `lines`.
+- 3. Variant B (`PIPE_B=1`, Main only). Each worker runs `readIndex` + `chunkSetup` + `withMono` once, then `alignOneP` per pair.
+
+1M:
+
+| set / input | festive | 0 | 1+2 (A) | 3 (B) |
+|---|---|---|---|---|
+| nova1M plain | 58.1 / 117.7 / 0.51 | 30.3 / 115.0 / 0.95 | 27.7 / 106.5 / 0.96 | 24.0 / 91.1 / 0.95 |
+| nova1M FIFO | 33.9 / 112.4 / 0.83 | 28.4 / 104.8 / 0.92 | 26.5 / 97.9 / 0.92 | 23.7 / 86.0 / 0.91 |
+| hg002_1M plain | 74.3 / 130.7 / 0.44 | 29.6 / 113.9 / 0.96 | 26.9 / 104.2 / 0.97 | 27.7 / 106.4 / 0.96 |
+| hg002_1M FIFO | 42.4 / 123.3 / 0.73 | 33.2 / 118.4 / 0.89 | 30.3 / 107.5 / 0.89 | 28.1 / 98.7 / 0.88 |
+
+5M FIFO (each 1M gz concatenated 5×). md5: nova 025f8576cd71…, hg002 606e5fea16a6….
+
+| set | festive | A | B |
+|---|---|---|---|
+| nova5M | 155.4 / 514.1 / 0.83 (zcat 23.4 s cpu) | 131.2 / 476.7 / 0.91 | 117.3 / 424.3 / 0.90 |
+| hg002_5M | 206.7 / 608.7 / 0.74 (zcat 49.1 s cpu) | 150.0 / 525.1 / 0.88 | 139.6 / 487.2 / 0.87 |
+
+- **B against festive.** nova: map wall −24.5%, CPU −17.5%. hg002: map wall −32%, CPU −20%.
+- **A against festive.** CPU −7% (nova) and −14% (hg002).
+- **FIFO utilization.** 0.87–0.91 on FIFO is limited by zcat's own CPU. Counting zcat, the 4 cores are about 95% busy. Plain files reach 0.95–0.97.
+- **Serial stages (step 4).** Callgrind on 4000 pairs: the reader/dispatcher is about 31M Ir out of about 2216M total. The serial stages stay far under one core.
+- **Ir per step (callgrind, 4000 HiSeq pairs).**
+  - Byte SAM: −4.7%.
+  - Byte names: −3.0%.
+  - B: −0.9%. B's wall and CPU gain is native (cache and allocation), not instruction count.
+- **Remaining hot spots.**
+  - `trimRecord`, about 237M Ir. This is S-H's area and was not touched.
+  - `parseRecord`'s `allBytes` loops, about 96M Ir. A USize structural loop is the next candidate.
+
+### Patch layout
+- **Shim-compatible part.**
+  - Main.lean `Pipe`, mirrored in `Spec/Shim.lean`.
+  - Spec/Fastq.lean: quality as ByteArray, `findNewlineU`.
+  - Spec/Sam.lean + Proofs/Sam.lean: `samChunkB` + quality bytes.
+  - New file Proofs/SamBytes.lean; lakefile.lean change.
+  - The Spec/ edits are a prototype copy only.
+- **Main-only part.** Variant B is the `vb` branch in the worker. `Spec/Shim.lean` cannot call `alignOneP`, so the Main/Shim mirror check is expected to differ there, at Shim line ~150.
+- **FROZEN.sha256.** Not in the patch. It must be regenerated after applying.
+- **Proofs broken by the patch.** `lake build` (full) fails in two places. Both come from quality changing from String to ByteArray:
+  - `Proofs/SamBytes.lean`: `toUTF8`/`toByteArray` applied to a ByteArray quality.
+  - `Proofs/TrimRecord.lean`: `toUTF8`, plus a heartbeat timeout.
+
+  The shim build (`lake build lean-align`) succeeds, and these proofs need adapting before merge.
+- **Not touched:** ReadTrim, AdapterTrim.
+
+### Provisional spec changes (exactly which definitions change)
+1. **`FastqRecord`.** Becomes S4's shape `{qname, letters, quality : ByteArray}`. `qname` holds the QNAME bytes: no '@', comment cut at the first space, trailing "/1" or "/2" dropped.
+2. **`parseRecord header letters plus quality`.** Additionally computes `qname := qnameOf header` and absorbs both the QNAME check (size 1..254, bytes in `!`..`?` or `A`..`~`) and the letters/quality length check. On success it returns the record with `qname`.
+3. **`qnameOf` (bytes).** Replaces `mateName` and the String `samName` path. The prototype is `qnameBytes` (structural `spaceAt`, fuel = header size).
+4. **`lines`.** Splits on `'\n'`, with a `'\n'` appended at EOF when it is missing, and strips CR. The parser follows it as `parseFrom` (fuel = size, structural).
+5. **`pairUp`.** Compares mates by `qname` bytes; the error says the files are out of step.
+6. **`trimRecord`.** Uses `quality` directly, without `toUTF8` / `fromUTF8!`.
+7. **`samChunk`.** Replaced by `samChunkB`, which builds a ByteArray from qname, letters and quality bytes. Its byte-equality theorem is in Proofs/SamBytes, which needs adapting (see above).
+8. **New, for variant B.** `alignPairsP (setup : ChunkSetup) pairs := pairs.map (alignOneP ins chroms setup ·)`, with the theorem `alignPairsP (chunkSetup index) = alignPairs index`. The Shim worker would then do the setup once per worker and call `alignPairsP`. Until that theorem exists, B stays Main-only.
+
+### Unproved assumptions in the prototype
+- The `parseFrom` and `spaceAt` fuel is sufficient: fuel = size, and every step advances at least 1 byte.
+- Slice cutting at every 4k-th newline is the same as `parseFastq` on the whole file.
+- `qnameBytes` is equal to `qnameOf`.
+- The B setup is equal to the per-job setup (point 8).
