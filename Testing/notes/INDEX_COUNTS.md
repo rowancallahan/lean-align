@@ -66,7 +66,8 @@ short-seed component.
 |---|---|---|
 | index size | 5,326,114,456 B | 5,338,015,764 B (+11.9 MB, +0.22%) |
 | build wall / CPU | 24.8 min / 30.3 min user | 31.0 min / 39.1 min user (+6.2 min wall, +25%) |
-| peak RSS | not recorded (logging failed) | 10.76 GB |
+| peak RSS | 9.85 GB | 10.76 GB (+0.9 GB) |
+- The 39ae4e8 rebuild here is byte-identical to the release shim.idx.
 - Table: 457,742 entries (= 2 × 228,871, the C count). Every entry passed the check: the mask has 457,742 ones.
 - The builder alone (heavy_bench): 4.6 min single-threaded, plus 2.6 min to read the FASTA.
 - Loaded RAM: +11.9 MB per loaded copy. `rdBytes` copies H and M on every load (one per task per chunk).
