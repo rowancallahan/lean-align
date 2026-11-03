@@ -1,9 +1,10 @@
 import Proofs.LastResort
 
-/-! # Giving up on repeats (prototype for the proposed `.gaveUp` answer)
+/-! # Giving up on repeats (Spec's `.repetitiveUnknown`)
 
-Spec (proposal): `.gaveUp` claims `found = none` and a mate has a seed (a window of `seedLength = 25` letters)
-that occurs at least `gaveUpRepeats = 500` times (`Genome.RepeatWitness`, counted over both strands).
+Spec: `.repetitiveUnknown` claims `found = none` and a mate is `highlyRepetitiveIn` the genome: at least
+`gaveUpSeeds` of its grid seeds (letters `[25 i, 25 i + 25)`) occur at least `gaveUpRepeats` times
+(`Genome.occurrences`: prefix matches over all starts, forward plus reverse complement).
 
 The check (`repeatMate`): look up seeds of the mate at `0, 25, 50, …` in the index. The lookup returns exactly
 the places of the seed in the whole packed genome (`Mz.lookupSeed_mem`, strictly increasing:
@@ -18,11 +19,9 @@ namespace Spec.GaveUp
 
 /-! ## Counting: a list of distinct windows that occur is no longer than `occurrences` -/
 
--- the starts in `chromosome` where `word` (or its reverse complement) occurs, as `Genome.occurrences` counts them
+-- the starts in `chromosome` where `word` occurs (forward), as `Genome.occurrences` counts them
 def occOf (word : Read) (chromosome : Chromosome) : List Nat :=
-  (List.range (chromosome.seq.length + 1 - word.length)).filter fun start =>
-    let window := (chromosome.seq.drop start).take word.length
-    window == word || window == reverseComplement word
+  (List.range chromosome.seq.length).filter (word.isPrefixOf ∘ chromosome.seq.drop)
 
 -- `(chromosome index, start)` of every occurrence, chromosomes numbered from `c`
 def occList (word : Read) : Nat → Genome → List (Nat × Nat)
@@ -34,9 +33,13 @@ theorem occList_length (word : Read) : ∀ c (g : Genome),
   | _, [] => rfl
   | c, chr :: rest => by simp [occList, occList_length word (c + 1) rest]
 
-theorem occurrences_eq (genome : Genome) (word : Read) :
-    genome.occurrences word = (occList word 0 genome).length := by
-  rw [occList_length]; rfl
+-- the forward occurrences are part of `occurrences`
+theorem occurrences_ge (genome : Genome) (word : Read) :
+    (occList word 0 genome).length ≤ genome.occurrences word := by
+  rw [occList_length]
+  unfold Genome.occurrences
+  simp only [occOf, List.countP_eq_length_filter]
+  exact Nat.le_add_right _ _
 
 theorem mem_occList (word : Read) : ∀ c (g : Genome) (x : Nat × Nat) (chr : Chromosome),
     c ≤ x.1 → g[x.1 - c]? = some chr → x.2 ∈ occOf word chr → x ∈ occList word c g
@@ -75,8 +78,7 @@ theorem length_le_of_nodup_sub {α : Type} [DecidableEq α] : ∀ (l1 l2 : List 
 theorem count_le_occurrences (genome : Genome) (word : Read) (L : List (Nat × Nat)) (hn : L.Nodup)
     (hL : ∀ x ∈ L, ∃ chr, genome[x.1]? = some chr ∧ x.2 ∈ occOf word chr) :
     L.length ≤ genome.occurrences word := by
-  rw [occurrences_eq]
-  refine length_le_of_nodup_sub L _ hn fun x hx => ?_
+  refine Nat.le_trans (length_le_of_nodup_sub L _ hn fun x hx => ?_) (occurrences_ge genome word)
   obtain ⟨chr, hg, hs⟩ := hL x hx
   exact mem_occList word 0 genome x chr (Nat.zero_le _) (by rw [Nat.sub_zero]; exact hg) hs
 
@@ -191,11 +193,10 @@ theorem seed_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Ar
     obtain ⟨hfit, hseq⟩ := hslice c chr hg
     refine ⟨chr, hg, ?_⟩
     unfold occOf
-    rw [List.mem_filter, List.mem_range, hw]
+    rw [List.mem_filter, List.mem_range]
     have hq : MapSpec.Mz.q = 25 := rfl
     have hsl : seedLength = 25 := rfl
     rw [hsl] at hend
-    refine ⟨by omega, ?_⟩
     have hwin : (chr.seq.drop (p - offs[c]!)).take 25 = word := by
       have hU := decodeRead_length (MapSpec.Mz.unpack G)
       apply List.ext_getElem?
@@ -210,41 +211,39 @@ theorem seed_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Ar
           show offs[c]! + (p - offs[c]! + i) = p + i by omega,
           decodeRead_getElem? _ _ (by omega), decodeRead_getElem? _ _ (by omega), heq i (by rw [hq]; omega)]
       · rfl
-    simp [hwin]
+    show p - offs[c]! < chr.seq.length ∧ word.isPrefixOf (chr.seq.drop (p - offs[c]!)) = true
+    refine ⟨by omega, ?_⟩
+    rw [List.isPrefixOf_iff_prefix, ← hwin]
+    exact List.take_prefix _ _
   have hle := count_le_occurrences genome word (F.map (placeOf offs)) hnd hocc
   rw [List.length_map] at hle
   exact Nat.le_trans hcnt hle
 
-/-- **The check is sound**: a mate that `repeatMate` flags has `gaveUpSeeds` non-overlapping seeds, each
-occurring at least `gaveUpRepeats` times. -/
+/-- **The check is sound**: a mate that `repeatMate` flags is `highlyRepetitiveIn` the genome: each grid seed it
+counts occurs at least `gaveUpRepeats` times. -/
 theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs ns : Array Nat} {genome : Genome}
     (hchk : MapSpec.Mz.check2P ix G = true)
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
       offs[c]! + chr.seq.length ≤ (decodeRead (MapSpec.Mz.unpack G)).length ∧
       chr.seq = ((decodeRead (MapSpec.Mz.unpack G)).drop offs[c]!).take chr.seq.length)
     (hchr : ∀ c, c < ns.size → ∃ chr : Chromosome, genome[c]? = some chr ∧ chr.seq.length = ns[c]!)
-    (R : ByteArray) (h : repeatMate (ix, G) offs ns R = true) : genome.RepeatWitness (decodeRead R) := by
-  unfold repeatMate at h
-  simp only [decide_eq_true_eq] at h
+    (R : ByteArray) (h : repeatMate (ix, G) offs ns R = true) : (decodeRead R).highlyRepetitiveIn genome := by
+  unfold repeatMate repeatSeeds at h
+  simp only [decide_eq_true_eq, List.length_map, ← List.countP_eq_length_filter] at h
   have hsl : seedLength = 25 := rfl
-  refine ⟨(repeatSeeds (ix, G) offs ns R).take gaveUpSeeds, by simp; omega, ?_, ?_⟩
-  · refine List.Pairwise.sublist (List.take_sublist _ _) ?_
-    unfold repeatSeeds
-    rw [List.pairwise_map]
-    exact (List.pairwise_lt_range.filter _).imp fun {a b} hab => by rw [hsl]; omega
-  · intro start hm
-    have hm' := List.mem_of_mem_take hm
-    unfold repeatSeeds at hm'
-    obtain ⟨j, hj, rfl⟩ := List.mem_map.mp hm'
-    obtain ⟨hjr, hjc⟩ := List.mem_filter.mp hj
-    rw [List.mem_range] at hjr
-    simp only [decide_eq_true_eq] at hjc
-    have hsR : seedLength * j + 25 ≤ R.size := by
-      rw [hsl] at hjr ⊢
-      have := Nat.lt_div_iff_mul_lt (by decide : 0 < 25) |>.mp hjr
-      omega
-    exact ⟨by rw [decodeRead_length, hsl]; rw [hsl] at hsR; exact hsR,
-      seed_sound hchk hslice hchr R _ hsR hjc⟩
+  unfold Read.highlyRepetitiveIn
+  simp only [decodeRead_length, ge_iff_le]
+  refine Nat.le_trans h (List.countP_mono_left fun j hj hc => ?_)
+  rw [List.mem_range] at hj
+  simp only [decide_eq_true_eq] at hc ⊢
+  have hsR : seedLength * j + 25 ≤ R.size := by
+    rw [hsl] at hj ⊢
+    have := Nat.lt_div_iff_mul_lt (by decide : 0 < 25) |>.mp hj
+    omega
+  have := seed_sound hchk hslice hchr R _ hsR hc
+  rw [List.extract_eq_take_drop, show (j + 1) * seedLength - j * seedLength = seedLength by rw [hsl]; omega,
+    show j * seedLength = seedLength * j from Nat.mul_comm _ _]
+  exact this
 
 #print axioms repeatMate_sound
 

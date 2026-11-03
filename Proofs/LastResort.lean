@@ -116,7 +116,7 @@ theorem provedBound_ok {insertSettings : InsertSettings} {genome : Genome} {m1 m
   | some rep =>
     cases hq : a.uniqueness with
     | unknown => exact h0
-    | gaveUp => exact h0
+    | repetitiveUnknown => exact h0
     | unique =>
       rw [hq] at hu
       obtain ⟨rep', hr', best, hbr, hbest⟩ := hu
@@ -139,9 +139,9 @@ theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m
     (a : PairAnswer) (b : Int)
     (hb : ∀ pair : PairAlignment genome m1 m2,
       pair.IsProper insertSettings.range insertSettings.dovetailSlack → pair.score ≤ b) :
-    (boundOnly insertSettings fit (insertSettings.requiredMapBound m1 m2) b a).Correct insertSettings genome m1 m2 ∨
-      (Leftover (insertSettings.requiredMapBound m1 m2) (boundOnly insertSettings fit (insertSettings.requiredMapBound m1 m2) b a) ∧
-        CorrectU insertSettings genome m1 m2 (boundOnly insertSettings fit (insertSettings.requiredMapBound m1 m2) b a)) := by
+    (boundOnly insertSettings fit (requiredMapBound m1 m2) b a).Correct insertSettings genome m1 m2 ∨
+      (Leftover (requiredMapBound m1 m2) (boundOnly insertSettings fit (requiredMapBound m1 m2) b a) ∧
+        CorrectU insertSettings genome m1 m2 (boundOnly insertSettings fit (requiredMapBound m1 m2) b a)) := by
   have hno : noPair insertSettings fit = true →
       ∀ pair : PairAlignment genome m1 m2, ¬ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
     intro h
@@ -152,7 +152,7 @@ theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m
     · exact .inl (by omega)
     · exact .inr (hnone h)
   unfold boundOnly
-  by_cases h1 : b < insertSettings.requiredMapBound m1 m2
+  by_cases h1 : b < requiredMapBound m1 m2
   · left
     rw [if_pos h1]
     exact ⟨fun _ h => by simp at h, hb, fun _ => h1⟩
@@ -161,10 +161,10 @@ theorem boundOnly_correct {insertSettings : InsertSettings} {genome : Genome} {m
     · left
       rw [if_pos h2]
       exact ⟨fun _ h => by simp at h, fun pair hp => absurd hp (hno h2 pair),
-        fun _ => show insertSettings.requiredMapBound m1 m2 - 1 < insertSettings.requiredMapBound m1 m2 by omega⟩
+        fun _ => show requiredMapBound m1 m2 - 1 < requiredMapBound m1 m2 by omega⟩
     · right
       rw [if_neg h2]
-      exact ⟨⟨rfl, show insertSettings.requiredMapBound m1 m2 ≤ b by omega⟩, fun _ h => by simp at h, hb, trivial⟩
+      exact ⟨⟨rfl, show requiredMapBound m1 m2 ≤ b by omega⟩, fun _ h => by simp at h, hb, trivial⟩
 
 -- the answer is correct, or it is a leftover whose pair-free bound is still true
 theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1 m2 : Read} {a : PairAnswer}
@@ -172,9 +172,9 @@ theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1
     (hnone : fit insertSettings.range.1 = none →
       ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr → chr.seq.length < insertSettings.range.1)
     (ha : CorrectU insertSettings genome m1 m2 a) :
-    (finalize insertSettings fit (insertSettings.requiredMapBound m1 m2) a).Correct insertSettings genome m1 m2 ∨
-      (Leftover (insertSettings.requiredMapBound m1 m2) (finalize insertSettings fit (insertSettings.requiredMapBound m1 m2) a) ∧
-        CorrectU insertSettings genome m1 m2 (finalize insertSettings fit (insertSettings.requiredMapBound m1 m2) a)) := by
+    (finalize insertSettings fit (requiredMapBound m1 m2) a).Correct insertSettings genome m1 m2 ∨
+      (Leftover (requiredMapBound m1 m2) (finalize insertSettings fit (requiredMapBound m1 m2) a) ∧
+        CorrectU insertSettings genome m1 m2 (finalize insertSettings fit (requiredMapBound m1 m2) a)) := by
   unfold finalize
   cases hf : a.found with
   | none => exact boundOnly_correct fit hnone a _ ha.2.1
@@ -192,7 +192,7 @@ theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {m1
         | unique => rw [hq] at h3; exact h3
         | multimapper => rw [hq] at h3; exact h3
         | unknown => intro h; rw [hf] at h; cases h
-        | gaveUp => rw [hq] at h3; rw [hf] at h3; cases h3
+        | repetitiveUnknown => rw [hq] at h3; rw [hf] at h3; cases h3
     · rw [if_neg hj]
       exact boundOnly_correct fit hnone a _ (provedBound_ok ha)
 

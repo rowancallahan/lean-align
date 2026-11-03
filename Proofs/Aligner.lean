@@ -186,7 +186,7 @@ def pairCfg (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArr
 
 -- the mates' `requiredMapBound` (Spec's `.unknown` arm), on their letters. THE ONE PLACE that reads it.
 def reqOf (insertSettings : InsertSettings) (read1 read2 : ByteArray) : Int :=
-  insertSettings.requiredMapBound (decodeRead read1) (decodeRead read2)
+  requiredMapBound (decodeRead read1) (decodeRead read2)
 
 -- the cap of the second look: `-requiredMapBound`, at most 16 (`LastResort.pairsAt_mem`); for Spec's default
 -- `requiredMapBound` it is `LastResort.capOfLens` (`4 * errorsChecked` of the shorter mate)
@@ -263,7 +263,7 @@ def gaveUpOn : Bool := true
 def gaveUp (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (read1 read2 : ByteArray) (a : PairAnswer) :
     Option PairAnswer :=
   if LastResort.Leftover req a ∧ (gaveUpOn && (GaveUp.repeatMate pk offs ns read1 || GaveUp.repeatMate pk offs ns read2))
-  then some { a with uniqueness := .gaveUp } else none
+  then some { a with uniqueness := .repetitiveUnknown } else none
 
 -- the stage's answer if it is not a leftover, else the next stage
 def orElse (req : Int) (o : Option PairAnswer) (next : Unit → PairAnswer) : PairAnswer :=
@@ -522,25 +522,20 @@ theorem chromGenome_lens (chroms : List (List Nat)) :
   rw [getElem!_pos _ c hc]
   simp [chromGenome]
 
--- THE ONE SETTING CONDITION: the second look's cap (at most 16) reaches `requiredMapBound`, and a pair below
--- `junkScore` is below `requiredMapBound`. (Without the second part Spec has no correct answer for some reads:
--- best proper pair at -12, `junkScore` -10, `requiredMapBound` -16.)
-def SettingsOk (insertSettings : InsertSettings) : Prop :=
-  ∀ m1 m2 : Read, -16 ≤ insertSettings.requiredMapBound m1 m2 ∧
-    insertSettings.junkScore ≤ insertSettings.requiredMapBound m1 m2
+-- THE ONE SETTING CONDITION: `junkScore ≤ -16`, so a pair below `junkScore` is below Spec's `requiredMapBound`
+-- (which is between -16 and 0). (Without it Spec has no correct answer for some reads: best proper pair at -12,
+-- `junkScore` -10, `requiredMapBound` -16.)
+def SettingsOk (insertSettings : InsertSettings) : Prop := insertSettings.junkScore ≤ -16
 
--- Spec's default `requiredMapBound`: `SettingsOk` is `junkScore ≤ -16`, and the cap is `LastResort.capOfLens`
-def defaultBound (m1 m2 : Read) : Int := -4 * ((min 4 ((min m1.length m2.length) / 25 - 1) : Nat) : Int)
+-- what the proofs use: the second look's cap (at most 16) reaches `requiredMapBound`, and `junkScore` is below it
+theorem settings_reads {insertSettings : InsertSettings} (h : SettingsOk insertSettings) (m1 m2 : Read) :
+    -16 ≤ requiredMapBound m1 m2 ∧ insertSettings.junkScore ≤ requiredMapBound m1 m2 := by
+  unfold SettingsOk at h; unfold requiredMapBound; constructor <;> omega
 
-theorem settingsOk_default (insertSettings : InsertSettings) (hf : insertSettings.requiredMapBound = defaultBound)
-    (hj : insertSettings.junkScore ≤ -16) : SettingsOk insertSettings := by
-  intro m1 m2
-  rw [hf]; unfold defaultBound
-  constructor <;> omega
-
+-- the second look's cap for Spec's `requiredMapBound` is `LastResort.capOfLens`
 theorem lookCap_default (m1 m2 : Read) :
-    lookCap (defaultBound m1 m2) = LastResort.capOfLens m1.length m2.length := by
-  unfold lookCap defaultBound LastResort.capOfLens LastResort.errorsChecked
+    lookCap (requiredMapBound m1 m2) = LastResort.capOfLens m1.length m2.length := by
+  unfold lookCap requiredMapBound LastResort.capOfLens LastResort.errorsChecked
   omega
 
 theorem lookCap_ok {req : Int} (h : -16 ≤ req) : -((lookCap req : Int) + 1) < req := by
@@ -558,7 +553,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
   | none, _ => simp [alignOne, PairResult.Correct]
   | some _, none => simp [alignOne, PairResult.Correct]
   | some read1, some read2 =>
-    obtain ⟨hreq, hj⟩ := hS (decodeRead read1) (decodeRead read2)
+    obtain ⟨hreq, hj⟩ := settings_reads hS (decodeRead read1) (decodeRead read2)
     have hc := lookCap_ok hreq
     match loaded, hcase with
     | none, hcase =>
@@ -685,7 +680,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
           have hb := (key (fallbackFrom (reqOf insertSettings read1 read2)) _ hok0).elim (fun h => h.2.1) (fun h => h.2.2.1)
           simp only [Bool.and_eq_true, Bool.or_eq_true] at hrep
           refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
-          have hw : genome.RepeatWitness (decodeRead read1) ∨ genome.RepeatWitness (decodeRead read2) := by
+          have hw : (decodeRead read1).highlyRepetitiveIn genome ∨ (decodeRead read2).highlyRepetitiveIn genome := by
             rcases hrep.2 with h | h
             · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
             · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 h)

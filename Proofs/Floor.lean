@@ -3,7 +3,7 @@ import Proofs.Report
 /-! # The report floor: pairs below `junkScore`, and proofs that no good proper pair exists
 
 Spec's clause 1 asks every reported pair to score at least `insertSettings.junkScore`; an answer without a pair
-needs `bestPossibleScore < insertSettings.requiredMapBound`. The pieces here:
+needs `bestPossibleScore < requiredMapBound`. The pieces here:
 
 * `score_of_report`: a printed pair's score is the sum of its two printed mate scores;
 * `bound_of_noPair`: when no proper pair of hits within cap `c` (both mates) scores at least `−c`, every proper

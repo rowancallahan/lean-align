@@ -12,12 +12,16 @@ structure InsertSettings where
   range         : Nat × Nat  -- allowed fragment length: min and max, both included
   dovetailSlack : Nat := 0
   junkScore : Int := -100
-  --This makes it so that 26-49 bp reads have to map perfectly and
-  --The number of mismatches goes up every 25bp we can change this later if we 
-  --End up getting more seeds etc it taks the minimum length in seeds, subtracts -1
-  --Then it tops out at -16 where it is min 4 etc we can change these all later
-  requiredMapBound : Read -> Read -> Int := fun mate1 mate2 => 
-   -4 * ((min 4 ((min mate1.length mate2.length)/25-1) : Nat) : Int)
+--This makes it so that 26-49 bp reads have to map perfectly and
+--The number of mismatches goes up every 25bp we can change this later if we 
+--End up getting more seeds etc it taks the minimum length in seeds, subtracts -1
+--Then it tops out at -16 where it is min 4 etc we can change these all later
+def requiredMapBound : Read -> Read -> Int := fun mate1 mate2 => 
+ -4 * ((min 4 ((min mate1.length mate2.length)/25-1) : Nat) : Int)
+
+def seedLength : Nat := 25
+def gaveUpRepeats : Nat := 200
+def gaveUpSeeds : Nat := 2
 
 inductive Mate where
   | one
@@ -69,33 +73,18 @@ def PairAlignment.IsUniqueBestProper {genome : Genome} {mate1 mate2 : Read}
     other.IsProper insertSettings.range insertSettings.dovetailSlack →
     other.placements ≠ pair.placements → other.score < pair.score
 
-/-! ## Repeats -/
-
--- seeds are this long
-def seedLength : Nat := 25
-
--- PROTOTYPE (proof/gaveup; NOT Rowan's Spec): the repeat rule below is a proposal
--- a seed that occurs at least this often counts as a repeat seed
-def gaveUpRepeats : Nat := 500
-
--- a mate may be given up on when it has this many non-overlapping repeat seeds
-def gaveUpSeeds : Nat := 2
-
--- how often `word` occurs in the genome: windows equal to it or to its reverse complement, over all
--- starts of all chromosomes
 def Genome.occurrences (genome : Genome) (word : Read) : Nat :=
-  (genome.map fun chromosome =>
-    ((List.range (chromosome.seq.length + 1 - word.length)).filter fun start =>
-      let window := (chromosome.seq.drop start).take word.length
-      window == word || window == reverseComplement word).length).sum
+  let countIn (reference query : List Char) : Nat :=
+    List.countP (query.isPrefixOf ∘ reference.drop) (List.range reference.length)
+  let forward  := genome.map fun chr => countIn chr.seq word
+  let backward := genome.map fun chr => countIn chr.seq (reverseComplement word)
+  forward.sum + backward.sum
 
--- the read has `gaveUpSeeds` non-overlapping seeds (windows of `seedLength` letters), each occurring at
--- least `gaveUpRepeats` times
-def Genome.RepeatWitness (genome : Genome) (read : Read) : Prop :=
-  ∃ starts : List Nat, starts.length = gaveUpSeeds ∧
-    starts.Pairwise (fun a b => a + seedLength ≤ b) ∧
-    ∀ start ∈ starts, start + seedLength ≤ read.length ∧
-      gaveUpRepeats ≤ genome.occurrences ((read.drop start).take seedLength)
+def Read.highlyRepetitiveIn (genome : Genome) (mate : Read) : Prop :=
+  let seedPositions := List.range (mate.length / seedLength)
+  let seed (i : Nat) : Read := mate.extract (i * seedLength) ((i + 1) * seedLength)
+  let isRepeat (i : Nat) : Bool := genome.occurrences (seed i) ≥ gaveUpRepeats
+  List.countP isRepeat seedPositions ≥ gaveUpSeeds
 
 /-! ## The answer -/
 
@@ -103,8 +92,8 @@ def Genome.RepeatWitness (genome : Genome) (read : Read) : Prop :=
 inductive Uniqueness where
   | unique       -- the reported pair is the unique best proper pair
   | multimapper  -- proved: the reported pair is a best proper pair, and another one ties with it
-  | unknown      -- not checked
-  | gaveUp       -- not searched: a mate has `gaveUpSeeds` seeds repeating at least `gaveUpRepeats` times (PROTOTYPE)
+  | unknown      -- not checked but we get bounds and its mapped unless low qual
+  | repetitiveUnknown --not checked or able to return bc too many matches in repetitive region
 deriving DecidableEq, Repr
 
 -- which router path answered: a performance record only, no claim
@@ -147,16 +136,25 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
   (match answer.uniqueness with
    | .unique =>
        ∃ report, answer.found = some report ∧
-       ∃ pair : PairAlignment genome mate1 mate2, pair.report = report ∧ pair.IsUniqueBestProper insertSettings
+       ∃ pair : PairAlignment genome mate1 mate2, pair.report = report ∧
+       pair.IsUniqueBestProper insertSettings
    | .multimapper =>
        ∃ report, answer.found = some report ∧
        ∃ pair other : PairAlignment genome mate1 mate2, pair.report = report ∧
-         pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
+         pair.IsBestProper insertSettings ∧
+         other.IsBestProper insertSettings ∧
+         pair.placements ≠ other.placements
+
    | .unknown => 
-       answer.found = none → answer.bestPossibleScore < insertSettings.requiredMapBound mate1 mate2
-   | .gaveUp =>
-       answer.found = none ∧ (genome.RepeatWitness mate1 ∨ genome.RepeatWitness mate2)
-   )
+       --if it doesn't give anything it must show it has no good mappings at all
+       answer.found = none → answer.bestPossibleScore < requiredMapBound mate1 mate2
+   | .repetitiveUnknown =>
+       --unless it can show that it can't prove bounds because the whole thing is super repetitive
+       --this cannot be used to return a found answer so you cannot sneak good pairs into here
+       --Even if they are in a repetitive region
+       --One of the most important parts of the whole spec and very important to think about
+       answer.found = none ∧  ( ( mate1.highlyRepetitiveIn genome ) ∨ ( mate2.highlyRepetitiveIn genome ) )
+     )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)
 def PairResult.Correct (insertSettings : InsertSettings) (genome : Genome) (trimmed1 trimmed2 : Option Read) :
