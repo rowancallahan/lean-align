@@ -18,7 +18,7 @@ Everything is computed from minibwa's alignment and the original FASTQ; we have 
 | errors | none of those, minibwa's alignment scores < -16 in our model (too many mismatches for the bound a `none` must beat) | 1 194 (17.3 %) | 466 (6.1 %) |
 | unexplained | alignment >= -16 end to end and we still say none | 0 | 0 |
 
-Overlap (a pair counts in every class it has): clip 27.5 % / 53.0 %, trimmed 36.4 % / 76.6 %, indel 15.6 % / 30.2 %; two or more classes 24.5 % / 65.5 %. On HiSeq most pairs have several causes at once (long 2x250 reads with a poor 3' tail: minibwa clips it, our trimmer cuts it, and the rest of the read has an error or two).
+Overlap (a pair counts in every class it has): clip 27.5 % / 53.0 %, trimmed 36.4 % / 76.6 %, indel 15.6 % / 30.2 %; fragment 25.9 % / 15.2 %; two or more of the five flags (fragment, clip, trimmed, indel, small clip) 33.1 % / 68.9 %; none of the five (gave up, errors) 25.1 % / 6.8 %. On HiSeq most pairs have several causes at once (long 2x250 reads with a poor 3' tail: minibwa clips it, our trimmer cuts it, and the rest of the read has an error or two).
 
 **The fragment class by reason** (NovaSeq / HiSeq): fragment > 1000: 697 / 38; different chromosome: 426 / 273; same strand: 21 / 22; **dovetail or containment even without the clipped ends: 483 / 543**; **read-through, proper only once the clipped ends (adapter) are excluded: 158 / 284**.
 Dovetail overshoot (bases the forward mate starts after, or ends after, the reverse mate, aligned part): 1 base: 131 / 160, 2 bases: 87 / 70, 3-4: 41 / 56, 5-9: 13 / 18, 10-19: 13 / 12, 20-49: 18 / 23, 50+: 120 / 179. So over 40 % of the dovetails are 1-2 bases past each other: the properness rule has slack 0 (`dovetailSlack`), and minibwa places the mates a base apart.
@@ -26,7 +26,7 @@ Dovetail overshoot (bases the forward mate starts after, or ends after, the reve
 ## Clipped pairs (clip >= 10 bases in some mate): 1 898 NovaSeq, 4 045 HiSeq
 
 - Clipped mates: 2 330 / 5 206. At the read's 3' end: 1 652 / 4 048; 5' end: 513 / 702; both ends: 152 / 448. Clipped bases per clipped mate: 10-19: 503 / 871, 20-29: 339 / 565, 30-49: 472 / 943, 50-74: 594 / 903, 75-99: 270 / 695, 100+: 152 / 1 229.
-- **Pair score of the aligned part (clipped part excluded, our model):** >= -16: 652 / 639; >= -50: 1 242 / 1 529; >= -100: 1 792 / 2 973; < -100: 106 / 1 072. So excluding the clip would pass the -100 floor for 94 % of the NovaSeq clipped pairs and 74 % of the HiSeq ones; but only 34 % / 16 % would pass the -16 bound that a `none` answer must beat (a pair at >= -16 cannot be `none`), and 66 % / 37 % the -50 floor. The HiSeq pairs mostly fail because the aligned part itself carries errors, tails of 100+ clipped bases, and indels.
+- **Pair score of the aligned part (clipped part excluded, our model):** >= -16: 652 / 639; >= -50: 1 242 / 1 529; >= -100: 1 792 / 2 973; < -100: 106 / 1 072. So excluding the clip would pass the -100 floor for 94 % of the NovaSeq clipped pairs and 74 % of the HiSeq ones; but only 34 % / 16 % would pass the -16 bound that a `none` answer must beat (a pair at >= -16 cannot be `none`), and 65 % / 38 % the -50 floor. The HiSeq pairs mostly fail because the aligned part itself carries errors, tails of 100+ clipped bases, and indels.
 - If the clipped bases were forced in end to end as mismatches (about 3 per base on random sequence) almost none of them pass: >= -50: 40 / 19, >= -100: 246 / 228 of the clipped pairs. So end-to-end alignment cannot rescue them; clipping (a local alignment) or adapter removal is the only route.
 - The 3' bias (71 % / 78 % of clips at the 3' end) is the signature of adapter read-through and quality decay, not of structural variation.
 
@@ -38,7 +38,7 @@ Aligned score >= -16: 1 328 / 325; >= -50: 3 606 / 1 877; >= -100: 4 844 / 3 019
 
 1. Clipping alone explains a fifth (NovaSeq) to a half (HiSeq) of these `none` pairs, and for the NovaSeq clipped pairs excluding the clip passes the -100 floor in 94 %; the read-through adapter pairs (158 / 284) are a special case a plain adapter trimmer might remove.
 2. **A dovetail slack of 1-2 bases would admit about 220 NovaSeq and 230 HiSeq of these pairs** without any clipping; that is a setting (`dovetailSlack`) rather than a new alignment mode.
-3. Another 18 % / 6 % are error-rich pairs (minibwa's own alignment has 4-9 mismatches per mate): the -16 bound, not the search, is why we say `none`.
+3. Another 17 % / 6 % are error-rich pairs (minibwa's own alignment has 4-9 mismatches per mate): the -16 bound, not the search, is why we say `none`.
 4. Our trimmer removes the whole mate for some good reads (example 2: a 151 bp mate with 7 mismatches in 147 trimmed away entirely, `trimmedAway2`).
 
 ## Examples (10 each; `ours:` is our label and bound XB)
