@@ -1,4 +1,4 @@
-# Index-side heavy 25-mer table (`speed/index-counts`, off proof/gaveup2 d18dbbd)
+# Index-side heavy 25-mer table (`speed/index-counts`, on festive-fermi 39ae4e8)
 
 Goal: Rowan's `Read.highlyRepetitiveIn` witness (≥ `gaveUpSeeds` = 2 grid seeds, each with
 `Genome.occurrences` ≥ `gaveUpRepeats` = 200, both strands) as a cheap lookup instead of the
@@ -42,6 +42,54 @@ Rowan's limit is a whole loaded index just under 8 GB; today it is ~5.3 GB. The 
 takes 1.8 MB, so it uses almost none of the ~2.5 GB headroom. That leaves ≈ 2.5 GB for a later
 short-seed component.
 
-## Status
-Lean is not available in this session: the permission policy refused to run the elan/Lean release.
-Nothing in Lean is built yet: no table section, check, wiring, CI, or Ir measurements.
+## What is built and proved (Proofs/Heavy.lean, Proofs/HeavyBuild.lean, Proofs/Aligner.lean)
+- Table `H`: both orientations, 25 bytes per entry, sorted (the query needs no canonical code). Mask `M`: one byte
+  per entry, 1 = passed `entryOk` on the built index. Both are saved after `ns`; `LoadedIndex` is a 6-tuple.
+- `entryOk i`: `capCount(entry) + capCount(rc entry) ≥ 200`. `capCount` = in-chromosome places among the first 200
+  places of the exact place list; it is computed with the capped lookup (`capCount_eqF`, csimp). `indexOk` adds
+  `heavyOk` (every masked entry passes); the mask and the check run on 16 tasks (`heavyMask_eqP`, `heavyOk_eqP`).
+- `heavyMate_sound`: ≥ `gaveUpSeeds` grid seeds found (binary search, `M = 1`) ⇒ `highlyRepetitiveIn`. Uses
+  `GaveUp.occurrences_eq` (occurrences = forward(w) + forward(rc w)) and `seedCount_le_occList` per strand. The proof
+  needs no sortedness: a found entry equals the seed byte for byte.
+- Completeness: `buildIndex_eq_saveIndex` keeps its statement and is re-proved. New `heavyOk_mask`: two checked
+  indexes of one genome have the same exact sorted place lists (`lookupSeed_mem`/`_sorted`), so a mask computed
+  on the built index passes on the loaded one.
+- The builder `HeavyBuild.table` is unproved and capped at 2^63 bytes. Pass 1 uses 256 MB of saturating byte counters
+  over a 28-bit hash of the canonical code; pass 2 keeps exact counts in a hash map for codes whose counter is ≥ 200.
+- Wiring: the gave-up stage (leftovers, after the router) uses `heavyMate` instead of `repeatMate`.
+  `witnessFirst` (Proofs/Aligner.lean) is OFF by default. When on, a flagged pair answers bound 0 +
+  `.repetitiveUnknown` before the router. Both settings are proved.
+- CI with FUZZ=1 passes on 67c608f: 452 theorems, standard axioms only.
+
+## hg38 build (this box: 4 cores, 15 GB)
+| | 39ae4e8 | this branch |
+|---|---|---|
+| index size | 5,326,114,456 B | 5,338,015,764 B (+11.9 MB, +0.22%) |
+| build wall / CPU | BASEBUILD | 31.0 min / 39.1 min user |
+| peak RSS | BASERSS | 10.76 GB |
+- Table: 457,742 entries (= 2 × 228,871, the C count). Every entry passed the check: the mask has 457,742 ones.
+- The builder alone (heavy_bench): 4.6 min single-threaded, plus 2.6 min to read the FASTA.
+- Loaded RAM: +11.9 MB per loaded copy. `rdBytes` copies H and M on every load (one per task per chunk).
+
+## Ir (callgrind, the shim, first 2000 pairs, index load included; Testing/repro/ir.sh with the index as argument)
+| binary | index | NovaSeq | HiSeq (hg002) |
+|---|---|---|---|
+| festive-fermi 0e48158 (no floor) | shim.idx | 960.4M | 1309.4M |
+| proof/gaveup2 d18dbbd (gaveUp 500, ManyPlaces) | shim.idx | 2732.7M | 1993.6M |
+| speed/floor-real-spec 61e4daa (repeatMate, 200) | shim.idx | 1754.0M | 1602.8M |
+| festive-fermi 39ae4e8 (this branch's base: repeatMate) | shim.idx | 1526.8M | 1478.7M |
+| **this branch 67c608f (heavyMate)** | heavy.idx | **1300.1M** (−14.8% vs 39ae4e8) | **1450.5M** (−1.9%) |
+| this branch, witnessFirst := true | heavy.idx | 1103.7M | 1190.0M |
+- The heavy functions do not show up in the profile. The remaining overhead vs 0e48158 is the proved floor for
+  non-repeat leftovers: `lookAt` is 220M (17%) of the NovaSeq run.
+- Witness-first (one flag) is below 0e48158 on HiSeq. It unmaps pairs, though: mapped SAM records 3740 → 3108
+  (NovaSeq) and 3742 → 3024 (HiSeq).
+
+## SAM vs 39ae4e8 (same 2000 pairs)
+Mapped records are identical (NovaSeq 3740 / 3740, HiSeq 3742 / 3742). 3 pairs differ, all unmapped in both runs:
+2 NovaSeq + 1 HiSeq pairs that the old forward-only witness missed now answer `repetitiveUnknown` (XB −13 / −12)
+instead of `unknown` after the second look (XB −17). `repetitiveUnknown` lines: NovaSeq 42 → 46, HiSeq 18 → 20.
+
+## Not done
+- The builder passes are single-threaded; they could be split by hash range over 4 tasks.
+- H and M could be read in place from the index bytes instead of copied on every load.
