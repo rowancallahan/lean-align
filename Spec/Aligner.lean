@@ -68,6 +68,27 @@ def PairAlignment.IsUniqueBestProper {genome : Genome} {mate1 mate2 : Read}
     other.IsProper insertSettings.range insertSettings.dovetailSlack →
     other.placements ≠ pair.placements → other.score < pair.score
 
+/-! ## Repeats -/
+
+-- seeds are this long
+def seedLength : Nat := 25
+
+-- a mate with a seed that occurs at least this often may be given up on
+def gaveUpRepeats : Nat := 500
+
+-- how often `word` occurs in the genome: windows equal to it or to its reverse complement, over all
+-- starts of all chromosomes
+def Genome.occurrences (genome : Genome) (word : Read) : Nat :=
+  (genome.map fun chromosome =>
+    ((List.range (chromosome.seq.length + 1 - word.length)).filter fun start =>
+      let window := (chromosome.seq.drop start).take word.length
+      window == word || window == reverseComplement word).length).sum
+
+-- the read has a seed (a window of `seedLength` letters) that occurs at least `gaveUpRepeats` times
+def Genome.RepeatWitness (genome : Genome) (read : Read) : Prop :=
+  ∃ start, start + seedLength ≤ read.length ∧
+    gaveUpRepeats ≤ genome.occurrences ((read.drop start).take seedLength)
+
 /-! ## The answer -/
 
 -- what is known about whether the best proper pair is unique
@@ -75,6 +96,7 @@ inductive Uniqueness where
   | unique       -- the reported pair is the unique best proper pair
   | multimapper  -- proved: the reported pair is a best proper pair, and another one ties with it
   | unknown      -- not checked
+  | gaveUp       -- not searched: a mate has a seed that repeats at least `gaveUpRepeats` times
 deriving DecidableEq, Repr
 
 -- which router path answered: a performance record only, no claim
@@ -124,6 +146,8 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
          pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
    | .unknown => 
        answer.found = none → answer.bestPossibleScore < insertSettings.requiredMapBound mate1 mate2
+   | .gaveUp =>
+       answer.found = none ∧ (genome.RepeatWitness mate1 ∨ genome.RepeatWitness mate2)
    )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)
