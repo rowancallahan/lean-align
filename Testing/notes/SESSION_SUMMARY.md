@@ -1530,3 +1530,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - Fuzz + type-check guide for Rowan: Testing/fuzz/ROWAN_CHECKLIST.md.
 - Next for Rowan: FASTQ spec (a definition of a FASTQ file plus ~1 theorem), FASTA spec, SAM spec. Later idea: the mapper outputs SAM lines directly, so the kernels include SAM formatting (speed + one proof chain).
 - Rowan will run his own fuzzing comparisons before blogging.
+- ~04:11: MILESTONE (S4, same session): festive a5bcc94 (K=2, N=200, proved) + the rebased shim_speed.patch: NovaSeq minibwa 16.4 / ours 8.1 s = 2.02x (CPU 2.29x); HiSeq 30.4 / 8.7 s = 3.50x (CPU 3.96x). Baseline 0e48158 + its patch: 2.77x / 4.12x. Rowan's stop condition (K=2, NovaSeq >= ~2.0x) is met; the 5-10%-of-baseline line is not (1.37x / 1.18x).
