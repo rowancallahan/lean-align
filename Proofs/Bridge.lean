@@ -201,7 +201,8 @@ def CorrectU (insertSettings : InsertSettings) (genome : Genome) (mate1 mate2 : 
        ∃ report, answer.found = some report ∧
        ∃ pair other : PairAlignment genome mate1 mate2, pair.report = report ∧
          pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
-   | .unknown => True)
+   | .unknown => True
+   | .repetitiveUnknown => False)
 
 def tierOf : MapSpec.Fast.Tag → Tier
   | .t1   => .eachMateUnique

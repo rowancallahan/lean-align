@@ -140,6 +140,7 @@ theorem finalize_correct {insertSettings : InsertSettings} {genome : Genome} {R1
     | unique => rw [hq] at hu; exact hu
     | multimapper => rw [hq] at hu; exact hu
     | unknown => intro h0; have := hc h0; omega
+    | repetitiveUnknown => rw [hq] at hu; exact hu
 
 /-! ## Chromosome lengths, from the index or from the lengths record -/
 

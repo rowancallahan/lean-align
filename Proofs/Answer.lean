@@ -70,6 +70,7 @@ inductive Uniqueness where
   | unique       -- the reported pair is the unique best proper pair
   | multimapper  -- proved: the reported pair is a best proper pair, and another one ties with it
   | unknown      -- not checked
+  | repetitiveUnknown -- never produced by this implementation yet (proved on speed/floor-real-spec)
 deriving DecidableEq, Repr
 
 -- which router path answered: a performance record only, no claim
@@ -116,6 +117,7 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
          pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
    | .unknown => 
        answer.found = none → answer.bestPossibleScore < insertSettings.junkScore
+   | .repetitiveUnknown => False  -- not produced here; the real clause lands with speed/floor-real-spec
    )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)

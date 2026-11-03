@@ -70,6 +70,7 @@ def uniquenessText : Uniqueness → String
   | .unique      => "unique"
   | .multimapper => "multimapper"
   | .unknown     => "unknown"
+  | .repetitiveUnknown => "repetitiveUnknown"
 
 def tierText : Tier → String
   | .eachMateUnique    => "eachMateUnique"
