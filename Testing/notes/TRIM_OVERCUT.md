@@ -20,4 +20,18 @@ Quality profile: the cut bases are mostly **mean Q 20-24** (88 % NovaSeq, 73 % H
 - HiSeq: Q = 24: 1 030, 23: 1 134, 22: 1 333, 21: 1 715, 20: 1 844, 19: 1 956, 18: 2 191, 17: 2 348, 16: 2 592, 15: 2 508, 14: 2 492, 13: 1 374, <= 12: 1 189, never: 8, Q = 25 (kept only by adapter or length rules): 12. Counting the mates each setting would keep: Q = 20 keeps 7 068 of the 23 726 overcut HiSeq mates (30 %), Q = 15 keeps 18 663 (79 %); NovaSeq Q = 20 keeps 481 of 673 (71 %), Q = 15 keeps 613 (91 %). Most HiSeq mates need Q 14-18.
 - 3' tails dominate (HiSeq 88 % 3' only), which is the ordinary quality decay of 2x250 reads.
 
-What is NOT done: the run of the shim with a gentler `defQ` (e.g. 20, 15) to measure what a lower threshold gains (mapped and unique pairs, pairs scored below -50/-100) and loses (more mismatches and pairs failing the -16 bound). That needs a local edit of `defQ` in `Aligner/mapper/ReadTrim.lean` and a rebuild; it waits for approval.
+## A gentler `defQ`: measured (festive 39ae4e8, local edit of `ReadTrim.defQ` only, never pushed; one run each, 4 cores)
+
+Raw lines in `Testing/notes/trim_overcut/defq_runs.log`, counts by `Testing/fuzz/defq_measure.py`. "mapped" = both mates mapped; unique = both mates `XU:Z:unique`; repetitiveUnknown (`gaveUp`) and all-insertion pairs are 0 on this head, so unmapped = `none`.
+
+| set | defQ | mapped | unique | unmapped | pairs < -50 | pairs < -100 | user CPU (s) |
+|---|---|---|---|---|---|---|---|
+| NovaSeq | 25 (now) | 187 599 | 164 839 | 12 401 | 2 793 | 0 | 30.3 |
+| NovaSeq | 20 | 185 878 (-1 721) | 164 292 (-547) | 14 122 | 3 865 | 0 | 31.9 |
+| NovaSeq | 15 | 184 445 (-3 154) | 164 061 (-778) | 15 555 | 3 874 | 0 | 33.0 |
+| HiSeq | 25 (now) | 187 231 | 169 101 | 12 769 | 2 361 | 0 | 28.2 |
+| HiSeq | 20 | 182 588 (-4 643) | 162 439 (-6 662) | 17 412 | 4 189 | 0 | 34.1 |
+| HiSeq | 15 | 173 211 (-14 020) | 151 258 (-17 843) | 26 789 | 6 027 | 0 | 30.9 |
+
+**A lower defQ (keeping more bases) is worse on every count**: fewer pairs mapped and unique, more pairs below -50, and no CPU saving (user CPU is within the run-to-run spread, one run each; the wall and total CPU of the first run include a cold index load).
+Why: the shim aligns end to end under the -4 per mismatch score and gives `none` when the best pair is below the -16 bound. The extra bases that minibwa aligns "well" (0-4 % mismatches) still carry 1-4 mismatches over 30-130 bases, i.e. -4 to -16 per mate, which pushes pairs under the bound; trimming them gave a pair that scores. So the overcut finding above is real (minibwa aligns those regions), but it is not recoverable by lowering defQ under the current end-to-end scoring. What would recover them is local alignment (clipping, scored like minibwa) or a clip penalty, not a gentler trimmer. The opposite direction (a higher defQ) was not run.
