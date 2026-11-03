@@ -30,6 +30,9 @@ sorries = [l for l in re.findall(r"^warning: (\S+):\d+:\d+: declaration uses .so
 for n, a in bad: print(f"FAIL non-standard axioms: {n}: [{a}]")
 for e in errors: print(f"FAIL {e}")
 for f in sorries: print(f"FAIL sorry outside Spec/: {f}")
+need = ["Spec.alignPairs_correct", "Spec.alignPairs_end_to_end"]
+for n in need:
+    if not any(x == n for x, _ in lists): print(f"FAIL no axiom line for the headline theorem {n}"); bad.append(n)
 if bad or errors or sorries or not lists: sys.exit(1)
 print(f"ok   {len(lists) + len(none)} theorems, standard axioms only; sorry only in Spec/ (the statements)")
 PY
