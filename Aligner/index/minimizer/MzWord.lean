@@ -226,6 +226,25 @@ termination_by hi - t
     (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
     (ix.hiB p.b) base bit (ix.loB p.b) #[]
 
+/-- At most one place per slot. -/
+theorem scanAW_size (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) : ∀ n t (acc : Array Nat), hi - t = n →
+    (scanAW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc).size ≤ acc.size + (hi - t) := by
+  intro n
+  induction n with
+  | zero => intro t acc hn; rw [scanAW, if_neg (by omega)]; omega
+  | succ n ih =>
+    intro t acc hn
+    rw [scanAW, if_pos (by omega)]
+    refine Nat.le_trans (ih (t + 1) _ (by omega)) ?_
+    split <;> simp <;> omega
+
+/-- A lookup returns at most the bucket's slot count. -/
+theorem lookupPW_size (ix : MzIdx) (G : PGen) (R : ByteArray) (s : Nat) (p : MzP) (base bit : Nat) :
+    (lookupPW ix G R s p base bit).size ≤ ix.hiB p.b - ix.loB p.b := by
+  unfold lookupPW
+  simpa using scanAW_size ix G R _ _ s _ _ _ _ _ _ _ _ _ _ base bit _ _ #[] rfl
+
 end MzW
 
 /-! ## The key test on `UInt64` slots (compiled in place of `lookupPW`: `lookupPW_eqK`) -/
