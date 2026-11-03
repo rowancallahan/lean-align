@@ -188,6 +188,15 @@ def pairCfg (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArr
 def reqOf (insertSettings : InsertSettings) (read1 read2 : ByteArray) : Int :=
   requiredMapBound (decodeRead read1) (decodeRead read2)
 
+-- `reqOf` from the byte counts (Spec's `requiredMapBound` reads only the mates' lengths; no decoding)
+def reqOfF (_ : InsertSettings) (read1 read2 : ByteArray) : Int :=
+  -4 * ((min 4 ((min read1.size read2.size) / 25 - 1) : Nat) : Int)
+
+@[csimp] theorem reqOf_eqF : @reqOf = @reqOfF := by
+  funext insertSettings read1 read2
+  unfold reqOf reqOfF requiredMapBound
+  rw [GaveUp.decodeRead_length, GaveUp.decodeRead_length]
+
 -- the cap of the second look: `-requiredMapBound`, at most 16 (`LastResort.pairsAt_mem`); for Spec's default
 -- `requiredMapBound` it is `LastResort.capOfLens` (`4 * errorsChecked` of the shorter mate)
 def lookCap (req : Int) : Nat := min 16 (-req).toNat
