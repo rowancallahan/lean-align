@@ -1070,6 +1070,87 @@ theorem certified_global (sc : Scoring) (xs ys : List Char) (w : Nat)
   omega
 
 -- ══════════════════════════════════════════════════════════════════
+-- PART 5b: compiled `bandedRun` without the rows' dead prefixes
+-- ══════════════════════════════════════════════════════════════════
+
+/-- `List.replicate k bCellNone ++ r`, dropped by `k`. -/
+def dropK (k' : Nat) (r : List BCell) (k : Nat) : List BCell :=
+  if k ≤ k' then List.replicate (k' - k) bCellNone ++ r else r.drop (k - k')
+
+theorem dropK_eq (k' : Nat) (r : List BCell) (k : Nat) :
+    (List.replicate k' bCellNone ++ r).drop k = dropK k' r k := by
+  unfold dropK
+  split
+  · rw [List.drop_append, List.drop_replicate, List.length_replicate, show k - k' = 0 by omega, List.drop_zero]
+  · rw [List.drop_append, List.drop_replicate, List.length_replicate, show k' - k = 0 by omega]; rfl
+
+/-- How many leading cells of a row are outside the band (`lo > 0`). -/
+def deadK (ys : List Char) (lo hi : Int) : Nat :=
+  if 0 < lo ∧ lo ≤ hi then min lo.toNat ys.length else 0
+
+/-- `bTable` as (dead prefix length, the rest). -/
+def bTableK (sc : Scoring) : List Char → List Char → Int → Int → Nat × List BCell
+  | [], ys, lo, hi => (0, bLastRow sc ys lo hi)
+  | x :: xs, ys, lo, hi =>
+      let nx := bTableK sc xs ys (lo + 1) (hi + 1)
+      let k := deadK ys lo hi
+      (k, bRowUp sc x (ys.drop k) (dropK nx.1 nx.2 k) (lo - k) (hi - k))
+
+theorem bRowUp_dead (sc : Scoring) (x : Char) : ∀ (k : Nat) (ys : List Char) (next : List BCell) (lo hi : Int),
+    k ≤ ys.length → (k : Int) ≤ lo → lo ≤ hi →
+    bRowUp sc x ys next lo hi =
+      List.replicate k bCellNone ++ bRowUp sc x (ys.drop k) (next.drop k) (lo - k) (hi - k) := by
+  intro k
+  induction k with
+  | zero => intro ys next lo hi _ _ _; simp
+  | succ k ih =>
+    intro ys next lo hi hk hl hh
+    match ys with
+    | [] => simp at hk
+    | y :: ys' =>
+      simp only [List.length_cons] at hk
+      rw [bRowUp, if_neg (by omega)]
+      simp only []
+      rw [ih ys' next.tail (lo - 1) (hi - 1) (by omega) (by omega) (by omega)]
+      have hm : bMkMain sc x y lo hi (bCellHead next) (bCellHead next.tail)
+          (bCellHead (List.replicate k bCellNone ++
+            bRowUp sc x (ys'.drop k) (next.tail.drop k) (lo - 1 - k) (hi - 1 - k))) = bCellNone := by
+        rw [bMkMain, if_neg (by omega)]
+      rw [hm, List.replicate_succ, List.cons_append, List.drop_succ_cons, List.drop_tail,
+        show lo - 1 - (k : Int) = lo - ((k + 1 : Nat) : Int) by push_cast; omega,
+        show hi - 1 - (k : Int) = hi - ((k + 1 : Nat) : Int) by push_cast; omega]
+
+theorem bTableK_eq (sc : Scoring) : ∀ (xs ys : List Char) (lo hi : Int),
+    bTable sc xs ys lo hi = List.replicate (bTableK sc xs ys lo hi).1 bCellNone ++ (bTableK sc xs ys lo hi).2
+  | [], ys, lo, hi => by simp [bTable, bTableK]
+  | x :: xs, ys, lo, hi => by
+    rw [bTable, bTableK_eq sc xs ys (lo + 1) (hi + 1)]
+    simp only [bTableK]
+    unfold deadK
+    split
+    · rename_i h
+      rw [bRowUp_dead sc x (min lo.toNat ys.length) ys _ lo hi (Nat.min_le_right _ _) (by omega) h.2, dropK_eq]
+    · simp [dropK]
+
+/-- Compiled `bandedRun`. -/
+def bandedRunK (sc : Scoring) (xs ys : List Char) (lo hi : Int) : Option (List Step × Int) :=
+  let t := bTableK sc xs ys lo hi
+  if t.1 = 0 then (bCellHead t.2).neutral else none
+
+@[csimp] theorem bandedRun_eqK : @bandedRun = @bandedRunK := by
+  funext sc xs ys lo hi
+  unfold bandedRun bandedRunK
+  rw [bTableK_eq]
+  simp only []
+  split
+  · rename_i h; rw [h]; rfl
+  · rename_i h
+    obtain ⟨k, hk⟩ := Nat.exists_eq_succ_of_ne_zero h
+    rw [hk, List.replicate_succ, List.cons_append]; rfl
+
+#print axioms bandedRun_eqK
+
+-- ══════════════════════════════════════════════════════════════════
 -- PART 6: the band-doubling driver and the unconditional theorem
 -- ══════════════════════════════════════════════════════════════════
 
