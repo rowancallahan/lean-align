@@ -1,10 +1,12 @@
 Pipeline prototype for Rowan (NOT applied; touches Spec/Shim.lean + its mirror Main.lean, so Spec/FROZEN.sha256 must be
 regenerated after applying:  shasum -a 256 Spec/Alignment.lean Spec/Mapping.lean Spec/Aligner.lean Spec/Shim.lean > Spec/FROZEN.sha256).
    git apply Testing/notes/pipeline_proto.patch
-Made against festive-fermi 89ef604. Variant A (one Spec.alignPairs per 4000-pair job). See Testing/notes/UTILIZATION.md §5.
+Made against festive-fermi 89ef604. Variant A (one Spec.alignPairs per job), job = 16000 pairs (PROTOTYPE knobs: env
+PIPE_JOB / PIPE_DEPTH). The quality-length check compiles whether FastqRecord.quality is a String (festive) or a
+ByteArray (shim_speed.patch) via the small QSize class. See Testing/notes/UTILIZATION.md §5-6.
 
 diff --git a/Main.lean b/Main.lean
-index d6e284b..cd4e32f 100644
+index d6e284b..9f26f48 100644
 --- a/Main.lean
 +++ b/Main.lean
 @@ -1,5 +1,6 @@
@@ -14,7 +16,7 @@ index d6e284b..cd4e32f 100644
  
  /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
  then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
-@@ -8,6 +9,168 @@ Each chunk is read (`Spec.readChunk`), then its mates are trimmed many at once (
+@@ -8,6 +9,178 @@ Each chunk is read (`Spec.readChunk`), then its mates are trimmed many at once (
  which runs the proved trimmer `Spec.trimRecord` on every mate); a mate with no letters left is
  trimmed away (`none`, `Spec.chunkPairs` in Spec/Fastq.lean). -/
  
@@ -29,8 +31,15 @@ index d6e284b..cd4e32f 100644
 +open Spec
 +
 +def blockSize : Nat := 8 * 1024 * 1024
-+def jobPairs : Nat := 4000
++def jobPairs : Nat := 16000
 +def workers : Nat := 4
++-- jobs queued per worker
++def depth : Nat := 2
++
++-- the quality length in bytes, whether `FastqRecord.quality` is a String or (with shim_speed.patch) a ByteArray
++class QSize (α : Type) where qsize : α → Nat
++instance : QSize String := ⟨String.utf8ByteSize⟩
++instance : QSize ByteArray := ⟨ByteArray.size⟩
 +
 +-- up to 8 MB; short (pipe) reads are topped up, 1 MB at a time, until the block is full or the input ends
 +def readBig (h : IO.FS.Handle) : IO ByteArray := do
@@ -62,8 +71,8 @@ index d6e284b..cd4e32f 100644
 +  IO.Process.exit 1
 +
 +-- slices of exactly `jobPairs` records (the last one may be shorter), in file order
-+def reader (h : IO.FS.Handle) (ch : Std.CloseableChannel.Sync ByteArray) : IO Unit := do
-+  let need := 4 * jobPairs
++def reader (h : IO.FS.Handle) (k : Nat) (ch : Std.CloseableChannel.Sync ByteArray) : IO Unit := do
++  let need := 4 * k
 +  let mut carry := ByteArray.empty
 +  let mut scan := 0
 +  let mut lines := 0
@@ -121,7 +130,7 @@ index d6e284b..cd4e32f 100644
 +      let name := mateName record.name
 +      unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
 +        throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
-+    if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
++    if record1.letters.size != QSize.qsize record1.quality || record2.letters.size != QSize.qsize record2.quality then
 +      throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
 +    chunk := chunk.push (record1, record2)
 +  if r1.size != r2.size then
@@ -140,12 +149,15 @@ index d6e284b..cd4e32f 100644
 +
 +def run (ins : InsertSettings) (index : ByteArray) (chromosomes : ChromosomeList) (h1 h2 : IO.FS.Handle)
 +    (outH : IO.FS.Handle) : IO Unit := do
++  -- PROTOTYPE knobs for the measurements (defaults: jobPairs, depth)
++  let k := ((← IO.getEnv "PIPE_JOB").bind String.toNat?).getD jobPairs
++  let d := ((← IO.getEnv "PIPE_DEPTH").bind String.toNat?).getD depth
 +  let ch1 ← Std.CloseableChannel.Sync.new (some 3)
 +  let ch2 ← Std.CloseableChannel.Sync.new (some 3)
-+  let jobs ← Std.CloseableChannel.Sync.new (some (2 * workers))
++  let jobs ← Std.CloseableChannel.Sync.new (some (d * workers))
 +  let res ← Std.CloseableChannel.Sync.new (some (4 * workers))
-+  let _ ← IO.asTask (prio := .dedicated) (try reader h1 ch1 catch e => die "reader 1" e)
-+  let _ ← IO.asTask (prio := .dedicated) (try reader h2 ch2 catch e => die "reader 2" e)
++  let _ ← IO.asTask (prio := .dedicated) (try reader h1 k ch1 catch e => die "reader 1" e)
++  let _ ← IO.asTask (prio := .dedicated) (try reader h2 k ch2 catch e => die "reader 2" e)
 +  let _ ← IO.asTask (prio := .dedicated) (try
 +      let mut seq := 0
 +      repeat
@@ -183,7 +195,7 @@ index d6e284b..cd4e32f 100644
  def main (args : List String) : IO UInt32 := do
    match args with
    | ["build", genomePath, indexPath] =>
-@@ -21,42 +184,10 @@ def main (args : List String) : IO UInt32 := do
+@@ -21,42 +194,10 @@ def main (args : List String) : IO UInt32 := do
      -- and INDEX.chromosomes lists that genome's names and lengths
      let index ← IO.FS.readBinFile indexPath
      let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
@@ -228,7 +240,7 @@ index d6e284b..cd4e32f 100644
    | _ =>
      IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
 diff --git a/Spec/Shim.lean b/Spec/Shim.lean
-index 22e2738..4628a58 100644
+index 22e2738..67b6395 100644
 --- a/Spec/Shim.lean
 +++ b/Spec/Shim.lean
 @@ -1,4 +1,5 @@
@@ -237,7 +249,7 @@ index 22e2738..4628a58 100644
  
  /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
  then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
-@@ -7,6 +8,168 @@ Each chunk is read (`Spec.readChunk`), then its mates are trimmed many at once (
+@@ -7,6 +8,178 @@ Each chunk is read (`Spec.readChunk`), then its mates are trimmed many at once (
  which runs the proved trimmer `Spec.trimRecord` on every mate); a mate with no letters left is
  trimmed away (`none`, `Spec.chunkPairs` in Spec/Fastq.lean). -/
  
@@ -252,8 +264,15 @@ index 22e2738..4628a58 100644
 +open Spec
 +
 +def blockSize : Nat := 8 * 1024 * 1024
-+def jobPairs : Nat := 4000
++def jobPairs : Nat := 16000
 +def workers : Nat := 4
++-- jobs queued per worker
++def depth : Nat := 2
++
++-- the quality length in bytes, whether `FastqRecord.quality` is a String or (with shim_speed.patch) a ByteArray
++class QSize (α : Type) where qsize : α → Nat
++instance : QSize String := ⟨String.utf8ByteSize⟩
++instance : QSize ByteArray := ⟨ByteArray.size⟩
 +
 +-- up to 8 MB; short (pipe) reads are topped up, 1 MB at a time, until the block is full or the input ends
 +def readBig (h : IO.FS.Handle) : IO ByteArray := do
@@ -285,8 +304,8 @@ index 22e2738..4628a58 100644
 +  IO.Process.exit 1
 +
 +-- slices of exactly `jobPairs` records (the last one may be shorter), in file order
-+def reader (h : IO.FS.Handle) (ch : Std.CloseableChannel.Sync ByteArray) : IO Unit := do
-+  let need := 4 * jobPairs
++def reader (h : IO.FS.Handle) (k : Nat) (ch : Std.CloseableChannel.Sync ByteArray) : IO Unit := do
++  let need := 4 * k
 +  let mut carry := ByteArray.empty
 +  let mut scan := 0
 +  let mut lines := 0
@@ -344,7 +363,7 @@ index 22e2738..4628a58 100644
 +      let name := mateName record.name
 +      unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
 +        throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
-+    if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
++    if record1.letters.size != QSize.qsize record1.quality || record2.letters.size != QSize.qsize record2.quality then
 +      throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
 +    chunk := chunk.push (record1, record2)
 +  if r1.size != r2.size then
@@ -363,12 +382,15 @@ index 22e2738..4628a58 100644
 +
 +def run (ins : InsertSettings) (index : ByteArray) (chromosomes : ChromosomeList) (h1 h2 : IO.FS.Handle)
 +    (outH : IO.FS.Handle) : IO Unit := do
++  -- PROTOTYPE knobs for the measurements (defaults: jobPairs, depth)
++  let k := ((← IO.getEnv "PIPE_JOB").bind String.toNat?).getD jobPairs
++  let d := ((← IO.getEnv "PIPE_DEPTH").bind String.toNat?).getD depth
 +  let ch1 ← Std.CloseableChannel.Sync.new (some 3)
 +  let ch2 ← Std.CloseableChannel.Sync.new (some 3)
-+  let jobs ← Std.CloseableChannel.Sync.new (some (2 * workers))
++  let jobs ← Std.CloseableChannel.Sync.new (some (d * workers))
 +  let res ← Std.CloseableChannel.Sync.new (some (4 * workers))
-+  let _ ← IO.asTask (prio := .dedicated) (try reader h1 ch1 catch e => die "reader 1" e)
-+  let _ ← IO.asTask (prio := .dedicated) (try reader h2 ch2 catch e => die "reader 2" e)
++  let _ ← IO.asTask (prio := .dedicated) (try reader h1 k ch1 catch e => die "reader 1" e)
++  let _ ← IO.asTask (prio := .dedicated) (try reader h2 k ch2 catch e => die "reader 2" e)
 +  let _ ← IO.asTask (prio := .dedicated) (try
 +      let mut seq := 0
 +      repeat
@@ -406,7 +428,7 @@ index 22e2738..4628a58 100644
  def main (args : List String) : IO UInt32 := do
    match args with
    | ["build", genomePath, indexPath] =>
-@@ -20,42 +183,10 @@ def main (args : List String) : IO UInt32 := do
+@@ -20,42 +193,10 @@ def main (args : List String) : IO UInt32 := do
      -- and INDEX.chromosomes lists that genome's names and lengths
      let index ← IO.FS.readBinFile indexPath
      let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
