@@ -604,6 +604,23 @@ def fallbackOfK (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep :
     let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
     c2.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)
 
+/-- `fallbackOfK` with each mate's preparation given (the router's, `answerOfPairP`): `fallbackOfKP_eq`. -/
+def fallbackOfKP (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (slack lo hi : Nat)
+    (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (s1 s2 : PrepM MzP) (t : TierOut) : Option PairReport :=
+  let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
+  match c1.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false) with
+  | some p => some p
+  | none =>
+    let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
+    c2.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)
+
+theorem fallbackOfKP_eq (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
+    (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) :
+    fallbackOfKP pre limOf keep k pk slack lo hi pgs offs ns R1 R2 (prepMz pk R1) (prepMz pk R2) t =
+      fallbackOfK pre limOf keep k pk slack lo hi pgs offs ns R1 R2 t := by
+  unfold fallbackOfKP fallbackOfK
+  rw [prepMz_eq, prepMz_eq]
+
 -- the first proper pair (no filter)
 def fallbackOf (k : Nat) (pk : PkMz) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
     (t : TierOut) : Option PairReport :=
@@ -1156,7 +1173,8 @@ def answerOfPairP (ties : Bool) (fb : Option Int) (rescue : Bool) (pre : MateRep
   let g := match f, fb with
     | none, some T =>
       if T ≤ Bridge.boundOf t || (rescue && (t.m1.pl.isSome || t.m2.pl.isSome)) then
-        fallbackOfK pre limOf keep k pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2 t
+        fallbackOfKP pre limOf keep k pk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 pgs offs ns R1 R2
+          s1 s2 t
       else none
     | _, _ => f
   { Bridge.answerOf t with found := g, uniqueness := uniqOf t f }
@@ -1169,6 +1187,6 @@ theorem answerOfPairP_eq (ties : Bool) (fb : Option Int) (rescue : Bool) (pre : 
   have h1 : ∀ R, (prepMz pk R).Rr = revCompK R ∧ (prepMz pk R).K1 = packRP R ∧ (prepMz pk R).K2 = packRP (revCompK R) :=
     fun R => by rw [prepMz_eq]; exact ⟨rfl, rfl, rfl⟩
   unfold answerOfPairP answerOfPair foundOfK foundOf
-  simp only [(h1 R1).1, (h1 R1).2.1, (h1 R1).2.2, (h1 R2).1, (h1 R2).2.1, (h1 R2).2.2, mateOfK_eq]
+  simp only [(h1 R1).1, (h1 R1).2.1, (h1 R1).2.2, (h1 R2).1, (h1 R2).2.1, (h1 R2).2.2, mateOfK_eq, fallbackOfKP_eq]
 
 end Spec.Report
