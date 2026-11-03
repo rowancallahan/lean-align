@@ -1507,3 +1507,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
     - walk with the junk filter +64M;
     - reqOf decode / finalize / alloc +64M.
   - Stage CPU (200k, 1 thread): NovaSeq complete search 3.9 s (was 7.5); HiSeq 1.4 s (was 5.4).
+- ~03:14: merged proof/trimrecord (S5) → 5b6228c: trimRecord composition proved (window, ACGT, empty or >= 25, cut before the adapter; quality as bytes). S5 next: Fastq/Sam fail-fast checks (allowed files) and discharging the UTF-8 hypothesis.
