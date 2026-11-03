@@ -52,6 +52,22 @@ def FastqReader.line (reader : FastqReader) : IO (Option ByteArray) := do
 -- every byte satisfies `p`
 def allBytes (p : UInt8 → Bool) (bytes : ByteArray) : Bool := Nat.all bytes.size fun i _ => p bytes[i]!
 
+-- `allBytes` as one loop over the bytes, last first; compiled code runs it (`allBytes_eq`)
+@[specialize] def allBytesGo (p : UInt8 → Bool) (bytes : ByteArray) : Nat → Bool
+  | 0 => true
+  | n + 1 => p bytes[n]! && allBytesGo p bytes n
+
+@[inline] def allBytesF (p : UInt8 → Bool) (bytes : ByteArray) : Bool := allBytesGo p bytes bytes.size
+
+theorem allBytesGo_eq (p : UInt8 → Bool) (bytes : ByteArray) :
+    ∀ n, allBytesGo p bytes n = Nat.all n fun i _ => p bytes[i]!
+  | 0 => by simp [allBytesGo]
+  | n + 1 => by rw [allBytesGo, Nat.all_succ, allBytesGo_eq p bytes n, Bool.and_comm]
+
+@[csimp] theorem allBytes_eq : @allBytes = @allBytesF := by
+  funext p bytes
+  exact (allBytesGo_eq p bytes bytes.size).symm
+
 -- the letters the spec's `GenomeIsDNA` allows: A C G T N
 def isDnaByte (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84 || b == 78
 
