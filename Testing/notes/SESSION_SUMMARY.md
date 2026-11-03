@@ -1498,3 +1498,12 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
   - A dovetail slack of 1-2 bases would admit ~220 per set.
   - With local alignment, the clipped part's pair score passes -100 for 94 / 74%, but beats the -16 bound for only 34 / 16%.
   - For Rowan's later local-alignment / dovetailSlack decisions.
+- ~03:09: S-D's callgrind, NovaSeq 2k, whole run: baseline 0e48158+patch 859M vs 3d63f4b+patch 1,503M (+644M).
+  - The router itself is identical (263M); SAM writing is identical.
+  - The extra:
+    - complete search +405M (63%);
+    - join +62M;
+    - repeat check +49M;
+    - walk with the junk filter +64M;
+    - reqOf decode / finalize / alloc +64M.
+  - Stage CPU (200k, 1 thread): NovaSeq complete search 3.9 s (was 7.5); HiSeq 1.4 s (was 5.4).
