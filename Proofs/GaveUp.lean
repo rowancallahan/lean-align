@@ -254,6 +254,7 @@ theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs n
 def seedRepF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) (s : Nat) : Bool :=
   let p := MapSpec.Fast.mzPrep pk.1 (MapSpec.Fast.seedHashAt R s)
   if p.ok then
+    if pk.1.hiB p.b - pk.1.loB p.b < gaveUpRepeats then false else
     let a := MapSpec.Fast.lookupPWk pk.1 pk.2 R s p 0 0 gaveUpRepeats
     if a.size < gaveUpRepeats then false
     else if gaveUpRepeats ≤ (a.extract 0 gaveUpRepeats).toList.countP (fun e => inChrom offs ns (e / 16)) then true
@@ -269,6 +270,13 @@ theorem seedRepF_eq (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArra
     have hsp : seedPlaces pk R s = MapSpec.Fast.lookupPW pk.1 pk.2 R s
         (MapSpec.Fast.mzPrep pk.1 (MapSpec.Fast.seedHashAt R s)) 0 0 := by
       unfold seedPlaces MapSpec.Fast.mzLookSP; rw [if_pos hok]
+    split
+    · rename_i hb
+      have hle : seedCount pk offs ns R s < gaveUpRepeats := by
+        unfold seedCount
+        rw [hsp]
+        exact Nat.lt_of_le_of_lt (Nat.le_trans List.countP_le_length (by simpa using MapSpec.Fast.lookupPW_size _ _ _ _ _ _ _)) hb
+      simp; omega
     split
     · rename_i hs
       have hfull := MapSpec.Fast.lookupPWk_small _ _ _ _ _ _ _ _ hs
