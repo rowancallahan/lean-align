@@ -9,13 +9,15 @@ Index of recipes (R-ids are used in the results page). Each script prints the nu
 | R2 | instruction counts (callgrind) | `bash Testing/repro/ir.sh BINARY SET [PAIRS=2000]` | not timed (200 pairs ran to completion) |
 | R3 | mapped / unique / agreement with minibwa | `bash Testing/repro/mapping.sh OUT hg38_mason hg38_low hg002_200k novaseq_200k` | `hg38_low`: 1 min 45 s |
 | R4 | unique-genome exact match | `bash Testing/unique/run.sh OUT` | 5 min 9 s |
-| R5 | hg38 fuzz audits (rules A-E), 3 seeds x 3 modes | `bash Testing/repro/fuzz_audit.sh OUT` | 4 min 25 s (+ about 50 s once for the one-line genome) |
+| R5 | hg38 fuzz audits (rules A-D print `HARD ...: 0`; rule E is the `info H` lines), 3 seeds x 3 modes | `bash Testing/repro/fuzz_audit.sh OUT` | 4 min 25 s (+ about 50 s once for the one-line genome) |
 | R6 | real-data comparison and rescoring | `bash Testing/repro/real_rescore.sh OUT` | not timed (several minutes) |
 | R7 | SAM/BAM output checks | `sh Testing/scripts/fuzz_ci.sh` (tiny genome) and `bash Testing/scripts/output_fuzz.sh OUT SET...` (hg38) | `fuzz_ci.sh`: 10-16 s |
 | R8 | proofs: CI line, axioms, audit | `bash Testing/repro/proofs.sh` | 1 min 39 s (cached build) |
 | R9 | theorem statements at two commits | `bash Testing/repro/statements.sh REV_A REV_B` | seconds |
 
 ## Setup from a fresh checkout (once)
+**Disk: have about 40 GB free.** The release is 17 GB; `fetch_release.sh` joins the parts before deleting them (peak about 2x), `hg38.1l.fa` (R5, R6) is another 3 GB, the SAMs of R1/R3 add a few GB. On a 252 GB volume with 39 GB free the check ran out of disk three times (`No space left on device` truncates a part silently). Download assets one at a time and delete each part after appending it, or check `df` first.
+**Check every asset's size and SHA-256.** `gh api ... releases/assets/ID > file` was cut short twice (`mb.mbw.partab` 1.57 of 1.99 GB, `genome.fa.partab`) with exit 0; `fetch_release.sh` catches it through `shasum -c`, a hand download does not, so compare sizes with `gh api repos/rowancallahan/lean-align/releases/tags/bench-release --jq '.assets[]|"\(.name) \(.size)"'`.
 
 ```
 git clone https://github.com/rowancallahan/lean-align && cd lean-align && git checkout docs/results   # or the commit named by the claim

@@ -1,28 +1,30 @@
 Shim speed patch for Rowan (frozen files: NOT applied).   git apply Testing/notes/shim_speed.patch
-Touches Proofs/Fastq.lean, Proofs/Sam.lean and their copies Spec/Fastq.lean, Spec/Sam.lean (the same edits).
+Base: festive-fermi 562a2f5 (adapter trim merged). Touches Proofs/Fastq.lean, Proofs/Sam.lean and their copies
+Spec/Fastq.lean, Spec/Sam.lean (the same edits).
 
-Items, measured cumulatively (callgrind Ir of the shim, first 2000 pairs, index load included; base 34832e7:
-NovaSeq 958.6M, HiSeq hg002 2x250 1681.4M). SAM byte-identical to base at every step on both subsets; with all four
+Items, measured cumulatively at 562a2f5 (callgrind Ir of the shim, first 2000 pairs, index load included; base
+NovaSeq 985.5M, HiSeq hg002 2x250 1359.0M). SAM byte-identical to base at every step on both subsets; with all four
 items, also identical on the four full 200k sets (NovaSeq, mason, low, HiSeq), and CI_check.sh passes.
 | step | change | NovaSeq | HiSeq |
-| 1 | reverseMapBytes @[specialize]: f (complementByte / id) was a closure call per byte | -31.5M (-3.3%) | -48.4M (-2.9%) |
-| 2 | samName / mateName: (name.takeWhile (· != ' ')).toString instead of (name.splitOn " ").headD _ | -29.5M (-3.1%) | -20.0M (-1.2%) |
-| 3 | findNewline: USize loop with uget (findNewlineU), the while loop kept as the fallback | -17.7M (-1.8%) | -22.0M (-1.3%) |
-| 4 | FastqRecord.quality : ByteArray (was String): no UTF-8 round trips when reading / trimming; SAM QUAL decoded once | -22.1M (-2.3%) | -39.6M (-2.4%) |
-| all | | 857.8M (-10.5%) | 1551.4M (-7.7%) |
+| 1 | reverseMapBytes @[specialize]: f (complementByte / id) was a closure call per byte | -32.1M (-3.3%) | -49.1M (-3.6%) |
+| 2 | samName / mateName: (name.takeWhile (· != ' ')).toString instead of (name.splitOn " ").headD _ | -29.3M (-3.0%) | -20.3M (-1.5%) |
+| 3 | findNewline: USize loop with uget (findNewlineU), the while loop kept as the fallback | -14.4M (-1.5%) | -21.7M (-1.6%) |
+| 4 | FastqRecord.quality : ByteArray (was String): no UTF-8 round trips when reading / trimming; SAM QUAL decoded once | -26.0M (-2.6%) | -40.3M (-3.0%) |
+| all | | 883.8M (-10.3%) | 1227.6M (-9.7%) |
 Notes:
 - Step 2 gives the same string: the part before the first space (splitOn with a non-empty separator always has a
   first piece; with no space it is the whole name).
 - Step 3's findNewlineU is not proved equal to the while loop (needs a lemma if the file must stay proof-equal);
   it returns the same index on the four full sets.
-- Step 4 changes a Spec structure's field type (FastqRecord.quality); nothing else in Spec/, Main.lean or the
-  proofs reads it. The SAM text is unchanged.
+- Step 4 changes a Spec structure's field type (FastqRecord.quality); trimRecord now hands the quality bytes to
+  AdapterTrim.cutTruSeq / ReadTrim.trimRead directly. Nothing else in Spec/, Main.lean or the proofs reads the
+  field. The SAM text is unchanged.
 
 diff --git a/Proofs/Fastq.lean b/Proofs/Fastq.lean
-index e65183e..f6902e3 100644
+index b656414..7a468c6 100644
 --- a/Proofs/Fastq.lean
 +++ b/Proofs/Fastq.lean
-@@ -10,7 +10,7 @@ namespace Spec
+@@ -12,7 +12,7 @@ namespace Spec
  structure FastqRecord where
    name    : String
    letters : ByteArray
@@ -31,7 +33,7 @@ index e65183e..f6902e3 100644
  
  -- a FASTQ file read in blocks: the unread bytes are `buffer` from `pos` on
  structure FastqReader where
-@@ -22,7 +22,23 @@ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
+@@ -24,7 +24,23 @@ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
    return { handle, buffer := ← IO.mkRef ByteArray.empty, pos := ← IO.mkRef 0 }
  
  -- the first newline byte at or after `i` (or `bytes.size` when there is none)
@@ -56,7 +58,7 @@ index e65183e..f6902e3 100644
    let mut j := i
    while j < bytes.size && bytes[j]! != 10 do
      j := j + 1
-@@ -53,21 +69,21 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+@@ -55,11 +71,11 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
    let some _plus ← reader.line | return none
    let some quality ← reader.line | return none
    return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
@@ -69,21 +71,23 @@ index e65183e..f6902e3 100644
 +  let base := (name.takeWhile (· != ' ')).toString
    if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
  
- -- quality trimming with the proved trimmer: keep the best window of letters and qualities; a mate
- -- with nothing worth keeping comes back with no letters (trimmed away)
+ -- shortest mate kept after trimming; shorter mates become empty (trimmed away)
+@@ -69,12 +85,12 @@ def minLength : Nat := 25
+ -- and qualities at the first TruSeq adapter, keep the best window, and drop a mate shorter than
+ -- `minLength`; a mate with nothing worth keeping comes back with no letters (trimmed away)
  def trimRecord (record : FastqRecord) : FastqRecord :=
--  let qual := record.quality.toUTF8
-+  let qual := record.quality
-   match ReadTrim.trimRead record.letters qual with
-   | some (s, e) => { record with letters := record.letters.extract s e,
--                                 quality := String.fromUTF8! (qual.extract s e) }
--  | none => { record with letters := ByteArray.empty, quality := "" }
-+                                 quality := qual.extract s e }
-+  | none => { record with letters := ByteArray.empty, quality := ByteArray.empty }
+-  let (letters, qual) := AdapterTrim.cutTruSeq record.letters record.quality.toUTF8
++  let (letters, qual) := AdapterTrim.cutTruSeq record.letters record.quality
+   let (letters, qual) := match ReadTrim.trimRead letters qual with
+     | some (s, e) => (letters.extract s e, qual.extract s e)
+     | none => (ByteArray.empty, ByteArray.empty)
+   let (letters, qual) := AdapterTrim.dropShort minLength letters qual
+-  { record with letters, quality := String.fromUTF8! qual }
++  { record with letters, quality := qual }
  
  -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
  -- names differ or one file ends before the other (the files are out of step)
-@@ -78,7 +94,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+@@ -85,7 +101,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
      | some record1, some record2 =>
        if mateName record1.name != mateName record2.name then
          throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
@@ -127,10 +131,10 @@ index f74f50b..fc14eb2 100644
  def uniquenessText : Uniqueness → String
    | .unique      => "unique"
 diff --git a/Spec/Fastq.lean b/Spec/Fastq.lean
-index e65183e..f6902e3 100644
+index b656414..7a468c6 100644
 --- a/Spec/Fastq.lean
 +++ b/Spec/Fastq.lean
-@@ -10,7 +10,7 @@ namespace Spec
+@@ -12,7 +12,7 @@ namespace Spec
  structure FastqRecord where
    name    : String
    letters : ByteArray
@@ -139,7 +143,7 @@ index e65183e..f6902e3 100644
  
  -- a FASTQ file read in blocks: the unread bytes are `buffer` from `pos` on
  structure FastqReader where
-@@ -22,7 +22,23 @@ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
+@@ -24,7 +24,23 @@ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
    return { handle, buffer := ← IO.mkRef ByteArray.empty, pos := ← IO.mkRef 0 }
  
  -- the first newline byte at or after `i` (or `bytes.size` when there is none)
@@ -164,7 +168,7 @@ index e65183e..f6902e3 100644
    let mut j := i
    while j < bytes.size && bytes[j]! != 10 do
      j := j + 1
-@@ -53,21 +69,21 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+@@ -55,11 +71,11 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
    let some _plus ← reader.line | return none
    let some quality ← reader.line | return none
    return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
@@ -177,21 +181,23 @@ index e65183e..f6902e3 100644
 +  let base := (name.takeWhile (· != ' ')).toString
    if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
  
- -- quality trimming with the proved trimmer: keep the best window of letters and qualities; a mate
- -- with nothing worth keeping comes back with no letters (trimmed away)
+ -- shortest mate kept after trimming; shorter mates become empty (trimmed away)
+@@ -69,12 +85,12 @@ def minLength : Nat := 25
+ -- and qualities at the first TruSeq adapter, keep the best window, and drop a mate shorter than
+ -- `minLength`; a mate with nothing worth keeping comes back with no letters (trimmed away)
  def trimRecord (record : FastqRecord) : FastqRecord :=
--  let qual := record.quality.toUTF8
-+  let qual := record.quality
-   match ReadTrim.trimRead record.letters qual with
-   | some (s, e) => { record with letters := record.letters.extract s e,
--                                 quality := String.fromUTF8! (qual.extract s e) }
--  | none => { record with letters := ByteArray.empty, quality := "" }
-+                                 quality := qual.extract s e }
-+  | none => { record with letters := ByteArray.empty, quality := ByteArray.empty }
+-  let (letters, qual) := AdapterTrim.cutTruSeq record.letters record.quality.toUTF8
++  let (letters, qual) := AdapterTrim.cutTruSeq record.letters record.quality
+   let (letters, qual) := match ReadTrim.trimRead letters qual with
+     | some (s, e) => (letters.extract s e, qual.extract s e)
+     | none => (ByteArray.empty, ByteArray.empty)
+   let (letters, qual) := AdapterTrim.dropShort minLength letters qual
+-  { record with letters, quality := String.fromUTF8! qual }
++  { record with letters, quality := qual }
  
  -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
  -- names differ or one file ends before the other (the files are out of step)
-@@ -78,7 +94,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+@@ -85,7 +101,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
      | some record1, some record2 =>
        if mateName record1.name != mateName record2.name then
          throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")

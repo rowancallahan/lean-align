@@ -1450,3 +1450,25 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - Rowan's Spec: junkScore (floor) -100; requiredMapBound scaled by the shorter mate (cap 4 errors, 25-letter seeds: 0 / -4 / -8 / -12 / -16 at 25 / 50 / 75 / 100 / 125+ bp). Needs junkScore <= requiredMapBound.
 - Proof branch speed/report-floor-proofs (cd00d2c): correct (S3 check: audits 0, no placeholders, no unique pair changed) but 20-60x slower: the complete search runs on repeat pairs. hNoLeftover is still needed for short mates (fixed by the scaled bound) and for pairs on real hg38 (NovaSeq 2.1%, HiSeq 1.3% of pairs end unmapped with XB >= -16).
 - To keep today's speed, Rowan must decide a "gave up" answer. Proposal: `.gaveUp` only with a repeat witness: a 25-letter piece of a mate occurs >= N times in the genome (N ~ 1000), so a non-repetitive pair is always decided at bounded cost. S-B is measuring witness coverage at N = 200/500/1000/5000.
+
+### Finish line (Rowan, 2026-11-03 ~01:40 UTC)
+- Done = report floor + gave-up fully proved (no extra hypothesis beyond settings) AND speed within 5-10% of today's code (festive-fermi 0e48158: NovaSeq ~2.5-2.7x, HiSeq ~3.5x vs minibwa, same box, headline.sh method).
+- Rowan's Spec: repeat witness (K grid seeds, N occurrences) being written now; the "many places" witness (cap the complete search at M good placements) can be added later as one more disjunct if timing needs it.
+
+### Rowan's later-work list (2026-11-03, via the Spec guide; NOT current tasks)
+- Naming: rename the `Uniqueness` type (it now holds unique / multimapper / unknown / gaveUp). Update Spec/Sam + Proofs/Sam, Proofs/Answer, Aligner, Bridge; regenerate FROZEN; keep the `XU:Z:` label unless Rowan says otherwise.
+- Options with flexible proofs: make `seedLength` (25), `gaveUpRepeats` (Rowan choosing 200) and `gaveUpSeeds` (K = 2) options. The indexer hardcodes 25 (`MzIndex.lean:48 def q : Nat := 25`, WgPacked, MapperFastIndex, benches, and the `/25` in requiredMapBound), so this needs a proof generic in the seed length; until then everything stays 25 together. Use `seedLength` in requiredMapBound.
+- Spec clauses:
+  - requiredMapBound as a top-level def, with the comment fix (25-49 bp: `none` only when no perfect proper pair);
+  - `.unknown` with `max junkScore requiredMapBound`;
+  - the gap clause;
+  - a shorter-seed index for short mates.
+- Measurements wanted: K=2 at N=200 (gave-up count, speed, pairs lost at truth); the speed of K=3.
+- Proof side: the .gaveUp proof against Rowan's exact Spec wording (S-D's prototype is the basis; forward strand = lower bound on Genome.occurrences). Check the `.unknown` mirror in Proofs/Answer on main.
+
+### Spec edit rights (Rowan, 2026-11-03 ~02:25 UTC)
+- Claude MAY edit Spec/Sam.lean and Spec/Fastq.lean (plus their Proofs/ mirrors).
+- Claude may NOT edit Spec/Aligner.lean, Spec/Alignment.lean, Spec/Mapping.lean or Spec/Shim.lean (Main.lean mirrors the Shim); Rowan works on those.
+- Rowan will merge claude/festive-fermi-mf9mo6 with main.
+- Index RAM budget (Rowan, 2026-11-03): the loaded index may be up to just under 8 GB (today ~5.3 GB), e.g. for the heavy-25-mer table plus a combined longer/shorter-seed index.
+- Spec guide session ended (Rowan). Its README notes are on branch claude/spec-guide-notes (Proofs/README.md, commits 5067108, 29bf14c; main-based). Merge them when festive-fermi and main are merged. Open items for Rowan: Sam label (spec/sam-fix b8c773c), the requiredMapBound comment wording, the shim speed patch, the audit fail-fast patch.
