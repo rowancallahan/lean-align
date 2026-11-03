@@ -229,18 +229,22 @@ def lookAt (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz
 -- answered `.gaveUp` instead of the second look (`GaveUp.repeatMate`)
 def gaveUpOn : Bool := true
 
+-- a leftover (`LastResort.Leftover`) gets `.gaveUp` when a mate has a repeat seed, else the second look (`lookAt`)
+def afterLeftover (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat)
+    (read1 read2 : ByteArray) (a : PairAnswer) : PairAnswer :=
+  if LastResort.Leftover req a then
+    if gaveUpOn && (GaveUp.repeatMate pk offs ns read1 || GaveUp.repeatMate pk offs ns read2) then
+      { a with uniqueness := .gaveUp }
+    else lookAt insertSettings req pk offs ns read1 read2
+  else a
+
 -- the router with the per-pair settings; a leftover (`LastResort.Leftover`) gets the second look (`lookAt`),
 -- or `.gaveUp` when a mate has a repeat seed
 def answerOfReads (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
     (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (read1 read2 : ByteArray) : PairAnswer :=
   let req := reqOf insertSettings read1 read2
   let t := MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
-  let a := answerWith insertSettings req pk pgs offs ns read1 read2 t
-  if LastResort.Leftover req a then
-    if gaveUpOn && (GaveUp.repeatMate pk offs ns read1 || GaveUp.repeatMate pk offs ns read2) then
-      { a with uniqueness := .gaveUp }
-    else lookAt insertSettings req pk offs ns read1 read2
-  else a
+  afterLeftover insertSettings req pk offs ns read1 read2 (answerWith insertSettings req pk pgs offs ns read1 read2 t)
 
 def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
@@ -358,7 +362,7 @@ def alignOneP (insertSettings : InsertSettings) (chroms : List (List Nat)) (setu
                 (MapSpec.Fast.tierPairBP.tierPairBQ cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2
                   (MapSpec.Fast.costZS ca sa1 sa2) (MapSpec.Fast.costZS cb sb1 sb2))))
           -- a leftover gets the second look (`answerOfReads`)
-          .aligned (if LastResort.Leftover req ans then lookAt insertSettings req pk offs ns read1 read2 else ans)
+          .aligned (afterLeftover insertSettings req pk offs ns read1 read2 ans)
 
 -- the router's caps under `pairCfgZ` are the given ones (equal reads have equal caps)
 theorem pairCfgZ_cap (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArray) (f : ByteArray → Nat) :
@@ -570,7 +574,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
               (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok')))
       have hok0 := hok (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
       show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _)
-      unfold answerOfReads
+      unfold answerOfReads afterLeftover
       dsimp only
       split
       · rename_i hleft
