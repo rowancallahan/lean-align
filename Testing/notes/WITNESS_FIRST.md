@@ -76,3 +76,24 @@ distinct from the forward ones unless the seed is its own reverse complement, wh
 - Effect: the check drops from ~630M to the bucket-size pass plus O(1) per seed (~1–2M per 2k pairs). Witness-first
   would then remove ~619M (NovaSeq) / ~592M (HiSeq) at ~zero cost: NovaSeq ≈ 950M ≈ baseline 960.6M, HiSeq
   ≈ 1095M < 1309M. That is the only route here to "at or below baseline", and it unmaps the 17–20% of pairs in §1.
+
+## 6. What witness-first loses (S-G's caveat), and the router-first variant
+The caught pairs' answers today (ff61781 at N = 200, 2k subsets, first SAM line per pair, XU tag):
+| | NovaSeq, forward | NovaSeq, both strands | HiSeq, forward | HiSeq, both strands |
+|---|---|---|---|---|
+| caught | 318 | 350 | 349 | 400 |
+| today unique and mapped (XU unique) | 200 | 225 | 247 | 280 |
+| today mapped, XU unknown | 83 | 84 | 66 | 73 |
+| today unmapped (unknown or gaveUp) | 33 | 39 | 35 | 44 |
+Witness-first (both strands) would unmap 309 of the 1855 pairs mapped today on NovaSeq (16.7%), 225 of them
+proved unique. On HiSeq it is 353 of 1861 (19.0%), 280 unique. The usual case is a repetitive mate whose
+partner is unique.
+
+Router first, then the witness for router failures, is what `afterLeftover` does today (`repeatMate` on a
+leftover, before the second look). At N = 200 it gives up on 40 NovaSeq / 17 HiSeq pairs (2k) and loses
+nothing the router maps. Its cost is the ff61781 N = 200 row of §2: NovaSeq 1565.8M (+605M over 0e48158; of
+that `afterLeftover` 519M = second looks 455M + witness 63M), HiSeq 1682.9M (+374M; `afterLeftover` 214M).
+Counting reverse-complement occurrences there would add the leftovers caught in the both-strands column but
+not the forward one: 6 more NovaSeq and 9 more HiSeq pairs, each skipping a second look of ~8M on average. The
+saving is ~50M per set, minus a second lookup per leftover seed. That is small next to the 455M of second looks
+on the leftovers that are not repetitive (the proved floor).
