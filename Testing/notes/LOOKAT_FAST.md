@@ -1,7 +1,7 @@
 # lookat-fast: the leftover path at 453394f (branch `speed/lookat-fast`, 2026-11-03)
 
 Base 453394f (gaveUp merged). Ir = callgrind of the shim on the first 2000 pairs (index load included). Checks:
-SAM byte-identical to 453394f on the 2000-pair subsets and on the four full 200k sets; `CI_check.sh` passes; no
+SAM byte-identical to 453394f on the NovaSeq and HiSeq 2000-pair subsets and on the four full 200k sets; `CI_check.sh` passes; no
 Spec/, Main.lean or Shim edits; no sorry / native_decide / implemented_by / extern / unsafe / partial. Every change
 is a `@[csimp]` rewrite with an equality proof. No definition used in a statement changed, so `alignPairs_correct`
 (under `SettingsOk`) and `repeatMate_sound` are untouched.
@@ -42,4 +42,12 @@ Total NovaSeq **−37.4%** (2122.4M → 1327.6M), HiSeq **−15.4%** (1905.8M �
 - `deadK` recomputes `ys.length` per row (3.6M).
 
 ## 5. Native CPU (200k pairs, taskset 4 cores, same idle box)
-TIMING
+User CPU seconds (`timed.py`), 453394f → c633294; wall time is noisy here (index load, page cache):
+| set | 453394f | c633294 | change |
+|---|---|---|---|
+| NovaSeq | 43.2–48.1 | 29.0–31.7 | ≈ −32% |
+| HiSeq (hg002) | 43.8 | 30.8 | −30% |
+| mason | 35.2 | 31.1 | −12% |
+| low | 23.1 | 22.2 | −4% |
+NovaSeq is three runs per binary (the first base run read the index cold); the other sets are one run each.
+SAM identical on all four full sets (400,197 lines each). `CI_check.sh`: ALL CHECKS PASSED.
