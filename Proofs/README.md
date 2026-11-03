@@ -64,3 +64,11 @@
 `insertSettings.junkScore ≤ requiredMapBound mate1 mate2`. This holds for the default
 `junkScore = -100` since `requiredMapBound ≥ -16`. Keep it true: if `junkScore` ever becomes
 configurable, either carry this as a hypothesis or use `max junkScore (requiredMapBound …)`.
+
+## TODO: make seed length and the gave-up thresholds options
+
+`seedLength` (25), `gaveUpRepeats` and `gaveUpSeeds` are hardcoded in `Spec/Aligner.lean`, and the
+index hardcodes the same 25 (`q` in `Aligner/index/minimizer/MzIndex.lean`; bare `25`s in
+`WgPacked.lean`, `Spec/Aligner.lean` `requiredMapBound`). Later they must all become options, and
+the indexer must take the same seed length. That needs a proof that is flexible in the seed
+length, not specialised to 25. Until then everything must stay 25 together.
