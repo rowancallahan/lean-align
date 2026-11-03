@@ -22,13 +22,13 @@ def walkOf (k : Nat) (floor : Int) (pk : PkMz) (slack lo hi : Nat) (pgs : Array 
   let s2 : PrepM MzP := prepMate pk R2
   let ok := fun (p : Option PairReport) => p.bind fun p => if floor ≤ repScore p then some p else none
   let c1 := t.m1.pl.toList ++ Report.anchorsOf pk pgs R1 s1 k
-  match c1.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).1
-      (Report.tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).2) with
+  match c1.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi 1000000 R1 t.m1 R2 s2 x).1
+      (Report.tryAt pk pgs offs ns hi 1000000 R1 t.m1 R2 s2 x).2) with
   | some p => some p
   | none =>
     let c2 := t.m2.pl.toList ++ Report.anchorsOf pk pgs R2 s2 k
-    c2.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).2
-      (Report.tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).1)
+    c2.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi 1000000 R2 t.m2 R1 s1 x).2
+      (Report.tryAt pk pgs offs ns hi 1000000 R2 t.m2 R1 s1 x).1)
 
 /-- (prototype) walk the exact hits of mate `RX` within 16 (best first, at most `K`): the other mate near each, checked
 (`tryAt`); the first pair at or above the floor. -/
@@ -37,7 +37,7 @@ def walkHits (K : Nat) (floor : Int) (pk : PkMz) (slack lo hi : Nat) (pgs : Arra
   let sY : PrepM MzP := prepMate pk RY
   let lX := ((hitsKPF pk ByteArray.empty #[0] pgs RX 16).toArray.qsort fun u v => v.2 < u.2).toList.take K
   lX.findSome? fun x =>
-    let r := Report.tryAt pk pgs offs ns hi RX {} RY sY x
+    let r := Report.tryAt pk pgs offs ns hi 1000000 RX {} RY sY x
     let p := if xIsMate1 then Report.pairOf slack lo hi r.1 r.2 else Report.pairOf slack lo hi r.2 r.1
     p.bind fun p => if floor ≤ repScore p then some p else none
 
