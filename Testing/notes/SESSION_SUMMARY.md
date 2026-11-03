@@ -1537,3 +1537,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 
 - 04:5x UTC: merged S-H speed/new-filter (proved fineE=fineEC rolling scan, suppA countP). Callgrind 2k: NovaSeq -3.4%, HiSeq -0.6%. SAM identical on 200k both sets; FUZZ=1 CI green.
 - 05:0x UTC: merged S-G speed/index-counts (proved heavy 25-mer table, both strands). Ir 2k: NovaSeq -14.8%, HiSeq -1.9%. Mapped records identical; 3 unmapped pairs now repetitiveUnknown (within Spec). Index +12 MB, build +6 min, build peak RSS 10.76 GB (was 9.85). INDEX FORMAT CHANGED: rebuild shim.idx. FUZZ=1 CI green (453 theorems, standard axioms).
+- 05:2x UTC: merged S-H speed/next (hitsCKT supports once via suppCntC, sweepAF; proved). Ir 2k: NovaSeq -1.6%, HiSeq -0.5%. SAM identical 200k; FUZZ=1 CI green.
