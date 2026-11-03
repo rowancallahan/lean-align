@@ -49,3 +49,51 @@ The shim pipelines two stages: one reader task (`readChunk` + `trimChunk`) and t
   (c) A deeper read-ahead (2 chunks) only absorbs jitter.
 - Lean pool facts (step 2 of the plan) and parTasks / persistent-pool experiments (step 3) were not reached.
   The data above points at the reader and the serial main loop, not the pool size: align alone runs at ~4 cores.
+
+## 5. Pipeline prototype (Testing/notes/pipeline_proto.patch, NOT applied; local code branch, not pushed)
+Structure (Main.lean, mirrored in Spec/Shim.lean):
+- Two dedicated reader tasks, one per mate file. Each reads 8 MB blocks (short pipe reads are topped up) and cuts slices of
+  exactly 4000 records at every 16000th newline (`cutAfter`). No parsing.
+- A dedicated dispatcher pairs slice k of R1 with slice k of R2 into job k.
+- 4 dedicated workers, each with these steps per job:
+  1. `parseSlice` (lines as `FastqReader.line` cuts them, `parseRecord` per 4 lines)
+  2. `pairUp` (`readChunk`'s name / QNAME / length checks)
+  3. `trimRecord`
+  4. `alignPairs` on the job
+  5. `samChunk` (parts 1)
+- The writer (main thread) writes jobs in sequence order, holding out-of-order results in a map.
+- Bounded `Std.CloseableChannel.Sync` queues (3 slices per mate, 8 jobs, 16 results). Memory stays flat. Any task error
+  prints and exits 1.
+
+Measured, 4 threads, 1 rep each, map wall / utilization. SAM is byte-identical to festive 89ef604 on both sets, in both
+variants:
+| set / input | festive 89ef604 | A: `alignPairs` per job (this patch) | B: per-worker setup + `alignOneP` |
+|---|---|---|---|
+| nova1M plain | 32.6 s, 0.89 | 29.9 s, 0.96 | 26.8 s, 0.96 |
+| nova1M FIFO | 35.3 s, 0.83 | 31.7 s, 0.92 | 27.2 s, 0.92 |
+| hg002_1M plain | 38.7 s, 0.89 | 34.8 s, 0.96 | 30.1 s, 0.96 |
+| hg002_1M FIFO | 46.1 s, 0.76 | 37.8 s, 0.90 | 31.2 s, 0.89 |
+- A reaches 0.96 on plain files and 0.90–0.92 through zcat FIFOs. Its total CPU is about the same as festive's.
+- B also cuts CPU (nova1M plain 115 → 103 s user+sys). Each `alignPairs` call reloads the index view (`readIndex`:
+  H/M copies, small fields) and builds the setup in each of its 16 internal tasks. B builds the setup once per worker.
+  B needs a Spec-level interface (e.g. an `alignPairs` that takes a prepared index or setup, with its own correctness
+  theorem). Spec/Shim cannot call `alignOneP`. So B is not in the patch.
+- FIFO is still 4–6 points below plain files. The remaining cost is zcat itself (10 s CPU on hg002_1M) competing for
+  the 4 cores.
+
+### What the prototype relies on that is not proved
+1. Slice cut = record boundary: a slice ending right after every 16000th newline holds whole records (4 lines each).
+   Matches `cutLinesL_boundary` in Testing/notes/byte_specs/FastqBytes.lean.
+2. Slices concatenate to the file: carry handling in `reader` (`extract 0 p` / `extract p size` of the buffer).
+   Compare `parseSlices_eq` / `parseFastq_append`.
+3. `parseSlice` = `FastqReader.line` + `readFastqRecord` on the same bytes: CR strip before a newline only, the last line
+   without a newline, and the "file ends inside a record" cases. Shaped like `lines` / `parseLines` / `parseRecord`.
+4. Parallel parse = serial parse: jobs are independent, and records of job k are records `4000k ..< 4000(k+1)` of each file.
+5. `pairUp` = `readChunk`'s checks in the same order. On bad input the first error reported can differ, since jobs fail in
+   parallel; the exit is still non-zero.
+6. Pairing slice k with slice k gives the same mate pairs as reading the files in step (needs 1 + 4).
+7. The writer emits in sequence order: the pending map, `nextSeq`, and all results arriving before `res` closes.
+8. `samChunk` per job, concatenated in job order = `samChunk` of the whole run's chunks: SAM lines are per pair,
+   independent of chunking.
+9. Task / channel behaviour of the runtime (dedicated threads, channel close semantics). Errors exit the process.
+`alignPairs` itself stays proved (`alignPairs_correct`) for each job's pairs.
