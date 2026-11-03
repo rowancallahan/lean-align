@@ -1508,3 +1508,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
     - reqOf decode / finalize / alloc +64M.
   - Stage CPU (200k, 1 thread): NovaSeq complete search 3.9 s (was 7.5); HiSeq 1.4 s (was 5.4).
 - ~03:14: merged proof/trimrecord (S5) → 5b6228c: trimRecord composition proved (window, ACGT, empty or >= 25, cut before the adapter; quality as bytes). S5 next: Fastq/Sam fail-fast checks (allowed files) and discharging the UTF-8 hypothesis.
+- ~03:17: TRIM_OVERCUT.md (S4): the quality trimmer (ReadTrim.defQ = 25) over-cuts good bases (MAPQ >= 30 in minibwa, <= 5% mismatches) in 0.33% of NovaSeq pairs but 11.0% of HiSeq pairs; the cut bases have mean Q 20-24. Q = 20 keeps 30% (HiSeq) / 71% (NovaSeq) of them, Q = 15 keeps 79% / 91%. A gentler defQ run is pending (local measurement only).
