@@ -592,6 +592,38 @@ theorem saLoopU_eq (minLen maxErr : Nat) (bA bC bG bT msk sh : UInt64) (mU : USi
       rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [ep, hmU]; exact hc.1.1)), ep, hmU]
     · rw [if_neg hc, if_neg hc]; exact ih
 
+/-- `saLoopU` without the `Nat` fuel: the loop runs while `p < nU` (`nU = read.size`; `saLoopV_eq`). -/
+def saLoopV (bA bC bG bT msk sh : UInt64) (m nU : USize) (ok1 e1q : Bool) (minLen : Nat) (p : USize) (e0 e1 : UInt64) : Nat :=
+  if h : p < nU then
+    let b := bOf bA bC bG bT (ReadTrim.rtGet read p)
+    let e0' := ((e0 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& b
+    let e1' := (((e1 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& b) ||| (((e0 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& msk)
+    if m ≤ p + 1 && ok1 && ((((if e1q then e1' else e0') >>> sh) &&& (1 : UInt64)) != 0) then (p + 1 - m).toNat
+    else saLoopV bA bC bG bT msk sh m nU ok1 e1q minLen (p + 1) e0' e1'
+  else
+    scanP (fun s => decide (minLen ≤ read.size - s) && e0.toNat.testBit (read.size - s - 1))
+      (read.size - (p.toNat + 1 - adapter.size)) (p.toNat + 1 - adapter.size)
+termination_by nU.toNat - p.toNat
+decreasing_by
+  have hl : p.toNat < nU.toNat := h
+  have hs := USize.toNat_lt_size nU
+  rw [USize.size_eq_two_pow] at hs
+  rw [USize.toNat_add, show (1 : USize).toNat = 1 from ReadTrim.rt_one, Nat.mod_eq_of_lt (by omega)]
+  omega
+
+theorem saLoopV_eq (bA bC bG bT msk sh : UInt64) (m nU : USize) (ok1 e1q : Bool) (minLen : Nat)
+    (hnU : nU.toNat = read.size) (hn : read.size < 2 ^ 30) :
+    ∀ k (p : USize) (e0 e1 : UInt64), p.toNat + k = read.size →
+      saLoopV adapter read bA bC bG bT msk sh m nU ok1 e1q minLen p e0 e1 =
+        saLoopU adapter read bA bC bG bT msk sh m ok1 e1q minLen k p e0 e1
+  | 0, p, e0, e1, hp => by
+    rw [saLoopV, dif_neg (show ¬ p < nU from fun h => by have : p.toNat < nU.toNat := h; omega), saLoopU]
+  | k + 1, p, e0, e1, hp => by
+    have ih := fun e0' e1' => saLoopV_eq bA bC bG bT msk sh m nU ok1 e1q minLen hnU hn k (p + 1) e0' e1'
+      (by rw [ReadTrim.rt_add _ _ (by rw [ReadTrim.rt_one]; omega), ReadTrim.rt_one]; omega)
+    rw [saLoopV, dif_pos (show p < nU from show p.toNat < nU.toNat by omega), saLoopU]
+    simp only [ih]
+
 end sa
 
 /-- `bmask` on machine words (`bmaskU_eq`, for masks below `2^64`). -/
@@ -629,9 +661,9 @@ def acgtAll (adapter : ByteArray) : Bool :=
 /-- The bit-parallel cut (`saCutU_eq`): the four letter masks once, then `saLoopU`. -/
 @[inline] def saCutU (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) : Nat :=
   let m := adapter.size
-  saLoopU adapter read (bmaskU adapter 65 m 0) (bmaskU adapter 67 m 0) (bmaskU adapter 71 m 0)
-    (bmaskU adapter 84 m 0) (((1 : UInt64) <<< m.toUInt64) - 1) (m - 1).toUInt64 m.toUSize (decide (minLen ≤ m))
-    (decide (maxErr ≠ 0)) minLen read.size 0 0 0
+  saLoopV adapter read (bmaskU adapter 65 m 0) (bmaskU adapter 67 m 0) (bmaskU adapter 71 m 0)
+    (bmaskU adapter 84 m 0) (((1 : UInt64) <<< m.toUInt64) - 1) (m - 1).toUInt64 m.toUSize read.size.toUSize (decide (minLen ≤ m))
+    (decide (maxErr ≠ 0)) minLen 0 0 0
 
 theorem saCutU_eq (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) (hm0 : 0 < adapter.size)
     (hm : adapter.size < 64) (he : maxErr ≤ 1) (hn : read.size < 2 ^ 30) (ha : acgtAll adapter = true) :
@@ -662,6 +694,7 @@ theorem saCutU_eq (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray)
             rw [bmask_other adapter c (fun j hj e => by rcases hacgt j hj with h | h | h | h <;> simp_all)]
             rfl
   unfold saCutU
+  rw [saLoopV_eq adapter read _ _ _ _ _ _ _ _ _ _ _ (rt_n _ (by omega)) hn read.size 0 _ _ (by simp)]
   simp only [pow_sub_one_u64 _ hm]
   have em : ∀ c, bmaskU adapter c adapter.size 0 = (bmask adapter c adapter.size 0).toUInt64 := fun c => by
     apply UInt64.toNat_inj.mp; rw [bmaskU_eq _ _ _ _ (by omega), lt64]
@@ -715,6 +748,40 @@ at most one mismatch, else the `USize` scan. -/
 /-- The setting used by the FASTQ reader: TruSeq, tail prefixes of at least 6 letters, 1 mismatch
 over the whole adapter. -/
 def cutTruSeq (letters qual : ByteArray) : ByteArray × ByteArray := cutAdapter truSeq 6 1 letters qual
+
+/-! `cutTruSeq` for the compiled code (`cutTruSeq_eqF`): the adapter's letter masks and constants computed once
+(top-level values), not per read, and the conditions of `cutPosF` decided once for `truSeq`. -/
+
+def tsA : UInt64 := bmaskU truSeq 65 truSeq.size 0
+def tsC : UInt64 := bmaskU truSeq 67 truSeq.size 0
+def tsG : UInt64 := bmaskU truSeq 71 truSeq.size 0
+def tsT : UInt64 := bmaskU truSeq 84 truSeq.size 0
+def tsMsk : UInt64 := ((1 : UInt64) <<< truSeq.size.toUInt64) - 1
+def tsSh : UInt64 := (truSeq.size - 1).toUInt64
+def tsM : USize := truSeq.size.toUSize
+
+/-- `cutPos truSeq 6 1` with the precomputed masks (`cutPosTS_eq`). -/
+@[inline] def cutPosTS (read : ByteArray) : Nat :=
+  if read.size < 2 ^ 30 then saLoopV truSeq read tsA tsC tsG tsT tsMsk tsSh tsM read.size.toUSize true true 6 0 0 0
+  else cutPosW truSeq 6 1 read
+
+theorem cutPosTS_eq (read : ByteArray) : cutPosTS read = cutPos truSeq 6 1 read := by
+  unfold cutPosTS
+  split
+  · rename_i hn
+    rw [← saCutU_eq truSeq 6 1 read (by decide) (by decide) (by decide) hn (by decide)]
+    rfl
+  · exact cutPosW_eq truSeq 6 1 read
+
+/-- `cutTruSeq` for the compiled code. -/
+@[inline] def cutTruSeqF (letters qual : ByteArray) : ByteArray × ByteArray :=
+  let c := cutPosTS letters
+  (letters.extract 0 c, qual.extract 0 c)
+
+@[csimp] theorem cutTruSeq_eqF : @cutTruSeq = @cutTruSeqF := by
+  funext letters qual
+  unfold cutTruSeq cutTruSeqF cutAdapter
+  rw [cutPosTS_eq]
 
 /-- Minimum length: a mate with fewer than `minLength` letters becomes empty (trimmed away). -/
 def dropShort (minLength : Nat) (letters qual : ByteArray) : ByteArray × ByteArray :=

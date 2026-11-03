@@ -230,12 +230,66 @@ theorem wlU_eq (Q : Int64) (seq qual : ByteArray) : ∀ (i : Nat) (iU nsU plU bs
         · rw [ih _ _ _ _ _ _ (by rw [eo]; omega) hb he, eo, ecs]
     · rw [ih _ _ _ _ _ _ (by rw [eo]; omega) (by rw [ecs]; omega) (by rw [ec1]; omega), eo, ecs, ec1]
 
+/-- `fI` with the quality in `UInt8` arithmetic (`fIU_eq`). -/
+@[inline] def fIU (Q : Int64) (b qc : UInt8) : Int64 :=
+  if isACGT b then (if qc < 33 then (0 : UInt8) else min (qc - 33) 93).toUInt64.toInt64 - Q else -1000000
+
+/-- `wlU` with `fIU` and the literal `0` passed in as `z` (a literal `Int64` in the loop is fetched through
+`lean_uint64_once` every step): `wlU2_eq`. -/
+def wlU2 (Q z : Int64) (seq qual : ByteArray) (i ns : USize) (hr : Bool) (pl : USize) (ps : Int64) (bs be : USize)
+    (bsc : Int64) : PackedFoldState :=
+  if h : i = 0 then ⟨ns.toNat, hr, pl.toNat, ps.toInt, bs.toNat, be.toNat, bsc.toInt⟩
+  else
+    let j := i - 1
+    let cs := if ns = 0 then 0 else ns - 1
+    let f := fIU Q (rtGet seq j) (rtGet qual j)
+    if hr then
+      if z < ps then
+        if bsc ≤ f + ps then wlU2 Q z seq qual j cs true (pl + 1) (f + ps) cs (cs + (pl + 1)) (f + ps)
+        else wlU2 Q z seq qual j cs true (pl + 1) (f + ps) bs be bsc
+      else if bsc ≤ f then wlU2 Q z seq qual j cs true 1 f cs (cs + 1) f
+      else wlU2 Q z seq qual j cs true 1 f bs be bsc
+    else wlU2 Q z seq qual j cs true 1 f cs (cs + 1) f
+termination_by i.toNat
+decreasing_by
+  all_goals
+    have : i.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [rt_sub1 i h]; omega
+
+set_option maxRecDepth 8000 in
+theorem qcU_all : ∀ n, n < 256 → (if (UInt8.ofNat n) < 33 then (0 : UInt8) else min (UInt8.ofNat n - 33) 93).toUInt64.toInt64 =
+    Int64.ofNat (min ((UInt8.ofNat n).toNat - 33) 93) := by
+  decide
+
+theorem qcU_eq (qc : UInt8) :
+    (if qc < 33 then (0 : UInt8) else min (qc - 33) 93).toUInt64.toInt64 = Int64.ofNat (min (qc.toNat - 33) 93) := by
+  have := qcU_all qc.toNat qc.toNat_lt
+  rwa [UInt8.ofNat_toNat] at this
+
+theorem fIU_eq (Q : Int64) (b qc : UInt8) : fIU Q b qc = fI Q b qc := by
+  unfold fIU fI; rw [qcU_eq]
+
+theorem wlU2_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU : USize), iU.toNat = n →
+    ∀ ns hr pl ps bs be bsc, wlU2 Q 0 seq qual iU ns hr pl ps bs be bsc = wlU Q seq qual iU ns hr pl ps bs be bsc := by
+  intro n
+  induction n with
+  | zero =>
+    intro iU hi ns hr pl ps bs be bsc
+    have : iU = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
+    rw [wlU2, wlU, dif_pos this, dif_pos this]
+  | succ n ih =>
+    intro iU hi ns hr pl ps bs be bsc
+    have h0 : iU ≠ 0 := fun e => by rw [e] at hi; simp at hi
+    have ej : (iU - 1).toNat = n := by rw [rt_sub1 iU h0, hi]; rfl
+    rw [wlU2, wlU, dif_neg h0, dif_neg h0]
+    simp only [fIU_eq, ih _ ej]
+
 /-- `wl` for the compiled code (`wl_eq_wlF`): `wlI` from the start state (scores 0). -/
 @[inline] def wlF (Q : Nat) (seq qual : ByteArray) (i ns : Nat) (hr : Bool) (pl : Nat) (ps : Int) (bs be : Nat)
     (bsc : Int) : PackedFoldState :=
   if Q ≤ 1000 ∧ i ≤ 10000 ∧ ps = 0 ∧ bsc = 0 then
     if ns < 1073741824 ∧ pl + i < 1073741824 ∧ bs < 2147483648 ∧ be < 2147483648 then
-      wlU (Int64.ofNat Q) seq qual i.toUSize ns.toUSize hr pl.toUSize 0 bs.toUSize be.toUSize 0
+      wlU2 (Int64.ofNat Q) 0 seq qual i.toUSize ns.toUSize hr pl.toUSize 0 bs.toUSize be.toUSize 0
     else wlI (Int64.ofNat Q) seq qual i ns hr pl 0 bs be 0
   else wl Q seq qual i ns hr pl ps bs be bsc
 
@@ -249,7 +303,7 @@ theorem wlU_eq (Q : Int64) (seq qual : ByteArray) : ∀ (i : Nat) (iU nsU plU bs
     rw [e0] at hI
     split
     · rename_i hb
-      rw [wlU_eq _ seq qual i _ _ _ _ _ hr 0 0 (rt_n i (by omega)) (by rw [rt_n ns (by omega)]; omega)
+      rw [wlU2_eq _ seq qual i _ (rt_n i (by omega)), wlU_eq _ seq qual i _ _ _ _ _ hr 0 0 (rt_n i (by omega)) (by rw [rt_n ns (by omega)]; omega)
         (by rw [rt_n pl (by omega)]; omega) (by rw [rt_n bs (by omega)]; omega) (by rw [rt_n be (by omega)]; omega),
         rt_n ns (by omega), rt_n pl (by omega), rt_n bs (by omega), rt_n be (by omega), hI]
     · exact hI.symm
