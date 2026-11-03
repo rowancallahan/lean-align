@@ -1538,3 +1538,11 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - 04:5x UTC: merged S-H speed/new-filter (proved fineE=fineEC rolling scan, suppA countP). Callgrind 2k: NovaSeq -3.4%, HiSeq -0.6%. SAM identical on 200k both sets; FUZZ=1 CI green.
 - 05:0x UTC: merged S-G speed/index-counts (proved heavy 25-mer table, both strands). Ir 2k: NovaSeq -14.8%, HiSeq -1.9%. Mapped records identical; 3 unmapped pairs now repetitiveUnknown (within Spec). Index +12 MB, build +6 min, build peak RSS 10.76 GB (was 9.85). INDEX FORMAT CHANGED: rebuild shim.idx. FUZZ=1 CI green (453 theorems, standard axioms).
 - 05:2x UTC: merged S-H speed/next (hitsCKT supports once via suppCntC, sweepAF; proved). Ir 2k: NovaSeq -1.6%, HiSeq -0.5%. SAM identical 200k; FUZZ=1 CI green.
+
+### Rowan's to-think list (added 2026-11-03 night)
+- INDEX IDENTITY: new binary on an old shim.idx silently maps nothing (exit 0, all unmapped). Options:
+  1. header in buildIndex output: magic + format version + hash of the index-building code (e.g. FROZEN hash of Spec/Index + builder files, baked into the binary at compile time) + hash of the genome FASTA (shim_fasta_failfast.patch already writes a genome-hash sidecar). `map` reads ~64 bytes and fails fast on any mismatch.
+  2. optional whole-file checksum (fast hash over 5.3 GB, ~1-5 s) checked at load or only by a `verify` command.
+  3. full check (rebuild/recompare, the expensive one) only as `verify`, run once after build, never per map.
+  The trusted hypothesis then narrows to: "a file whose header says (code H, genome G) was produced by buildIndex of code H on genome G".
+- FASTQ/SAM SPECS as a dual object: spec on readable Strings, fast code on ByteArray, connected by encode/decode round-trip lemmas (ASCII-only invariant makes bytes = chars) and `fast = encode ∘ spec` (@[csimp] style). Lean's own String is UTF-8 bytes with toUTF8/fromUTF8, so there is precedent.
