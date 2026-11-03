@@ -221,13 +221,23 @@ def walkK : Nat := 3
 def keepOf (insertSettings : InsertSettings) (p : PairReport) : Bool :=
   decide (insertSettings.junkScore ≤ LastResort.repScore p)
 
+-- a walk step aligns the other mate only when the anchored mate alone is at `junkScore` or better: a pair's score is
+-- the sum of its mates' scores, each at most 0, so a worse anchored mate gives no pair that `keepOf` keeps
+def preOf (insertSettings : InsertSettings) (r : MateReport) : Bool :=
+  decide (insertSettings.junkScore ≤ r.score)
+
+-- the other mate's DP limit at a walk step: a partner with penalty `≥ r.score - junkScore + 1` puts the pair below
+-- `junkScore` (`keepOf` drops it). At least 9: `TierHeur.nearY` runs its banded DP only for a limit above 8
+def limOf (insertSettings : InsertSettings) (r : MateReport) : Nat :=
+  max 9 (r.score - insertSettings.junkScore + 1).toNat
+
 -- the answer from a router output `t`: the found pair re-checked (`Report`), the walk when `fb` allows it, then
 -- the report floor (`LastResort.finalize`)
 def answerWith (insertSettings : InsertSettings) (req : Int) (fb : Option Int) (pk : MapSpec.Fast.PkMz)
     (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (read1 read2 : ByteArray) (t : MapSpec.Fast.TierOut) :
     PairAnswer :=
   LastResort.finalize insertSettings (LastResort.fitNs ns) req
-    (Report.answerOfPair reportTies fb mateRescue (keepOf insertSettings) walkK pk insertSettings pgs offs ns
+    (Report.answerOfPair reportTies fb mateRescue (preOf insertSettings) (limOf insertSettings) (keepOf insertSettings) walkK pk insertSettings pgs offs ns
       read1 read2 t)
 
 -- the second look at a leftover: every proper pair within the cap, on the chromosomes (`LastResort.lookAnswer`).
@@ -424,7 +434,7 @@ def alignOneP (insertSettings : InsertSettings) (chroms : List (List Nat)) (setu
           let cb := capForS (cfg.rcfg.cap1 read2) read2 sb1 sb2
           let cfg' := pairCfgZ cfg pk read1 read2 ca cb
           let ans := LastResort.finalize insertSettings (LastResort.fitNs ns) req
-            (Report.answerOfPairP reportTies (fallbackFrom req) mateRescue (keepOf insertSettings) walkK pk insertSettings
+            (Report.answerOfPairP reportTies (fallbackFrom req) mateRescue (preOf insertSettings) (limOf insertSettings) (keepOf insertSettings) walkK pk insertSettings
               pgs offs ns ok read1 read2
               s1 s2 (MapSpec.Fast.tierUp cfg' pk #[0] pgs read1 read2
                 (MapSpec.Fast.tierPairBP.tierPairBQ cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2
@@ -632,7 +642,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
            CorrectU insertSettings genome (decodeRead read1) (decodeRead read2) (answerWith insertSettings
             (reqOf insertSettings read1 read2) fb (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2 t)) :=
         fun fb t hok' => LastResort.finalize_correct (LastResort.fitNs ns) hnone
-          (Report.answerOfPair_correct hslice hchr hlen reportTies fb mateRescue _ _ (ix, G) insertSettings read1 read2 _ hok'
+          (Report.answerOfPair_correct hslice hchr hlen reportTies fb mateRescue _ _ _ _ (ix, G) insertSettings read1 read2 _ hok'
             (Whole.correct_of_whole insertSettings _ _ hslice _ rfl rfl
               (answerOf_correct insertSettings (Whole.wholeOf G) _ _ read1 read2 _ hok')))
       -- the second look

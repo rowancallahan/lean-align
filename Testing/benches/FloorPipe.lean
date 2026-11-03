@@ -24,13 +24,13 @@ def walkOf (k : Nat) (floor : Int) (pk : PkMz) (slack lo hi : Nat) (pgs : Array 
     let s2 : PrepM MzP := prepMate pk R2
     let ok := fun (p : Option PairReport) => p.bind fun p => if floor ≤ repScore p then some p else none
     let c1 := t.m1.pl.toList ++ Report.anchorsOf pk pgs R1 s1 k
-    match c1.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).1
-        (Report.tryAt pk pgs offs ns hi R1 t.m1 R2 s2 x).2) with
+    match c1.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi 1000000 R1 t.m1 R2 s2 x).1
+        (Report.tryAt pk pgs offs ns hi 1000000 R1 t.m1 R2 s2 x).2) with
     | some p => some p
     | none =>
       let c2 := t.m2.pl.toList ++ Report.anchorsOf pk pgs R2 s2 k
-      c2.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).2
-        (Report.tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).1)
+      c2.findSome? fun x => ok (Report.pairOf slack lo hi (Report.tryAt pk pgs offs ns hi 1000000 R2 t.m2 R1 s1 x).2
+        (Report.tryAt pk pgs offs ns hi 1000000 R2 t.m2 R1 s1 x).1)
 
 -- the largest exact occurrence count of a seed of `R` (both strands' seeds)
 def maxOcc (pk : PkMz) (R : ByteArray) : Nat := Id.run do
