@@ -1534,3 +1534,5 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - ~04:13: S-D same-session NovaSeq + patch: K=2 N=200: 12.8/6.6 = 1.94x; K=2 N=100: 12.8/6.4 = 2.00x (repetitiveUnknown 0.83%, -11 mapped pairs); baseline + patch 2.91x. With S4's 2.02x: K=2 N=200 sits at ~1.94-2.02x, right at the line.
 - ~04:18: HiSeq + patch (S-D): K=2 N=200 24.5/6.6 = 3.71x; K=2 N=100 3.77x; baseline + patch 4.30x.
 - RULE (Rowan, 2026-11-03 ~04:25): Shim changes are pushed by Rowan only; eventually ALL of Spec/ is Rowan's. Claude prepares patches (Testing/notes/*.patch) and does not apply them. shim_speed.patch is NOT applied by Claude.
+
+- 04:5x UTC: merged S-H speed/new-filter (proved fineE=fineEC rolling scan, suppA countP). Callgrind 2k: NovaSeq -3.4%, HiSeq -0.6%. SAM identical on 200k both sets; FUZZ=1 CI green.
