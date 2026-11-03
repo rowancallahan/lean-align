@@ -73,8 +73,12 @@ def PairAlignment.IsUniqueBestProper {genome : Genome} {mate1 mate2 : Read}
 -- seeds are this long
 def seedLength : Nat := 25
 
--- a mate with a seed that occurs at least this often may be given up on
+-- PROTOTYPE (proof/gaveup; NOT Rowan's Spec): the repeat rule below is a proposal
+-- a seed that occurs at least this often counts as a repeat seed
 def gaveUpRepeats : Nat := 500
+
+-- a mate may be given up on when it has this many non-overlapping repeat seeds
+def gaveUpSeeds : Nat := 2
 
 -- how often `word` occurs in the genome: windows equal to it or to its reverse complement, over all
 -- starts of all chromosomes
@@ -84,10 +88,13 @@ def Genome.occurrences (genome : Genome) (word : Read) : Nat :=
       let window := (chromosome.seq.drop start).take word.length
       window == word || window == reverseComplement word).length).sum
 
--- the read has a seed (a window of `seedLength` letters) that occurs at least `gaveUpRepeats` times
+-- the read has `gaveUpSeeds` non-overlapping seeds (windows of `seedLength` letters), each occurring at
+-- least `gaveUpRepeats` times
 def Genome.RepeatWitness (genome : Genome) (read : Read) : Prop :=
-  ∃ start, start + seedLength ≤ read.length ∧
-    gaveUpRepeats ≤ genome.occurrences ((read.drop start).take seedLength)
+  ∃ starts : List Nat, starts.length = gaveUpSeeds ∧
+    starts.Pairwise (fun a b => a + seedLength ≤ b) ∧
+    ∀ start ∈ starts, start + seedLength ≤ read.length ∧
+      gaveUpRepeats ≤ genome.occurrences ((read.drop start).take seedLength)
 
 /-! ## The answer -/
 
@@ -96,7 +103,7 @@ inductive Uniqueness where
   | unique       -- the reported pair is the unique best proper pair
   | multimapper  -- proved: the reported pair is a best proper pair, and another one ties with it
   | unknown      -- not checked
-  | gaveUp       -- not searched: a mate has a seed that repeats at least `gaveUpRepeats` times
+  | gaveUp       -- not searched: a mate has `gaveUpSeeds` seeds repeating at least `gaveUpRepeats` times (PROTOTYPE)
 deriving DecidableEq, Repr
 
 -- which router path answered: a performance record only, no claim
