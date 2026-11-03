@@ -80,9 +80,11 @@ if want 5; then
       for i in $(seq $R); do
         if [ $tool = ours ]; then
           cat "$IDX" > /dev/null
-          load=$(tm taskset -c 0-$((T-1)) $LA map "$IDX" "$O/empty.fq" "$O/empty.fq" /dev/null 100 1000 | cut -d' ' -f1)
-          read w u y <<< "$(tm taskset -c 0-$((T-1)) $LA map "$IDX" "$r1" "$r2" /dev/null 100 1000)"
-          lcpu=$(tm taskset -c 0-$((T-1)) $LA map "$IDX" "$O/empty.fq" "$O/empty.fq" /dev/null 100 1000 | awk '{print $2+$3}')
+          # the load measured inside the run (until the index's bytes are read: timed_load.py); a separate empty run
+          # loads at a different page-cache state and can exceed the real run's load (negative map time)
+          line=$(taskset -c 0-$((T-1)) python3 Testing/scripts/timed_load.py ours $LA map "$IDX" "$r1" "$r2" /dev/null 100 1000)
+          get() { echo "$line" | sed "s/.* $1 \([0-9.]*\) s.*/\1/"; }
+          w=$(get wall); u=$(get user); y=$(get sys); load=$(get load); lcpu=$(get loadcpu)
         else
           cat $MBI.* > /dev/null
           read w u y <<< "$(tm taskset -c 0-$((T-1)) $MB map -t $T "$MBI" "$r1" "$r2")"
