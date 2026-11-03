@@ -657,6 +657,49 @@ def bMkMain (sc : Scoring) (x y : Char) (lo hi : Int)
     , afterGapY := pick oe sc.gapExtend }
   else bCellNone
 
+/-- `bMkMain`'s three-way pick with the scores compared first (one cons for the winner; `pick3_eq`). -/
+@[inline] def pick3 (a gx gy : Option (List Step × Int)) (cx cy : Int) : Option (List Step × Int) :=
+  match a, gx, gy with
+  | none, none, none => none
+  | some a, none, none => some a
+  | none, some x, none => some (.gapX :: x.1, cx + x.2)
+  | none, none, some y => some (.gapY :: y.1, cy + y.2)
+  | some a, some x, none => if cx + x.2 ≤ a.2 then some a else some (.gapX :: x.1, cx + x.2)
+  | some a, none, some y => if cy + y.2 ≤ a.2 then some a else some (.gapY :: y.1, cy + y.2)
+  | none, some x, some y =>
+    if cy + y.2 ≤ cx + x.2 then some (.gapX :: x.1, cx + x.2) else some (.gapY :: y.1, cy + y.2)
+  | some a, some x, some y =>
+    if cx + x.2 ≤ a.2 then (if cy + y.2 ≤ a.2 then some a else some (.gapY :: y.1, cy + y.2))
+    else if cy + y.2 ≤ cx + x.2 then some (.gapX :: x.1, cx + x.2) else some (.gapY :: y.1, cy + y.2)
+
+theorem pick3_eq (a gx gy : Option (List Step × Int)) (cx cy : Int) :
+    Option.merge (maxOn fun item : List Step × Int => item.2)
+        (Option.merge (maxOn fun item : List Step × Int => item.2) a
+          (gx.map fun t => (Step.gapX :: t.1, cx + t.2)))
+        (gy.map fun t => (Step.gapY :: t.1, cy + t.2)) = pick3 a gx gy cx cy := by
+  rcases a with _ | a <;> rcases gx with _ | x <;> rcases gy with _ | y <;>
+    simp only [pick3, Option.merge, Option.map, maxOn_eq_ite] <;>
+    repeat (first | rfl | (split <;> try rfl) | omega)
+
+/-- `bMkMain` by `pick3`. -/
+def bMkMainF (sc : Scoring) (x y : Char) (lo hi : Int) (nj nj1 cur1 : BCell) : BCell :=
+  if lo ≤ 0 ∧ 0 ≤ hi then
+    let dCand := nj1.neutral.map fun t => (Step.diag :: t.1, diagCost sc x y + t.2)
+    let gx := cur1.afterGapX
+    let gy := nj.afterGapY
+    let oe := sc.gapOpen + sc.gapExtend
+    { neutral   := pick3 dCand gx gy oe oe
+    , afterGapX := pick3 dCand gx gy sc.gapExtend oe
+    , afterGapY := pick3 dCand gx gy oe sc.gapExtend }
+  else bCellNone
+
+@[csimp] theorem bMkMain_eqF : @bMkMain = @bMkMainF := by
+  funext sc x y lo hi nj nj1 cur1
+  unfold bMkMain bMkMainF
+  simp only [pick3_eq]
+
+#print axioms bMkMain_eqF
+
 -- ── Cell builders compute the right cells ──
 
 theorem bMkBase_spec (sc : Scoring) (lo hi : Int) :
