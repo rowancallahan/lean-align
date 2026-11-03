@@ -39,15 +39,6 @@ theorem mask55 : ∀ t, t < 32 → (0x5555555555555555 : Nat).testBit (2 * t) = 
 theorem dig_hi (x : UInt64) (t : Nat) (ht : 32 ≤ t) : dig x.toNat t = 0 := by
   rw [dig_eq, tb_hi _ _ (by omega), tb_hi _ _ (by omega)]; rfl
 
-theorem cntNZ_congr (n x y : Nat) (h : ∀ t, t < n → dig x t = dig y t) : cntNZ n x = cntNZ n y := by
-  induction n generalizing x y with
-  | zero => rfl
-  | succ n ih =>
-    have h0 := h 0 (by omega)
-    simp only [dig, Nat.pow_zero, Nat.div_one] at h0
-    rw [cntNZ, cntNZ, h0, ih (x / 4) (y / 4) (fun t ht => by
-      rw [dig_div4, dig_div4]; exact h _ (by omega))]
-
 theorem xor_dig (x y : UInt64) (t : Nat) : dig (x ^^^ y).toNat t = 0 ↔ dig x.toNat t = dig y.toNat t := by
   simp only [dig, UInt64.toNat_xor, show 4 ^ t = 2 ^ (2 * t) by rw [Nat.pow_mul], Nat.xor_div_two_pow]
   exact xor_mod4_eq_zero _ _

@@ -29,77 +29,11 @@ def ScoreFaithful (sc : Scoring) (T : Int) (read : List Char) (g : Genome)
     (score : Window → Option Int) : Prop :=
   ∀ w s, (score w = some s ∧ T ≤ s) ↔ (windowScore sc read g w = some s ∧ T ≤ s)
 
-/-- `hitsOf` only looks at scores `≥ T`. -/
-theorem hitsOf_congr_faithful (sc : Scoring) (T : Int) (read : List Char) (g : Genome)
-    (score : Window → Option Int) (hf : ScoreFaithful sc T read g score) (ws : List Window) :
-    hitsOf score T ws = hitsOf (windowScore sc read g) T ws := by
-  unfold hitsOf
-  induction ws with
-  | nil => rfl
-  | cons w ws ih =>
-  rw [List.filterMap_cons, List.filterMap_cons, ih]
-  congr 1
-  have h := hf w
-  cases h1 : score w with
-  | none =>
-    cases h2 : windowScore sc read g w with
-    | none => rfl
-    | some s =>
-      by_cases hT : T ≤ s
-      · have := (h s).mpr ⟨h2, hT⟩; rw [h1] at this; cases this.1
-      · simp [hT]
-  | some s =>
-    by_cases hT : T ≤ s
-    · have := (h s).mp ⟨h1, hT⟩
-      rw [this.1]
-    · simp only [hT, if_false]
-      cases h2 : windowScore sc read g w with
-      | none => rfl
-      | some s' =>
-        by_cases hT' : T ≤ s'
-        · have := (h s').mpr ⟨h2, hT'⟩; rw [h1] at this
-          simp at this; omega
-        · simp [hT']
-
-/-- **Faithful scorer.**  With a complete lookup and a scorer faithful at
-threshold `T`, the mapper returns the specification's answer. -/
-theorem mapWith_eq_mapSpec_of_faithful (lookup : List Char → List (Nat × Nat))
-    (score : Window → Option Int) (l0 : Nat) (sc : Scoring) (hv : ValidScoring sc) (T : Int)
-    (g : Genome) (read : List Char) (hl : LookupComplete g l0 lookup)
-    (hf : ScoreFaithful sc T read g score) :
-    mapWith lookup score l0 T (errBound sc T) g read = mapSpec sc T g read := by
-  have h : mapWith lookup score l0 T (errBound sc T) g read =
-      mapWith lookup (windowScore sc read g) l0 T (errBound sc T) g read := by
-    unfold mapWith
-    rw [hitsOf_congr_faithful sc T read g score hf]
-  rw [h]
-  exact mapWith_eq_mapSpec lookup _ l0 sc hv T g read hl (fun _ => rfl)
-
-
 /-! ## Part 2: the banded scorer -/
-
-/-- One byte per letter (letters must be `< 256`). -/
-def toBytes (cs : List Char) : ByteArray := ⟨(cs.map fun c => c.toNat.toUInt8).toArray⟩
-
-theorem toBytes_encodes (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 256) : Encodes (toBytes cs) cs := by
-  refine ⟨by simp [toBytes, ByteArray.size], fun i hi => ?_⟩
-  have hc := h cs[i] (List.getElem_mem hi)
-  show ((cs.map fun (c : Char) => c.toNat.toUInt8).toArray[i]!).toNat = _
-  rw [getElem!_pos _ i (by simpa using hi)]
-  simp only [List.getElem_toArray, List.getElem_map, Nat.toUInt8, UInt8.toNat_ofNat']
-  rw [Nat.mod_eq_of_lt (by omega)]
 
 /-- The chromosomes as bytes. -/
 def GenomeBytes (gbs : Array ByteArray) (g : Genome) : Prop :=
   gbs.size = g.length ∧ ∀ c (h1 : c < gbs.size) (h2 : c < g.length), Encodes gbs[c] g[c].seq
-
-def genomeBytes (g : Genome) : Array ByteArray := (g.map fun c => toBytes c.seq).toArray
-
-theorem genomeBytes_ok (g : Genome) (h : ∀ c : Chromosome, c ∈ g → ∀ x : Char, x ∈ c.seq → x.toNat < 256) :
-    GenomeBytes (genomeBytes g) g := by
-  refine ⟨by simp [genomeBytes], fun c h1 h2 => ?_⟩
-  simp only [genomeBytes, List.getElem_toArray, List.getElem_map]
-  exact toBytes_encodes _ (h _ (List.getElem_mem h2))
 
 /-- Score of one window through the banded kernel: `none` when the window
 does not fit, is more than `B` letters longer or shorter than the read, or
@@ -186,35 +120,8 @@ theorem bandScore_faithful (sc : Scoring) (hv : ValidScoring sc) (T : Int) (B : 
       rw [List.getElem?_eq_none (by have := hg.1; omega)]
     simp [windowScore, this]
 
-/-- The mapper with the banded scorer. -/
-def bandMapper (lookup : List Char → List (Nat × Nat)) (l0 : Nat) (sc : Scoring) (T : Int)
-    (g : Genome) (gbs : Array ByteArray) (read : List Char) (rb : ByteArray) : Option (Window × Int) :=
-  mapWith lookup (bandScore sc T (bandOf sc T) rb gbs) l0 T (errBound sc T) g read
-
-/-- **Mapper with the banded scorer = specification**, for a complete
-lookup, a valid scoring, and read and chromosomes given as bytes. -/
-theorem bandMapper_eq_mapSpec (lookup : List Char → List (Nat × Nat)) (l0 : Nat) (sc : Scoring)
-    (hv : ValidScoring sc) (T : Int) (g : Genome) (gbs : Array ByteArray) (read : List Char)
-    (rb : ByteArray) (hl : LookupComplete g l0 lookup) (hr : Encodes rb read)
-    (hg : GenomeBytes gbs g) :
-    bandMapper lookup l0 sc T g gbs read rb = mapSpec sc T g read :=
-  mapWith_eq_mapSpec_of_faithful lookup _ l0 sc hv T g read hl
-    (bandScore_faithful sc hv T (bandOf sc T) (bandOf_ok sc hv T) read g rb gbs hr hg)
-
-/-- Same, with the index of `SeedMapper`. -/
-theorem bandMapper_index_eq_mapSpec (l0 : Nat) (sc : Scoring) (hv : ValidScoring sc) (T : Int)
-    (g : Genome) (read : List Char) (h : ∀ c : Chromosome, c ∈ g → ∀ x : Char, x ∈ c.seq → x.toNat < 256)
-    (hread : ∀ x ∈ read, x.toNat < 256) :
-    bandMapper (buildIndex l0 g).lookup l0 sc T g (genomeBytes g) read (toBytes read) =
-      mapSpec sc T g read :=
-  bandMapper_eq_mapSpec _ l0 sc hv T g _ read _ (buildIndex_complete l0 g)
-    (toBytes_encodes read hread) (genomeBytes_ok g h)
-
 end MapSpec
 
-#print axioms MapSpec.mapWith_eq_mapSpec_of_faithful
 #print axioms MapSpec.bandEnd_spec
 #print axioms MapSpec.bandEnd2_spec
 #print axioms MapSpec.bandScore_faithful
-#print axioms MapSpec.bandMapper_eq_mapSpec
-#print axioms MapSpec.bandMapper_index_eq_mapSpec

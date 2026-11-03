@@ -62,7 +62,6 @@ theorem cellVals_rel (sc : Scoring) (hv : ValidScoring sc) (T : Int) (xs gs : Li
         rel_max3 h1 h2 h3 (by omega) (by omega) (by omega),
         rel_max3 h1 h2 h3 (by omega) (by omega) (by omega)⟩
 
-
 /-! ## The row loop -/
 
 def Valid (n B e i k : Nat) : Prop := n + k ≤ e + i + B ∧ i + B ≤ n + k
@@ -181,7 +180,6 @@ theorem bandRow_spec (sc : Scoring) (hv : ValidScoring sc) (T : Int) (B : Nat) (
         by_cases hkk : k = k0
         · subst hkk; exact absurd hvk2 hvk
         · exact hdead ha k (by omega) hkW hvk2
-
 
 /-! ## All rows -/
 

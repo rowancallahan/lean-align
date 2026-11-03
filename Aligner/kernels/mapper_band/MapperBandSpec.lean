@@ -100,8 +100,6 @@ theorem bandOf_ok (sc : Scoring) (hv : ValidScoring sc) (T : Int) :
     rw [Int.mul_neg]
   omega
 
-theorem bandOf_default : bandOf ⟨0, -4, -6, -2⟩ (-12) = 3 := by decide
-
 /-- A valid walk with at least `G` gap columns scores at most
 `G * gapExtend`, and at most `gapOpen + G * gapExtend` when it starts outside
 a gap. -/

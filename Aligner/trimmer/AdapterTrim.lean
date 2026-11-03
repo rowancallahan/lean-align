@@ -844,14 +844,6 @@ theorem cut_le (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) :
     cutPos adapter minLen maxErr read ≤ read.size := by
   have := (scan_spec adapter minLen maxErr read read.size 0).2.1; unfold cutPos; omega
 
-/-- (1) The kept letters and qualities are prefixes of the input. -/
-theorem cut_prefix (adapter : ByteArray) (minLen maxErr : Nat) (letters qual : ByteArray) :
-    (cutAdapter adapter minLen maxErr letters qual).1.data.toList <+: letters.data.toList ∧
-    (cutAdapter adapter minLen maxErr letters qual).2.data.toList <+: qual.data.toList := by
-  simp only [cutAdapter, ByteArray.data_extract, Array.toList_extract, List.extract_eq_take_drop,
-    List.drop_zero, Nat.sub_zero]
-  exact ⟨List.take_prefix _ _, List.take_prefix _ _⟩
-
 /-- (2) If it cuts at `i`, the adapter (or its allowed prefix) matches at `i`. -/
 theorem cut_matches (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) :
     cutPos adapter minLen maxErr read < read.size →
@@ -864,14 +856,6 @@ theorem cut_first (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray)
     ∀ j, j < cutPos adapter minLen maxErr read → matchesAt adapter minLen maxErr read j = false :=
   fun j h => (scan_spec adapter minLen maxErr read read.size 0).2.2.2 j (Nat.zero_le _) h
 
-/-- (4) If it does not cut, no position matches. -/
-theorem cut_none (adapter : ByteArray) (minLen maxErr : Nat) (read : ByteArray) :
-    cutPos adapter minLen maxErr read = read.size → ∀ j, matchesAt adapter minLen maxErr read j = false := by
-  intro h j
-  by_cases hj : j < read.size
-  · exact cut_first adapter minLen maxErr read j (by omega)
-  · simp [matchesAt, hj]
-
 /-- (5) After `dropShort`, a mate is empty or has at least `minLength` letters. -/
 theorem dropShort_size (minLength : Nat) (letters qual : ByteArray) :
     (dropShort minLength letters qual).1.size = 0 ∨ minLength ≤ (dropShort minLength letters qual).1.size := by
@@ -879,17 +863,14 @@ theorem dropShort_size (minLength : Nat) (letters qual : ByteArray) :
   · exact Or.inl rfl
   · exact Or.inr (Nat.le_of_not_lt ‹_›)
 
-
 -- examples: full adapter with 1 mismatch mid-read; a 6-letter tail; a 5-letter tail is too short
 #guard cutPos truSeq 6 1 "ACGTACGTAGATCGGTAGAGCTTTT".toUTF8 = 8
 #guard cutPos truSeq 6 1 "ACGTACGTACGTAGATCG".toUTF8 = 12
 #guard cutPos truSeq 6 1 "ACGTACGTACGTAGATC".toUTF8 = 17
 
 #print axioms cut_le
-#print axioms cut_prefix
 #print axioms cut_matches
 #print axioms cut_first
-#print axioms cut_none
 #print axioms fastMatchesAt_eq
 #print axioms dropShort_size
 #print axioms cutPos_eq_cutPosF

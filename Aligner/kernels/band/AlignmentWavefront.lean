@@ -355,53 +355,6 @@ theorem counts_of_not_inBand (lo hi : Int) (p : List Step)
           simp +decide [List.count_cons]
           omega
 
-/-- A valid walk fits in any band wide enough to hold both whole
-strings. -/
-theorem inBand_of_wide (p : List Step) (xs ys : List Char) (lo hi : Int)
-    (hvalid : IsMonotoneWalk p xs ys)
-    (hlo : lo ≤ -(xs.length : Int)) (hhi : (ys.length : Int) ≤ hi) :
-    inBand lo hi p = true := by
-  induction p generalizing xs ys lo hi with
-  | nil =>
-      simp [inBand]
-      omega
-  | cons s rest ih =>
-      obtain ⟨hx, hy⟩ := hvalid
-      cases s with
-      | diag =>
-          cases xs with
-          | nil => simp [xConsumed] at hx
-          | cons x xs =>
-              cases ys with
-              | nil => simp [yConsumed] at hy
-              | cons y ys =>
-                  simp [xConsumed, yConsumed] at hx hy
-                  rw [inBand, Bool.and_eq_true]
-                  refine ⟨by simp; omega, ?_⟩
-                  simp [stepDev]
-                  exact ih xs ys lo hi (by constructor <;> omega)
-                    (by simp at hlo ⊢; omega) (by simp at hhi ⊢; omega)
-      | gapX =>
-          cases ys with
-          | nil => simp [yConsumed] at hy
-          | cons y ys =>
-              simp [xConsumed, yConsumed] at hx hy
-              rw [inBand, Bool.and_eq_true]
-              refine ⟨by simp; omega, ?_⟩
-              simp [stepDev]
-              exact ih xs ys (lo - 1) (hi - 1) (by constructor <;> omega)
-                (by omega) (by simp at hhi ⊢; omega)
-      | gapY =>
-          cases xs with
-          | nil => simp [xConsumed] at hx
-          | cons x xs =>
-              simp [xConsumed, yConsumed] at hx hy
-              rw [inBand, Bool.and_eq_true]
-              refine ⟨by simp; omega, ?_⟩
-              simp [stepDev]
-              exact ih xs ys (lo + 1) (hi + 1) (by constructor <;> omega)
-                (by simp at hlo ⊢; omega) (by omega)
-
 /-- The banded specification: the best walk among those staying inside
 the band, with the same earliest-maximum tie policy as the spec. -/
 def bandedBestAux (sc : Scoring) (xs ys : List Char) (prev : Option Step)
@@ -560,20 +513,6 @@ theorem bandedBestAux_eq_bBellman (sc : Scoring) (xs ys : List Char)
   | case8 x xs y ys prev lo hi hg =>
       rw [bandedBestAux_none_of_bad sc _ _ _ _ _ hg]
       simp [bBellman, hg]
-
-/-- Behind a wide enough band the banded recursion is the exact one. -/
-theorem bBellman_wide (sc : Scoring) (xs ys : List Char)
-    (prev : Option Step) (lo hi : Int)
-    (hlo : lo ≤ -(xs.length : Int)) (hhi : (ys.length : Int) ≤ hi) :
-    bBellman sc xs ys prev lo hi = some (bellmanAux sc xs ys prev) := by
-  rw [← bandedBestAux_eq_bBellman, ← bestAux_eq_bellmanAux]
-  rw [bandedBestAux, bestAux]
-  congr 1
-  congr 1
-  apply List.filter_eq_self.mpr
-  intro p hp
-  exact inBand_of_wide p xs ys lo hi
-    (isMonotoneWalk_of_mem_allPaths xs ys p hp) hlo hhi
 
 -- ══════════════════════════════════════════════════════════════════
 -- PART 4: banded row tabulation

@@ -1198,5 +1198,4 @@ def packRPU (R : ByteArray) : RP :=
   · next h => rw [packWU_eq R _ _ h _ 0 _ _ rfl]; rfl
   · rfl
 
-
 end MapSpec.Fast

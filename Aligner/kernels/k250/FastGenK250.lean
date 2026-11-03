@@ -303,19 +303,6 @@ the prepared seeds `ps`, `pr`. -/
   mapChromsGBF (kerHK R K1 gbs2 pvs2) (kerHK Rr K2 gbs2 pvs2) P ix G offs gbs R Rr
     (prepGK ix R K1 m Ls) (prepGK ix Rr K2 m Ls)
 
-def mapFastGBK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (R : ByteArray) : Option (Placement × Int) :=
-  if fastT P R then decodeP gbs.size P (mapChromsGBK P ix G offs gbs pvs R)
-  else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB gbs) (decodeBytes R)
-
-/-- A proper pair at `T = −P`, word kernels. -/
-def pairFastGBK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (R1 R2 : ByteArray) :
-    Option ((Placement × Int) × (Placement × Int)) :=
-  match mapFastGBK P ix G offs gbs pvs R1, mapFastGBK P ix G offs gbs pvs R2 with
-  | some a, some b => if properPair lo hi a.1 b.1 then some (a, b) else none
-  | _, _ => none
-
 /-! ## Proofs: kernels -/
 
 theorem revCompLoop_data (R : ByteArray) : ∀ (i : Nat) (acc : ByteArray),
@@ -762,35 +749,8 @@ theorem kerHK_eq (R : ByteArray) (gbs : Array ByteArray) (pvs : Array PGen) (hre
 
 /-! ## Proofs: the search -/
 
-/-- The runtime check of the packed chromosomes. -/
-def checkPGs (pvs : Array PGen) (gbs : Array ByteArray) : Bool :=
-  pvs.size == gbs.size && (List.range gbs.size).all fun c => checkPG pvs[c]! gbs[c]!
-
 theorem rep_default : Rep (default : PGen) (default : ByteArray) :=
   ⟨rfl, fun i => by rw [get_out _ i (Nat.zero_le _), get!_out _ i (Nat.zero_le _)]⟩
-
-theorem checkPGs_ok (pvs : Array PGen) (gbs : Array ByteArray) (h : checkPGs pvs gbs = true) :
-    RepAllK (pvs ++ pvs) (gbs ++ gbs) := by
-  unfold checkPGs at h
-  simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, List.mem_range] at h
-  obtain ⟨hs, hall⟩ := h
-  have one : ∀ c, c < gbs.size → Rep pvs[c]! gbs[c]! := fun c hc => checkPG_ok _ _ (hall c hc)
-  intro c
-  by_cases h1 : c < gbs.size
-  · rw [getElem!_pos (pvs ++ pvs) c (by simp; omega), getElem!_pos (gbs ++ gbs) c (by simp; omega),
-      Array.getElem_append_left (by omega), Array.getElem_append_left (by omega),
-      ← getElem!_pos pvs c (by omega), ← getElem!_pos gbs c h1]
-    exact one c h1
-  by_cases h2 : c < 2 * gbs.size
-  · rw [getElem!_pos (pvs ++ pvs) c (by simp; omega), getElem!_pos (gbs ++ gbs) c (by simp; omega),
-      Array.getElem_append_right (by omega), Array.getElem_append_right (by omega),
-      ← getElem!_pos pvs (c - pvs.size) (by omega), ← getElem!_pos gbs (c - gbs.size) (by omega), hs]
-    exact one _ (by omega)
-  · rw [getElem!_neg (pvs ++ pvs) c (by simp; omega), getElem!_neg (gbs ++ gbs) c (by simp; omega)]
-    exact rep_default
-
-theorem stageKF_eq (R : ByteArray) (gbs : Array ByteArray) (c lim : Nat) (shs : List (Int × Int)) (ds : List Nat)
-    (b : Best) : stageKF (kerH R gbs) R.size c lim shs ds b = stageK R gbs c lim shs ds b := rfl
 
 theorem chromKBF_eq (R : ByteArray) (gbs : Array ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
     (b : Best) : chromKBF (kerH R gbs) R gbs c P acc J b = chromKBS R gbs c P acc J b := by
@@ -827,49 +787,8 @@ theorem prepGK_eq {L Pp : Type} [LookG L Pp] (ix : L) (R : ByteArray) (m Ls : Na
   unfold prepGK prepG
   simp only [seedHashK_eq]
 
-theorem mapChromsGBK_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (hpg : checkPGs pvs gbs = true) (R : ByteArray) :
-    mapChromsGBK P ix G offs gbs pvs R = mapChromsGB P ix G offs gbs R := by
-  have hrep := checkPGs_ok pvs gbs hpg
-  unfold mapChromsGBK
-  simp only [revCompK_eq, prepGK_eq]
-  rw [← mapChromsGBF_eq]
-  congr 1
-  · funext c st len l; exact kerHK_eq R _ _ hrep c st len l
-  · funext c st len l; exact kerHK_eq (revCompB R) _ _ hrep c st len l
-
-theorem pairFastGBK_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (gbs : Array ByteArray) (pvs : Array PGen) (hpg : checkPGs pvs gbs = true) (R1 R2 : ByteArray) :
-    pairFastGBK P lo hi ix G offs gbs pvs R1 R2 = pairFastGB P lo hi ix G offs gbs R1 R2 := by
-  have h : ∀ R, mapFastGBK P ix G offs gbs pvs R = mapFastGB P ix G offs gbs R := fun R => by
-    unfold mapFastGBK mapFastGB; rw [mapChromsGBK_eq P ix G offs gbs pvs hpg]
-  unfold pairFastGBK pairFastGB
-  rw [h R1, h R2]
-  cases mapFastGB P ix G offs gbs R1 <;> cases mapFastGB P ix G offs gbs R2 <;> rfl
-
 /-! ## Top theorems -/
-
-/-- **Proper pairs, word kernels, hashed index over the concatenation.** -/
-theorem pairFastGBK_hashed_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
-    (pvs : Array PGen) (R1 R2 : ByteArray) (ix : HIdx) (G : ByteArray) (offs : Array Nat)
-    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
-    (hchk : checkAll #[ix] #[G] = true) (hpg : checkPGs pvs gbs = true) :
-    pairFastGBK P lo hi ix G offs gbs pvs R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
-  rw [pairFastGBK_eq P lo hi ix G offs gbs pvs hpg]
-  exact pairFastGB_hashed_eq_pairSpec P lo hi g m1 m2 gbs R1 R2 ix G offs hg h1 h2 hcat hchk
-
-/-- **Proper pairs, word kernels, minimizer index over the concatenation.** -/
-theorem pairFastGBK_mz_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
-    (pvs : Array PGen) (R1 R2 : ByteArray) (ix : Mz.MzIdx) (G : ByteArray) (offs : Array Nat)
-    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOk G offs gbs = true)
-    (hchk : checkAllMz #[ix] #[G] = true) (hpg : checkPGs pvs gbs = true) :
-    pairFastGBK P lo hi ix G offs gbs pvs R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
-  rw [pairFastGBK_eq P lo hi ix G offs gbs pvs hpg]
-  exact pairFastGB_mz_eq_pairSpec P lo hi g m1 m2 gbs R1 R2 ix G offs hg h1 h2 hcat hchk
 
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.kerHK_eq
-#print axioms MapSpec.Fast.pairFastGBK_eq
-#print axioms MapSpec.Fast.pairFastGBK_hashed_eq_pairSpec
-#print axioms MapSpec.Fast.pairFastGBK_mz_eq_pairSpec

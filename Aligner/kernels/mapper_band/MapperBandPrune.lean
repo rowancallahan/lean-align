@@ -53,15 +53,6 @@ theorem deadRow2_step (xs gs : List Char) (e : Nat) (he : e ≤ gs.length) (i : 
   intro p hp
   exact key (e - p) p rfl hp
 
-theorem deadRow2_down (xs gs : List Char) (e : Nat) (he : e ≤ gs.length) (tN tG : Int)
-    (h1 : tN ≤ tG) (h2 : tG ≤ tN + 8) :
-    ∀ k i, k ≤ i → i ≤ xs.length → DeadRow2 xs gs e i tN tG → DeadRow2 xs gs e (i - k) tN tG
-  | 0, i, _, _, h => by simpa using h
-  | k + 1, i, hk, hi, h => by
-    have := deadRow2_down xs gs e he tN tG h1 h2 k i (by omega) hi h
-    rw [show i - (k + 1) = (i - k) - 1 by omega]
-    exact deadRow2_step xs gs e he (i - k - 1) (by omega) tN tG h1 h2 (by rwa [show i - k - 1 + 1 = i - k by omega])
-
 /-- Read letters `[r, b)` equal genome letters `[p, p + (b - r))`. -/
 def ExactAt (xs gs : List Char) (r b p : Nat) : Prop :=
   (xs.drop r).take (b - r) = (gs.drop p).take (b - r)
