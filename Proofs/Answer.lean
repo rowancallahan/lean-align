@@ -81,6 +81,9 @@ def gaveUpRepeats : Nat := 500
 -- a mate may be given up on when it has this many non-overlapping repeat seeds
 def gaveUpSeeds : Nat := 2
 
+-- (PROTOTYPE) a mate may be given up on when it aligns well at this many places
+def gaveUpPlaces : Nat := 50
+
 -- how often `word` occurs in the genome: windows equal to it or to its reverse complement, over all
 -- starts of all chromosomes
 def Genome.occurrences (genome : Genome) (word : Read) : Nat :=
@@ -97,6 +100,11 @@ def Genome.RepeatWitness (genome : Genome) (read : Read) : Prop :=
     ∀ start ∈ starts, start + seedLength ≤ read.length ∧
       gaveUpRepeats ≤ genome.occurrences ((read.drop start).take seedLength)
 
+-- (PROTOTYPE) at least `gaveUpPlaces` distinct places where `mate` aligns scoring at least `bound`
+def Genome.ManyPlaces (genome : Genome) (mate : Read) (bound : Int) : Prop :=
+  ∃ places : List Placement, places.Nodup ∧ gaveUpPlaces ≤ places.length ∧
+    ∀ p ∈ places, ∃ a : GenomicAlignment genome mate, a.placement = p ∧ bound ≤ a.score
+
 /-! ## The answer -/
 
 -- what is known about whether the best proper pair is unique
@@ -104,7 +112,7 @@ inductive Uniqueness where
   | unique       -- the reported pair is the unique best proper pair
   | multimapper  -- proved: the reported pair is a best proper pair, and another one ties with it
   | unknown      -- not checked
-  | gaveUp       -- not searched: a mate has `gaveUpSeeds` seeds repeating at least `gaveUpRepeats` times (PROTOTYPE)
+  | gaveUp       -- (PROTOTYPE) not searched further: a mate has repeat seeds, or aligns well at many places
 deriving DecidableEq, Repr
 
 -- which router path answered: a performance record only, no claim
@@ -155,7 +163,9 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
    | .unknown => 
        answer.found = none → answer.bestPossibleScore < insertSettings.requiredMapBound mate1 mate2
    | .gaveUp =>
-       answer.found = none ∧ (genome.RepeatWitness mate1 ∨ genome.RepeatWitness mate2)
+       answer.found = none ∧ (genome.RepeatWitness mate1 ∨ genome.RepeatWitness mate2 ∨
+         genome.ManyPlaces mate1 (insertSettings.requiredMapBound mate1 mate2) ∨
+         genome.ManyPlaces mate2 (insertSettings.requiredMapBound mate1 mate2))
    )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)

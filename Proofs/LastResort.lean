@@ -472,11 +472,23 @@ theorem runsIx_ok {pgs : Array PGen} {g : MapSpec.Genome} (hg : GenomeBytes (pgs
   exact cigarOk_of_hit hx hwin
 
 -- every proper pair of the mates' hits within `c` scoring `≥ -c` (as `pairGXE` lists them)
+-- mate 1's hits within `c`
+def hitsX (c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 : ByteArray) : List (MapSpec.Placement × Int) :=
+  hitsKPF pk ByteArray.empty offs pgs R1 c
+
+-- mate 2's hits within `c` that can pair with one of `lX`
+def hitsY (sl hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R2 : ByteArray)
+    (lX : List (MapSpec.Placement × Int)) : List (MapSpec.Placement × Int) :=
+  hitsKPFN sl hi pk ByteArray.empty offs pgs R2 c lX
+
+-- the proper pairs of the two hit lists scoring `≥ -c`
+def pairsOfHits (sl lo hi c : Nat) (lX lY : List (MapSpec.Placement × Int)) : List PairHit :=
+  (properPairsF sl lo hi lX lY).filter fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
+
 def pairsAt (sl lo hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
     List PairHit :=
-  let lX := hitsKPF pk ByteArray.empty offs pgs R1 c
-  (properPairsF sl lo hi lX (hitsKPFN sl hi pk ByteArray.empty offs pgs R2 c lX)).filter
-    fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
+  let lX := hitsX c pk offs pgs R1
+  pairsOfHits sl lo hi c lX (hitsY sl hi c pk offs pgs R2 lX)
 
 theorem pairsAt_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 m2 : List Char} {ix : Mz.MzIdx}
     {G : PGen} {offs ns : Array Nat} (hcut : cutOk G offs ns = true)
@@ -487,7 +499,7 @@ theorem pairsAt_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 
         -(c : Int) ≤ pairScoreD dcost0 p := by
   have K1 := hitsKPF_mem g ix G offs ns hcut hg hchk R1 m1 h1 c hc
   have K2 := hitsKPF_mem g ix G offs ns hcut hg hchk R2 m2 h2 c hc
-  unfold pairsAt
+  unfold pairsAt pairsOfHits hitsX hitsY
   rw [List.mem_filter, properPairsF_eq, pp_near_right (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
     decide_eq_true_eq, mem_properPairs, mem_properPairs, K1, K2]
 

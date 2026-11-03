@@ -225,6 +225,22 @@ def lookAt (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz
       (LastResort.pairsAt insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
         read1 read2))
 
+-- (PROTOTYPE, proposed Spec) the second look gives up once a mate's checked hits scoring `≥ req` sit at
+-- `gaveUpPlaces` distinct placements (`GaveUp.manyHits`): mate 1's hits, then mate 2's near them; else as `lookAt`
+def gaveUpPlacesOn : Bool := true
+
+def lookAtG (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat)
+    (read1 read2 : ByteArray) (a : PairAnswer) : PairAnswer :=
+  let c := lookCap req
+  let pgs := MapSpec.Fast.cutAll pk.2 offs ns
+  let lX := LastResort.hitsX c pk offs pgs read1
+  if gaveUpPlacesOn && GaveUp.manyHits req lX then { a with uniqueness := .gaveUp } else
+  let lY := LastResort.hitsY insertSettings.dovetailSlack insertSettings.range.2 c pk offs pgs read2 lX
+  if gaveUpPlacesOn && GaveUp.manyHits req lY then { a with uniqueness := .gaveUp } else
+  LastResort.finalize insertSettings (LastResort.fitNs ns) req
+    (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
+      (LastResort.pairsOfHits insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c lX lY))
+
 -- (prototype, proposed Spec) a leftover whose mate has a seed repeating at least `gaveUpRepeats` times is
 -- answered `.gaveUp` instead of the second look (`GaveUp.repeatMate`)
 def gaveUpOn : Bool := true
@@ -235,7 +251,7 @@ def afterLeftover (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fa
   if LastResort.Leftover req a then
     if gaveUpOn && (GaveUp.repeatMate pk offs ns read1 || GaveUp.repeatMate pk offs ns read2) then
       { a with uniqueness := .gaveUp }
-    else lookAt insertSettings req pk offs ns read1 read2
+    else lookAtG insertSettings req pk offs ns read1 read2 a
   else a
 
 -- the router with the per-pair settings; a leftover (`LastResort.Leftover`) gets the second look (`lookAt`),
@@ -584,17 +600,40 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
           have hb := (key _ hok0).elim (fun h => h.2.1) (fun h => h.2.2.1)
           simp only [Bool.and_eq_true, Bool.or_eq_true] at hrep
           refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
-          have hw : genome.RepeatWitness (decodeRead read1) ∨ genome.RepeatWitness (decodeRead read2) := by
-            rcases hrep.2 with h | h
-            · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
-            · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 h)
-          exact ⟨hleft.1, hw⟩
-        unfold lookAt
-        dsimp only
+          refine ⟨hleft.1, ?_⟩
+          rcases hrep.2 with h | h
+          · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
+          · exact .inr (.inl (GaveUp.repeatMate_sound hchk hslice hchr read2 h))
         have hc16 : lookCap (reqOf insertSettings read1 read2) ≤ 16 := Nat.min_le_left _ _
+        have hb := (key _ hok0).elim (fun h => h.2.1) (fun h => h.2.2.1)
+        -- mate 1's hits are its checked hits; mate 2's are among its own
+        have hX := fun x => MapSpec.Fast.hitsKPF_mem (oldGenome genome) ix G offs ns hcut hg hchk read1
+          (decodeRead read1) (encodes_decodeRead _) _ hc16 x
+        have hY := (MapSpec.Fast.hitsKPFN_near insertSettings.dovetailSlack insertSettings.range.1
+          insertSettings.range.2 ((ix, G) : MapSpec.Fast.PkMz) ByteArray.empty offs (MapSpec.Fast.cutAll G offs ns) read2
+          (lookCap (reqOf insertSettings read1 read2))
+          (LastResort.hitsX (lookCap (reqOf insertSettings read1 read2)) (ix, G) offs (MapSpec.Fast.cutAll G offs ns) read1)).1
+        have hY2 := fun x => MapSpec.Fast.hitsKPF_mem (oldGenome genome) ix G offs ns hcut hg hchk read2
+          (decodeRead read2) (encodes_decodeRead _) _ hc16 x
+        unfold lookAtG
+        dsimp only
+        split
+        · rename_i hm
+          simp only [Bool.and_eq_true] at hm
+          refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, hleft.1, .inr (.inr (.inl ?_))⟩
+          exact GaveUp.manyHits_sound (fun x hx => GaveUp.hit_alignment hg (encodes_decodeRead _) ((hX x).mp hx)) hm.2
+        split
+        · rename_i _ hm
+          simp only [Bool.and_eq_true] at hm
+          refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, hleft.1, .inr (.inr (.inr ?_))⟩
+          exact GaveUp.manyHits_sound (fun x hx => GaveUp.hit_alignment hg (encodes_decodeRead _)
+            ((hY2 x).mp (hY x hx))) hm.2
+        have hP := LastResort.pairsAt_mem (sl := insertSettings.dovetailSlack) (lo := insertSettings.range.1)
+          (hi := insertSettings.range.2) hc16 hcut hg hchk (encodes_decodeRead read1) (encodes_decodeRead read2)
+        unfold LastResort.pairsAt at hP
+        dsimp only at hP
         rcases LastResort.finalize_correct (LastResort.fitNs ns) hnone
-            (LastResort.lookAnswer_correct insertSettings genome _ _ _ _ _ _
-              (LastResort.pairsAt_mem hc16 hcut hg hchk (encodes_decodeRead _) (encodes_decodeRead _))
+            (LastResort.lookAnswer_correct insertSettings genome _ _ _ _ _ _ hP
               (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)
               (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)) with h | h
         · exact h

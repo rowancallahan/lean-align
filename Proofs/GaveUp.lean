@@ -246,7 +246,70 @@ theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs n
     exact ⟨by rw [decodeRead_length, hsl]; rw [hsl] at hsR; exact hsR,
       seed_sound hchk hslice hchr R _ hsR hjc⟩
 
+/-! ## Many places: a mate's checked hits at `gaveUpPlaces` distinct placements (PROTOTYPE) -/
+
+-- the distinct elements of `l` after `acc` (newest first), stopping once `k` are collected
+def distinctGo {α : Type} [DecidableEq α] (k : Nat) : List α → List α → List α
+  | acc, [] => acc
+  | acc, x :: xs => if k ≤ acc.length then acc else if x ∈ acc then distinctGo k acc xs else distinctGo k (x :: acc) xs
+
+theorem distinctGo_spec {α : Type} [DecidableEq α] (k : Nat) : ∀ (l acc : List α), acc.Nodup →
+    (distinctGo k acc l).Nodup ∧ ∀ y ∈ distinctGo k acc l, y ∈ acc ∨ y ∈ l
+  | [], acc, h => ⟨h, fun y hy => .inl hy⟩
+  | x :: xs, acc, h => by
+    unfold distinctGo
+    split
+    · exact ⟨h, fun y hy => .inl hy⟩
+    · split
+      · obtain ⟨h1, h2⟩ := distinctGo_spec k xs acc h
+        exact ⟨h1, fun y hy => (h2 y hy).imp id (List.mem_cons_of_mem _)⟩
+      · rename_i hx
+        obtain ⟨h1, h2⟩ := distinctGo_spec k xs (x :: acc) (List.nodup_cons.mpr ⟨hx, h⟩)
+        refine ⟨h1, fun y hy => ?_⟩
+        rcases h2 y hy with h | h
+        · rcases List.mem_cons.mp h with rfl | h
+          · exact .inr List.mem_cons_self
+          · exact .inl h
+        · exact .inr (List.mem_cons_of_mem _ h)
+
+-- the placements of the hits scoring at least `bound` (up to `gaveUpPlaces` distinct ones)
+def placesOf (bound : Int) (l : List (MapSpec.Placement × Int)) : List Placement :=
+  distinctGo gaveUpPlaces [] ((l.filter fun x => decide (bound ≤ x.2)).map fun x => Bridge.newPlacement x.1)
+
+-- at least `gaveUpPlaces` distinct placements score at least `bound`
+def manyHits (bound : Int) (l : List (MapSpec.Placement × Int)) : Bool :=
+  gaveUpPlaces ≤ (placesOf bound l).length
+
+/-- **Many places**: hits that are alignments give `ManyPlaces` when `manyHits` holds. -/
+theorem manyHits_sound {genome : Genome} {m : Read} {bound : Int} {l : List (MapSpec.Placement × Int)}
+    (hl : ∀ x ∈ l, ∃ a : GenomicAlignment genome m, a.placement = Bridge.newPlacement x.1 ∧ a.score = x.2)
+    (h : manyHits bound l = true) : genome.ManyPlaces m bound := by
+  unfold manyHits at h
+  simp only [decide_eq_true_eq] at h
+  obtain ⟨hn, hm⟩ := distinctGo_spec gaveUpPlaces
+    ((l.filter fun x => decide (bound ≤ x.2)).map fun x => Bridge.newPlacement x.1) [] List.nodup_nil
+  refine ⟨placesOf bound l, hn, h, fun p hp => ?_⟩
+  rcases hm p hp with h0 | h0
+  · simp at h0
+  · obtain ⟨x, hx, rfl⟩ := List.mem_map.mp h0
+    obtain ⟨hxl, hxb⟩ := List.mem_filter.mp hx
+    simp only [decide_eq_true_eq] at hxb
+    obtain ⟨a, ha, hs⟩ := hl x hxl
+    exact ⟨a, ha, by rw [hs]; exact hxb⟩
+
+open MapSpec MapSpec.Fast AlignmentSpec in
+/-- A checked hit is an alignment at its placement, with its score. -/
+theorem hit_alignment {genome : Genome} {m : Read} {T : Int} {pgs : Array PGen}
+    (hg : GenomeBytes (pgs.map Mz.unpack) (Bridge.oldGenome genome)) {R : ByteArray}
+    (hr : Encodes R m) {x : MapSpec.Placement × Int}
+    (hx : x ∈ hitsBoth sc0 T (Bridge.oldGenome genome) m) :
+    ∃ a : GenomicAlignment genome m, a.placement = Bridge.newPlacement x.1 ∧ a.score = x.2 := by
+  obtain ⟨a, ha⟩ := Report.alignment_of_cigar (LastResort.runsIx_ok hg hr hx)
+  exact ⟨a, congrArg MateReport.placement ha, congrArg MateReport.score ha⟩
+
 #print axioms repeatMate_sound
+#print axioms manyHits_sound
+#print axioms hit_alignment
 
 /-! ## Compiled form: stop a seed's lookup after `gaveUpRepeats` places -/
 
@@ -295,12 +358,12 @@ theorem seedRepF_eq (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArra
   · rfl
 
 def repeatMateF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
-  (List.range (R.size / seedLength)).any fun j => seedRepF pk offs ns R (seedLength * j)
+  gaveUpSeeds ≤ (List.range (R.size / seedLength)).countP fun j => seedRepF pk offs ns R (seedLength * j)
 
 @[csimp] theorem repeatMate_eqF : @repeatMate = @repeatMateF := by
   funext pk offs ns R
-  unfold repeatMate repeatMateF
-  simp only [seedRepF_eq]
+  unfold repeatMate repeatMateF repeatSeeds
+  simp only [seedRepF_eq, List.length_map, List.countP_eq_length_filter]
 
 #print axioms repeatMate_eqF
 
