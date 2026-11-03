@@ -68,6 +68,9 @@ if grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.prin
 if grep -nE "IO\." Aligner/LeanAlign/*.lean; then echo "FAIL: IO in the pure library"; fail=1; else echo "LeanAlign/ is IO-free"; fi
 if grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Fastq.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean; then fail=1; else echo "shim files: no sorry / native_decide / extern / unsafe / implemented_by"; fi
 for f in Fasta Fastq Sam; do sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean && echo "Proofs/$f.lean mirrors Spec/$f.lean" || { echo "FAIL: Proofs/$f.lean differs from Spec/$f.lean"; fail=1; }; done
+n=$(grep -n '^/-! ## The index and the aligner' Spec/Aligner.lean | cut -d: -f1)
+head -n $((n-1)) Spec/Aligner.lean >"$tmp/lean_align_spec_answer.lean"
+[ -n "$n" ] && sed "1d; \$d; s/^import Proofs.Mapping$/import Spec.Mapping/" Proofs/Answer.lean | cmp -s - "$tmp/lean_align_spec_answer.lean" && echo "Proofs/Answer.lean mirrors Spec/Aligner.lean (up to the holes)" || { echo "FAIL: Proofs/Answer.lean differs from Spec/Aligner.lean"; fail=1; }
 sed "1d; s/^import Proofs.Sam$/import Spec.Sam/" Main.lean | cmp -s - Spec/Shim.lean && echo "Main.lean mirrors Spec/Shim.lean" || { echo "FAIL: Main.lean differs from Spec/Shim.lean"; fail=1; }
 
 if [ "${FUZZ:-0}" = 1 ]; then
