@@ -1454,3 +1454,14 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 ### Finish line (Rowan, 2026-11-03 ~01:40 UTC)
 - Done = report floor + gave-up fully proved (no extra hypothesis beyond settings) AND speed within 5-10% of today's code (festive-fermi 0e48158: NovaSeq ~2.5-2.7x, HiSeq ~3.5x vs minibwa, same box, headline.sh method).
 - Rowan's Spec: repeat witness (K grid seeds, N occurrences) being written now; the "many places" witness (cap the complete search at M good placements) can be added later as one more disjunct if timing needs it.
+
+### Rowan's later-work list (2026-11-03, via the Spec guide; NOT current tasks)
+- Naming: rename the `Uniqueness` type (it now holds unique / multimapper / unknown / gaveUp). Update Spec/Sam + Proofs/Sam, Proofs/Answer, Aligner, Bridge; regenerate FROZEN; keep the `XU:Z:` label unless Rowan says otherwise.
+- Options with flexible proofs: make `seedLength` (25), `gaveUpRepeats` (Rowan choosing 200) and `gaveUpSeeds` (K = 2) options. The indexer hardcodes 25 (`MzIndex.lean:48 def q : Nat := 25`, WgPacked, MapperFastIndex, benches, and the `/25` in requiredMapBound), so this needs a proof generic in the seed length; until then everything stays 25 together. Use `seedLength` in requiredMapBound.
+- Spec clauses:
+  - requiredMapBound as a top-level def, with the comment fix (25-49 bp: `none` only when no perfect proper pair);
+  - `.unknown` with `max junkScore requiredMapBound`;
+  - the gap clause;
+  - a shorter-seed index for short mates.
+- Measurements wanted: K=2 at N=200 (gave-up count, speed, pairs lost at truth); the speed of K=3.
+- Proof side: the .gaveUp proof against Rowan's exact Spec wording (S-D's prototype is the basis; forward strand = lower bound on Genome.occurrences). Check the `.unknown` mirror in Proofs/Answer on main.
