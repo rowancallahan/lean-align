@@ -277,3 +277,22 @@ def repeatMateF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) :
 #print axioms repeatMate_eqF
 
 end Spec.GaveUp
+
+namespace Spec.GaveUp
+
+/-! ## Compiled `decodeRead`: one pass over the bytes from the end, no intermediate `List UInt8` -/
+
+def decodeReadF (B : ByteArray) : Read := B.data.foldr (fun b acc => Char.ofNat b.toNat :: acc) []
+
+@[csimp] theorem decodeRead_eqF : @decodeRead = @decodeReadF := by
+  funext B
+  unfold decodeRead decodeReadF
+  rw [Bridge.byteArray_toList, ← Array.foldr_toList]
+  generalize B.data.toList = l
+  induction l with
+  | nil => rfl
+  | cons x xs ih => rw [List.foldr_cons, List.map_cons, ih]
+
+#print axioms decodeRead_eqF
+
+end Spec.GaveUp
