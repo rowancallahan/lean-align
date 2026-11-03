@@ -233,6 +233,49 @@ def lookAt (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz
       (LastResort.pairsAt insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
         read1 read2))
 
+-- (PROTOTYPE, proposed Spec) the second look gives up once a mate's checked hits scoring `≥ req` sit at
+-- `gaveUpPlaces` distinct placements (`GaveUp.manyHits`): mate 1's hits, then mate 2's near them; else as `lookAt`
+def gaveUpPlacesOn : Bool := true
+
+def lookAtG (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat)
+    (read1 read2 : ByteArray) (a : PairAnswer) : PairAnswer :=
+  let c := lookCap req
+  let pgs := MapSpec.Fast.cutAll pk.2 offs ns
+  let lX := LastResort.hitsX c pk offs pgs read1
+  if gaveUpPlacesOn && GaveUp.manyHits req lX then { a with uniqueness := .gaveUp } else
+  let lY := LastResort.hitsY insertSettings.dovetailSlack insertSettings.range.2 c pk offs pgs read2 lX
+  if gaveUpPlacesOn && GaveUp.manyHits req lY then { a with uniqueness := .gaveUp } else
+  LastResort.finalize insertSettings (LastResort.fitNs ns) req
+    (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
+      (LastResort.pairsOfHits insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c lX lY))
+
+-- compiled `lookAtG`: mate 1's hits stop at `gaveUpPlaces` distinct placements (`GaveUp.hitsXS_spec`)
+def lookAtGF (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat)
+    (read1 read2 : ByteArray) (a : PairAnswer) : PairAnswer :=
+  let c := lookCap req
+  let pgs := MapSpec.Fast.cutAll pk.2 offs ns
+  match (if gaveUpPlacesOn then GaveUp.hitsXS req c pk offs pgs read1 else some (LastResort.hitsX c pk offs pgs read1)) with
+  | none => { a with uniqueness := .gaveUp }
+  | some lX =>
+    if gaveUpPlacesOn && GaveUp.manyHits req lX then { a with uniqueness := .gaveUp } else
+    let lY := LastResort.hitsY insertSettings.dovetailSlack insertSettings.range.2 c pk offs pgs read2 lX
+    if gaveUpPlacesOn && GaveUp.manyHits req lY then { a with uniqueness := .gaveUp } else
+    LastResort.finalize insertSettings (LastResort.fitNs ns) req
+      (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
+        (LastResort.pairsOfHits insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c lX lY))
+
+@[csimp] theorem lookAtG_eqF : @lookAtG = @lookAtGF := by
+  funext insertSettings req pk offs ns read1 read2 a
+  unfold lookAtG lookAtGF
+  simp only []
+  have hs := GaveUp.hitsXS_spec req (lookCap req) pk offs (MapSpec.Fast.cutAll pk.2 offs ns) read1
+  cases ho : gaveUpPlacesOn
+  · rfl
+  · simp only [if_true, Bool.true_and]
+    cases hx : GaveUp.hitsXS req (lookCap req) pk offs (MapSpec.Fast.cutAll pk.2 offs ns) read1 with
+    | none => simp only [hs.1 hx, if_true]
+    | some l => simp only [hs.2 l hx]
+
 -- the sum of the `k` rarest seed buckets of a mate, over both strands (what a lookup of those seeds costs)
 def rareCost (pk : MapSpec.Fast.PkMz) (R : ByteArray) (k : Nat) : Nat :=
   let s : MapSpec.Fast.PrepM MapSpec.Fast.MzP := MapSpec.Fast.prepMate pk R
@@ -292,7 +335,10 @@ def afterRouter (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (
   orElse req (if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
     fun _ =>
   -- the gave-up answer is taken as it is (it has no pair and no bound below `requiredMapBound`: a leftover)
-  (gaveUp req pk offs ns read1 read2 a1).getD (lookAt insertSettings req pk offs ns read1 read2)
+  -- (6) the second look, which also gives up at `gaveUpPlaces` placements (`lookAtG`)
+  (gaveUp req pk offs ns read1 read2 a1).getD
+    (if LastResort.Leftover req a1 then lookAtG insertSettings req pk offs ns read1 read2 a1
+     else lookAt insertSettings req pk offs ns read1 read2)
 
 -- the pipeline: (1) the router with the per-pair settings, its pair re-checked; (2) the walk; (3) the
 -- rarest-seed join; (4) short mates: the second look; (5) the gave-up hook; (6) the second look (`lookAt`).
@@ -673,7 +719,45 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
             (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
             (MapSpec.Fast.tierPair (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
               (ix, G) read1 read2) (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]) (some read1) (some read2))) with
-      | none => exact hlook
+      | none =>
+        show PairAnswer.Correct _ _ _ _ (if _ then _ else _)
+        split
+        · rename_i hleft
+          have hc16 : lookCap (reqOf insertSettings read1 read2) ≤ 16 := Nat.min_le_left _ _
+          have hb := (key (fallbackFrom (reqOf insertSettings read1 read2)) _ hok0).elim (fun h => h.2.1) (fun h => h.2.2.1)
+          -- mate 1's hits are its checked hits; mate 2's are among its own
+          have hX := fun x => MapSpec.Fast.hitsKPF_mem (oldGenome genome) ix G offs ns hcut hg hchk read1
+            (decodeRead read1) (encodes_decodeRead _) _ hc16 x
+          have hY := (MapSpec.Fast.hitsKPFN_near insertSettings.dovetailSlack insertSettings.range.1
+            insertSettings.range.2 ((ix, G) : MapSpec.Fast.PkMz) ByteArray.empty offs (MapSpec.Fast.cutAll G offs ns) read2
+            (lookCap (reqOf insertSettings read1 read2))
+            (LastResort.hitsX (lookCap (reqOf insertSettings read1 read2)) (ix, G) offs (MapSpec.Fast.cutAll G offs ns) read1)).1
+          have hY2 := fun x => MapSpec.Fast.hitsKPF_mem (oldGenome genome) ix G offs ns hcut hg hchk read2
+            (decodeRead read2) (encodes_decodeRead _) _ hc16 x
+          unfold lookAtG
+          dsimp only
+          split
+          · rename_i hm
+            simp only [Bool.and_eq_true] at hm
+            refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, hleft.1, .inr (.inr (.inl ?_))⟩
+            exact GaveUp.manyHits_sound (fun x hx => GaveUp.hit_alignment hg (encodes_decodeRead _) ((hX x).mp hx)) hm.2
+          split
+          · rename_i _ hm
+            simp only [Bool.and_eq_true] at hm
+            refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, hleft.1, .inr (.inr (.inr ?_))⟩
+            exact GaveUp.manyHits_sound (fun x hx => GaveUp.hit_alignment hg (encodes_decodeRead _)
+              ((hY2 x).mp (hY x hx))) hm.2
+          have hP := LastResort.pairsAt_mem (sl := insertSettings.dovetailSlack) (lo := insertSettings.range.1)
+            (hi := insertSettings.range.2) hc16 hcut hg hchk (encodes_decodeRead read1) (encodes_decodeRead read2)
+          unfold LastResort.pairsAt at hP
+          dsimp only at hP
+          rcases LastResort.finalize_correct (LastResort.fitNs ns) hnone
+              (LastResort.lookAnswer_correct insertSettings genome _ _ _ _ _ _ hP
+                (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)
+                (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)) with h | h
+          · exact h
+          · exact absurd h.1 (LastResort.look_not_leftover hc hj)
+        · exact hlook
       | some a =>
         show PairAnswer.Correct _ _ _ _ a
         have ha := hgv
@@ -685,11 +769,10 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
           have hb := (key (fallbackFrom (reqOf insertSettings read1 read2)) _ hok0).elim (fun h => h.2.1) (fun h => h.2.2.1)
           simp only [Bool.and_eq_true, Bool.or_eq_true] at hrep
           refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
-          have hw : genome.RepeatWitness (decodeRead read1) ∨ genome.RepeatWitness (decodeRead read2) := by
-            rcases hrep.2 with h | h
-            · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
-            · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 h)
-          exact ⟨hleft.1, hw⟩
+          refine ⟨hleft.1, ?_⟩
+          rcases hrep.2 with h | h
+          · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
+          · exact .inr (.inl (GaveUp.repeatMate_sound hchk hslice hchr read2 h))
         · cases ha
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's

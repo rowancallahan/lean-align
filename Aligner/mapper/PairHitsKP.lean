@@ -30,9 +30,22 @@ def hitsCK (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Lis
         else none
     else []
 
-/-- `hitsCK` with the shapes taken once from the table (`hitsCK_eqT`). -/
+theorem diags_empty (acc : List (Array Nat)) (h : (acc.all fun a => a.isEmpty) = true) : diags acc = [] := by
+  unfold diags
+  have : (acc.flatMap fun arr => arr.toList.map (· / 16)) = [] := by
+    rw [List.flatMap_eq_nil_iff]
+    intro a ha
+    rw [List.all_eq_true] at h
+    have := h a ha
+    simp only [Array.isEmpty_iff] at this
+    simp [this]
+  rw [this, List.mergeSort_nil, dedupAdj]
+
+/-- `hitsCK` with the shapes taken once from the table, and nothing done when every slice is empty
+(`hitsCK_eqT`). -/
 def hitsCKT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) : List (Window × Nat) :=
+  if acc.all fun a => a.isEmpty then [] else
   let shs := shapesT lim
   (diags acc).flatMap fun D =>
     if kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
@@ -45,9 +58,11 @@ def hitsCKT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Li
 
 /-- Compiled code runs `hitsCKT`. -/
 @[csimp] theorem hitsCK_eqT : @hitsCK = @hitsCKT := by
-  funext
+  funext K R pgs2 c lim acc us Ls
   unfold hitsCK hitsCKT
-  simp only [shapesT_eq]
+  split
+  · rename_i h; rw [diags_empty acc h]; rfl
+  · simp only [shapesT_eq]
 
 /-- `hitsS` on packed chromosomes (the read packed once per strand). -/
 def hitsSK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)

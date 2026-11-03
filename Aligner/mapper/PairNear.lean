@@ -203,6 +203,7 @@ def hitsCKN (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Li
 /-- `hitsCKN` with the shapes taken once from the table (`hitsCKN_eqT`). -/
 def hitsCKNT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) (sel : Nat → Bool) : List (Window × Nat) :=
+  if acc.all fun a => a.isEmpty then [] else
   let shs := shapesT lim
   (diags acc).flatMap fun D =>
     if sel D && kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
@@ -215,9 +216,11 @@ def hitsCKNT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : L
 
 /-- Compiled code runs `hitsCKNT`. -/
 @[csimp] theorem hitsCKN_eqT : @hitsCKN = @hitsCKNT := by
-  funext
+  funext K R pgs2 c lim acc us Ls sel
   unfold hitsCKN hitsCKNT
-  simp only [shapesT_eq]
+  split
+  · rename_i h; rw [diags_empty acc h]; rfl
+  · simp only [shapesT_eq]
 
 theorem hitsCKN_sub (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) (sel : Nat → Bool) (x : Window × Nat)
@@ -432,6 +435,7 @@ def pairUKHN {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [In
 def hitsSKNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
     (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) (keep : Nat → Nat → Nat → Bool) (gate : Nat → Bool) :
     List (Window × Nat) :=
+  if !(List.range n).any gate then [] else
   let m := Rs.size / 25
   let Ls := Rs.size / m
   let K := packRP Rs
@@ -456,6 +460,15 @@ theorem hitsSKNG_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : Byte
     (h : ∀ c D, c < n → gate c = false → keep (t + c) Rs.size D = false) :
     hitsSKNG ix G offs pgs2 n t lim Rs keep gate = hitsSKN ix G offs pgs2 n t lim Rs keep := by
   unfold hitsSKNG hitsSKN
+  split
+  · rename_i hn
+    simp only [Bool.not_eq_true', List.any_eq_false, List.mem_range] at hn
+    simp only []
+    symm
+    rw [List.flatMap_eq_nil_iff]
+    intro c hc
+    rw [List.mem_range] at hc
+    exact hitsCKN_none _ _ _ _ _ _ _ _ _ (fun D => h c D hc (by simpa using hn c hc))
   simp only []
   rw [List.flatMap_def, List.flatMap_def]
   congr 1

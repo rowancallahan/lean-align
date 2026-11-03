@@ -246,7 +246,70 @@ theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs n
     exact ⟨by rw [decodeRead_length, hsl]; rw [hsl] at hsR; exact hsR,
       seed_sound hchk hslice hchr R _ hsR hjc⟩
 
+/-! ## Many places: a mate's checked hits at `gaveUpPlaces` distinct placements (PROTOTYPE) -/
+
+-- the distinct elements of `l` after `acc` (newest first), stopping once `k` are collected
+def distinctGo {α : Type} [DecidableEq α] (k : Nat) : List α → List α → List α
+  | acc, [] => acc
+  | acc, x :: xs => if k ≤ acc.length then acc else if x ∈ acc then distinctGo k acc xs else distinctGo k (x :: acc) xs
+
+theorem distinctGo_spec {α : Type} [DecidableEq α] (k : Nat) : ∀ (l acc : List α), acc.Nodup →
+    (distinctGo k acc l).Nodup ∧ ∀ y ∈ distinctGo k acc l, y ∈ acc ∨ y ∈ l
+  | [], acc, h => ⟨h, fun y hy => .inl hy⟩
+  | x :: xs, acc, h => by
+    unfold distinctGo
+    split
+    · exact ⟨h, fun y hy => .inl hy⟩
+    · split
+      · obtain ⟨h1, h2⟩ := distinctGo_spec k xs acc h
+        exact ⟨h1, fun y hy => (h2 y hy).imp id (List.mem_cons_of_mem _)⟩
+      · rename_i hx
+        obtain ⟨h1, h2⟩ := distinctGo_spec k xs (x :: acc) (List.nodup_cons.mpr ⟨hx, h⟩)
+        refine ⟨h1, fun y hy => ?_⟩
+        rcases h2 y hy with h | h
+        · rcases List.mem_cons.mp h with rfl | h
+          · exact .inr List.mem_cons_self
+          · exact .inl h
+        · exact .inr (List.mem_cons_of_mem _ h)
+
+-- the placements of the hits scoring at least `bound` (up to `gaveUpPlaces` distinct ones)
+def placesOf (bound : Int) (l : List (MapSpec.Placement × Int)) : List Placement :=
+  distinctGo gaveUpPlaces [] ((l.filter fun x => decide (bound ≤ x.2)).map fun x => Bridge.newPlacement x.1)
+
+-- at least `gaveUpPlaces` distinct placements score at least `bound`
+def manyHits (bound : Int) (l : List (MapSpec.Placement × Int)) : Bool :=
+  gaveUpPlaces ≤ (placesOf bound l).length
+
+/-- **Many places**: hits that are alignments give `ManyPlaces` when `manyHits` holds. -/
+theorem manyHits_sound {genome : Genome} {m : Read} {bound : Int} {l : List (MapSpec.Placement × Int)}
+    (hl : ∀ x ∈ l, ∃ a : GenomicAlignment genome m, a.placement = Bridge.newPlacement x.1 ∧ a.score = x.2)
+    (h : manyHits bound l = true) : genome.ManyPlaces m bound := by
+  unfold manyHits at h
+  simp only [decide_eq_true_eq] at h
+  obtain ⟨hn, hm⟩ := distinctGo_spec gaveUpPlaces
+    ((l.filter fun x => decide (bound ≤ x.2)).map fun x => Bridge.newPlacement x.1) [] List.nodup_nil
+  refine ⟨placesOf bound l, hn, h, fun p hp => ?_⟩
+  rcases hm p hp with h0 | h0
+  · simp at h0
+  · obtain ⟨x, hx, rfl⟩ := List.mem_map.mp h0
+    obtain ⟨hxl, hxb⟩ := List.mem_filter.mp hx
+    simp only [decide_eq_true_eq] at hxb
+    obtain ⟨a, ha, hs⟩ := hl x hxl
+    exact ⟨a, ha, by rw [hs]; exact hxb⟩
+
+open MapSpec MapSpec.Fast AlignmentSpec in
+/-- A checked hit is an alignment at its placement, with its score. -/
+theorem hit_alignment {genome : Genome} {m : Read} {T : Int} {pgs : Array PGen}
+    (hg : GenomeBytes (pgs.map Mz.unpack) (Bridge.oldGenome genome)) {R : ByteArray}
+    (hr : Encodes R m) {x : MapSpec.Placement × Int}
+    (hx : x ∈ hitsBoth sc0 T (Bridge.oldGenome genome) m) :
+    ∃ a : GenomicAlignment genome m, a.placement = Bridge.newPlacement x.1 ∧ a.score = x.2 := by
+  obtain ⟨a, ha⟩ := Report.alignment_of_cigar (LastResort.runsIx_ok hg hr hx)
+  exact ⟨a, congrArg MateReport.placement ha, congrArg MateReport.score ha⟩
+
 #print axioms repeatMate_sound
+#print axioms manyHits_sound
+#print axioms hit_alignment
 
 /-! ## Compiled form: stop a seed's lookup after `gaveUpRepeats` places -/
 
@@ -294,13 +357,27 @@ theorem seedRepF_eq (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArra
       · rfl
   · rfl
 
+-- `k ≤ l.countP p`, stopping once `k` are found
+def countGE {α : Type} (p : α → Bool) : Nat → List α → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | k + 1, x :: xs => if p x then countGE p k xs else countGE p (k + 1) xs
+
+theorem countGE_eq {α : Type} (p : α → Bool) : ∀ (k : Nat) (l : List α), countGE p k l = decide (k ≤ l.countP p)
+  | 0, _ => by simp [countGE]
+  | _ + 1, [] => by simp [countGE]
+  | k + 1, x :: xs => by
+    unfold countGE
+    rw [List.countP_cons]
+    split <;> rename_i hp <;> simp [hp, countGE_eq p _ xs]
+
 def repeatMateF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
-  decide (gaveUpSeeds ≤ ((List.range (R.size / seedLength)).filter fun j => seedRepF pk offs ns R (seedLength * j)).length)
+  countGE (fun j => seedRepF pk offs ns R (seedLength * j)) gaveUpSeeds (List.range (R.size / seedLength))
 
 @[csimp] theorem repeatMate_eqF : @repeatMate = @repeatMateF := by
   funext pk offs ns R
   unfold repeatMate repeatMateF repeatSeeds
-  simp only [seedRepF_eq, List.length_map]
+  simp only [countGE_eq, seedRepF_eq, List.length_map, List.countP_eq_length_filter]
 
 #print axioms repeatMate_eqF
 
@@ -322,5 +399,191 @@ def decodeReadF (B : ByteArray) : Read := B.data.foldr (fun b acc => Char.ofNat 
   | cons x xs ih => rw [List.foldr_cons, List.map_cons, ih]
 
 #print axioms decodeRead_eqF
+
+end Spec.GaveUp
+
+/-! ## Compiled second look: mate 1's hits enumerated until `gaveUpPlaces` distinct placements are seen -/
+
+namespace Spec.GaveUp
+
+theorem distinctGo_stop {α : Type} [DecidableEq α] (k : Nat) (acc l : List α) (h : k ≤ acc.length) :
+    distinctGo k acc l = acc := by
+  cases l <;> simp [distinctGo, h]
+
+theorem distinctGo_append {α : Type} [DecidableEq α] (k : Nat) : ∀ (p s acc : List α),
+    distinctGo k acc (p ++ s) = distinctGo k (distinctGo k acc p) s
+  | [], _, _ => rfl
+  | x :: p, s, acc => by
+    simp only [List.cons_append, distinctGo]
+    split
+    · rename_i h; rw [distinctGo_stop k acc s h]
+    · split <;> exact distinctGo_append k p s _
+
+/-- The inner walk: hits `h d` of each `d`, stopping (`none`) once `k` distinct `g`-values are seen. -/
+def walkIn {δ β P : Type} [DecidableEq P] (k : Nat) (g : β → Option P) (h : δ → List β) :
+    List δ → List P → Array β → Option (List P × Array β)
+  | [], acc, out => some (acc, out)
+  | d :: ds, acc, out =>
+    let ys := h d
+    let acc' := distinctGo k acc (ys.filterMap g)
+    if k ≤ acc'.length then none else walkIn k g h ds acc' (out ++ ys.toArray)
+
+theorem walkIn_eq {δ β P : Type} [DecidableEq P] (k : Nat) (g : β → Option P) (h : δ → List β) :
+    ∀ (ds : List δ) (acc : List P) (out : Array β), acc.length < k →
+    walkIn k g h ds acc out =
+      if k ≤ (distinctGo k acc ((ds.flatMap h).filterMap g)).length then none
+      else some (distinctGo k acc ((ds.flatMap h).filterMap g), out ++ (ds.flatMap h).toArray)
+  | [], acc, out, hacc => by simp [walkIn, distinctGo, show ¬ k ≤ acc.length by omega]
+  | d :: ds, acc, out, hacc => by
+    simp only [walkIn, List.flatMap_cons, List.filterMap_append, distinctGo_append]
+    split
+    · rename_i hk; rw [distinctGo_stop k _ _ hk, if_pos hk]
+    · rename_i hk
+      rw [walkIn_eq k g h ds _ _ (by omega)]
+      simp [Array.append_assoc]
+
+/-- The outer walk: each `a` prepared once (`prep`), then its inner list walked. -/
+def walkOut {α σ δ β P : Type} [DecidableEq P] (k : Nat) (g : β → Option P) (prep : α → σ) (inn : σ → List δ)
+    (h : σ → δ → List β) : List α → List P → Array β → Option (List P × Array β)
+  | [], acc, out => some (acc, out)
+  | a :: as, acc, out =>
+    let s := prep a
+    match walkIn k g (h s) (inn s) acc out with
+    | none => none
+    | some (acc', out') => walkOut k g prep inn h as acc' out'
+
+theorem walkOut_eq {α σ δ β P : Type} [DecidableEq P] (k : Nat) (g : β → Option P) (prep : α → σ)
+    (inn : σ → List δ) (h : σ → δ → List β) :
+    ∀ (as : List α) (acc : List P) (out : Array β), acc.length < k →
+    walkOut k g prep inn h as acc out =
+      let L := as.flatMap fun a => (inn (prep a)).flatMap (h (prep a))
+      if k ≤ (distinctGo k acc (L.filterMap g)).length then none
+      else some (distinctGo k acc (L.filterMap g), out ++ L.toArray)
+  | [], acc, out, hacc => by simp [walkOut, distinctGo, show ¬ k ≤ acc.length by omega]
+  | a :: as, acc, out, hacc => by
+    simp only [walkOut, List.flatMap_cons, List.filterMap_append, distinctGo_append]
+    rw [walkIn_eq k g _ _ acc out hacc]
+    by_cases hk : k ≤ (distinctGo k acc (((inn (prep a)).flatMap (h (prep a))).filterMap g)).length
+    · simp only [if_pos hk]; rw [distinctGo_stop k _ _ hk, if_pos hk]
+    · simp only [if_neg hk]
+      rw [walkOut_eq k g prep inn h as _ _ (by omega)]
+      simp [Array.append_assoc]
+
+end Spec.GaveUp
+
+namespace Spec.GaveUp
+open MapSpec MapSpec.Fast
+
+/-- One diagonal of `hitsCK` (shapes given). -/
+@[inline] def skBody (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
+    (us : List Nat) (Ls : Nat) (shs : List (Int × Int)) (D : Nat) : List (Window × Nat) :=
+  if kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
+    shs.filterMap fun sh =>
+      if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
+        let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
+        if k ≤ lim then some (⟨c, (dst R.size D sh).toNat, (wlen R.size sh).toNat⟩, k) else none
+      else none
+  else []
+
+/-- `hitsSK` by `walkOut`: chromosome by chromosome, diagonal by diagonal, stopping at `k` distinct `g`-values. -/
+def walkSK {P : Type} [DecidableEq P] (k : Nat) (g : Window × Nat → Option P) (ix : PkMz) (G : ByteArray)
+    (offs : Array Nat) (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) (acc0 : List P)
+    (out0 : Array (Window × Nat)) : Option (List P × Array (Window × Nat)) :=
+  let m := Rs.size / 25
+  let Ls := Rs.size / m
+  let K := packRP Rs
+  let ps := prepG ix Rs m Ls
+  let J := (ordG (ps.map (LookG.size ix)) m).take (sbound lim + 1)
+  let lk := J.map fun j => (j, LookG.look ix G Rs (j * Ls) (Rs.size - j * Ls) ps[j]!)
+  let us := unseen m J
+  let shs := shapesT lim
+  walkOut k g (fun c => (c, slicesAt lk Rs.size Ls offs[c]! (GRead.size pgs2[t + c]!)))
+    (fun s => if s.2.all fun a => a.isEmpty then [] else diags s.2)
+    (fun s D => skBody K Rs pgs2 (t + s.1) lim s.2 us Ls shs D) (List.range n) acc0 out0
+
+theorem walkSK_eq {P : Type} [DecidableEq P] (k : Nat) (g : Window × Nat → Option P) (ix : PkMz) (G : ByteArray)
+    (offs : Array Nat) (pgs2 : Array PGen) (n t lim : Nat) (Rs : ByteArray) (acc0 : List P)
+    (out0 : Array (Window × Nat)) (hacc : acc0.length < k) :
+    walkSK k g ix G offs pgs2 n t lim Rs acc0 out0 =
+      if k ≤ (distinctGo k acc0 ((hitsSK ix G offs pgs2 n t lim Rs).filterMap g)).length then none
+      else some (distinctGo k acc0 ((hitsSK ix G offs pgs2 n t lim Rs).filterMap g),
+        out0 ++ (hitsSK ix G offs pgs2 n t lim Rs).toArray) := by
+  unfold walkSK
+  rw [walkOut_eq _ _ _ _ _ _ _ _ hacc]
+  have e : ∀ L1 L2 : List (Window × Nat), L1 = L2 →
+      (if k ≤ (distinctGo k acc0 (L1.filterMap g)).length then none
+        else some (distinctGo k acc0 (L1.filterMap g), out0 ++ L1.toArray)) =
+      (if k ≤ (distinctGo k acc0 (L2.filterMap g)).length then none
+        else some (distinctGo k acc0 (L2.filterMap g), out0 ++ L2.toArray)) := by
+    intro L1 L2 h; rw [h]
+  apply e
+  unfold hitsSK hitsCK
+  simp only [shapesT_eq]
+  congr 1
+  funext c
+  split
+  · rename_i h; rw [diags_empty _ h]; rfl
+  · rfl
+
+theorem filterMap_of_map_filter {α β γ : Type} (f : α → β) (q : β → Bool) (r : β → γ) :
+    ∀ l : List α, ((l.map f).filter q).map r = l.filterMap fun x => if q (f x) then some (r (f x)) else none
+  | [] => rfl
+  | x :: l => by
+    simp only [List.map_cons, List.filter_cons, List.filterMap_cons]
+    split <;> simp_all [filterMap_of_map_filter f q r l]
+
+/-- `hitsX`, or `none` once its hits scoring `≥ req` reach `gaveUpPlaces` distinct placements (`hitsXS_none`,
+`hitsXS_some`). -/
+def hitsXS (req : Int) (c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
+    Option (List (MapSpec.Placement × Int)) :=
+  if fastT c R then
+    let n := pgs.size
+    let pgs2 := pgs ++ pgs
+    let g := fun x : Window × Nat =>
+      if decide (req ≤ -(x.2 : Int)) then some (Bridge.newPlacement (decB n x.1)) else none
+    match walkSK gaveUpPlaces g pk ByteArray.empty offs pgs2 n 0 c R [] #[] with
+    | none => none
+    | some (acc, out) =>
+      match walkSK gaveUpPlaces g pk ByteArray.empty offs pgs2 n n c (revCompK R) acc out with
+      | none => none
+      | some (_, out') => some (out'.toList.map fun x => (decB n x.1, -(x.2 : Int)))
+  else some (LastResort.hitsX c pk offs pgs R)
+
+theorem hitsXS_spec (req : Int) (c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
+    (hitsXS req c pk offs pgs R = none → manyHits req (LastResort.hitsX c pk offs pgs R) = true) ∧
+      (∀ l, hitsXS req c pk offs pgs R = some l → l = LastResort.hitsX c pk offs pgs R) := by
+  unfold hitsXS
+  split
+  · rename_i hf
+    have hX : LastResort.hitsX c pk offs pgs R =
+        (hitsSK pk ByteArray.empty offs (pgs ++ pgs) pgs.size 0 c R ++
+          hitsSK pk ByteArray.empty offs (pgs ++ pgs) pgs.size pgs.size c (revCompK R)).map
+          fun x => (decB pgs.size x.1, -(x.2 : Int)) := by
+      unfold LastResort.hitsX hitsKPF hitsAtKP; rw [if_pos hf]
+    have hp : (0 : Nat) < gaveUpPlaces := by decide
+    simp only []
+    rw [walkSK_eq _ _ _ _ _ _ _ _ _ _ [] #[] hp]
+    unfold manyHits placesOf
+    rw [hX, filterMap_of_map_filter, List.filterMap_append, distinctGo_append]
+    simp only [decide_eq_true_eq]
+    generalize hA : hitsSK pk ByteArray.empty offs (pgs ++ pgs) pgs.size 0 c R = A
+    generalize hB : hitsSK pk ByteArray.empty offs (pgs ++ pgs) pgs.size pgs.size c (revCompK R) = B
+    generalize (fun x : Window × Nat =>
+      if req ≤ -(x.2 : Int) then some (Bridge.newPlacement (decB pgs.size x.1)) else none) = g
+    by_cases hk : gaveUpPlaces ≤ (distinctGo gaveUpPlaces [] (A.filterMap g)).length
+    · rw [if_pos hk, distinctGo_stop _ _ _ hk]
+      exact ⟨fun _ => (by simpa using hk), fun l hl => (by cases hl)⟩
+    · rw [if_neg hk]
+      simp only []
+      rw [walkSK_eq _ _ _ _ _ _ _ _ _ _ _ _ (by omega), hB]
+      by_cases hk2 : gaveUpPlaces ≤ (distinctGo gaveUpPlaces (distinctGo gaveUpPlaces [] (A.filterMap g))
+          (B.filterMap g)).length
+      · rw [if_pos hk2]
+        exact ⟨fun _ => (by simpa using hk2), fun l hl => (by cases hl)⟩
+      · rw [if_neg hk2]
+        exact ⟨fun h => (by cases h), fun l hl => (by cases hl; simp)⟩
+  · exact ⟨fun h => (by cases h), fun l hl => (by cases hl; rfl)⟩
+
+#print axioms hitsXS_spec
 
 end Spec.GaveUp
