@@ -398,6 +398,28 @@ def bandCellsG (jump : Bool) (X W : @& ByteArray) (K c0s m lim n : UInt32) (fuel
     bandCellsJ X W K c0s m lim n fuel 1 (rowStart K c0s 1 pa) 16777216 16777216 pa pb K 0 H F tb
   else bandCells X W K c0s m lim fuel 1 0 16777216 16777216 pa pb K 0 H F tb
 
+/-- `bandDPg`'s traceback as a tail-recursive loop (was a `while` loop that allocated its state each step), the
+runs built as the steps are prepended (same runs as `runsOf` of the step list). Not proved equal to the old loop
+(a `while` loop is opaque); `bandDPg` has no value theorem and its result is re-checked downstream. -/
+def tbRun (tb : ByteArray) (K : Nat) : (fuel : Nat) → (i k st : Nat) → List (AlignmentSpec.Step × Nat) →
+    Option (Nat × Nat × List (AlignmentSpec.Step × Nat))
+  | 0, i, k, _, runs => some (i, k, runs)
+  | f + 1, i, k, st, runs =>
+    if i == 0 then some (i, k, runs) else
+    let byte := tb.get! (i * K + k)
+    let push := fun (s : AlignmentSpec.Step) (runs : List (AlignmentSpec.Step × Nat)) => match runs with
+      | (t, c) :: rest => if s == t then (t, c + 1) :: rest else (s, 1) :: runs
+      | [] => [(s, 1)]
+    if st == 0 then
+      let src := byte &&& 3
+      if src == 0 then tbRun tb K f (i - 1) k 0 (push .diag runs)
+      else if src == 1 then tbRun tb K f i k 1 runs
+      else tbRun tb K f i k 2 runs
+    else if st == 1 then
+      if k == 0 then none
+      else tbRun tb K f i (k - 1) (if byte &&& 4 == 0 then 0 else 1) (push .gapX runs)
+    else tbRun tb K f (i - 1) (k + 1) (if byte &&& 8 == 0 then 0 else 2) (push .gapY runs)
+
 /-- Banded semi-global affine DP (sc0 penalties: mismatch 4, gap 6 + 2L) of the whole read `X` in the
 window letters `W` (free window ends), on the diagonals `s0 − w … s0 + w` (`s0` = read start in `W`):
 (start in `W`, length, penalty, runs) when the penalty is `< lim`; stops once a whole row is `≥ lim`. -/
@@ -438,36 +460,14 @@ def bandDPg (jump : Bool) (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (N
       bv := hv
       bk := k
   if bk == K || bv ≥ lim then return none
-  let mut i := n
-  let mut k := bk
-  let mut st : Nat := 0
-  let mut steps : List AlignmentSpec.Step := []
-  let mut fuel := 4 * (n + K) + 8
-  while i > 0 && fuel > 0 do
-    fuel := fuel - 1
-    let byte := tb.get! (i * K + k)
-    if st == 0 then
-      let src := byte &&& 3
-      if src == 0 then
-        steps := .diag :: steps
-        i := i - 1
-      else if src == 1 then st := 1
-      else st := 2
-    else if st == 1 then
-      steps := .gapX :: steps
-      if byte &&& 4 == 0 then st := 0
-      if k == 0 then return none
-      k := k - 1
-    else
-      steps := .gapY :: steps
-      if byte &&& 8 == 0 then st := 0
-      i := i - 1
-      k := k + 1
-  if i > 0 then return none
-  let cs := c0 + (k : Int)
-  let ce := cl + (bk : Int)
-  if cs < 0 || ce < cs then return none
-  return some (cs.toNat, (ce - cs).toNat, bv, runsOf steps)
+  match tbRun tb K (4 * (n + K) + 8) n bk 0 [] with
+  | none => return none
+  | some (i, k, runs) =>
+    if i > 0 then return none
+    let cs := c0 + (k : Int)
+    let ce := cl + (bk : Int)
+    if cs < 0 || ce < cs then return none
+    return some (cs.toNat, (ce - cs).toNat, bv, runs)
 
 /-- `bandDPg` with `bandCellsJ` (the cells `bandCells` skips are jumped over; same output). -/
 def bandDP (X W : ByteArray) (s0 : Int) (w lim : Nat) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) :=
