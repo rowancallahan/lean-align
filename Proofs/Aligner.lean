@@ -257,27 +257,12 @@ def shortOk (pk : MapSpec.Fast.PkMz) (c : Nat) (read1 read2 : ByteArray) : Bool 
     decide (rareCost pk read1 (c / 4 + 1) + rareCost pk read2 (c / 4 + 1) ≤ shortBudget)
 
 -- (stage 5, prototype, proposed Spec) the gave-up answer: the router's answer `a`, still a leftover, with
--- `.gaveUp` when a mate has at least `gaveUpK` grid seeds repeating `gaveUpRepeats` times or more
--- (`GaveUp.repeatMate` asks for one; `gaveUpK ≥ 1` asks for more, so it implies it)
+-- `.gaveUp` when a mate has `gaveUpSeeds` grid seeds repeating `gaveUpRepeats` times or more (`GaveUp.repeatMate`)
 def gaveUpOn : Bool := true
-
-def gaveUpK : Nat := 2
-
-def repeatMateK (K : Nat) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
-  decide (K ≤ (List.range (R.size / seedLength)).countP fun j =>
-    gaveUpRepeats ≤ GaveUp.seedCount pk offs ns R (seedLength * j))
-
-theorem repeatMateK_one {K : Nat} (hK : 1 ≤ K) {pk : MapSpec.Fast.PkMz} {offs ns : Array Nat} {R : ByteArray}
-    (h : repeatMateK K pk offs ns R = true) : GaveUp.repeatMate pk offs ns R = true := by
-  unfold repeatMateK at h
-  unfold GaveUp.repeatMate
-  have h0 := List.countP_pos_iff.mp (Nat.lt_of_lt_of_le hK (of_decide_eq_true h))
-  obtain ⟨j, hj, hp⟩ := h0
-  exact List.any_eq_true.mpr ⟨j, hj, hp⟩
 
 def gaveUp (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (read1 read2 : ByteArray) (a : PairAnswer) :
     Option PairAnswer :=
-  if LastResort.Leftover req a ∧ (gaveUpOn && (repeatMateK gaveUpK pk offs ns read1 || repeatMateK gaveUpK pk offs ns read2))
+  if LastResort.Leftover req a ∧ (gaveUpOn && (GaveUp.repeatMate pk offs ns read1 || GaveUp.repeatMate pk offs ns read2))
   then some { a with uniqueness := .gaveUp } else none
 
 -- the stage's answer if it is not a leftover, else the next stage
@@ -702,8 +687,8 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
           refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
           have hw : genome.RepeatWitness (decodeRead read1) ∨ genome.RepeatWitness (decodeRead read2) := by
             rcases hrep.2 with h | h
-            · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 (repeatMateK_one (by decide) h))
-            · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 (repeatMateK_one (by decide) h))
+            · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
+            · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 h)
           exact ⟨hleft.1, hw⟩
         · cases ha
 

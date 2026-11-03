@@ -295,12 +295,12 @@ theorem seedRepF_eq (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArra
   · rfl
 
 def repeatMateF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
-  (List.range (R.size / seedLength)).any fun j => seedRepF pk offs ns R (seedLength * j)
+  decide (gaveUpSeeds ≤ ((List.range (R.size / seedLength)).filter fun j => seedRepF pk offs ns R (seedLength * j)).length)
 
 @[csimp] theorem repeatMate_eqF : @repeatMate = @repeatMateF := by
   funext pk offs ns R
-  unfold repeatMate repeatMateF
-  simp only [seedRepF_eq]
+  unfold repeatMate repeatMateF repeatSeeds
+  simp only [seedRepF_eq, List.length_map]
 
 #print axioms repeatMate_eqF
 
