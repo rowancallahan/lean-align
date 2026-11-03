@@ -1522,3 +1522,11 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - ~03:58: S-F: reusing the join's lookups in the second look was built and proved but measured slightly worse; dropped. No exact lever above ~10M left outside the lookAt verification and the frozen FASTQ shim (~190M on HiSeq: Rowan's shim_speed.patch). S-F next: early exit in the lookAt verification for the 'open' pairs.
 - ~03:59: S-F: the open-pair levers (score-bound exit, q-gram prefilter) already exist; nothing exact above ~3% left. S-F archived. Remaining levers: Rowan's K choice, shim_speed.patch, and (later) a new filter algorithm with its own proof.
 - ~04:03: DECISION TIMING (S-D, HEAD 2149f19, no patch; baseline 0e48158 NovaSeq 4.7 s / HiSeq 5.9 s): K=2 N=200: 6.8 s (1.45x) / 7.4 s (1.25x); K=1 N=200: 5.7 s (1.21x) / 7.0 s (1.19x). K=1 loses 60/51 mapped pairs, +861/+547 repetitiveUnknown, unique unchanged. Next: the N=100/50 sweep.
+
+### Rowan's plan (2026-11-03 ~04:05 UTC)
+- Stop point: K=2 (preferred), NovaSeq at or above ~2.0x faster than minibwa, same box. HiSeq is OK as is (~3.3x).
+- Rowan applies shim_speed.patch (rebased on festive; Testing/notes/shim_speed.patch).
+- S-H: a new proved candidate filter for the second look.
+- Fuzz + type-check guide for Rowan: Testing/fuzz/ROWAN_CHECKLIST.md.
+- Next for Rowan: FASTQ spec (a definition of a FASTQ file plus ~1 theorem), FASTA spec, SAM spec. Later idea: the mapper outputs SAM lines directly, so the kernels include SAM formatting (speed + one proof chain).
+- Rowan will run his own fuzzing comparisons before blogging.
