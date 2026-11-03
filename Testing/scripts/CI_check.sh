@@ -40,7 +40,7 @@ tail -3 "$tmp/cross.log"
 step "forbidden tokens"
 before=$fail
 grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |IO.Process|getStdout|getStderr" \
-  Aligner/PairwiseMain.lean Aligner/LeanAlign/*.lean && bad "forbidden token in the executables"
+  Aligner/LeanAlign/*.lean && bad "forbidden token in the executables"
 grep -nE "IO\." Aligner/LeanAlign/*.lean && bad "IO in the pure library LeanAlign/"
 grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" \
   Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Fastq.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
