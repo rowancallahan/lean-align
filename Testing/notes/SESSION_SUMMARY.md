@@ -1546,3 +1546,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
   3. full check (rebuild/recompare, the expensive one) only as `verify`, run once after build, never per map.
   The trusted hypothesis then narrows to: "a file whose header says (code H, genome G) was produced by buildIndex of code H on genome G".
 - FASTQ/SAM SPECS as a dual object: spec on readable Strings, fast code on ByteArray, connected by encode/decode round-trip lemmas (ASCII-only invariant makes bytes = chars) and `fast = encode ∘ spec` (@[csimp] style). Lean's own String is UTF-8 bytes with toUTF8/fromUTF8, so there is precedent.
+- 05:3x UTC: merged S-G speed/lookat (hitsSK_eqV: visit only chromosomes holding anchors; proved). Ir 2k: NovaSeq -1.4%, HiSeq -0.9%. SAM identical 200k; FUZZ=1 CI green (454 theorems). Sorted-bucket index layout scoped and DROPPED (<=2% bound).
