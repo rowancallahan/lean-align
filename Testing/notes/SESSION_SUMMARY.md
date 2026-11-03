@@ -1536,3 +1536,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - RULE (Rowan, 2026-11-03 ~04:25): Shim changes are pushed by Rowan only; eventually ALL of Spec/ is Rowan's. Claude prepares patches (Testing/notes/*.patch) and does not apply them. shim_speed.patch is NOT applied by Claude.
 
 - 04:5x UTC: merged S-H speed/new-filter (proved fineE=fineEC rolling scan, suppA countP). Callgrind 2k: NovaSeq -3.4%, HiSeq -0.6%. SAM identical on 200k both sets; FUZZ=1 CI green.
+- 05:0x UTC: merged S-G speed/index-counts (proved heavy 25-mer table, both strands). Ir 2k: NovaSeq -14.8%, HiSeq -1.9%. Mapped records identical; 3 unmapped pairs now repetitiveUnknown (within Spec). Index +12 MB, build +6 min, build peak RSS 10.76 GB (was 9.85). INDEX FORMAT CHANGED: rebuild shim.idx. FUZZ=1 CI green (453 theorems, standard axioms).
