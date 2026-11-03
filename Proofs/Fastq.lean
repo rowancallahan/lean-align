@@ -49,13 +49,31 @@ def FastqReader.line (reader : FastqReader) : IO (Option ByteArray) := do
     reader.pos.set 0
   return none
 
+-- every byte satisfies `p`
+def allBytes (p : UInt8 → Bool) (bytes : ByteArray) : Bool := Nat.all bytes.size fun i _ => p bytes[i]!
+
+-- the letters the spec's `GenomeIsDNA` allows: A C G T N
+def isDnaByte (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84 || b == 78
+
+-- the four lines of a record, checked: header '@' + printable ASCII, '+' line, letters A C G T N, qualities '!'..'~'.
+-- Pure, so that `Proofs/TrimRecord.lean` can state what every record the reader returns satisfies.
+def parseRecord (header letters plus quality : ByteArray) : Except String FastqRecord :=
+  if !(0 < header.size && header[0]! == 64 && allBytes (fun b => 32 ≤ b && b ≤ 126) header) then
+    .error "header line is not '@' + printable ASCII"
+  else if !(0 < plus.size && plus[0]! == 43) then .error "third line of a record does not start with '+'"
+  else if !allBytes isDnaByte letters then .error "letters other than A C G T N (lowercase, IUPAC)"
+  else if !allBytes (fun b => 33 ≤ b && b ≤ 126) quality then .error "quality outside '!'..'~'"
+  else .ok { name := String.fromUTF8! (header.extract 1 header.size), letters, quality := String.fromUTF8! quality }
+
 def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
   let some header ← reader.line | return none
-  let some letters ← reader.line | return none
-  let some _plus ← reader.line | return none
-  let some quality ← reader.line | return none
-  return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
-                quality := String.fromUTF8! quality }
+  let cut := throw (IO.userError "FASTQ: file ends inside a record")
+  let some letters ← reader.line | cut
+  let some plus ← reader.line | cut
+  let some quality ← reader.line | cut
+  match parseRecord header letters plus quality with
+  | .ok record => return some record
+  | .error why => throw (IO.userError s!"FASTQ: {why}")
 
 -- a read's name without its comment (after the first space) and without a trailing "/1" or "/2"
 def mateName (name : String) : String :=
@@ -85,6 +103,10 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
     | some record1, some record2 =>
       if mateName record1.name != mateName record2.name then
         throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
+      for record in [record1, record2] do
+        let name := mateName record.name
+        unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
+          throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
       if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
       chunk := chunk.push (trimRecord record1, trimRecord record2)

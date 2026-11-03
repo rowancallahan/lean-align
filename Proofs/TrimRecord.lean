@@ -137,9 +137,97 @@ theorem trimRecord_correct (record : FastqRecord) :
   · rw [hl]; exact trimBytes_acgt _ _
   · rw [hl]; exact trimBytes_size _ _
 
+theorem ascii_single (x : UInt8) (h : x < 128) :
+    [Char.ofNat x.toNat].utf8Encode = ByteArray.mk #[x] := by
+  have hx : x.toNat < 128 := by simpa [UInt8.lt_iff_toNat_lt] using h
+  have hvalid : x.toNat.isValidChar := by unfold Nat.isValidChar; omega
+  have hv : (Char.ofNat x.toNat).val.toNat = x.toNat := by
+    rw [Char.ofNat, dite_cond_eq_true (eq_true hvalid)]
+    exact UInt32.toNat_ofNatLT
+  rw [List.utf8Encode_singleton]
+  unfold String.utf8EncodeChar
+  simp only [hv, if_pos (show x.toNat ≤ 127 by omega), UInt8.ofNat_toNat]
+  rfl
+
+theorem ascii_encode : ∀ (l : List UInt8), (∀ x ∈ l, x < 128) →
+    (l.map fun x => Char.ofNat x.toNat).utf8Encode = ByteArray.mk l.toArray
+  | [], _ => rfl
+  | x :: l, h => by
+    rw [List.map_cons, List.utf8Encode_cons, ascii_single x (h x (by simp)),
+      ascii_encode l (fun y hy => h y (by simp [hy]))]
+    apply ByteArray.ext
+    simp [ByteArray.data_append]
+
+theorem ascii_valid (b : ByteArray) (h : ∀ x ∈ b.data, x < 128) : b.IsValidUTF8 := by
+  refine .intro (b.data.toList.map fun x => Char.ofNat x.toNat) ?_
+  rw [ascii_encode _ (fun x hx => h x (by simpa using hx))]
+
+theorem nat_all_true : ∀ (n : Nat) (f : (i : Nat) → i < n → Bool), Nat.all n f = true →
+    ∀ i (h : i < n), f i h = true
+  | 0, _, _, i, h => absurd h (Nat.not_lt_zero _)
+  | n + 1, f, hall, i, h => by
+    rw [Nat.all_succ] at hall
+    simp only [Bool.and_eq_true] at hall
+    by_cases hi : i = n
+    · subst hi; exact hall.2
+    · exact nat_all_true n _ hall.1 i (by omega)
+
+theorem allBytes_mem (p : UInt8 → Bool) (bytes : ByteArray) (h : allBytes p bytes = true) :
+    ∀ x ∈ bytes.data, p x = true := by
+  intro x hx
+  obtain ⟨i, hi, rfl⟩ := Array.getElem_of_mem hx
+  have := nat_all_true _ _ h i hi
+  have e : bytes[i]! = bytes[i] := getElem!_pos bytes i hi
+  simp only [e] at this
+  exact this
+
+theorem extract_mem (b : ByteArray) (i j : Nat) : ∀ x ∈ (b.extract i j).data, x ∈ b.data := by
+  intro x hx
+  rw [ByteArray.data_extract] at hx
+  obtain ⟨k, hk, rfl⟩ := Array.mem_extract_iff_getElem.mp hx
+  exact Array.getElem_mem _
+
+/-- The reader's check discharges the UTF-8 hypothesis: for every record `parseRecord` returns (the reader
+returns exactly these), the trimmed quality bytes are valid UTF-8 and the quality String of `trimRecord` is
+exactly those bytes. -/
+theorem parseRecord_trim_quality {header letters plus quality : ByteArray} {record : FastqRecord}
+    (h : parseRecord header letters plus quality = .ok record) :
+    (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8 ∧
+    (trimRecord record).quality.toUTF8 = (trimBytes record.letters record.quality.toUTF8).2 := by
+  have hq : allBytes (fun b => 33 ≤ b && b ≤ 126) quality = true ∧ record.quality = String.fromUTF8! quality := by
+    unfold parseRecord at h
+    split at h
+    · cases h
+    split at h
+    · cases h
+    split at h
+    · cases h
+    split at h
+    · cases h
+    rename_i _ _ _ h4
+    simp only [Bool.not_eq_true', Bool.not_eq_false'] at h4
+    cases h
+    exact ⟨by simpa using h4, rfl⟩
+  obtain ⟨hall, hrec⟩ := hq
+  have hqa : ∀ x ∈ quality.data, x < 128 := by
+    intro x hx
+    have := allBytes_mem _ _ hall x hx
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at this
+    exact UInt8.lt_iff_toNat_lt.mpr (by have := this.2; simp [UInt8.le_iff_toNat_le] at this; show x.toNat < 128; omega)
+  have hvalid : quality.IsValidUTF8 := ascii_valid quality hqa
+  have hbytes : record.quality.toUTF8 = quality := by rw [hrec]; exact fromUTF8!_toUTF8 quality hvalid
+  obtain ⟨a, b, -, -, -, -, h5⟩ := trimBytes_window record.letters record.quality.toUTF8
+  have hv : (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8 := by
+    apply ascii_valid
+    intro x hx
+    rw [h5, hbytes] at hx
+    exact hqa x (extract_mem _ _ _ x hx)
+  exact ⟨hv, trimRecord_quality_bytes record hv⟩
+
 end Spec
 
 #print axioms Spec.trimRecord_correct
+#print axioms Spec.parseRecord_trim_quality
 
 #print axioms Spec.trimBytes_window
 #print axioms Spec.trimBytes_acgt
