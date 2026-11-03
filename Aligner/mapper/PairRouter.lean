@@ -41,36 +41,6 @@ variable (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (R : 
 
 include hg hr hcat hlk
 
-/-- The search's best penalty is within the cap exactly when the read has a hit. -/
-theorem pen_le_iff (hf : fastT P R = true) :
-    (mapChromsGB P ix G offs gbs R).pen ≤ P ↔ hitsBoth sc0 (-(P : Int)) g read ≠ [] := by
-  unfold fastT at hf
-  simp only [Bool.and_eq_true, decide_eq_true_eq] at hf
-  obtain ⟨S, hi, hall⟩ := mapChromsGB_inv P read g gbs R hg hr ix G offs hcat hlk hf.1 hf.2
-  have key : ∀ (st : Strand) w' s', (strandScore g read st w' = some s' ∧ -(P : Int) ≤ s') ↔
-      (cwS P read g st w' ≤ P ∧ s' = -(cwS P read g st w' : Int)) := by
-    intro st w' s'
-    cases st with
-    | fwd => exact cwT_iff P read g w' s'
-    | rev => exact cwT_iff P (revComp read) g w' s'
-  constructor
-  · intro hp hn
-    have hw := hi.hit hp
-    have hb : cwB P read g (mapChromsGB P ix G offs gbs R).win ≤ P := by omega
-    have hd := cwS_decB P read g (mapChromsGB P ix G offs gbs R).win
-    generalize decB g.length (mapChromsGB P ix G offs gbs R).win = p at hd
-    have h2 := (key p.2 p.1 _).mpr ⟨by omega, rfl⟩
-    have hm : (p, -(cwS P read g p.2 p.1 : Int)) ∈ hitsBoth sc0 (-(P : Int)) g read :=
-      (mem_hitsBoth_T _ _ _ _ _).mpr ⟨strandScore_allWindows g read p.2 p.1 _ h2.1, h2.1, h2.2⟩
-    rw [hn] at hm; cases hm
-  · intro hn
-    obtain ⟨⟨p, s⟩, hm⟩ := List.exists_mem_of_ne_nil _ hn
-    rw [mem_hitsBoth_T] at hm
-    obtain ⟨h1, -⟩ := (key p.2 p.1 s).mp ⟨hm.2.1, hm.2.2⟩
-    have := hi.min _ (hall _ (by rw [cwB_encB P read g p h1]; exact h1))
-    rw [cwB_encB P read g p h1] at this
-    omega
-
 /-- (Tie cut) The search's best penalty is within the cap exactly when the read has a hit. -/
 theorem pen_le_iffT (hf : fastT P R = true) :
     (mapChromsGBT P ix G offs gbs R).pen ≤ P ↔ hitsBoth sc0 (-(P : Int)) g read ≠ [] := by
@@ -120,10 +90,6 @@ inductive Out where
   | mapped (x : (Placement × Int) × (Placement × Int))
   | unmapped (r : Reason) (k : Option (Placement × Int))
 deriving Inhabited, BEq
-
-def Out.toOpt : Out → Option ((Placement × Int) × (Placement × Int))
-  | .mapped x => some x
-  | .unmapped _ _ => none
 
 /-- Mates exchanged (a pass run with mate 2 first). -/
 def Out.swap : Out → Out
@@ -337,13 +303,6 @@ def routeG (cfg : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (O1 O2 : Option Byte
         ⟨pass2G K2 cfg.swap2 A1 A2 B1 B2 r lo hi R1 R2 k, 2, B1, B2⟩
       else ⟨o, 1, A1, A2⟩
 
-/-- The router with today's kernel in both passes. -/
-def routeKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (cfg : RouteCfg)
-    (lo hi : Nat) (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (O1 O2 : Option ByteArray) : Routed :=
-  let K := kpKer lo hi ix rl G offs pgs
-  routeG cfg K K lo hi O1 O2
-
 /-! ## What a routed answer means -/
 
 /-- The other mate's answer carried with `noPartner` (reused by pass 2). -/
@@ -360,22 +319,6 @@ def Settled (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (R1 R2 : ByteArray) (
   | .unmapped (.trimmedAway _) _ => False
   | .unmapped rs k => ReasonOk (Mate.sel (-(r.c1 : Int)) (-(r.c2 : Int))) lo hi g (Mate.sel m1 m2) rs ∧
       KnownOk (Mate.sel (-(r.c1 : Int)) (-(r.c2 : Int))) g (Mate.sel m1 m2) rs k
-
-/-- Settled with a search reason: the pair is `none` at the reported caps. -/
-theorem settled_none (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (R1 R2 : ByteArray) (r : Routed)
-    (rs : Reason) (hrs : rs.searched = true) {k : Option (Placement × Int)} (ho : r.out = .unmapped rs k) (h : Settled lo hi g m1 m2 R1 R2 r) :
-    pairSpecT (-(r.c1 : Int)) (-(r.c2 : Int)) lo hi g m1 m2 = none := by
-  unfold Settled at h
-  rw [ho] at h
-  have e := reasonOk_none (Mate.sel (-(r.c1 : Int)) (-(r.c2 : Int))) lo hi g (Mate.sel m1 m2) rs
-  cases rs with
-  | trimmedAway m => simp [Reason.searched] at hrs
-  | tooShort m => simp [Reason.searched] at hrs
-  | noHit m => exact e h.1
-  | tie m => exact e h.1
-  | noPartner m => exact e h.1
-  | notProper => exact e h.1
-  | noPair => exact e h.1
 
 /-! ## Proofs: the step -/
 
@@ -751,7 +694,6 @@ theorem regionKP_ok (P : Nat) (R : ByteArray) (m : List Char) (hr : Encodes R m)
     (fun _ _ _ _ _ _ _ => rfl) (catOk_cut G offs ns hcut)
     (fun a b B hb hB hBi => lookOk_rg ix G hchk a b B hb hB hBi) a h p.1 p.2 hp.2.1 hp.2.2
 
-
 include hcut hg hchk in
 /-- Today's kernel meets `KerOk`. -/
 theorem kpKer_ok : KerOk lo hi g (kpKer lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz))
@@ -781,19 +723,10 @@ theorem routeKPB_ok (cfg : RouteCfg) (j1 j2 hint : Bool) :
   routeG_ok lo hi g m1 m2 R1 R2 h1 h2 cfg _ _ (kpKerB_ok lo hi g ix G offs ns hcut hg hchk j1 hint)
     (kpKerB_ok lo hi g ix G offs ns hcut hg hchk j2 hint)
 
-include hcut hg h1 h2 hchk in
-/-- **Router (today's kernel) = specification.** -/
-theorem routeKP_ok (cfg : RouteCfg) :
-    Settled lo hi g m1 m2 R1 R2 (routeKP cfg lo hi ((ix, G) : PkMz)
-      (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs (cutAll G offs ns) (some R1) (some R2)) :=
-  have hK := kpKer_ok lo hi g ix G offs ns hcut hg hchk
-  routeG_ok lo hi g m1 m2 R1 R2 h1 h2 cfg _ _ hK hK
-
 end packed
 
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.pen_le_iff
 #print axioms MapSpec.Fast.mateKP_ok
 #print axioms MapSpec.Fast.kpKer_ok
 #print axioms MapSpec.Fast.passG_ok
@@ -801,7 +734,5 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.passLenG_ok
 #print axioms MapSpec.Fast.pass2G_ok
 #print axioms MapSpec.Fast.routeG_ok
-#print axioms MapSpec.Fast.routeKP_ok
-#print axioms MapSpec.Fast.settled_none
 #print axioms MapSpec.Fast.kpKerB_ok
 #print axioms MapSpec.Fast.routeKPB_ok

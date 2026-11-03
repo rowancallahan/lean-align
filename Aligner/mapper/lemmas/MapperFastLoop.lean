@@ -33,13 +33,6 @@ theorem foldl_inv {α : Type} (cw : Window → Nat) (f : Best → α → Best) (
     exact inv_congr cw _ _ _ this (fun w => by
       simp only [List.mem_cons, exists_eq_or_imp]; exact or_assoc)
 
-theorem pop4_pos (G R : ByteArray) (d : Nat) (h : maskAt G R d ≠ 0) : 1 ≤ pop4 (maskAt G R d) := by
-  rw [pop4_maskAt]
-  unfold maskAt at h
-  split <;> split <;> split <;> split <;> simp_all
-
-theorem pop4_le (m : Nat) : pop4 m ≤ 4 := by unfold pop4; omega
-
 section chrom
 
 variable (cw : Window → Nat) (hc13 : ∀ w, cw w ≤ 13) (R G : ByteArray) (c : Nat)

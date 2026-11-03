@@ -504,22 +504,6 @@ theorem pairGQC_sound (hG : Gc ≤ 7) (swap : Bool) (P1 P2 : Nat) (hP1 : Gc ≤ 
     obtain ⟨w, hw, -⟩ := hA.1.1 hsn
     exact ⟨w, hw⟩
 
-theorem hitsAtQ_some (lim : Nat) (ix : PkMzR) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray)
-    (h : fastT lim R = true) : ∃ l, hitsAtQ lim ix offs pgs R = some l := by
-  unfold hitsAtQ
-  rw [if_pos h]
-  split
-  · exact ⟨_, rfl⟩
-  · exact hitsAtKP3_some lim ix ByteArray.empty offs pgs R h
-
-theorem pairGQC_some (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMzR) (offs : Array Nat)
-    (pgs : Array PGen) (R1 R2 : ByteArray) (h : fastT Gc (if swap then R2 else R1) = true) :
-    ∃ v, pairGQC dc sl lo hi Gc swap ix offs pgs R1 R2 = some v := by
-  obtain ⟨l, hl⟩ := hitsAtQ_some Gc ix offs pgs _ h
-  unfold pairGQC
-  simp only [hl]
-  exact ⟨_, rfl⟩
-
 end top
 
 end MapSpec.Fast
@@ -528,4 +512,3 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.hitsGS_mem
 #print axioms MapSpec.Fast.mem_hitsAtQ_mzR
 #print axioms MapSpec.Fast.pairGQC_sound
-#print axioms MapSpec.Fast.pairGQC_some

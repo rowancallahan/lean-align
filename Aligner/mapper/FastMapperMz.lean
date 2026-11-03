@@ -210,12 +210,6 @@ deriving Inhabited
     (o - m1) (ix.k + m2) (ix.w - 1 - o - m2)
     (ix.hiB p.b) base bit (ix.loB p.b) #[]
 
-/-- Seed `j`'s packed anchors from a minimizer index; an ACGT seed reuses its
-prepared code and bucket instead of reading its letters again. -/
-def mzLook (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (p : MzP) : Array Nat :=
-  if p.ok then lookupP ix G R (j * q) p (BIAS - j * q) (pow2 j)
-  else lookupSeedA ix G R (j * q) (BIAS - j * q) (pow2 j)
-
 theorem unmix_mix (x : UInt64) (hx : x.toNat < 2 ^ 50) : unmix (mix x) = x.toNat := by
   unfold unmix
   rw [UInt64.toNat_and, UInt64.toNat_mul, mix_toNat, show (0x3FFFFFFFFFFFF : UInt64).toNat = 2 ^ 50 - 1 from rfl,
@@ -252,78 +246,8 @@ theorem acgt_mz (b : UInt8) (h : acgt b = true) : Mz.acgt b = true := by
 letter other than ACGT. -/
 @[inline] def mzSize (ix : Mz.MzIdx) (p : MzP) : Nat := if p.ok then ix.hiB p.b - ix.loB p.b else 0
 
-def mzL : Look Mz.MzIdx MzP := ⟨mzPrep, mzSize, mzLook⟩
-
 def checkAllMz (idxs : Array Mz.MzIdx) (gbs : Array ByteArray) : Bool :=
   (List.range gbs.size).all fun c => Mz.check2 idxs[c]! gbs[c]!
 
-def mapFastMz (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (R : ByteArray) : Option (Window × Int) :=
-  mapFastG mzL gbs idxs R
-
-theorem mzLook_eq (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) :
-    mzLook ix G R j (mzPrep ix (seedHash R j)) =
-      (Mz.lookupSeed ix G R (j * q)).map (anc (BIAS - j * q) (pow2 j)) := by
-  rw [seedHash_spec]
-  split
-  · next ha =>
-    have e : ∀ y, mzLook ix G R j (mzPrep ix (some y)) =
-        lookupCodeA ix G R (j * q) (unmix y) (BIAS - j * q) (pow2 j) := fun y => by
-      unfold mzLook mzPrep lookupP lookupCodeA
-      dsimp only
-      rw [if_pos rfl]
-    rw [e]
-    unfold hashAt
-    rw [unmix_mix _ (by rw [hashWord_toNat]; exact Nat.lt_of_lt_of_le (wN_lt R (j * q) q) (by decide)),
-      hashWord_toNat, wN_eq, lookupCodeA_eq, Mz.lookupSeed_eq_lookupCode ix G R (j * q)
-        (fun i hi => acgt_mz _ ((allACGT_word R (j * q)).1 ha i hi))]
-    rfl
-  · show lookupSeedA ix G R (j * q) (BIAS - j * q) (pow2 j) = _
-    rw [lookupA_eq]
-
-theorem mzLook_ok (ix : Mz.MzIdx) (G R : ByteArray) (j : Nat) (hj : j < 4)
-    (hc : Mz.check ix G = true) : LookOk G R j (mzLook ix G R j (mzPrep ix (seedHash R j))) := by
-  have hf : anc (BIAS - j * q) (pow2 j) = anchorOf j := funext fun p => by
-    unfold anc; rw [pow2_eq j hj]; rfl
-  unfold LookOk
-  rw [mzLook_eq, hf, Array.toList_map]
-  refine ⟨List.Pairwise.map _ (fun (a b : Nat) (hab : a < b) => show anchorOf j a < anchorOf j b by
-    unfold anchorOf; generalize 2 ^ j = w; omega) (Mz.lookupSeed_sorted hc R (j * q)), fun e => ?_⟩
-  rw [List.mem_map]
-  constructor
-  · rintro ⟨p, hp, rfl⟩
-    exact ⟨p, (Mz.lookupSeed_mem hc R (j * q) p).1 hp, rfl⟩
-  · rintro ⟨p, hp, rfl⟩
-    exact ⟨p, (Mz.lookupSeed_mem hc R (j * q) p).2 hp, rfl⟩
-
-/-- **Mapping.**  Through minimizer indexes that pass the checker, `mapFastMz` is
-the specification's answer. -/
-theorem mapFastMz_eq_mapSpec (g : Genome) (read : List Char) (gbs : Array ByteArray)
-    (idxs : Array Mz.MzIdx) (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read)
-    (hchk : checkAllMz idxs gbs = true) :
-    mapFastMz gbs idxs R = mapSpec sc0 (-12) g read := by
-  apply mapFastG_eq_mapSpec mzL g read gbs idxs R hg hr
-  intro c hc R' j hj
-  unfold checkAllMz at hchk
-  simp only [List.all_eq_true, List.mem_range] at hchk
-  exact mzLook_ok _ _ _ _ hj (by rw [← Mz.check2_eq]; exact hchk c hc)
-
-/-- `n` tasks. -/
-def mapFastMzPar (n : Nat) (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (Rs : Array ByteArray) :
-    Array (Option (Window × Int)) := ParMap.parMap n (mapFastMz gbs idxs) Rs
-
-theorem mapFastMzPar_eq_mapSpec (n : Nat) (g : Genome) (gbs : Array ByteArray) (idxs : Array Mz.MzIdx)
-    (Rs : Array ByteArray) (reads : Array (List Char)) (hg : GenomeBytes gbs g)
-    (hchk : checkAllMz idxs gbs = true) (hl : Rs.size = reads.size)
-    (hr : ∀ i (h1 : i < Rs.size) (h2 : i < reads.size), Encodes Rs[i] reads[i]) :
-    mapFastMzPar n gbs idxs Rs = reads.map (mapSpec sc0 (-12) g) := by
-  unfold mapFastMzPar
-  rw [ParMap.parMap_eq_map]
-  apply Array.ext (by simp [hl])
-  intro i h1 h2
-  simp only [Array.getElem_map]
-  exact mapFastMz_eq_mapSpec g _ gbs idxs _ hg (hr i (by simpa using h1) (by simpa [hl] using h1)) hchk
-
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.mapFastMz_eq_mapSpec
-#print axioms MapSpec.Fast.mapFastMzPar_eq_mapSpec

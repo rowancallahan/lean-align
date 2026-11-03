@@ -62,47 +62,7 @@ theorem lookAllG_mz (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (hchk : chec
   simp only [List.all_eq_true, List.mem_range] at hchk
   exact mzLookS_ok idxs[c]! gbs[c]! R s base (by rw [← Mz.check2_eq]; exact hchk c hc)
 
-/-- Map one read at threshold `−P` through minimizer indexes. -/
-def mapFastTMz (P : Nat) (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (R : ByteArray) : Option (Window × Int) :=
-  mapFastTG P gbs idxs R
-
-/-- **Minimizer indexes.** -/
-theorem mapFastTMz_eq_mapSpec (P : Nat) (g : Genome) (read : List Char) (gbs : Array ByteArray)
-    (idxs : Array Mz.MzIdx) (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read)
-    (hchk : checkAllMz idxs gbs = true) :
-    mapFastTMz P gbs idxs R = mapSpec sc0 (-(P : Int)) g read :=
-  mapFastTG_eq_mapSpec P g read gbs idxs R hg hr (lookAllG_mz gbs idxs hchk)
-
 /-! ## One entry point: the tuned 100–103 bp path at `T = −12`, the general path otherwise -/
-
-/-- Map one read at `T = −P` (hashed indexes). -/
-def mapAuto (P : Nat) (gbs : Array ByteArray) (idxs : Array HIdx) (R : ByteArray) : Option (Window × Int) :=
-  if P = 12 ∧ fastOk R = true then mapFast gbs idxs R else mapFastT P gbs idxs R
-
-theorem mapAuto_eq_mapSpec (P : Nat) (g : Genome) (read : List Char) (gbs : Array ByteArray)
-    (idxs : Array HIdx) (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read)
-    (hchk : checkAll idxs gbs = true) :
-    mapAuto P gbs idxs R = mapSpec sc0 (-(P : Int)) g read := by
-  unfold mapAuto
-  split
-  · next h => rw [mapFast_eq_mapSpec g read gbs idxs R hg hr hchk, h.1]; rfl
-  · exact mapFastT_eq_mapSpec P g read gbs idxs R hg hr hchk
-
-/-- Map one read at `T = −P` (minimizer indexes). -/
-def mapAutoMz (P : Nat) (gbs : Array ByteArray) (idxs : Array Mz.MzIdx) (R : ByteArray) : Option (Window × Int) :=
-  if P = 12 ∧ fastOk R = true then mapFastMz gbs idxs R else mapFastTMz P gbs idxs R
-
-theorem mapAutoMz_eq_mapSpec (P : Nat) (g : Genome) (read : List Char) (gbs : Array ByteArray)
-    (idxs : Array Mz.MzIdx) (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read)
-    (hchk : checkAllMz idxs gbs = true) :
-    mapAutoMz P gbs idxs R = mapSpec sc0 (-(P : Int)) g read := by
-  unfold mapAutoMz
-  split
-  · next h => rw [mapFastMz_eq_mapSpec g read gbs idxs R hg hr hchk, h.1]; rfl
-  · exact mapFastTMz_eq_mapSpec P g read gbs idxs R hg hr hchk
 
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.mapFastTMz_eq_mapSpec
-#print axioms MapSpec.Fast.mapAuto_eq_mapSpec
-#print axioms MapSpec.Fast.mapAutoMz_eq_mapSpec

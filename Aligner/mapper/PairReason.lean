@@ -130,94 +130,14 @@ theorem mapSpecBoth_mono_some (T T' : Int) (hT : T' ≤ T) (g : Genome) (r : Lis
 
 /-! ## Every search reason means the pair is not reported -/
 
-theorem reasonOk_none (T : Mate → Int) (lo hi : Nat) (g : Genome) (rd : Mate → List Char) (r : Reason)
-    (h : ReasonOk T lo hi g rd r) :
-    pairSpecT (T .one) (T .two) lo hi g (rd .one) (rd .two) = none := by
-  unfold pairSpecT
-  cases r with
-  | trimmedAway m => exact h.elim
-  | tooShort m => exact h.elim
-  | noHit m =>
-    have h' := hitsBoth_nil_none h
-    cases m
-    · rw [h']
-    · rw [h']; cases mapSpecBoth sc0 (T .one) g (rd .one) <;> rfl
-  | tie m =>
-    have h' := h.2
-    cases m
-    · rw [h']
-    · rw [h']; cases mapSpecBoth sc0 (T .one) g (rd .one) <;> rfl
-  | noPartner m =>
-    obtain ⟨a, ha, hp⟩ := h
-    cases m
-    · simp only [Mate.other] at ha
-      rw [ha]
-      cases hb : mapSpecBoth sc0 (T .one) g (rd .one) with
-      | none => rfl
-      | some b =>
-        have := hp b (mapSpecBoth_mem hb)
-        rw [properPair_comm] at this
-        simp [this]
-    · simp only [Mate.other] at ha
-      rw [ha]
-      cases hb : mapSpecBoth sc0 (T .two) g (rd .two) with
-      | none => rfl
-      | some b =>
-        simp [hp b (mapSpecBoth_mem hb)]
-  | notProper =>
-    obtain ⟨a, b, ha, hb, hp⟩ := h
-    rw [ha, hb]; simp [hp]
-  | noPair =>
-    cases ha : mapSpecBoth sc0 (T .one) g (rd .one) with
-    | none => rfl
-    | some a =>
-      cases hb : mapSpecBoth sc0 (T .two) g (rd .two) with
-      | none => rfl
-      | some b => simp [h a (mapSpecBoth_mem ha) b (mapSpecBoth_mem hb)]
-
 /-! ## Which reasons stay at deeper caps -/
 
 section mono
 variable (T T' : Mate → Int) (hT : ∀ m, T' m ≤ T m) (lo hi : Nat) (g : Genome) (rd : Mate → List Char)
 include hT
 
-/-- A tie stays a tie at deeper caps. -/
-theorem reasonOk_tie_mono (m : Mate) (h : ReasonOk T lo hi g rd (.tie m)) : ReasonOk T' lo hi g rd (.tie m) := by
-  obtain ⟨h1, h2⟩ := h
-  refine ⟨?_, by rw [mapSpecBoth_mono (T m) (T' m) (hT m) g (rd m) h1]; exact h2⟩
-  intro hn
-  obtain ⟨x, hx⟩ := List.exists_mem_of_ne_nil _ h1
-  rw [mem_hitsBoth_T] at hx
-  have : x ∈ hitsBoth sc0 (T' m) g (rd m) := by
-    rw [mem_hitsBoth_T]; exact ⟨hx.1, hx.2.1, Int.le_trans (hT m) hx.2.2⟩
-  rw [hn] at this; cases this
-
-/-- Not a proper pair stays so at deeper caps. -/
-theorem reasonOk_notProper_mono (h : ReasonOk T lo hi g rd .notProper) : ReasonOk T' lo hi g rd .notProper := by
-  obtain ⟨a, b, ha, hb, hp⟩ := h
-  exact ⟨a, b, mapSpecBoth_mono_some _ _ (hT .one) g _ a ha, mapSpecBoth_mono_some _ _ (hT .two) g _ b hb, hp⟩
-
-/-- A pair reported at `T` is reported the same at any deeper `T'`. -/
-theorem pairSpecT_mono_some (x : (Placement × Int) × (Placement × Int))
-    (h : pairSpecT (T .one) (T .two) lo hi g (rd .one) (rd .two) = some x) :
-    pairSpecT (T' .one) (T' .two) lo hi g (rd .one) (rd .two) = some x := by
-  unfold pairSpecT at h ⊢
-  cases ha : mapSpecBoth sc0 (T .one) g (rd .one) with
-  | none => rw [ha] at h; cases h
-  | some a =>
-    cases hb : mapSpecBoth sc0 (T .two) g (rd .two) with
-    | none => rw [ha, hb] at h; cases h
-    | some b =>
-      rw [ha, hb] at h
-      rw [mapSpecBoth_mono_some _ _ (hT .one) g _ a ha, mapSpecBoth_mono_some _ _ (hT .two) g _ b hb]
-      exact h
-
 end mono
 
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.mapSpecBoth_mono
-#print axioms MapSpec.Fast.reasonOk_none
-#print axioms MapSpec.Fast.reasonOk_tie_mono
-#print axioms MapSpec.Fast.reasonOk_notProper_mono
-#print axioms MapSpec.Fast.pairSpecT_mono_some

@@ -202,10 +202,6 @@ def seedBit (G R : ByteArray) (j A : Nat) : Nat :=
 def maskAt (G R : ByteArray) (A : Nat) : Nat :=
   seedBit G R 0 A + seedBit G R 1 A + seedBit G R 2 A + seedBit G R 3 A
 
-theorem maskAt_lt (G R : ByteArray) (A : Nat) : maskAt G R A < 16 := by
-  unfold maskAt seedBit
-  split <;> split <;> split <;> split <;> simp
-
 theorem single_spec (a : Array Nat) (G R : ByteArray) (j : Nat) (hj : 2 ^ j < 16) (hjq : j * q ≤ BIAS)
     (hl : LookOk G R j a) :
     SortedA (a).toList ∧ (∀ e ∈ (a).toList, e % 16 = 2 ^ j) ∧

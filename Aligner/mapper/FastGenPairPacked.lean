@@ -150,17 +150,6 @@ theorem bandEnd2_same (sc : Scoring) (T : Int) (B : Nat) (rb : ByteArray) (e : N
     bandEnd2 sc T B rb x e = bandEnd2 sc T B rb y e := by
   simp only [bandEnd2, bandRows2_same h]
 
-theorem bandRowsP_same (T : Int) (B : Nat) (sp : Nat → Bool) (rb : ByteArray) (e : Nat) :
-    ∀ i N X Y, bandRowsP T B sp rb x e i N X Y = bandRowsP T B sp rb y e i N X Y := by
-  intro i
-  induction i with
-  | zero => intro N X Y; rw [bandRowsP, bandRowsP, bandLoop_same' h]
-  | succ i ih => intro N X Y; rw [bandRowsP, bandRowsP, bandLoop_same' h]; simp only [ih]
-
-theorem bandEndP_same (T : Int) (B : Nat) (sp : Nat → Bool) (rb : ByteArray) (e : Nat) :
-    bandEndP T B sp rb x e = bandEndP T B sp rb y e := by
-  simp only [bandEndP, bandRowsP_same h]
-
 theorem bandRowsC_same (T : Int) (B : Nat) (cnt : Array Nat) (rb : ByteArray) (e : Nat) :
     ∀ i N X Y, bandRowsC T B cnt rb x e i N X Y = bandRowsC T B cnt rb y e i N X Y := by
   intro i
@@ -278,12 +267,6 @@ theorem stageB_same (P : Nat) (R : ByteArray) (c : Nat) (shs : List (Int × Int)
     simp only [stageBD, bandEndAt_same h, e2]
   simp only [stageB, e, spoiledArr_same (h.2 c)]
 
-theorem chromKB_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) :
-    chromKB R xs c P acc b1 = chromKB R ys c P acc b1 := by
-  unfold chromKB
-  by_cases h16 : 16 ≤ min (min P 16) (min b1.pen P) <;>
-    simp only [h16, if_true, if_false, decide_true, decide_false, stageKP_same h, stageK_same h, stageB_same h]
-
 theorem chromKBS_same (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
     chromKBS R xs c P acc J b1 = chromKBS R ys c P acc J b1 := by
   unfold chromKBS
@@ -392,10 +375,6 @@ theorem pairLazy_match (lo hi : Nat) (m1 m2 : Option (Placement × Int)) :
       | _, _ => none) := by
   cases m1 <;> cases m2 <;> rfl
 
-def pairFastGBP (P lo hi : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
-    Option ((Placement × Int) × (Placement × Int)) :=
-  pairLazy lo hi (mapFastGBP P ix offs pgs R1) (fun _ => mapFastGBP P ix offs pgs R2)
-
 /-! ## Theorem -/
 
 theorem sameA_unpack (pgs : Array PGen) : SameA pgs (pgs.map Mz.unpack) := by
@@ -416,23 +395,6 @@ theorem mapFastGBP_eq (P : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen
     (fun _ _ _ _ => rfl)]
   simp
 
-/-- **Packed genome + one minimizer index, general path, proper pairs at `T = −P`.** -/
-theorem pairFastGBP_mz_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen)
-    (offs ns : Array Nat) (R1 R2 : ByteArray) (hcut : cutOk G offs ns = true)
-    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2)
-    (hchk : Mz.check2P ix G = true) :
-    pairFastGBP P lo hi (ix, G) offs (cutAll G offs ns) R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
-  have e : pairFastGBP P lo hi (ix, G) offs (cutAll G offs ns) R1 R2 =
-      pairFastGB P lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
-    unfold pairFastGBP pairFastGB; rw [pairLazy_match, mapFastGBP_eq, mapFastGBP_eq]; rfl
-  rw [e]
-  refine pairFastGB_eq_pairSpec P lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut) ?_
-  intro R' s base hs
-  show LookOkS (Mz.unpack G) R' s base 0 (mzLookSP ix G R' s base (mzPrep ix (seedHashAt R' s)))
-  rw [mzLookSP_eq (Mz.rep_unpack G)]
-  exact mzLookS_ok ix _ R' s base (by rw [← Mz.check2_eq, ← Mz.check2P_eq (Mz.rep_unpack G)]; exact hchk)
-
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.mapFastGBP_eq
-#print axioms MapSpec.Fast.pairFastGBP_mz_eq_pairSpec

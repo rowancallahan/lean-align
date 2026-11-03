@@ -75,9 +75,6 @@ above the best cannot change it; the best's own window is not scored again). -/
     if r ≤ l then b.add c st.toNat len.toNat r else b
   else b
 
-@[inline] def addB {Gt : Type} [GRead Gt] [Inhabited Gt] (P : Nat) (R : ByteArray) (gbs : Array Gt) (c : Nat) (st len : Int) (b : Best) : Best :=
-  if 0 ≤ st ∧ 0 ≤ len then b.add c st.toNat len.toNat (bandPen P R gbs ⟨c, st.toNat, len.toNat⟩) else b
-
 /-- The seed count for the penalty bound `x`: how many seeds a window within
 penalty `x` can spoil. -/
 def sbTbl : Array Nat := ((List.range 33).map fun (x : Nat) => seedBoundE sc0 (-(x : Int))).toArray
@@ -85,19 +82,6 @@ def sbTbl : Array Nat := ((List.range 33).map fun (x : Nat) => seedBoundE sc0 (-
 /-- (`sbound_def`: `seedBoundE sc0 (−x)` = `x / 4`, events counted; from a table below `33`.) -/
 @[inline] def sbound (x : Nat) : Nat := if x < 33 then sbTbl[x]! else seedBoundE sc0 (-(x : Int))
 
-/-- Look up the seeds of `ord`; each anchor's same-length window goes through the
-kernel.  Returns the best, the anchor arrays and the seeds looked up (newest first). -/
-def phase1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (gbs : Array ByteArray) (c P lim Ls : Nat)
-    (ps : Array Pp) : (ord : List Nat) → List Nat → List (Array Nat) → Best → Best × List (Array Nat) × List Nat
-  | [], J, acc, b => (b, acc, J)
-  | j :: rest, J, acc, b =>
-    let arr := LookG.look ix gbs[c]! R (j * Ls) (R.size - j * Ls) ps[j]!
-    let b := arr.foldl (fun b e => addK R gbs c lim ((e / 16 : Nat) - (R.size : Int)) R.size b) b
-    if sbound (min b.pen P) < J.length + 1 ∧ (b.pen ≤ lim ∨ lim = P) then (b, arr :: acc, j :: J)
-    else phase1 ix R gbs c P lim Ls ps rest (j :: J) (arr :: acc) b
-
-/-- Window of anchor `e` and shape `sh`: start and length. -/
-@[inline] def wst (n e : Nat) (sh : Int × Int) : Int := ((e / 16 : Nat) : Int) - n - sh.1
 @[inline] def wlen (n : Nat) (sh : Int × Int) : Int := (n : Int) + sh.1 + sh.2
 
 /-- The distinct diagonals of the anchors. -/
@@ -377,19 +361,6 @@ def shapesTbl : Array (List (Int × Int) × List (Int × Int)) :=
 @[inline] def shapesKT (x : Nat) : List (Int × Int) :=
   if x < 33 then shapesTbl[x]!.2 else (shapesAt x).filter (· != (0, 0))
 
-/-- Stages K and B of chromosome `c`, from phase 1's anchor arrays `acc` and best `b1`. -/
-@[specialize] def chromKB {Gt : Type} [GRead Gt] [Inhabited Gt] (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (b1 : Best) : Best :=
-  let lim := min P 16
-  let Q1 := min b1.pen P
-  let b2 := if 0 < gapBound sc0 (-(Q1 : Int)) then
-      (if 16 ≤ min lim Q1 then stageKP else stageK) R gbs c lim (shapesKT Q1)
-        (diagsB acc (acc.length - sbound (min lim Q1)) (2 * gapBound sc0 (-(Q1 : Int)))) b1 else b1
-  let Q2 := min b2.pen P
-  if lim < Q2 then
-    stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int))))
-      (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
-  else b2
-
 /-! ### Stage K with a seed filter (`chromKBS_cover`)
 
 Before the shapes of an anchor diagonal `D`, at the current best (`Q = min lim best`,
@@ -498,44 +469,11 @@ filter runs at `lim = P`, so a diagonal is skipped once its misses exceed `sboun
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
-/-- One chromosome. -/
-def chromG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (gbs : Array ByteArray)
-    (c P Ls : Nat) (ps : Array Pp) (ord : List Nat) (b : Best) : Best :=
-  let r1 := phase1 ix R gbs c P (min P 16) Ls ps ord [] [] b
-  chromKB R gbs c P r1.2.1 r1.1
-
 /-- Seeds `0 … m-1`, smallest `size` first. -/
 @[inline] def ordG (ks : Array Nat) (m : Nat) : List Nat :=
   (List.range m).foldl (fun l j => insKey ks j l) []
 
-/-- All chromosomes; the seed hashes are computed once. -/
-@[specialize] def mapChromsG {L Pp : Type} [LookG L Pp] [Inhabited L] [Inhabited Pp] (P : Nat) (R : ByteArray)
-    (gbs : Array ByteArray) (idxs : Array L) : Best :=
-  let m := R.size / 25
-  let Ls := R.size / m
-  let hs := (Array.range m).map fun j => seedHashAt R (j * Ls)
-  (List.range gbs.size).foldl (fun b c =>
-    let ix := idxs[c]!
-    let ps := hs.map (LookG.prep ix)
-    chromG ix R gbs c P Ls ps (ordG (ps.map (LookG.size ix)) m) b) (initP P)
-
 /-- Reads the general fast path takes: enough seeds for the bound. -/
 def fastT (P : Nat) (R : ByteArray) : Bool := decide (0 < R.size / 25) && decide (sbound P < R.size / 25)
-
-/-- Slow proved path at threshold `T`. -/
-def slowMapT (T : Int) (gbs : Array ByteArray) (R : ByteArray) : Option (Window × Int) :=
-  let g := decodeGenomeB gbs
-  let read := decodeBytes R
-  let l0 := read.length / (errBound sc0 T + 1)
-  mapWith (scanLookup g l0) (kernelScore sc0 read g) l0 T (errBound sc0 T) g read
-
-/-- Map one read at threshold `T = −P`. -/
-@[specialize] def mapFastTG {L Pp : Type} [LookG L Pp] [Inhabited L] [Inhabited Pp] (P : Nat)
-    (gbs : Array ByteArray) (idxs : Array L) (R : ByteArray) : Option (Window × Int) :=
-  if fastT P R then
-    match resultP P (mapChromsG P R gbs idxs) with
-    | some (c, st, len, pen) => some (⟨c, st, len⟩, -(pen : Int))
-    | none => none
-  else slowMapT (-(P : Int)) gbs R
 
 end MapSpec.Fast

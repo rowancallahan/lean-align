@@ -550,32 +550,11 @@ theorem trimRead_acgt (Q : Nat) (hQ : Q ≤ 93) (seq qual : ByteArray) (s e : Na
   simp only [scoresOf, List.length_map, List.length_range] at hv
   exact best_acgt Q hQ seq qual s e hsz s (by omega) hA hw
 
-/-- **The trimmer is the frozen contract** for every neutral quality `Q ≤ 93` and
-every read with an A/C/G/T letter (at most 10 000 letters). -/
-theorem trimRead_eq_contract (Q : Nat) (hQ : Q ≤ 93) (seq qual : ByteArray) (h : seq.size ≤ 10000) (j : Nat)
-    (hj : j < seq.size) (hjA : isACGT seq[j]! = true) :
-    trimReadQ Q seq qual = get_best_window [] (scoresOf seq qual) (fun ws => ws.map (perBase Q)) := by
-  have hc := (winLoop_packed Q seq qual).trans (getBestWindowPacked_equals_frozen_get_best_window [] _ _)
-  rw [initialPackedFoldState, ← wl_eq] at hc
-  unfold trimReadQ
-  rw [if_pos h, hc]
-  cases hw : get_best_window [] (scoresOf seq qual) (fun ws => ws.map (perBase Q)) with
-  | none => rfl
-  | some w =>
-    obtain ⟨s, e⟩ := w
-    have := best_acgt Q hQ seq qual s e h j hj hjA hw
-    simp [this.2.2 s (Nat.le_refl _) this.2.1]
-
 /-- The default neutral quality. -/
 def defQ : Nat := 25
 
 /-- The trimmer at the default neutral quality. -/
 def trimRead (seq qual : ByteArray) : Option (Nat × Nat) := trimReadQ defQ seq qual
-
-theorem trimRead_def_eq_contract (seq qual : ByteArray) (h : seq.size ≤ 10000) (j : Nat) (hj : j < seq.size)
-    (hjA : isACGT seq[j]! = true) :
-    trimRead seq qual = get_best_window [] (scoresOf seq qual) (fun ws => ws.map (perBase defQ)) :=
-  trimRead_eq_contract defQ (by decide) seq qual h j hj hjA
 
 theorem trimRead_def_acgt (seq qual : ByteArray) (s e : Nat) (ht : trimRead seq qual = some (s, e)) :
     e ≤ seq.size ∧ s < e ∧ ∀ i, s ≤ i → i < e → isACGT seq[i]! = true :=
@@ -585,30 +564,7 @@ end ReadTrim
 
 namespace ParMap
 
-/-- **Chunked output is the whole output**: for any cut of the input into
-chunks, the chunks' texts in order are the text of the whole input mapped. -/
-theorem chunks_text {α β : Type} (f : α → β) (fmt : β → String) (cs : List (Array α)) :
-    String.join (cs.map fun c => formatAll fmt (c.map f)) = formatAll fmt ((cs.foldl (· ++ ·) #[]).map f) := by
-  suffices h : ∀ acc, formatAll fmt (acc.map f) ++ String.join (cs.map fun c => formatAll fmt (c.map f)) =
-      formatAll fmt ((cs.foldl (· ++ ·) acc).map f) by
-    have := h #[]; simpa [formatAll] using this
-  induction cs with
-  | nil => intro acc; simp
-  | cons c cs ih =>
-    intro acc
-    rw [List.map_cons, String.join_cons, ← String.append_assoc, ← formatAll_append, ← Array.map_append, ih]
-    rfl
-
-/-- Two stages (prep, then map) are their composition. -/
-theorem stages_text {α β γ : Type} (p : α → β) (m : β → γ) (fmt : γ → String) (c : Array α) :
-    formatAll fmt ((c.map p).map m) = formatAll fmt (c.map (m ∘ p)) := by
-  rw [Array.map_map]
-
 end ParMap
 
-#print axioms ReadTrim.trimRead_eq_contract
 #print axioms ReadTrim.trimRead_acgt
-#print axioms ReadTrim.trimRead_def_eq_contract
 #print axioms ReadTrim.trimRead_def_acgt
-#print axioms ParMap.chunks_text
-#print axioms ParMap.stages_text

@@ -247,8 +247,6 @@ theorem term01 (G R : ByteArray) (J j A : Nat) :
     (if bit J j = 1 then seedBit G R j A else 0) = (if bit J j = 1 ∧ seedBit G R j A ≠ 0 then 1 else 0) * 2 ^ j := by
   rcases seedBit_cases G R j A with h | h <;> rw [h] <;> split <;> split <;> simp_all
 
-theorem ite01' (P : Prop) [Decidable P] : (if P then 1 else 0) ≤ 1 := by split <;> omega
-
 /-- **Support.**  `supAt` is the number of seeds clean on the diagonal. -/
 theorem supAt_spec (G R : ByteArray) (J : Nat) (as : Array Nat) (h : AnchorsM (maskJ G R J) as) (i A : Nat)
     (hi : i < as.size) (h1 : A ≤ as[i]! / 16 + 3) (h2 : as[i]! / 16 ≤ A + 3) :

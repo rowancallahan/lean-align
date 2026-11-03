@@ -623,31 +623,6 @@ theorem addBS_pen' (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c D : Nat)
   · exact add_pen_le _ _ _ _ _
   · exact Nat.le_refl _
 
-theorem chromKB_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (acc : List (Array Nat)) (b : Best) :
-    (chromKB R gbs c P acc b).pen ≤ b.pen := by
-  have hK : ∀ lim shs ds b, (stageK R gbs c lim shs ds b).pen ≤ b.pen := fun lim shs ds b => by
-    unfold stageK
-    exact foldl_pen _ (fun b D => foldl_pen _ (fun b sh => addK_pen _ _ _ _ _ _ b) _ b) _ b
-  have hB : ∀ shs bs ds b, (stageB P R gbs c shs bs ds b).pen ≤ b.pen := fun shs bs ds b => by
-    unfold stageB
-    refine foldl_pen _ (fun b D => foldl_pen _ (fun b bb => ?_) bs b) ds b
-    unfold stageBD; split
-    · exact foldl_pen _ (fun b sh => addBS_pen' _ R gbs c D _ b sh) _ b
-    · exact Nat.le_refl _
-  unfold chromKB
-  simp only [stageKP_fun, ite_self, shapesT_eq, shapesKT_eq]
-  have h2 : (if 0 < gapBound sc0 (-((min b.pen P : Nat) : Int)) then
-      stageK R gbs c (min P 16) ((shapesAt (min b.pen P)).filter (· != (0, 0)))
-        (diagsB acc (acc.length - sbound (min (min P 16) (min b.pen P))) (2 * gapBound sc0 (-((min b.pen P : Nat) : Int)))) b
-      else b).pen ≤ b.pen := by
-    split
-    · exact hK _ _ _ _
-    · exact Nat.le_refl _
-  generalize (if 0 < gapBound sc0 (-((min b.pen P : Nat) : Int)) then _ else b) = b2 at h2 ⊢
-  split
-  · exact Nat.le_trans (hB _ _ _ _) h2
-  · exact h2
-
 theorem chromKBS_pen (P : Nat) (R : ByteArray) (gbs : Array ByteArray) (c : Nat) (acc : List (Array Nat))
     (J : List Nat) (b : Best) : (chromKBS R gbs c P acc J b).pen ≤ b.pen := by
   have hK : ∀ lim shs ds b, (stageK R gbs c lim shs ds b).pen ≤ b.pen := fun lim shs ds b => by

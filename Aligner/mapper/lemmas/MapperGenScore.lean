@@ -33,11 +33,6 @@ theorem penQ_of (Q : Nat) (xs ys : List Char) (path : List Step) (bs : Int)
     penQ Q xs ys = if -(Q : Int) ≤ bs then (-bs).toNat else Q + 1 := by
   simp [penQ, h]
 
-theorem penQ_le (Q : Nat) (xs ys : List Char) : penQ Q xs ys ≤ Q + 1 := by
-  unfold penQ; split
-  · split <;> omega
-  · omega
-
 /-- Mismatches, runs and columns of a walk scoring `≥ −15`. -/
 theorem counts15 (path : List Step) (xs ys : List Char) (hw : IsMonotoneWalk path xs ys)
     (hs : -15 ≤ walkScore sc0 xs ys path) :

@@ -75,20 +75,6 @@ def kernelScore (sc : Scoring) (read : List Char) (g : Genome) (w : Window) : Op
     | none => none
   | none => none
 
-/-- Map one read through an index. -/
-def mapWithIndex (sc : Scoring) (T : Int) (idx : Index) (read : List Char) : Option (Window × Int) :=
-  mapWith idx.lookup (kernelScore sc read idx.genome) idx.l0 T (errBound sc T) idx.genome read
-
-/-- Build the index, then map one read. -/
-def indexMapper (l0 : Nat) (sc : Scoring) (T : Int) (g : Genome) (read : List Char) : Option (Window × Int) :=
-  mapWithIndex sc T (buildIndex l0 g) read
-
-/-- Build the index once, then map every read through it. -/
-def mapReads (l0 : Nat) (sc : Scoring) (T : Int) (g : Genome) (reads : List (List Char)) :
-    List (Option (Window × Int)) :=
-  let idx := buildIndex l0 g
-  reads.map (mapWithIndex sc T idx)
-
 /-! ## The theorems
 
     indexMapper l0 sc T genome read = mapSpec sc T genome read              (indexMapper_eq_mapSpec)
@@ -228,38 +214,5 @@ theorem kernelScore_eq (sc : Scoring) (read : List Char) (g : Genome) (w : Windo
     cases hk : wfaAlignU3 sc read.toArray ys.toArray <;>
       cases hb : getBestAlignment sc read ys <;> simp_all
 
-/-- **Genome and read.**  Building the index and mapping through it gives
-exactly the specification's answer. -/
-theorem indexMapper_eq_mapSpec (l0 : Nat) (sc : Scoring) (hv : ValidScoring sc) (T : Int)
-    (g : Genome) (read : List Char) :
-    indexMapper l0 sc T g read = mapSpec sc T g read :=
-  mapWith_eq_mapSpec _ _ l0 sc hv T g read (buildIndex_complete l0 g) (kernelScore_eq sc read g)
-
-/-- **Index and read.**  Mapping through an index that is the one
-`buildIndex` makes from the genome is `indexMapper`. -/
-theorem mapWithIndex_eq_indexMapper (l0 : Nat) (sc : Scoring) (T : Int) (g : Genome) (idx : Index)
-    (hidx : idx = buildIndex l0 g) (read : List Char) :
-    mapWithIndex sc T idx read = indexMapper l0 sc T g read := by
-  subst hidx; rfl
-
-/-- So it is the specification's answer. -/
-theorem mapWithIndex_eq_mapSpec (l0 : Nat) (sc : Scoring) (hv : ValidScoring sc) (T : Int)
-    (g : Genome) (idx : Index) (hidx : idx = buildIndex l0 g) (read : List Char) :
-    mapWithIndex sc T idx read = mapSpec sc T g read := by
-  rw [mapWithIndex_eq_indexMapper l0 sc T g idx hidx]; exact indexMapper_eq_mapSpec l0 sc hv T g read
-
-/-- **One index, many reads.**  Every read gets the specification's answer. -/
-theorem mapReads_eq_mapSpec (l0 : Nat) (sc : Scoring) (hv : ValidScoring sc) (T : Int)
-    (g : Genome) (reads : List (List Char)) :
-    mapReads l0 sc T g reads = reads.map (mapSpec sc T g) := by
-  unfold mapReads
-  apply List.map_congr_left
-  intro read _
-  exact mapWithIndex_eq_mapSpec l0 sc hv T g _ rfl read
-
 end MapSpec
 
-#print axioms MapSpec.indexMapper_eq_mapSpec
-#print axioms MapSpec.mapWithIndex_eq_indexMapper
-#print axioms MapSpec.mapWithIndex_eq_mapSpec
-#print axioms MapSpec.mapReads_eq_mapSpec

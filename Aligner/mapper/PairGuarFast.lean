@@ -61,119 +61,7 @@ variable (lim : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (hg
   (hlk : ∀ s base, s + q ≤ Rs.size →
     LookOkS G Rs s base 0 (LookG.look ix G Rs s base (LookG.prep ix (seedHashAt Rs s))))
 
-include hg hcat hrs ht hcwc hm hsb hl16 hlk in
-set_option maxHeartbeats 1000000 in
-theorem hitsS3_mem (w : Window) (k : Nat) :
-    (w, k) ∈ hitsS3 ix G offs (gbs ++ gbs) gbs.size t lim Rs ↔
-      (∃ c, c < gbs.size ∧ w.chr = t + c) ∧ k ≤ lim ∧ cwB lim read g w = k := by
-  have hg2 := genomeBytes_app gbs g hg
-  unfold hitsS3
-  simp only [List.mem_flatMap, List.mem_range]
-  constructor
-  · rintro ⟨c, hc, hmem⟩
-    have hc2 : t + c < (gbs ++ gbs).size := by simp; omega
-    obtain ⟨h1, h2, h3⟩ := hitsC_sound reads (g ++ g) (gbs ++ gbs) Rs hg2 hrs (t + c) lim hc2 hl16 _ _ _ w k hmem
-    refine ⟨⟨c, hc, h1⟩, h2, ?_⟩
-    obtain ⟨wc, wst, wlen⟩ := w
-    simp only at h1; subst h1
-    rw [hcwc c hc]; exact h3
-  · rintro ⟨⟨c, hc, hwc⟩, hk, hcw⟩
-    have hc2 : t + c < (gbs ++ gbs).size := by simp; omega
-    refine ⟨c, hc, ?_⟩
-    have hcw' : cwT lim reads (g ++ g) w = k := by
-      obtain ⟨wc, wst, wlen⟩ := w
-      simp only at hwc; subst hwc
-      rw [← hcwc c hc]; exact hcw
-    have hgc := gbs2_get gbs t c ht hc
-    have hcatc := catOk_spec G offs gbs hcat c hc
-    obtain ⟨nd, lt, len⟩ := ordG_spec ((prepG ix Rs (Rs.size / 25) (Rs.size / (Rs.size / 25))).map
-      (LookG.size ix)) (Rs.size / 25)
-    have hsub := List.take_sublist (sbound lim + 2) (ordG ((prepG ix Rs (Rs.size / 25)
-      (Rs.size / (Rs.size / 25))).map (LookG.size ix)) (Rs.size / 25))
-    have H := hitsC_complete reads (g ++ g) (gbs ++ gbs) Rs hg2 hrs (t + c) lim hc2 hl16 hm
-      (fun j => sliceG (LookG.look ix G Rs (j * (Rs.size / (Rs.size / 25))) (Rs.size - j * (Rs.size / (Rs.size / 25)))
-        (prepG ix Rs (Rs.size / 25) (Rs.size / (Rs.size / 25)))[j]!) (Rs.size - j * (Rs.size / (Rs.size / 25)))
-        offs[c]! (gbs ++ gbs)[t + c]!.size)
-      (fun j hj => by
-        rw [prepG_get ix Rs _ _ j hj, hgc]
-        exact sliceG_ok G gbs[c]! Rs _ _ _ _ (hlk _ _ (seed_fits Rs.size j hm hj)) hcatc.1 hcatc.2)
-      _ (hsub.nodup nd) (fun j hj => lt j (hsub.subset hj)) (by rw [List.length_take, len]; omega)
-      w hwc (by omega)
-    rw [hcw'] at H
-    unfold slicesAt
-    rw [List.map_map]
-    exact H
-
 end strand3
-
-set_option maxHeartbeats 1000000 in
-theorem mem_hitsAtB3 (lim : Nat) (hl16 : lim ≤ 16) (read : List Char) (g : Genome) (gbs : Array ByteArray)
-    (R : ByteArray) (hg : GenomeBytes gbs g) (hr : Encodes R read) {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    (ix : L) (G : ByteArray) (offs : Array Nat) (hcat : catOk G offs gbs = true)
-    (hlk : ∀ (R' : ByteArray) s base, s + q ≤ R'.size →
-      LookOkS G R' s base 0 (LookG.look ix G R' s base (LookG.prep ix (seedHashAt R' s))))
-    (l : List (Placement × Int)) (hl : hitsAtB3 lim ix G offs gbs R = some l) (x : Placement × Int) :
-    x ∈ l ↔ x ∈ hitsBoth sc0 (-(lim : Int)) g read := by
-  unfold hitsAtB3 at hl
-  split at hl
-  · next hok =>
-    unfold fastT at hok
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at hok
-    obtain ⟨hm, hsb⟩ := hok
-    simp only [Option.some.injEq] at hl
-    subst hl
-    have hn : gbs.size = g.length := hg.1
-    have hrr := revCompB_encodes R read hr
-    have hsz := revCompB_size R
-    have hcw1 : ∀ c, c < gbs.size → ∀ st len,
-        cwB lim read g ⟨0 + c, st, len⟩ = cwT lim read (g ++ g) ⟨0 + c, st, len⟩ := by
-      intro c hc st len
-      rw [Nat.zero_add, cwT_app_left lim read g _ (by simp only; omega)]
-      unfold cwB; rw [if_pos (by simp only; omega)]
-    have hcw2 : ∀ c, c < gbs.size → ∀ st len,
-        cwB lim read g ⟨gbs.size + c, st, len⟩ = cwT lim (revComp read) (g ++ g) ⟨gbs.size + c, st, len⟩ := by
-      intro c hc st len
-      rw [hn, cwT_app_right]
-      unfold cwB; rw [if_neg (by simp only; omega)]
-      simp
-    have key : ∀ w k, (w, k) ∈ hitsS3 ix G offs (gbs ++ gbs) gbs.size 0 lim R ++
-        hitsS3 ix G offs (gbs ++ gbs) gbs.size gbs.size lim (revCompB2 R) ↔ k ≤ lim ∧ cwB lim read g w = k := by
-      intro w k
-      rw [List.mem_append, revCompB2_eq,
-        hitsS3_mem lim read g gbs hg ix G offs hcat R read hr 0 (Or.inl rfl) hcw1 hm hsb hl16 (hlk R),
-        hitsS3_mem lim read g gbs hg ix G offs hcat (revCompB R) (revComp read) hrr gbs.size (Or.inr rfl) hcw2
-          (by rw [hsz]; exact hm) (by rw [hsz]; exact hsb) hl16 (hlk _)]
-      constructor
-      · rintro (⟨-, h⟩ | ⟨-, h⟩) <;> exact h
-      · rintro ⟨hk, hcw⟩
-        have := cwB_chr_lt lim read g w (by omega)
-        by_cases hc : w.chr < gbs.size
-        · left; exact ⟨⟨w.chr, hc, by omega⟩, hk, hcw⟩
-        · right; exact ⟨⟨w.chr - gbs.size, by omega, by omega⟩, hk, hcw⟩
-    obtain ⟨p, s⟩ := x
-    rw [List.mem_map, mem_hitsBoth_T]
-    have hS : ∀ st w, (strandScore g read st w = some s ∧ -(lim : Int) ≤ s) ↔
-        (cwS lim read g st w ≤ lim ∧ s = -(cwS lim read g st w : Int)) := by
-      intro st w; cases st
-      · exact cwT_iff lim read g w s
-      · exact cwT_iff lim (revComp read) g w s
-    constructor
-    · rintro ⟨⟨w, k⟩, hmem, he⟩
-      rw [key] at hmem
-      simp only [Prod.mk.injEq] at he
-      obtain ⟨rfl, rfl⟩ := he
-      have h3 : cwS lim read g (decB gbs.size w).2 (decB gbs.size w).1 = k := by
-        rw [hn, cwS_decB]; exact hmem.2
-      have h4 := (hS (decB gbs.size w).2 (decB gbs.size w).1).2 ⟨by omega, by rw [h3]⟩
-      exact ⟨strandScore_allWindows g read _ _ _ h4.1, h4.1, h4.2⟩
-    · rintro ⟨-, h1, h2⟩
-      have h4 := (hS p.2 p.1).1 ⟨h1, h2⟩
-      refine ⟨(encB gbs.size p, cwS lim read g p.2 p.1), (key _ _).2 ⟨h4.1, ?_⟩, ?_⟩
-      · rw [hn]; exact cwB_encB lim read g p h4.1
-      · simp only [Prod.mk.injEq]
-        rw [hn, decB_encB g.length p (cwS_chr_lt lim read g p h4.1), h4.2]
-        exact ⟨rfl, rfl⟩
-  · cases hl
 
 /-- `hitsSK` (packed chromosomes, word filter and kernels) with one more seed. -/
 def hitsSK3 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)
@@ -218,23 +106,6 @@ theorem hitsAtB3_congrG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G G'
     (offs : Array Nat) (gbs : Array ByteArray) (R : ByteArray) :
     hitsAtB3 lim ix G offs gbs R = hitsAtB3 lim ix G' offs gbs R := by
   simp only [hitsAtB3, hitsS3, hG]
-
-/-- **The enumerated mate's hits, packed whole genome.** -/
-theorem mem_hitsAtKP3_mz (lim : Nat) (hl16 : lim ≤ 16) (g : Genome) (read : List Char) (ix : Mz.MzIdx)
-    (G : PGen) (offs ns : Array Nat) (R : ByteArray) (hcut : cutOk G offs ns = true)
-    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (hr : Encodes R read)
-    (hchk : Mz.check2P ix G = true) (l : List (Placement × Int))
-    (hl : hitsAtKP3 lim ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R = some l)
-    (x : Placement × Int) : x ∈ l ↔ x ∈ hitsBoth sc0 (-(lim : Int)) g read := by
-  rw [hitsAtKP3_eq, hitsAtB3_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl)] at hl
-  exact mem_hitsAtB3 lim hl16 read g _ R hg hr _ _ offs (catOk_cut G offs ns hcut) (lookOk_pk ix G hchk) l hl x
-
-theorem hitsAtKP3_some {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lim : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (h : fastT lim R = true) :
-    ∃ l, hitsAtKP3 lim ix G offs pgs R = some l := by
-  unfold hitsAtKP3
-  rw [if_pos h]
-  exact ⟨_, rfl⟩
 
 /-! ## Part B: the partner, by a window scan -/
 
@@ -565,82 +436,13 @@ theorem bestOfPairs_restrict (dc : Nat → Nat) (sl lo hi : Nat) (h1 h2 : List (
 
 /-! ## Part D: the kernel and its theorem -/
 
-/-- **The fast pair-level guarantee at `Gc`**: the enumerated mate's hits within `Gc` (`swap`: mate 2),
-each hit's partners by the window scan, the pairs at pair score `≥ −Gc`, their unique best.
-Answer: `(best, a pair seen, the enumerated mate's hits)`; `none` when the enumerated mate is too
-short (`fastT Gc`). -/
-def pairGF (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMz) (offs : Array Nat)
-    (pgs : Array PGen) (R1 R2 : ByteArray) : Option (Option PairHit × Bool × List (Placement × Int)) :=
-  match hitsAtKP3 Gc ix ByteArray.empty offs pgs (if swap then R2 else R1) with
-  | none => none
-  | some lX =>
-    let RY := if swap then R1 else R2
-    let RYr := revCompK RY
-    let ps := pairsGF dc sl lo hi Gc (pgs ++ pgs) RY RYr (packRP RY) (packRP RYr) swap lX
-    some (bestOfPairs dc ps, !ps.isEmpty, lX)
-
-theorem pairGF_some (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMz) (offs : Array Nat)
-    (pgs : Array PGen) (R1 R2 : ByteArray) (h : fastT Gc (if swap then R2 else R1) = true) :
-    ∃ v, pairGF dc sl lo hi Gc swap ix offs pgs R1 R2 = some v := by
-  obtain ⟨l, hl⟩ := hitsAtKP3_some Gc ix ByteArray.empty offs pgs _ h
-  unfold pairGF
-  simp only [hl]
-  exact ⟨_, rfl⟩
-
 section top
 variable (dc : Nat → Nat) (sl lo hi Gc : Nat) (g : Genome) (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen)
   (offs ns : Array Nat) (R1 R2 : ByteArray)
   (hcut : cutOk G offs ns = true) (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g)
   (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hchk : Mz.check2P ix G = true)
 
-include hcut hg h1 h2 hchk in
-/-- **The fast guarantee is the specification.**  At any caps `P1, P2 ≥ Gc` (`Gc ≤ 7`):
-the enumerated mate's hits are exactly its hits within `Gc`; a pair is seen iff some proper pair
-has pair score `≥ −Gc`; then the answer is `pairSpecUT`, and `none` is a pair-level tie. -/
-theorem pairGF_sound (hG : Gc ≤ 7) (swap : Bool) (P1 P2 : Nat) (hP1 : Gc ≤ P1) (hP2 : Gc ≤ P2)
-    (r : Option PairHit) (seen : Bool) (lX : List (Placement × Int))
-    (h : pairGF dc sl lo hi Gc swap ((ix, G) : PkMz) offs (cutAll G offs ns) R1 R2 = some (r, seen, lX)) :
-    (∀ x, x ∈ lX ↔ x ∈ hitsBoth sc0 (-(Gc : Int)) g (if swap then m2 else m1)) ∧
-    (seen = true ↔ ∃ w ∈ properPairs sl lo hi (hitsBoth sc0 (-(P1 : Int)) g m1) (hitsBoth sc0 (-(P2 : Int)) g m2),
-      -(Gc : Int) ≤ pairScoreD dc w) ∧
-    (seen = true → r = pairSpecUT sc0 dc sl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2) ∧
-    (seen = true → r = none → PairTieOk dc sl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2) := by
-  cases hl : hitsAtKP3 Gc ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (if swap then R2 else R1) with
-  | none => simp only [pairGF, hl, reduceCtorEq] at h
-  | some lX' =>
-    simp only [pairGF, hl, Option.some.injEq, Prod.mk.injEq] at h
-    obtain ⟨rfl, rfl, rfl⟩ := h
-    have hrX : Encodes (if swap then R2 else R1) (if swap then m2 else m1) := by cases swap <;> simpa
-    have hrY : Encodes (if swap then R1 else R2) (if swap then m1 else m2) := by cases swap <;> simpa
-    have hX := mem_hitsAtKP3_mz Gc (by omega) g _ ix G offs ns _ hcut hg hrX hchk lX' hl
-    have HP := mem_pairsGF g (cutAll G offs ns) hg dc sl lo hi Gc hG m1 m2 swap _ hrY lX' hX P1 P2 hP1 hP2
-    have hseen : (!(pairsGF dc sl lo hi Gc (cutAll G offs ns ++ cutAll G offs ns) (if swap then R1 else R2)
-        (revCompK (if swap then R1 else R2)) (packRP (if swap then R1 else R2))
-        (packRP (revCompK (if swap then R1 else R2))) swap lX').isEmpty) = true ↔
-        ∃ w ∈ properPairs sl lo hi (hitsBoth sc0 (-(P1 : Int)) g m1) (hitsBoth sc0 (-(P2 : Int)) g m2),
-          -(Gc : Int) ≤ pairScoreD dc w := by
-      rw [Bool.not_eq_true', List.isEmpty_eq_false_iff_exists_mem]
-      constructor
-      · rintro ⟨w, hw⟩; exact ⟨w, ((HP w).1 hw).1, ((HP w).1 hw).2⟩
-      · rintro ⟨w, hw, hs⟩; exact ⟨w, (HP w).2 ⟨hw, hs⟩⟩
-    have hbest : (!(pairsGF dc sl lo hi Gc (cutAll G offs ns ++ cutAll G offs ns) (if swap then R1 else R2)
-        (revCompK (if swap then R1 else R2)) (packRP (if swap then R1 else R2))
-        (packRP (revCompK (if swap then R1 else R2))) swap lX').isEmpty) = true →
-        bestOfPairs dc (pairsGF dc sl lo hi Gc (cutAll G offs ns ++ cutAll G offs ns) (if swap then R1 else R2)
-          (revCompK (if swap then R1 else R2)) (packRP (if swap then R1 else R2))
-          (packRP (revCompK (if swap then R1 else R2))) swap lX') =
-          pairSpecUT sc0 dc sl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2 := by
-      intro hs
-      rw [Bool.not_eq_true', List.isEmpty_eq_false_iff_exists_mem] at hs
-      obtain ⟨w, hw⟩ := hs
-      exact bestOfPairs_restrict dc sl lo hi _ _ (hitsBoth_scoreFun _ _ _ _) (hitsBoth_scoreFun _ _ _ _) _ _ HP
-        (List.ne_nil_of_mem hw)
-    refine ⟨hX, hseen, hbest, fun hs hn => ⟨?_, ?_⟩⟩
-    · rw [← hbest hs]; exact hn
-    · obtain ⟨w, hw, -⟩ := hseen.1 hs; exact ⟨w, hw⟩
-
 end top
 
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.pairGF_sound

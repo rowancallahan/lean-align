@@ -439,21 +439,8 @@ theorem penL_del (xs ys : List Char) (L : Nat) (hl : xs.length = ys.length + L) 
   · rw [if_pos hh, if_pos (by omega), hup (by omega)]; omega
   · rw [if_neg hh, if_neg]; intro h; have := hup h; omega
 
-/-- Lengths differing by 4 or more: penalty 13. -/
-theorem penL_far (xs ys : List Char) (hl : xs.length + 4 ≤ ys.length ∨ ys.length + 4 ≤ xs.length) :
-    penL xs ys = 13 := by
-  obtain ⟨path, bs, hb, hw, hs, -⟩ := best_facts xs ys
-  rw [penL_of xs ys path bs hb]
-  rw [if_neg]
-  intro h12
-  rcases shape_of_score path xs ys hw (by omega) with he | ⟨i, l, j, hL, hL3, he⟩ | ⟨i, l, j, hL, hL3, he⟩
-  · have := length_of_diags hw he; omega
-  · have := lengths_ins (he ▸ hw); omega
-  · have := lengths_del (he ▸ hw); omega
-
 end MapSpec
 
 #print axioms MapSpec.penL_same
 #print axioms MapSpec.penL_ins
 #print axioms MapSpec.penL_del
-#print axioms MapSpec.penL_far

@@ -30,12 +30,6 @@ theorem pop4_maskAt (G R : ByteArray) (d : Nat) :
   unfold maskAt seedBit
   split <;> split <;> split <;> split <;> rfl
 
-theorem maskAt_bits (G R : ByteArray) (d : Nat) :
-    (maskAt G R d % 2 = 1 ↔ seedBit G R 0 d ≠ 0) ∧ (maskAt G R d / 2 % 2 = 1 ↔ seedBit G R 1 d ≠ 0) ∧
-    (maskAt G R d / 4 % 2 = 1 ↔ seedBit G R 2 d ≠ 0) ∧ (maskAt G R d / 8 % 2 = 1 ↔ seedBit G R 3 d ≠ 0) := by
-  unfold maskAt seedBit
-  split <;> split <;> split <;> split <;> decide
-
 /-- A seed is clean on diagonal `d` iff its letters match the genome at offset `off`. -/
 theorem seedBit_match (G R : ByteArray) (j d off : Nat) (hd : BIAS - j * q ≤ d)
     (ho : d - (BIAS - j * q) = off + j * q) (hfit : off + j * q + q ≤ G.size) :

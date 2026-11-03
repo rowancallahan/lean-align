@@ -235,10 +235,6 @@ inductive Tag where
   | t0 | t1 | t1g | t1gm | t2 | t3 | t1u | t1um | t2b
 deriving DecidableEq, Repr, Inhabited
 
-def Tag.str : Tag → String
-  | .t0 => "T0" | .t1 => "T1" | .t1g => "T1g" | .t1gm => "T1gm" | .t2 => "T2" | .t3 => "T3"
-  | .t1u => "T1u" | .t1um => "T1um" | .t2b => "T2b"
-
 /-- A routed pair: tag, suffix (`""`, `z` guarantee at 0, `x` no guarantee), mates, RT's or the
 trimmer's reason, RT's caps, the guarantee's `G0` and enumerated mate (`sw`: mate 2), and `pf = some G0`
 when the guarantee found no proper pair within `G0`. -/
@@ -254,8 +250,6 @@ structure TierOut where
   sw : Bool := false
   pf : Option Nat := none
 deriving Inhabited
-
-def TierOut.tagStr (t : TierOut) : String := t.tag.str ++ t.sfx
 
 /-- Settings and untrusted helpers of the tier router.  `pg`: the guarantee's `G` (none: off; used
 when `≤ 7`); `xZ`: fall back to the guarantee at 0; `gate`: pairs that skip RT, given both mates' `prepMate` and pass-1 lookup costs
@@ -481,12 +475,6 @@ the same in every search of it, so it is computed once per pair). -/
   let b := foldUpN (fun b c => chromKBFGK K1 kf1 R gbs2 c P x.1.acc[c]! x.1.J b) n 0 x.2.2
   foldUpN (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) n 0 b
 
-theorem mapChromsGBFGPO_eq {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
-    (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) :
-    mapChromsGBFGPO kf1 kf2 K1 K2 P ix G offs gbs R Rr ps pr (ordG (ps.map (LookG.size ix)) (R.size / 25))
-      (ordG (pr.map (LookG.size ix)) (R.size / 25)) = mapChromsGBFGP kf1 kf2 K1 K2 P ix G offs gbs R Rr ps pr := rfl
-
 /-- `mateKPP` with the seed orders given (`mateKPPO_eq`). -/
 def mateKPPO {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) (o1 o2 : List Nat) : MateR :=
@@ -541,22 +529,6 @@ theorem mateKPPO_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L)
     if x.1.isSome || x.2 then x else mt P
   else mt P
 
-/-- `passG` with both mates' preparations given (`passGS_eq`). -/
-def passGS (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep) : Out :=
-  if K.noPair P1 P2 R1 R2 then .unmapped .noPair none else
-  let sw := match ord with
-    | some o => o
-    | none => decide (K.cost P2 s2 < K.cost P1 s1)
-  if sw then
-    (stepR .two .one lo hi (K.mate P2 R2 s2) (K.region P1 R1) (fun r => decide (P1 < r))
-      (mateH K P1 R1 s1)).swap
-  else
-    stepR .one .two lo hi (K.mate P1 R1 s1) (K.region P2 R2) (fun r => decide (P2 < r))
-      (mateH K P2 R2 s2)
-
-theorem passGS_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) :
-    passGS K P1 P2 ord lo hi R1 R2 (K.prep R1) (K.prep R2) = passG K P1 P2 ord lo hi R1 R2 := rfl
-
 /-- `passGS` with the lookup costs (`k1`, `k2`), each mate's genome search (`m1`, `m2`) and region search (`g1`, `g2`) given
 (`passGSF_eq`). -/
 def passGSF (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray)
@@ -569,10 +541,6 @@ def passGSF (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2
     (stepR .two .one lo hi (m2 P2) (g1 P1) (fun r => decide (P1 < r)) (mateHF K.hint R1 m1 P1)).swap
   else
     stepR .one .two lo hi (m1 P1) (g2 P2) (fun r => decide (P2 < r)) (mateHF K.hint R2 m2 P2)
-
-theorem passGSF_eq (K : PassKer) (P1 P2 : Nat) (ord : Option Bool) (lo hi : Nat) (R1 R2 : ByteArray) (s1 s2 : K.Prep) :
-    passGSF K P1 P2 ord lo hi R1 R2 (K.cost P1 s1) (K.cost P2 s2) (fun Q => K.mate Q R1 s1) (fun Q => K.mate Q R2 s2)
-      (fun Q => K.region Q R1) (fun Q => K.region Q R2) = passGS K P1 P2 ord lo hi R1 R2 s1 s2 := rfl
 
 /-- `routeG` on two reads, pass 1's lookup costs and searches given (`routeGS_eq`). -/
 def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray)
@@ -590,12 +558,6 @@ def routeGS (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray)
     if rc.pass2 && rc.goOn r && rc.gate2 R1 R2 && !(B1 == A1 && B2 == A2) then
       ⟨pass2G K2 rc.swap2 A1 A2 B1 B2 r lo hi R1 R2 k, 2, B1, B2⟩
     else ⟨o, 1, A1, A2⟩
-
-theorem routeGS_eq (rc : RouteCfg) (K1 K2 : PassKer) (lo hi : Nat) (R1 R2 : ByteArray) :
-    routeGS rc K1 K2 lo hi R1 R2 (K1.cost (rc.cap1 R1) (K1.prep R1)) (K1.cost (rc.cap1 R2) (K1.prep R2))
-      (fun Q => K1.mate Q R1 (K1.prep R1))
-      (fun Q => K1.mate Q R2 (K1.prep R2)) (fun Q => K1.region Q R1) (fun Q => K1.region Q R2) =
-      routeG rc K1 K2 lo hi (some R1) (some R2) := rfl
 
 /-- `tierRest` with both mates' preparations given (`tierRest_eqS`). -/
 def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) : TierOut :=
@@ -627,9 +589,6 @@ def tierRestS (a b : ByteArray) (s1 s2 : PrepM MzP) (rk : Option (Reason × Opti
             else tierB cfg pk pgs a b s1 s2 rk c1 c2 (some gx) none
           { tag := t.1, sfx := sfx, m1 := t.2.1, m2 := t.2.2, why := why, c1 := c1, c2 := c2, g0 := G0,
             sw := swap, pf := some G0 }
-
-theorem tierRest_eqS (a b : ByteArray) (rk : Option (Reason × Option (Placement × Int))) (c1 c2 : Nat) :
-    tierRest cfg pk offs pgs a b rk c1 c2 = tierRestS cfg pk offs pgs a b (prepMate pk a) (prepMate pk b) rk c1 c2 := rfl
 
 /-- `(l.take k).foldl (· + ·) acc` without the prefix list (`sumTake_eq`). -/
 def sumTake : Nat → List Nat → Nat → Nat

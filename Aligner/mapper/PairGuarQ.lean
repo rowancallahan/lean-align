@@ -581,23 +581,6 @@ def pairsQ (dc : Nat → Nat) (sl lo hi Gc : Nat) (pgs2 : Array PGen) (RY RYr : 
     let p : PairHit := if swap then (y, x) else (x, y)
     if -(Gc : Int) ≤ pairScoreD dc p then some p else none
 
-/-- **The fast pair-level guarantee at `Gc`, early stop**: the enumerated mate's hits within `Gc`
-(raw lookups), the perfect ones' pairs first, then the others' (bound: their best score), stopping
-when the answer is settled.  Answer as `pairGF`'s. -/
-def pairGQ (dc : Nat → Nat) (sl lo hi Gc : Nat) (swap : Bool) (ix : PkMzR) (offs : Array Nat)
-    (pgs : Array PGen) (R1 R2 : ByteArray) : Option (Option PairHit × Bool × List (Placement × Int)) :=
-  match hitsAtKP3 Gc ix ByteArray.empty offs pgs (if swap then R2 else R1) with
-  | none => none
-  | some lX =>
-    let RY := if swap then R1 else R2
-    let RYr := revCompK RY
-    let f := pairsQ dc sl lo hi Gc (pgs ++ pgs) RY RYr (packRP RY) (packRP RYr) swap
-    let l0 := lX.filter fun x => decide (x.2 = 0)
-    let l1 := lX.filter fun x => !decide (x.2 = 0)
-    let U1 := l1.foldl (fun m x => max m x.2) (-(Gc : Int))
-    let s := goP dc f U1 l1 (goP dc f 0 l0 (none, false))
-    some (if s.2 then none else s.1, s.1.isSome, lX)
-
 /-- As `pairsQ`, with cached words (`pscanC`).  The pairs of one hit `x` of the enumerated mate (partners within `Gc − pen x`, pair score `≥ −Gc`). -/
 def pairsQC (dc : Nat → Nat) (sl lo hi Gc : Nat) (pgs2 : Array PGen) (RY RYr : ByteArray) (KY KYr : RP)
     (swap : Bool) (x : Placement × Int) : List PairHit :=
@@ -851,7 +834,6 @@ theorem mem_hitsAtB3S (lim : Nat) (hl16 : lim ≤ 16) (read : List Char) (g : Ge
         rw [hn, decB_encB g.length p (cwS_chr_lt lim read g p h4.1), h4.2]
         exact ⟨rfl, rfl⟩
   · cases hl
-
 
 /-- **The enumerated mate's hits, raw lookups, packed whole genome.** -/
 theorem mem_hitsAtKP3_mzR (lim : Nat) (hl16 : lim ≤ 16) (g : Genome) (read : List Char) (ix : Mz.MzIdx)

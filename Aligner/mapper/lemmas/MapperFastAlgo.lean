@@ -81,12 +81,6 @@ def MIXC : UInt64 := 0x9E3779B97F4A7C15
 /-- Number of `UInt32`s in `B`. -/
 @[inline] def len32 (B : ByteArray) : Nat := B.size / 4
 
-@[inline] def setU32 (B : ByteArray) (i v : Nat) : ByteArray :=
-  let j := 4 * i
-  let v := v.toUInt32
-  ((((B.set! j v.toUInt8).set! (j + 1) (v >>> 8).toUInt8).set! (j + 2) (v >>> 16).toUInt8).set!
-    (j + 3) (v >>> 24).toUInt8)
-
 /-- Little-endian bytes of the `UInt32`s. -/
 def pack32 (a : Array UInt32) : ByteArray := Id.run do
   let mut b := ByteArray.emptyWithCapacity (4 * a.size)
@@ -105,40 +99,6 @@ structure HIdx where
 deriving Inhabited
 
 def NB : Nat := 1 <<< 24
-
-/-- Builder (fast, not trusted): two passes over the chromosome with a rolling
-code (`good` = length of the ACGT run ending here). -/
-def buildIdx (g : ByteArray) : HIdx := Id.run do
-  let wmask : UInt64 := 0x3FFFFFFFFFFFF
-  let mut cnt : Array UInt32 := Array.replicate (NB + 1) 0
-  let mut x : UInt64 := 0
-  let mut good := 0
-  for p in [0:g.size] do
-    let v := g.get! p
-    if acgt v then x := (x * 4 + c2 v) &&& wmask; good := good + 1 else good := 0
-    if good ≥ q then
-      let b := bucketOf (mix x)
-      cnt := cnt.modify (b + 1) (· + 1)
-  for b in [0:NB] do cnt := cnt.set! (b + 1) (cnt[b + 1]! + cnt[b]!)
-  let mut fill := cnt
-  let mut ents : Array UInt32 := Array.replicate (2 * cnt[NB]!.toNat) 0
-  x := 0; good := 0
-  for p in [0:g.size] do
-    let v := g.get! p
-    if acgt v then x := (x * 4 + c2 v) &&& wmask; good := good + 1 else good := 0
-    if good ≥ q then
-      let y := mix x
-      let b := bucketOf y
-      let i := fill[b]!.toNat
-      ents := (ents.set! (2 * i) (p + 1 - q).toUInt32).set! (2 * i + 1) (keyOf y).toUInt32
-      fill := fill.set! b (i + 1).toUInt32
-  let offs := pack32 cnt
-  let ent := pack32 ents
-  let mut odd : Array (Array UInt32) := Array.replicate 256 #[]
-  for p in [0:g.size] do
-    let v := g.get! p
-    if !acgt v then odd := odd.modify v.toNat (·.push p.toUInt32)
-  return { offs, ent, odd := odd.map pack32 }
 
 /-! ### Checker -/
 
@@ -776,9 +736,6 @@ def insKey (ks : Array Nat) (x : Nat) : List Nat → List Nat
     (hs : Array (Option UInt64)) (b : Best) : Best :=
   let ps := prepAll lk ix hs
   lazyLoop R G c lk ix ps (seedOrder lk ix ps) 0 #[] 0 b
-
-/-- Reads the fast path handles: `100 .. 103` letters. -/
-def fastOk (R : ByteArray) : Bool := R.size / 4 == q
 
 @[specialize] def mapChroms {L P : Type} [Inhabited L] [Inhabited P] (lk : Look L P) (R : ByteArray)
     (gbs : Array ByteArray) (idxs : Array L) : Best :=

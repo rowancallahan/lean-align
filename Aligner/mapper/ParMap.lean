@@ -49,12 +49,6 @@ namespace MapSpec
 
 open AlignmentSpec ParMap
 
-/-- Build the index once, then map an array of reads with `n` tasks. -/
-def mapReadsParArray (n l0 : Nat) (sc : Scoring) (T : Int) (g : Genome) (reads : Array (List Char)) :
-    Array (Option (Window × Int)) :=
-  let idx := buildIndex l0 g
-  parMap n (mapWithIndex sc T idx) reads
-
 /-! ## The theorems
 
     parMap n f xs = xs.map f                                                 (parMap_eq_map)
@@ -112,25 +106,7 @@ namespace MapSpec
 
 open AlignmentSpec ParMap
 
-/-- **Any per-read function equal to `mapSpec`, run in parallel,** gives every
-read the specification's answer. -/
-theorem parMap_eq_mapSpec (n : Nat) (sc : Scoring) (T : Int) (g : Genome)
-    (f : List Char → Option (Window × Int)) (hf : ∀ read, f read = mapSpec sc T g read)
-    (reads : Array (List Char)) :
-    parMap n f reads = reads.map (mapSpec sc T g) := by
-  rw [parMap_eq_map]
-  exact Array.map_congr_left (fun r _ => hf r)
-
-/-- **One index, reads mapped in parallel.**  Every read gets the
-specification's answer. -/
-theorem mapReadsParArray_eq_mapSpec (n l0 : Nat) (sc : Scoring) (hv : ValidScoring sc) (T : Int)
-    (g : Genome) (reads : Array (List Char)) :
-    mapReadsParArray n l0 sc T g reads = reads.map (mapSpec sc T g) :=
-  parMap_eq_mapSpec n sc T g _ (mapWithIndex_eq_mapSpec l0 sc hv T g _ rfl) reads
-
 end MapSpec
 
 #print axioms ParMap.parMap_eq_map
 #print axioms ParMap.parMapS_eq
-#print axioms MapSpec.parMap_eq_mapSpec
-#print axioms MapSpec.mapReadsParArray_eq_mapSpec

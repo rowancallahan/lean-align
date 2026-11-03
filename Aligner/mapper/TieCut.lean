@@ -28,10 +28,6 @@ open MapSpec
     if b.pen < b1.pen then b else b1
   else gap P b1
 
-theorem tieCut_congr (P : Nat) (gap gap' : Nat → Best → Best) (h : ∀ Q b, gap Q b = gap' Q b) (b1 : Best) :
-    tieCut P gap b1 = tieCut P gap' b1 := by
-  unfold tieCut; simp only [h]
-
 /-! ## Phase 1 with the tie cut's stop rule
 
 After a tie at `p`, the gapped stages only look for windows below `p` (cap `p − 1`), and their cover
@@ -225,7 +221,6 @@ theorem gsOk_cap (P Q : Nat) (g : Genome) (gbs : Array ByteArray) {L Pp : Type} 
   have hS' := h.2.2.2 c hc j hj e he w ⟨h1, h2, h3, by omega⟩
   rw [h3] at hS' e' h4
   exact hS c hc _ _ hS' (by omega)
-
 
 section bothT
 variable (P : Nat) (read : List Char) (g : Genome) (gbs : Array ByteArray) (hg : GenomeBytes gbs g)
@@ -488,7 +483,6 @@ theorem mapChromsGBT_inv (hm : 0 < R.size / 25) (hsb : sbound P < R.size / 25) :
     exact gap P hsb S1 x.2.2 o1 o2 i1 (stop _ l1 hn) (stop _ l2 hn)
 
 end top
-
 
 /-! ## The fast searches with the tie cut
 

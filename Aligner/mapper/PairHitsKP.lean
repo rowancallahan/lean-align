@@ -210,15 +210,6 @@ theorem markA_mark (offs : Array Nat) (b : Nat) (a : Array Nat) (e : Nat) (he : 
     (v : Array Bool) (hv : chromOfA offs b e < v.size) : (markA offs b v a)[chromOfA offs b e]! = true := by
   rw [markA_eqL]; exact markL_mark offs b e hb _ he v hv
 
-theorem visOf_size (offs : Array Nat) (n Ls N : Nat) (lk : List (Nat × Array Nat)) :
-    (visOf offs n Ls N lk).size = n := by
-  unfold visOf
-  suffices ∀ (v : Array Bool), (lk.foldl (fun v x => markA offs (N - x.1 * Ls) v x.2) v).size = v.size by
-    rw [this]; simp
-  induction lk with
-  | nil => intro v; rfl
-  | cons x l ih => intro v; simp only [List.foldl_cons]; rw [ih, markA_size]
-
 theorem visOf_mark (offs : Array Nat) (n Ls N : Nat) (lk : List (Nat × Array Nat)) (x : Nat × Array Nat)
     (hx : x ∈ lk) (e : Nat) (he : e ∈ x.2.toList) (hb : N - x.1 * Ls ≤ e / 16)
     (hc : chromOfA offs (N - x.1 * Ls) e < n) : (visOf offs n Ls N lk)[chromOfA offs (N - x.1 * Ls) e]! = true := by

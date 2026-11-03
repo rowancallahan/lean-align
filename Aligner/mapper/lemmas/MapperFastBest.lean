@@ -117,44 +117,4 @@ theorem inv_add (cw : Window → Nat) (hc : ∀ w, cw w ≤ 13) (S : Window → 
             · exact h3 (h2' (by omega))
             · omega
 
-/-- **Result.**  When every hit was looked at, `result` is the unique best hit. -/
-theorem result_spec (cw : Window → Nat) (S : Window → Prop) (b : Best) (h : Inv cw S b)
-    (hall : ∀ w, cw w ≤ 12 → S w) (w : Window) (pen : Nat) :
-    result b = some (w.chr, w.start, w.len, pen) ↔
-      cw w = pen ∧ pen ≤ 12 ∧ ∀ w', cw w' ≤ 12 → w' ≠ w → pen < cw w' := by
-  unfold result
-  constructor
-  · intro hr
-    split at hr
-    · next hc =>
-      simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true'] at hc
-      simp only [Option.some.injEq, Prod.mk.injEq] at hr
-      obtain ⟨e1, e2, e3, e4⟩ := hr
-      have hw : b.win = w := by cases w; simp_all [Best.win]
-      subst e4
-      refine ⟨by rw [← hw]; exact h.hit hc.1, by simp [cap] at hc; omega, fun w' h1 h2 => ?_⟩
-      have := h.min w' (hall w' h1)
-      by_cases he : cw w' = b.pen
-      · have := (h.amb (by simp [cap] at hc; omega)).mpr ⟨w', hall w' h1, by rw [hw]; exact h2, he⟩
-        simp_all
-      · omega
-    · cases hr
-  · rintro ⟨h1, h2, h3⟩
-    have hmin := h.min w (hall w (by omega))
-    have hp : b.pen ≤ 12 := by omega
-    have hbw : b.win = w := by
-      apply Classical.byContradiction
-      intro hne
-      have := h3 b.win (by rw [h.hit hp]; omega) hne
-      rw [h.hit hp] at this; omega
-    have hpen : b.pen = pen := by rw [← h1, ← hbw, h.hit hp]
-    have hamb : b.amb = false := by
-      cases ha : b.amb
-      · rfl
-      · obtain ⟨w', hw', hne, he⟩ := (h.amb hp).mp ha
-        have := h3 w' (by omega) (by rw [← hbw]; exact hne)
-        omega
-    rw [if_pos (by simp [cap, hamb, hp])]
-    rw [← hbw, hpen]; rfl
-
 end MapSpec.Fast

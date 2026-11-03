@@ -44,10 +44,8 @@ def rawLook (ix : Mz.MzIdx) (p : MzP) (base : Nat) : Array Nat := Id.run do
         out := out.push a
   return if sorted then out else out.qsort (· < ·)
 
-
 @[inline] def baseCode (b : UInt8) : Nat :=
   if b == 65 then 0 else if b == 67 then 1 else if b == 71 then 2 else if b == 84 then 3 else 4
-
 
 /-- `hamming R P st lim 0 stop 0` (`hamP_eq`): 32 letters per step (`hamA`) when the read packs (≤ 256
 letters, all ACGT) and the window's blocks are all flagged (pure ACGT); else the letter loop. -/
@@ -96,23 +94,6 @@ def hamD (R Rr : ByteArray) (pgs : Array PGen) (v D lim : Nat) : Nat := Id.run d
   -- (`hamP_eq`: the same count by 32-letter words)
   hamP Rx G st lim n
 
-
-def interS (a b : Array Nat) : Array Nat := Id.run do
-  let mut out : Array Nat := #[]
-  let mut i := 0
-  let mut j := 0
-  while i < a.size && j < b.size do
-    let x := a[i]!
-    let y := b[j]!
-    if x < y then i := i + 1
-    else if y < x then j := j + 1
-    else
-      out := out.push x
-      i := i + 1
-      j := j + 1
-  return out
-
-
 def unionS (a b : Array Nat) : Array Nat := Id.run do
   let mut out : Array Nat := #[]
   let mut i := 0
@@ -125,47 +106,6 @@ def unionS (a b : Array Nat) : Array Nat := Id.run do
     if j < b.size && y == v then j := j + 1
     if out.back? != some v then out := out.push v
   return out
-
-
-def hitsFS (lim : Nat) (pk : PkMz) (offs : Array Nat) (pgs2 : Array PGen) (n t : Nat) (Rs : ByteArray) :
-    Array (Window × Nat) := Id.run do
-  let m := Rs.size / 25
-  let Ls := Rs.size / m
-  let K := packRP Rs
-  let ps := prepG pk Rs m Ls
-  let J := (ordG (ps.map (LookG.size pk)) m).take (sbound lim + 2)
-  let A := (J.map fun j => (LookG.look pk ByteArray.empty Rs (j * Ls) (Rs.size - j * Ls) ps[j]!).map (· / 16)).toArray
-  let cs := if A.size == 1 then A[0]! else if A.size == 2 then interS A[0]! A[1]!
-    else unionS (unionS (interS A[0]! A[1]!) (interS A[0]! A[2]!)) (interS A[1]! A[2]!)
-  let ny := Rs.size
-  let mut out : Array (Window × Nat) := #[]
-  for D in cs do
-    if D < ny then continue
-    let st0 := D - ny
-    let mut lo := 0
-    let mut hi := n
-    while lo + 1 < hi do
-      let mid := (lo + hi) / 2
-      if offs[mid]! ≤ st0 then lo := mid else hi := mid
-    if st0 < offs[lo]! then continue
-    let st := st0 - offs[lo]!
-    let k := kerHKG Rs K pgs2 pgs2 (t + lo) st ny lim
-    if k ≤ lim then out := out.push (⟨t + lo, st, ny⟩, k)
-  return out
-
-
-def hitsFB (lim : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) : Option (List (Placement × Int)) :=
-  if fastT lim R then
-    let n := pgs.size
-    let pgs2 := pgs ++ pgs
-    some ((hitsFS lim pk offs pgs2 n 0 R ++ hitsFS lim pk offs pgs2 n n (revCompK R)).toList.map
-      fun x => (decB n x.1, -(x.2 : Int)))
-  else none
-
-/-- Prototype join: both mates' hit lists, the pairs with score ≥ −Gc (nested filter). -/
-def pairsJB (dc : Nat → Nat) (sl lo hi Gc : Nat) (l1 l2 : List (Placement × Int)) : List PairHit :=
-  l1.flatMap fun x => l2.filterMap fun y =>
-    if properPairU sl lo hi x.1 y.1 && decide (-(Gc : Int) ≤ pairScoreD dc (x, y)) then some (x, y) else none
 
 /-- The ceiling candidate of one mate (bench, untrusted; re-checked by `tierPair`): the best gapless
 diagonal `(vc, D, mismatches)` among at most `top` places of the rarest seed (bucket 1 … `BK`, either
@@ -263,12 +203,6 @@ theorem winLgU_eq (G : PGen) (o : USize) (ho : o.toNat = G.o) (hb : G.o + G.n < 
     · rw [show min b G.n - a = 0 by omega]; rfl
   · rfl
 
-/-- Steps as runs. -/
-def runsOf (steps : List AlignmentSpec.Step) : List (AlignmentSpec.Step × Nat) :=
-  steps.foldr (fun s acc => match acc with
-    | (t, c) :: rest => if s == t then (t, c + 1) :: rest else (s, 1) :: acc
-    | [] => [(s, 1)]) []
-
 /-- The cells of `bandDP`, row by row (cell `(i, k)` at `i * K + k` of `H`, `F`, `tb`, all preset to
 `INF` / `0`; window column of cell `(i, k)` = `i + k + c0s − SH`, shifted by `SH = 2^20`).  Only cells
 that can get under `lim` are written; the previous row's cells under `lim` lie in `[pa, pb)`, this row's
@@ -316,23 +250,8 @@ def zerosGo : Nat → ByteArray → ByteArray
   | 0, b => b
   | f + 1, b => zerosGo f (b ++ b)
 
-theorem zerosGo_data : ∀ f (c : Nat) (b : ByteArray), b.data = Array.replicate c 0 →
-    (zerosGo f b).data = Array.replicate (2 ^ f * c) 0
-  | 0, c, b, h => by simp [zerosGo, h]
-  | f + 1, c, b, h => by
-    rw [zerosGo, zerosGo_data f (c + c) (b ++ b) (by rw [ByteArray.data_append, h, Array.replicate_append_replicate]),
-      Nat.pow_succ]
-    congr 1; rw [Nat.mul_assoc, Nat.two_mul]
-
 /-- `n` zero bytes by doubling (`zerosB_eq`: `⟨Array.replicate n 0⟩`, which builds a boxed array first). -/
 def zerosB (n : Nat) : ByteArray := (zerosGo (Nat.log2 n + 1) ⟨#[0]⟩).extract 0 n
-
-theorem zerosB_eq (n : Nat) : zerosB n = ⟨Array.replicate n 0⟩ := by
-  apply ByteArray.ext
-  rw [zerosB, ByteArray.data_extract, zerosGo_data _ 1 ⟨#[0]⟩ rfl, Array.extract_replicate, Nat.mul_one]
-  congr 1
-  have : n < 2 ^ (Nat.log2 n + 1) := Nat.lt_log2_self
-  omega
 
 /-- First diagonal of row `i` that `bandCells` computes (the cells before it are skipped there: window
 column `< 0`, or left of the previous row's live cells `[pa, pb)`), at most `K`. -/
@@ -1013,7 +932,6 @@ def heurP (cfg : HCfg) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (sl lo 
       pv := s
       pp := p
   return pick
-
 
 /-- The sum of the `k` smallest buckets of seeds `0 … n-1` of `pp`. -/
 def smallK (pk : PkMz) (pp : Array MzP) (n k : Nat) : Nat :=

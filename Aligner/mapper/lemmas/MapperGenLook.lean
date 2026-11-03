@@ -83,7 +83,6 @@ theorem seedHashAt_spec (R : ByteArray) (s : Nat) :
       rw [beq_iff_eq, ← UInt64.toNat_inj, hsh]; simpa using h0
     rw [if_neg hz, if_neg (fun h => h0 (hiff.1 h))]
 
-
 theorem lookupHG_spec (ix : HIdx) (G R : ByteArray) (s base bit : Nat) (hchk : checkIdx ix G = true) :
     LookOkS G R s base bit (lookupHG ix G R s base bit (seedHashAt R s)) := by
   obtain ⟨hC, hS, hO, hI⟩ := checkIdx_spec ix G hchk
@@ -178,7 +177,6 @@ theorem lookupHG_spec (ix : HIdx) (G R : ByteArray) (s base bit : Nat) (hchk : c
         rw [if_pos (by
           simp only [Bool.and_eq_true, decide_eq_true_eq, hp']
           exact ⟨⟨by omega, hp1⟩, (eqRun_spec G R q _ _).2 hp2⟩), hp']
-
 
 end MapSpec.Fast
 

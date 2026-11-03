@@ -21,9 +21,6 @@ def Partner (sl lo hi : Nat) (l : List (Placement × Int)) (x : Placement × Int
 def NearOk (sl lo hi : Nat) (A H l : List (Placement × Int)) : Prop :=
   (∀ x ∈ l, x ∈ H) ∧ ∀ x ∈ H, Partner sl lo hi A x → x ∈ l
 
-theorem scoreFun_sub {l h : List (Placement × Int)} (s : ∀ x ∈ l, x ∈ h) (f : ScoreFun h) : ScoreFun l :=
-  fun x hx y hy he => f x (s x hx) y (s y hy) he
-
 theorem pp_near_right {sl lo hi : Nat} {A H l : List (Placement × Int)} (hn : NearOk sl lo hi A H l) (p : PairHit) :
     p ∈ properPairs sl lo hi A l ↔ p ∈ properPairs sl lo hi A H := by
   rw [mem_properPairs, mem_properPairs]
@@ -38,151 +35,14 @@ theorem pp_near_left {sl lo hi : Nat} {A H l : List (Placement × Int)} (hn : Ne
   · rintro ⟨h1, h2, h3⟩; exact ⟨hn.1 _ h1, h2, h3⟩
   · rintro ⟨h1, h2, h3⟩; exact ⟨hn.2 _ h1 ⟨p.2, h2, Or.inr h3⟩, h2, h3⟩
 
-/-- `bestPairD` depends on the proper pairs only (lists with unique scores). -/
-theorem bestPairD_congrPP (dc : Nat → Nat) (sl lo hi : Nat) {l1 l2 h1 h2 : List (Placement × Int)}
-    (ep : ∀ p, p ∈ properPairs sl lo hi l1 l2 ↔ p ∈ properPairs sl lo hi h1 h2)
-    (f1 : ScoreFun l1) (f2 : ScoreFun l2) (g1 : ScoreFun h1) (g2 : ScoreFun h2) :
-    bestPairD dc sl lo hi l1 l2 = bestPairD dc sl lo hi h1 h2 := by
-  have key : ∀ p, bestPairD dc sl lo hi l1 l2 = some p ↔ bestPairD dc sl lo hi h1 h2 = some p := by
-    intro p
-    rw [bestPairD_iff dc sl lo hi l1 l2 f1 f2, bestPairD_iff dc sl lo hi h1 h2 g1 g2]
-    simp only [ep]
-  cases ha : bestPairD dc sl lo hi l1 l2 with
-  | none =>
-    cases hb : bestPairD dc sl lo hi h1 h2 with
-    | none => rfl
-    | some p => have := (key p).2 hb; rw [ha] at this; cases this
-  | some p => exact ((key p).1 ha).symm
-
-/-- The penalty bound from the best pair of a list. -/
-def topE (dc : Nat → Nat) (ps : List PairHit) : Option Nat :=
-  (topW dc ps).map fun w => (-(pairScoreD dc w)).toNat
-
 theorem topW_none_iff (dc : Nat → Nat) (l : List PairHit) : topW dc l = none ↔ l = [] := by
   cases l <;> simp [topW]
-
-theorem topE_congr (dc : Nat → Nat) {l l' : List PairHit} (e : ∀ p, p ∈ l ↔ p ∈ l') :
-    topE dc l = topE dc l' := by
-  unfold topE
-  cases h : topW dc l with
-  | none =>
-    cases h' : topW dc l' with
-    | none => rfl
-    | some w =>
-      have := (e w).2 (topW_mem dc l' w h')
-      rw [(topW_none_iff dc l).1 h] at this; cases this
-  | some w =>
-    cases h' : topW dc l' with
-    | none =>
-      have := (e w).1 (topW_mem dc l w h)
-      rw [(topW_none_iff dc l').1 h'] at this; cases this
-    | some w' =>
-      have a := topW_max dc l w h w' ((e w').2 (topW_mem dc l' w' h'))
-      have b := topW_max dc l' w' h' w ((e w).1 (topW_mem dc l w h))
-      have : pairScoreD dc w = pairScoreD dc w' := by omega
-      simp only [Option.map_some, this]
-
-theorem isEmpty_congr {α : Type} {l l' : List α} (e : ∀ p, p ∈ l ↔ p ∈ l') : l.isEmpty = l'.isEmpty := by
-  cases l with
-  | nil =>
-    cases l' with
-    | nil => rfl
-    | cons y _ => have := (e y).2 List.mem_cons_self; cases this
-  | cons y _ =>
-    cases l' with
-    | nil => have := (e y).1 List.mem_cons_self; cases this
-    | cons _ _ => rfl
-
-/-- The ladder, the second mate's hits at each rung from `hn` given the first mate's. -/
-def ladderUB (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (hf : Bool → Nat → List (Placement × Int))
-    (hn : Bool → Nat → List (Placement × Int) → List (Placement × Int)) (a1 : Bool) :
-    List Nat → Option PairHit × Bool
-  | [] =>
-    let lA := hf a1 (if a1 then P1 else P2)
-    let lB := hn (!a1) (if a1 then P2 else P1) lA
-    let ps := properPairsF sl lo hi (if a1 then lA else lB) (if a1 then lB else lA)
-    (bestOfPairs dc ps, !ps.isEmpty)
-  | c :: cs =>
-    let c1 := min c P1
-    let c2 := min c P2
-    let hA := hf a1 (if a1 then c1 else c2)
-    if hA.isEmpty then
-      if (if a1 then P1 ≤ c1 else P2 ≤ c2) then (none, false) else ladderUB dc sl lo hi P1 P2 hf hn a1 cs
-    else
-      let hB := hn (!a1) (if a1 then c2 else c1) hA
-      let ps := properPairsF sl lo hi (if a1 then hA else hB) (if a1 then hB else hA)
-      if P1 ≤ c1 ∧ P2 ≤ c2 then (bestOfPairs dc ps, !ps.isEmpty)
-      else match topE dc ps with
-        | none => ladderUB dc sl lo hi P1 P2 hf hn a1 cs
-        | some e =>
-          if (P1 ≤ c1 ∨ e ≤ c1) ∧ (P2 ≤ c2 ∨ e ≤ c2) then (bestOfPairs dc ps, true)
-          else
-            let lA := hf a1 (if a1 then min P1 e else min P2 e)
-            let lB := hn (!a1) (if a1 then min P2 e else min P1 e) lA
-            (bestOfPairs dc (properPairsF sl lo hi (if a1 then lA else lB) (if a1 then lB else lA)), true)
 
 section near
 variable (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (hf : Bool → Nat → List (Placement × Int))
   (hn : Bool → Nat → List (Placement × Int) → List (Placement × Int))
   (hSF : ∀ b c, c ≤ (if b then P1 else P2) → ScoreFun (hf b c))
   (hN : ∀ b c lA, c ≤ (if b then P1 else P2) → NearOk sl lo hi lA (hf b c) (hn b c lA))
-
-include hSF hN in
-/-- One rung, mate 1 first: the near list gives the full list's proper pairs. -/
-theorem rungB_true (c1 c2 : Nat) (h1 : c1 ≤ P1) (h2 : c2 ≤ P2) :
-    (∀ p, p ∈ properPairs sl lo hi (hf true c1) (hn false c2 (hf true c1)) ↔
-      p ∈ properPairs sl lo hi (hf true c1) (hf false c2)) ∧
-    bestPairD dc sl lo hi (hf true c1) (hn false c2 (hf true c1)) =
-      bestPairD dc sl lo hi (hf true c1) (hf false c2) := by
-  have E := pp_near_right (hN false c2 (hf true c1) h2)
-  exact ⟨E, bestPairD_congrPP dc sl lo hi E (hSF true c1 h1) (scoreFun_sub (hN false c2 _ h2).1 (hSF false c2 h2))
-    (hSF true c1 h1) (hSF false c2 h2)⟩
-
-include hSF hN in
-theorem rungB_false (c1 c2 : Nat) (h1 : c1 ≤ P1) (h2 : c2 ≤ P2) :
-    (∀ p, p ∈ properPairs sl lo hi (hn true c1 (hf false c2)) (hf false c2) ↔
-      p ∈ properPairs sl lo hi (hf true c1) (hf false c2)) ∧
-    bestPairD dc sl lo hi (hn true c1 (hf false c2)) (hf false c2) =
-      bestPairD dc sl lo hi (hf true c1) (hf false c2) := by
-  have E := pp_near_left (hN true c1 (hf false c2) h1)
-  exact ⟨E, bestPairD_congrPP dc sl lo hi E (scoreFun_sub (hN true c1 _ h1).1 (hSF true c1 h1)) (hSF false c2 h2)
-    (hSF true c1 h1) (hSF false c2 h2)⟩
-
-include hSF hN in
-/-- **The near ladder is the ladder.** -/
-theorem ladderUB_eq (a1 : Bool) : ∀ cs,
-    ladderUB dc sl lo hi P1 P2 hf hn a1 cs = ladderUR dc sl lo hi P1 P2 hf a1 cs
-  | [] => by
-    cases a1
-    · have r := rungB_false dc sl lo hi P1 P2 hf hn hSF hN P1 P2 (Nat.le_refl _) (Nat.le_refl _)
-      simp only [ladderUB, ladderUR, properPairsF_eq, bestOfPairs_pp, Bool.not_false, Bool.false_eq_true,
-        ↓reduceIte, r.2, isEmpty_congr r.1]
-    · have r := rungB_true dc sl lo hi P1 P2 hf hn hSF hN P1 P2 (Nat.le_refl _) (Nat.le_refl _)
-      simp only [ladderUB, ladderUR, properPairsF_eq, bestOfPairs_pp, Bool.not_true, ↓reduceIte, r.2,
-        isEmpty_congr r.1]
-  | c :: cs => by
-    have ih := ladderUB_eq a1 cs
-    cases a1
-    · have r := rungB_false dc sl lo hi P1 P2 hf hn hSF hN (min c P1) (min c P2) (Nat.min_le_right _ _) (Nat.min_le_right _ _)
-      have re := fun e => rungB_false dc sl lo hi P1 P2 hf hn hSF hN (min P1 e) (min P2 e) (Nat.min_le_left _ _) (Nat.min_le_left _ _)
-      simp only [ladderUB, ladderUR, properPairsF_eq, bestOfPairs_pp, Bool.not_false, Bool.false_eq_true,
-        ↓reduceIte, r.2, isEmpty_congr r.1, topE_congr dc r.1, ih, (re _).2]
-      split
-      · rfl
-      · split
-        · rfl
-        · unfold topE
-          cases topW dc (properPairs sl lo hi (hf true (min c P1)) (hf false (min c P2))) <;> rfl
-    · have r := rungB_true dc sl lo hi P1 P2 hf hn hSF hN (min c P1) (min c P2) (Nat.min_le_right _ _) (Nat.min_le_right _ _)
-      have re := fun e => rungB_true dc sl lo hi P1 P2 hf hn hSF hN (min P1 e) (min P2 e) (Nat.min_le_left _ _) (Nat.min_le_left _ _)
-      simp only [ladderUB, ladderUR, properPairsF_eq, bestOfPairs_pp, Bool.not_true, ↓reduceIte, r.2,
-        isEmpty_congr r.1, topE_congr dc r.1, ih, (re _).2]
-      split
-      · rfl
-      · split
-        · rfl
-        · unfold topE
-          cases topW dc (properPairs sl lo hi (hf true (min c P1)) (hf false (min c P2))) <;> rfl
 
 end near
 
@@ -417,18 +277,6 @@ theorem hitsKPFN_near {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl lo hi : Nat)
 
 /-! ## Mode HN: mode H with the second mate searched near the first -/
 
-/-- Mode H, the ladder's second-searched mate enumerated only on diagonals near the first
-mate's hits at each rung (`keepN`). -/
-def pairUKHN {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2]
-    (dc : Nat → Nat) (sl lo hi : Nat) (caps : List Nat) (a1 : Bool) (ix : L) (rl : Nat → Nat → L2)
-    (G : ByteArray) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option PairHit × Bool :=
-  let lad := fun (_ : Unit) =>
-    ladderUB dc sl lo hi (penOf R1) (penOf R2) (fun b c => hitsKPF ix G offs pgs (if b then R1 else R2) c)
-      (fun b c ys => hitsKPFN sl hi ix G offs pgs (if b then R1 else R2) c ys) a1 caps
-  match pairRegionKP lo hi ix rl G offs pgs R1 R2 with
-  | some (a, b) => if properPairU sl lo hi a.1 b.1 && dc (fragLen a.1 b.1) == 0 then (some (a, b), true) else lad ()
-  | none => lad ()
-
 /-! ### Compiled `hitsKPFN`: chromosomes without a hit of the other mate are skipped (`hitsKPFN_eqG`) -/
 
 /-- `hitsSKN`, a chromosome searched only when `gate` holds on it. -/
@@ -527,53 +375,9 @@ variable (dc : Nat → Nat) (sl lo hi : Nat) (caps : List Nat) (a1 : Bool) (g : 
   (hcut : cutOk G offs ns = true) (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g)
   (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hchk : Mz.check2P ix G = true)
 
-include hcut hg h1 h2 hchk in
-/-- **Mode HN is mode H.** -/
-theorem pairUKHN_eq :
-    pairUKHN dc sl lo hi caps a1 ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty
-      offs (cutAll G offs ns) R1 R2 =
-    pairUKH dc sl lo hi caps a1 ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty
-      offs (cutAll G offs ns) R1 R2 := by
-  have hSF : ∀ (b : Bool) c, c ≤ (if b then penOf R1 else penOf R2) →
-      ScoreFun (hitsKPF ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (if b then R1 else R2) c) := by
-    intro b c hc
-    cases b
-    · exact scoreFun_of_iff (hitsKPF_mem g ix G offs ns hcut hg hchk R2 m2 h2 c
-        (Nat.le_trans hc (penOf_le16 R2))) (hitsBoth_scoreFun sc0 _ g m2)
-    · exact scoreFun_of_iff (hitsKPF_mem g ix G offs ns hcut hg hchk R1 m1 h1 c
-        (Nat.le_trans hc (penOf_le16 R1))) (hitsBoth_scoreFun sc0 _ g m1)
-  have e := ladderUB_eq dc sl lo hi (penOf R1) (penOf R2)
-    (fun b c => hitsKPF ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (if b then R1 else R2) c)
-    (fun b c ys => hitsKPFN sl hi ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) (if b then R1 else R2) c ys)
-    hSF (fun b c lA _ => hitsKPFN_near sl lo hi _ _ _ _ _ c lA) a1 caps
-  unfold pairUKHN pairUKH
-  simp only [e, ladderUF_eq]
-  rfl
-
-include hcut hg h1 h2 hchk in
-/-- **Mode HN, packed whole genome: the pair-level specification.** -/
-theorem pairUKHN_mz_eq :
-    (pairUKHN dc sl lo hi caps a1 ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty
-      offs (cutAll G offs ns) R1 R2).1 =
-      pairSpecUT sc0 dc sl lo hi (-(penOf R1 : Int)) (-(penOf R2 : Int)) g m1 m2 := by
-  rw [pairUKHN_eq dc sl lo hi caps a1 g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk]
-  exact pairUKH_mz_eq dc sl lo hi caps a1 g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk
-
-include hcut hg h1 h2 hchk in
-/-- **Mode HN: the answer kind `pairTie` is exact.** -/
-theorem pairUKHN_tie
-    (h : pairUKHN dc sl lo hi caps a1 ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty
-      offs (cutAll G offs ns) R1 R2 = (none, true)) :
-    PairTieOk dc sl lo hi (-(penOf R1 : Int)) (-(penOf R2 : Int)) g m1 m2 := by
-  rw [pairUKHN_eq dc sl lo hi caps a1 g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk] at h
-  exact pairUKH_tie dc sl lo hi caps a1 g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk h
-
 end topN
 
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.ladderUB_eq
 #print axioms MapSpec.Fast.hitsKPFN_near
 #print axioms MapSpec.Fast.hitsKPFN_eqG
-#print axioms MapSpec.Fast.pairUKHN_mz_eq
-#print axioms MapSpec.Fast.pairUKHN_tie

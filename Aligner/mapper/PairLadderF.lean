@@ -99,10 +99,6 @@ theorem bestOfPairs_eq (dc : Nat → Nat) (ps : List PairHit) :
         · exact h
         · exact absurd ⟨h.1.trans hw'.1.symm, h.2.trans hw'.2.symm⟩ hs
 
-theorem bestOfPairs_pp (dc : Nat → Nat) (sl lo hi : Nat) (h1 h2 : List (Placement × Int)) :
-    bestOfPairs dc (properPairs sl lo hi h1 h2) = bestPairD dc sl lo hi h1 h2 := by
-  rw [bestOfPairs_eq]; rfl
-
 /-! ## Proper pairs, grouped by chromosome and strand -/
 
 /-- Group key of a second-mate hit, and the key its proper partners of the first mate look up. -/
@@ -163,76 +159,7 @@ theorem properPairsF_eq (sl lo hi : Nat) (h1 h2 : List (Placement × Int)) :
   · simp [h, properPairU_key sl lo hi a.1 b.1 h]
   · simp [h]
 
-/-- `bestPairD`, fast. -/
-def bestPairF (dc : Nat → Nat) (sl lo hi : Nat) (h1 h2 : List (Placement × Int)) : Option PairHit :=
-  bestOfPairs dc (properPairsF sl lo hi h1 h2)
-
-theorem bestPairF_eq (dc : Nat → Nat) (sl lo hi : Nat) (h1 h2 : List (Placement × Int)) :
-    bestPairF dc sl lo hi h1 h2 = bestPairD dc sl lo hi h1 h2 := by
-  rw [bestPairF, properPairsF_eq, bestOfPairs_pp]
-
 /-! ## The ladder, proper pairs built once per rung -/
-
-def ladderUF (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (hf : Bool → Nat → List (Placement × Int))
-    (a1 : Bool) : List Nat → Option PairHit × Bool
-  | [] =>
-    let ps := properPairsF sl lo hi (hf true P1) (hf false P2)
-    (bestOfPairs dc ps, !ps.isEmpty)
-  | c :: cs =>
-    let c1 := min c P1
-    let c2 := min c P2
-    let hA := hf a1 (if a1 then c1 else c2)
-    if hA.isEmpty then
-      if (if a1 then P1 ≤ c1 else P2 ≤ c2) then (none, false) else ladderUF dc sl lo hi P1 P2 hf a1 cs
-    else
-      let hB := hf (!a1) (if a1 then c2 else c1)
-      let l1 := if a1 then hA else hB
-      let l2 := if a1 then hB else hA
-      let ps := properPairsF sl lo hi l1 l2
-      if P1 ≤ c1 ∧ P2 ≤ c2 then (bestOfPairs dc ps, !ps.isEmpty)
-      else match topW dc ps with
-        | none => ladderUF dc sl lo hi P1 P2 hf a1 cs
-        | some w =>
-          let e := (-(pairScoreD dc w)).toNat
-          if (P1 ≤ c1 ∨ e ≤ c1) ∧ (P2 ≤ c2 ∨ e ≤ c2) then (bestOfPairs dc ps, true)
-          else (bestPairF dc sl lo hi (hf true (min P1 e)) (hf false (min P2 e)), true)
-
-theorem ladderUF_eq (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (hf : Bool → Nat → List (Placement × Int))
-    (a1 : Bool) : ∀ cs, ladderUF dc sl lo hi P1 P2 hf a1 cs = ladderUR dc sl lo hi P1 P2 hf a1 cs
-  | [] => by simp only [ladderUF, ladderUR, properPairsF_eq, bestOfPairs_pp]
-  | c :: cs => by
-    have ih := ladderUF_eq dc sl lo hi P1 P2 hf a1 cs
-    simp only [ladderUF, ladderUR, properPairsF_eq, bestOfPairs_pp, bestPairF_eq, ih]
-    split
-    · rfl
-    · split
-      · rfl
-      · cases topW dc _ <;> rfl
-
-/-- `pairUKPR` with the fast pairing. -/
-def pairUKPRF {L Pp : Type} [LookG L Pp] [Inhabited Pp] (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (caps : List Nat)
-    (a1 : Bool) (ix : L) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
-    Option PairHit × Bool :=
-  let lad := fun (_ : Unit) =>
-    ladderUF dc sl lo hi P1 P2 (fun b c => hitsKPF ix G offs pgs (if b then R1 else R2) c) a1 caps
-  match mapFastGBKP P1 ix G offs pgs R1 with
-  | some a =>
-    match mapFastGBKP P2 ix G offs pgs R2 with
-    | some b => if properPairU sl lo hi a.1 b.1 && dc (fragLen a.1 b.1) == 0 then (some (a, b), true) else lad ()
-    | none => lad ()
-  | none => lad ()
-
-def pairUKPF {L Pp : Type} [LookG L Pp] [Inhabited Pp] (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (caps : List Nat)
-    (a1 : Bool) (ix : L) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
-    Option PairHit :=
-  (pairUKPRF dc sl lo hi P1 P2 caps a1 ix G offs pgs R1 R2).1
-
-theorem pairUKPRF_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (dc : Nat → Nat) (sl lo hi P1 P2 : Nat)
-    (caps : List Nat) (a1 : Bool) (ix : L) (G : ByteArray) (offs : Array Nat) (pgs : Array PGen)
-    (R1 R2 : ByteArray) :
-    pairUKPRF dc sl lo hi P1 P2 caps a1 ix G offs pgs R1 R2 = pairUKPR dc sl lo hi P1 P2 caps a1 ix G offs pgs R1 R2 := by
-  simp only [pairUKPRF, pairUKPR, ladderUF_eq]
-  cases mapFastGBKP P1 ix G offs pgs R1 <;> cases mapFastGBKP P2 ix G offs pgs R2 <;> rfl
 
 section top
 variable (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (caps : List Nat) (a1 : Bool) (g : Genome)
@@ -240,28 +167,7 @@ variable (dc : Nat → Nat) (sl lo hi P1 P2 : Nat) (caps : List Nat) (a1 : Bool)
   (hcut : cutOk G offs ns = true) (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g)
   (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hchk : Mz.check2P ix G = true)
 
-include hcut hg h1 h2 hchk in
-/-- **Proper-pair mode, fast pairing, packed whole genome: the specification.** -/
-theorem pairUKPF_mz_eq (hP1 : P1 ≤ 16) (hP2 : P2 ≤ 16) :
-    pairUKPF dc sl lo hi P1 P2 caps a1 ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
-      pairSpecUT sc0 dc sl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2 := by
-  unfold pairUKPF
-  rw [pairUKPRF_eq]
-  exact pairUKP_mz_eq dc sl lo hi P1 P2 caps a1 g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk hP1 hP2
-
-include hcut hg h1 h2 hchk in
-theorem pairUKPRF_tie (hP1 : P1 ≤ 16) (hP2 : P2 ≤ 16)
-    (h : pairUKPRF dc sl lo hi P1 P2 caps a1 ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
-      (none, true)) :
-    PairTieOk dc sl lo hi (-(P1 : Int)) (-(P2 : Int)) g m1 m2 := by
-  rw [pairUKPRF_eq] at h
-  exact pairUKPR_tie dc sl lo hi P1 P2 caps a1 g m1 m2 ix G offs ns R1 R2 hcut hg h1 h2 hchk hP1 hP2 h
-
 end top
 
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.bestPairF_eq
-#print axioms MapSpec.Fast.ladderUF_eq
-#print axioms MapSpec.Fast.pairUKPF_mz_eq
-#print axioms MapSpec.Fast.pairUKPRF_tie

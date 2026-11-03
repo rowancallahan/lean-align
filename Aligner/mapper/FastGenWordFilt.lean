@@ -189,7 +189,6 @@ theorem gAtWU_eq (gs : GW) (tU jU : USize) (t j : Nat) (ht : tU.toNat = t) (hj :
   simp only []
   rw [GW.getU_eq, GW.getU_eq, hu, hu1, hs, c1, c2]
 
-
 /-- `gAtW` (its slow path; not rewritten by `csimp`). -/
 @[inline] def gAtWS (gs : GW) (t : Nat) : UInt64 :=
   let s := t % 32
@@ -584,7 +583,6 @@ theorem lanesAnyS_eq (K : RP) (gs : GW) (n j : Nat) (full : UInt64) :
     exact (lanesAnyU_eq K gs n j _ (usz_n _ (by omega)) full k _ t F (usz_n _ (by omega)) (by omega)).symm
   · exact (lanesAnyS_eq K gs n j full k t F).symm
 
-
 /-- Number of lanes `0 … 3` flagged (bit `16i`). -/
 @[inline] def lc (F : UInt64) : Nat :=
   (F &&& 1).toNat + (F >>> 16 &&& 1).toNat + (F >>> 32 &&& 1).toNat + (F >>> 48 &&& 1).toNat
@@ -701,7 +699,6 @@ theorem laneZ_bit (m : UInt64) (i : Nat) (hi : i < 4) :
     have h4 := h 4 (by omega); have h5 := h 5 (by omega); have h6 := h 6 (by omega); have h7 := h 7 (by omega)
     simp only [Nat.add_assoc] at h0 h1 h2 h3 h4 h5 h6 h7 ⊢
     simp_all
-
 
 theorem dig_le1 (x : UInt64) (t : Nat) (h : dig x.toNat t ≤ 1) :
     dig x.toNat t = if x.toNat.testBit (2 * t) then 1 else 0 := by
@@ -1409,16 +1406,6 @@ theorem zt_bit (x : UInt64) (i : Nat) (hi : i < 4) :
   · intro h
     exact ⟨fun b hb => by rw [Nat.add_comm]; exact h b (by omega), h 15 (by omega)⟩
 
-theorem zt_off (x : UInt64) (p : Nat) (hp : p % 16 ≠ 15) : (zt x).toNat.testBit p = false := by
-  unfold zt
-  rw [UInt64.toNat_and, Nat.testBit_and]
-  have : (0x8000800080008000 : UInt64).toNat.testBit p = false := by
-    by_cases h : p < 64
-    · have : ∀ p, p < 64 → p % 16 ≠ 15 → (0x8000800080008000 : UInt64).toNat.testBit p = false := by decide
-      exact this p h hp
-    · exact tb_hi _ _ (by omega)
-  rw [this, Bool.and_false]
-
 /-- Lane `i` of `x` is zero iff its 8 fields are. -/
 theorem lane0_dig (X i : Nat) :
     (∀ b, b < 16 → X.testBit (16 * i + b) = false) ↔ ∀ f, f < 8 → dig X (8 * i + f) = 0 := by
@@ -1436,7 +1423,6 @@ theorem zt_lane (a g : UInt64) (i : Nat) (hi : i < 4) :
     (zt (a ^^^ g)).toNat.testBit (16 * i + 15) = true ↔ ∀ f, f < 8 → dig a.toNat (8 * i + f) = dig g.toNat (8 * i + f) := by
   rw [zt_bit _ _ hi, lane0_dig]
   exact forall_congr' fun f => imp_congr_right fun _ => xor_dig a g _
-
 
 /-- The shift scan on a rolling window: `a` = the 32 fields at the current offset, `b` = the next `c`
 fields (low first), `u` = the word `b` came from. Flags in bit `16i + 15`. -/
@@ -1519,7 +1505,6 @@ theorem lanesAnyR_bit (gs : GW) (wj full : UInt64) (i : Nat) :
           | zero => exact ⟨h1, Or.inl (Or.inr (by rw [ha]; simpa using h3))⟩
           | succ e =>
             exact ⟨h1, Or.inr ⟨e, by omega, by rw [show T + 1 + e = T + (e + 1) by omega]; exact h3⟩⟩
-
 
 /-- `fullL` on a machine word (`fullLU_eq`). -/
 @[inline] def fullLU (np : USize) : UInt64 :=
@@ -1619,7 +1604,6 @@ theorem wordR_bit (K : RP) (gs : GW) (o r j np : Nat) (hnp : np ≤ 4) (hb : o +
       · exact ⟨h1, e, he, by rw [show o + e + 32 * j = o + 32 * j + e by omega]; exact h3⟩
     · rintro ⟨h1, e, he, h3⟩
       exact ⟨h1, Or.inr ⟨e, he, by rw [show o + 32 * j + e = o + e + 32 * j by omega]; exact h3⟩⟩
-
 
 theorem lane_equiv (K : RP) (gs : GW) (n j t i : Nat) (hi : i < 4) (hin : 8 * i + 8 ≤ n - 32 * j) :
     (laneZ (lowF (mAt K gs t j) (n - 32 * j))).toNat.testBit (16 * i) = true ↔

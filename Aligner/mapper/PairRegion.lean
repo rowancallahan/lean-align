@@ -283,67 +283,12 @@ def costPK {L Pp : Type} [LookG L Pp] (ix : L) (P : Nat) (s : PrepM Pp) : Nat :=
   unfold costPI costPK
   simp only [take_isortN, List.foldr_map, Array.foldr_toList]
 
-/-- `mapFastGBKP` from a prepared read. -/
-def mapFastGBKPp {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) (s : PrepM Pp) : Option (Placement × Int) :=
-  if fastT P R then
-    decodeP pgs.size P (mapChromsGBFG (kerHKG R s.K1 (pgs ++ pgs) (pgs ++ pgs))
-      (kerHKG s.Rr s.K2 (pgs ++ pgs) (pgs ++ pgs)) P ix G offs pgs R s.Rr s.ps s.pr)
-  else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB (pgs.map Mz.unpack)) (decodeBytes R)
-
-theorem mapFastGBKPp_prep {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
-    mapFastGBKPp P ix G offs pgs R (prepMate ix R) = mapFastGBKP P ix G offs pgs R := rfl
-
-/-- Mate `A` over the genome; mate `B` near it first, over the genome only when
-the region has a hit. -/
-@[inline] def pairRegionStep (lo hi : Nat) (mA : Option (Placement × Int)) (nh : Placement → Bool)
-    (mB : Unit → Option (Placement × Int)) : Option ((Placement × Int) × (Placement × Int)) :=
-  match mA with
-  | none => none
-  | some a =>
-    if nh a.1 then none else
-    match mB () with
-    | none => none
-    | some b => if properPair lo hi a.1 b.1 then some (a, b) else none
-
-/-- **Pairs, mate-anchored**: length dispatch (`T = −16` / `−12` per mate), word
-kernels, packed genome; the cheaper mate first. -/
-def pairRegionKP {L Pp L2 Pp2 : Type} [LookG L Pp] [Inhabited Pp] [LookG L2 Pp2] [Inhabited Pp2] (lo hi : Nat)
-    (ix : L) (rl : Nat → Nat → L2) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option ((Placement × Int) × (Placement × Int)) :=
-  let P1 := penOf R1
-  let P2 := penOf R2
-  let s1 := prepMate ix R1
-  let s2 := prepMate ix R2
-  if costP ix P2 s2 < costP ix P1 s1 then
-    (pairRegionStep lo hi (mapFastGBKPp P2 ix G offs pgs R2 s2) (regionNoHitKP P1 lo hi rl G offs pgs R1)
-      (fun _ => mapFastGBKPp P1 ix G offs pgs R1 s1)).map fun x => (x.2, x.1)
-  else
-    pairRegionStep lo hi (mapFastGBKPp P1 ix G offs pgs R1 s1) (regionNoHitKP P2 lo hi rl G offs pgs R2)
-      (fun _ => mapFastGBKPp P2 ix G offs pgs R2 s2)
-
 /-! ## Proofs: pairs -/
 
 theorem properPair_comm (lo hi : Nat) (a b : Placement) : properPair lo hi a b = properPair lo hi b a := by
   rcases a with ⟨wa, sa⟩
   rcases b with ⟨wb, sb⟩
   cases sa <;> cases sb <;> simp [properPair]
-
-/-- Region step = both mates, when a region without hits rules out a proper partner. -/
-theorem pairRegionStep_eq (lo hi : Nat) (mA mB : Option (Placement × Int)) (nh : Placement → Bool)
-    (hnh : ∀ a b, nh a = true → mB = some b → properPair lo hi a b.1 = false) :
-    pairRegionStep lo hi mA nh (fun _ => mB) = pairLazy lo hi mA (fun _ => mB) := by
-  cases mA with
-  | none => rfl
-  | some a =>
-    cases mB with
-    | none => simp [pairRegionStep, pairLazy]
-    | some b =>
-      by_cases h : nh a.1 = true
-      · have := hnh a.1 b h rfl
-        simp [pairRegionStep, pairLazy, h, this]
-      · simp [pairRegionStep, pairLazy, h]
 
 /-! ## Proofs: the region -/
 
@@ -796,46 +741,7 @@ theorem regionNoHitKP_sound (b : Placement) (h : regionNoHitKP P lo hi rl G offs
 
 end packed
 
-/-- **Packed genome, word kernels, length dispatch, mate-anchored** (`T = −16` /
-`−12` per mate; region lookups cut to the region): `pairRegionKP` is `pairSpecT`. -/
-theorem pairRegionKP_mz_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen)
-    (offs ns : Array Nat) (R1 R2 : ByteArray) (hcut : cutOk G offs ns = true)
-    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2)
-    (hchk : Mz.check2P ix G = true) :
-    pairRegionKP lo hi ((ix, G) : PkMz) (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs
-      (cutAll G offs ns) R1 R2 =
-      pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
-  have hG : ∀ R s base p, LookG.look ((ix, G) : PkMz) ByteArray.empty R s base p =
-      LookG.look ((ix, G) : PkMz) (Mz.unpack G) R s base p := fun _ _ _ _ => rfl
-  have hcat := catOk_cut G offs ns hcut
-  have hlk := lookOk_pk ix G hchk
-  have hm : ∀ P R m, Encodes R m →
-      mapFastGBKP P ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R = mapSpecBoth sc0 (-(P : Int)) g m := by
-    intro P R m hr
-    rw [mapFastGBKP_eq, mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) hG]
-    exact mapFastGB_eq_mapSpecBoth P g m _ R _ _ offs hg hr hcat hlk
-  have hn : ∀ P R m, Encodes R m → ∀ a b,
-      regionNoHitKP P lo hi (fun a b => ((((ix, G) : PkMz), a, b) : RgMz)) ByteArray.empty offs
-        (cutAll G offs ns) R a = true →
-      mapSpecBoth sc0 (-(P : Int)) g m = some b → properPair lo hi a b.1 = false := by
-    intro P R m hr a b h hb
-    obtain ⟨⟨hs, hT⟩, -⟩ := (mapSpecBoth_iffT _ g m b.1 b.2).mp hb
-    exact regionNoHitKP_sound P lo hi m g _ R hg hr _ ByteArray.empty (Mz.unpack G) offs
-      (fun _ _ _ _ _ _ _ => rfl) hcat (fun a b B hb hB hBi => lookOk_rg ix G hchk a b B hb hB hBi) a h b.1 b.2 hs hT
-  unfold pairRegionKP pairSpecT
-  simp only [mapFastGBKPp_prep, hm _ R1 m1 h1, hm _ R2 m2 h2]
-  split
-  · rw [pairRegionStep_eq lo hi _ _ _ (fun a b h hb => hn _ R1 m1 h1 a b h hb), pairLazy_match]
-    cases mapSpecBoth sc0 (-(penOf R1 : Int)) g m1 <;> cases mapSpecBoth sc0 (-(penOf R2 : Int)) g m2 <;>
-      simp only [Option.map_none]
-    next a b =>
-      rw [properPair_comm]
-      split <;> simp
-  · rw [pairRegionStep_eq lo hi _ _ _ (fun a b h hb => hn _ R2 m2 h2 a b h hb), pairLazy_match]
-    cases mapSpecBoth sc0 (-(penOf R1 : Int)) g m1 <;> cases mapSpecBoth sc0 (-(penOf R2 : Int)) g m2 <;> rfl
-
 end MapSpec.Fast
 
 #print axioms MapSpec.Fast.region_absent
 #print axioms MapSpec.Fast.regionNoHitKP_sound
-#print axioms MapSpec.Fast.pairRegionKP_mz_eq

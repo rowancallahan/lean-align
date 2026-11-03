@@ -30,13 +30,6 @@ def pairGXE {L Pp : Type} [LookG L Pp] [Inhabited Pp] (dc : Nat → Nat) (sl lo 
     some (bestOfPairs dc ps, !ps.isEmpty)
   else none
 
-theorem pairGXE_some {L Pp : Type} [LookG L Pp] [Inhabited Pp] (dc : Nat → Nat) (sl lo hi Gc : Nat)
-    (swap : Bool) (ix : L) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray)
-    (h1 : fastT Gc R1 = true) (h2 : fastT Gc R2 = true) :
-    ∃ v, pairGXE dc sl lo hi Gc swap ix offs pgs R1 R2 = some v := by
-  unfold pairGXE
-  cases swap <;> simp [h1, h2]
-
 /-- Within a pair score `≥ −Gc`, a mate's hit within `Gc` is a hit at any cap `P ≥ Gc`. -/
 theorem hitsBoth_capped {g : Genome} {m : List Char} {Gc P : Nat} (hP : Gc ≤ P) (x : Placement × Int)
     (hx : -(Gc : Int) ≤ x.2) : x ∈ hitsBoth sc0 (-(Gc : Int)) g m ↔ x ∈ hitsBoth sc0 (-(P : Int)) g m := by
