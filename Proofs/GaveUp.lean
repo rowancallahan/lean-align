@@ -220,4 +220,60 @@ theorem repeatMate_sound {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen} {offs n
 
 #print axioms repeatMate_sound
 
+/-! ## Compiled form: stop a seed's lookup after `gaveUpRepeats` places -/
+
+-- one seed of `repeatMate`: with a word prep, look up only the first `gaveUpRepeats` places (`lookupPWk`); a shorter
+-- result is the whole result (`lookupPWk_small`), and `gaveUpRepeats` counted places among the first ones suffice
+def seedRepF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) (s : Nat) : Bool :=
+  let p := MapSpec.Fast.mzPrep pk.1 (MapSpec.Fast.seedHashAt R s)
+  if p.ok then
+    let a := MapSpec.Fast.lookupPWk pk.1 pk.2 R s p 0 0 gaveUpRepeats
+    if a.size < gaveUpRepeats then false
+    else if gaveUpRepeats ≤ (a.extract 0 gaveUpRepeats).toList.countP (fun e => inChrom offs ns (e / 16)) then true
+    else decide (gaveUpRepeats ≤ seedCount pk offs ns R s)
+  else decide (gaveUpRepeats ≤ seedCount pk offs ns R s)
+
+theorem seedRepF_eq (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) (s : Nat) :
+    seedRepF pk offs ns R s = decide (gaveUpRepeats ≤ seedCount pk offs ns R s) := by
+  unfold seedRepF
+  simp only []
+  split
+  · rename_i hok
+    have hsp : seedPlaces pk R s = MapSpec.Fast.lookupPW pk.1 pk.2 R s
+        (MapSpec.Fast.mzPrep pk.1 (MapSpec.Fast.seedHashAt R s)) 0 0 := by
+      unfold seedPlaces MapSpec.Fast.mzLookSP; rw [if_pos hok]
+    split
+    · rename_i hs
+      have hfull := MapSpec.Fast.lookupPWk_small _ _ _ _ _ _ _ _ hs
+      have hle : seedCount pk offs ns R s < gaveUpRepeats := by
+        unfold seedCount
+        rw [hsp, ← hfull]
+        exact Nat.lt_of_le_of_lt (List.countP_le_length) (by simpa using hs)
+      simp; omega
+    · split
+      · rename_i hc
+        have hpre := MapSpec.Fast.lookupPWk_extract pk.1 pk.2 R s
+          (MapSpec.Fast.mzPrep pk.1 (MapSpec.Fast.seedHashAt R s)) 0 0 gaveUpRepeats
+        rw [hpre] at hc
+        have hsub : ((MapSpec.Fast.lookupPW pk.1 pk.2 R s
+            (MapSpec.Fast.mzPrep pk.1 (MapSpec.Fast.seedHashAt R s)) 0 0).extract 0 gaveUpRepeats).toList.Sublist
+            (seedPlaces pk R s).toList := by
+          rw [hsp, Array.toList_extract]
+          simpa [List.extract] using List.take_sublist gaveUpRepeats _
+        have := hsub.countP_le (p := fun e => inChrom offs ns (e / 16))
+        unfold seedCount
+        simp only [decide_eq_true_eq, Bool.true_eq, decide_eq_true_iff]; omega
+      · rfl
+  · rfl
+
+def repeatMateF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
+  (List.range (R.size / seedLength)).any fun j => seedRepF pk offs ns R (seedLength * j)
+
+@[csimp] theorem repeatMate_eqF : @repeatMate = @repeatMateF := by
+  funext pk offs ns R
+  unfold repeatMate repeatMateF
+  simp only [seedRepF_eq]
+
+#print axioms repeatMate_eqF
+
 end Spec.GaveUp
