@@ -760,16 +760,66 @@ def tsMsk : UInt64 := ((1 : UInt64) <<< truSeq.size.toUInt64) - 1
 def tsSh : UInt64 := (truSeq.size - 1).toUInt64
 def tsM : USize := truSeq.size.toUSize
 
+/-- `scanP` with `saLoopTS`'s end test inlined (no closure): `scanTS_eq`. -/
+def scanTS (read : ByteArray) (e0 : UInt64) : (k i : Nat) → Nat
+  | 0, i => i
+  | k + 1, i => if decide (6 ≤ read.size - i) && e0.toNat.testBit (read.size - i - 1) then i else scanTS read e0 k (i + 1)
+
+theorem scanTS_eq (read : ByteArray) (e0 : UInt64) : ∀ k i,
+    scanTS read e0 k i = scanP (fun s => decide (6 ≤ read.size - s) && e0.toNat.testBit (read.size - s - 1)) k i
+  | 0, _ => rfl
+  | k + 1, i => by rw [scanTS, scanP, scanTS_eq read e0 k (i + 1)]
+
+/-- `saLoopV` for TruSeq with its constants as literals (`saLoopTS_eq`; the masks `tsConst`). -/
+def saLoopTS (read : ByteArray) (nU p : USize) (e0 e1 : UInt64) : Nat :=
+  if h : p < nU then
+    let b := bOf 1413 4112 2658 8 (ReadTrim.rtGet read p)
+    let e0' := ((e0 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& b
+    let e1' := (((e1 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& b) ||| (((e0 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& 8191)
+    if 13 ≤ p + 1 && (((e1' >>> (12 : UInt64)) &&& (1 : UInt64)) != 0) then (p + 1 - 13).toNat
+    else saLoopTS read nU (p + 1) e0' e1'
+  else scanTS read e0 (read.size - (p.toNat + 1 - 13)) (p.toNat + 1 - 13)
+termination_by nU.toNat - p.toNat
+decreasing_by
+  have hl : p.toNat < nU.toNat := h
+  have hs := USize.toNat_lt_size nU
+  rw [USize.size_eq_two_pow] at hs
+  rw [USize.toNat_add, show (1 : USize).toNat = 1 from ReadTrim.rt_one, Nat.mod_eq_of_lt (by omega)]
+  omega
+
+theorem tsConst : tsA = 1413 ∧ tsC = 4112 ∧ tsG = 2658 ∧ tsT = 8 ∧ tsMsk = 8191 ∧ tsSh = 12 ∧ tsM = 13 ∧
+    truSeq.size = 13 := by
+  have hz : truSeq.size = 13 := by decide
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, ?_, hz⟩
+  show truSeq.size.toUSize = 13
+  rw [hz]; rfl
+
+theorem saLoopTS_eq (read : ByteArray) (nU : USize) (hnU : nU.toNat = read.size) (hn : read.size < 2 ^ 30) :
+    ∀ k (p : USize) (e0 e1 : UInt64), p.toNat + k = read.size →
+      saLoopTS read nU p e0 e1 = saLoopV truSeq read tsA tsC tsG tsT tsMsk tsSh tsM nU true true 6 p e0 e1
+  | 0, p, e0, e1, hp => by
+    obtain ⟨_, _, _, _, _, _, _, hz⟩ := tsConst
+    rw [saLoopTS, saLoopV, dif_neg (show ¬ p < nU from fun h => by have : p.toNat < nU.toNat := h; omega),
+      dif_neg (show ¬ p < nU from fun h => by have : p.toNat < nU.toNat := h; omega), hz, scanTS_eq]
+  | k + 1, p, e0, e1, hp => by
+    obtain ⟨hA, hC, hG, hT, hM, hS, hm, _⟩ := tsConst
+    have ih := fun e0' e1' => saLoopTS_eq read nU hnU hn k (p + 1) e0' e1'
+      (by rw [ReadTrim.rt_add _ _ (by rw [ReadTrim.rt_one]; omega), ReadTrim.rt_one]; omega)
+    rw [saLoopTS, saLoopV, dif_pos (show p < nU from show p.toNat < nU.toNat by omega),
+      dif_pos (show p < nU from show p.toNat < nU.toNat by omega)]
+    simp only [ih, hA, hC, hG, hT, hM, hS, hm, Bool.and_true, if_true]
+
 /-- `cutPos truSeq 6 1` with the precomputed masks (`cutPosTS_eq`). -/
 @[inline] def cutPosTS (read : ByteArray) : Nat :=
-  if read.size < 2 ^ 30 then saLoopV truSeq read tsA tsC tsG tsT tsMsk tsSh tsM read.size.toUSize true true 6 0 0 0
+  if read.size < 2 ^ 30 then saLoopTS read read.size.toUSize 0 0 0
   else cutPosW truSeq 6 1 read
 
 theorem cutPosTS_eq (read : ByteArray) : cutPosTS read = cutPos truSeq 6 1 read := by
   unfold cutPosTS
   split
   · rename_i hn
-    rw [← saCutU_eq truSeq 6 1 read (by decide) (by decide) (by decide) hn (by decide)]
+    rw [saLoopTS_eq read _ (rt_n _ (by omega)) hn read.size 0 0 0 (by simp),
+      ← saCutU_eq truSeq 6 1 read (by decide) (by decide) (by decide) hn (by decide)]
     rfl
   · exact cutPosW_eq truSeq 6 1 read
 

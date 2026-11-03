@@ -284,11 +284,79 @@ theorem wlU2_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU : USize),
     rw [wlU2, wlU, dif_neg h0, dif_neg h0]
     simp only [fIU_eq, ih _ ej]
 
+/-- `wlU2` from the full read (`trimReadQ`'s call: `ns = i`, and `hr` is true after the first letter), the current
+run kept as its right end `re` instead of its length (`pl = re − i`): `wlR_eq`. -/
+def wlR (Q z : Int64) (seq qual : ByteArray) (i re : USize) (ps : Int64) (bs be : USize) (bsc : Int64) : PackedFoldState :=
+  if h : i = 0 then ⟨0, true, re.toNat, ps.toInt, bs.toNat, be.toNat, bsc.toInt⟩
+  else
+    let j := i - 1
+    let f := fIU Q (rtGet seq j) (rtGet qual j)
+    if z < ps then
+      let ps' := f + ps
+      if bsc ≤ ps' then wlR Q z seq qual j re ps' j re ps' else wlR Q z seq qual j re ps' bs be bsc
+    else if bsc ≤ f then wlR Q z seq qual j (j + 1) f j (j + 1) f
+    else wlR Q z seq qual j (j + 1) f bs be bsc
+termination_by i.toNat
+decreasing_by
+  all_goals
+    have : i.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [rt_sub1 i h]; omega
+
+theorem wlR_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU reU : USize), iU.toNat = n → n ≤ reU.toNat →
+    reU.toNat < 2 ^ 30 → ∀ ps bs be bsc,
+      wlR Q 0 seq qual iU reU ps bs be bsc = wlU2 Q 0 seq qual iU iU true (reU - iU) ps bs be bsc := by
+  intro n
+  induction n with
+  | zero =>
+    intro iU reU hi _ _ ps bs be bsc
+    have h0 : iU = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
+    rw [wlR, wlU2, dif_pos h0, dif_pos h0]
+    subst h0
+    simp only [USize.toNat_zero, USize.sub_zero]
+  | succ n ih =>
+    intro iU reU hi hle hre ps bs be bsc
+    have h0 : iU ≠ 0 := fun e => by rw [e] at hi; simp at hi
+    have ej : (iU - 1).toNat = n := by rw [rt_sub1 iU h0, hi]; rfl
+    have hns : (if iU = 0 then 0 else iU - 1 : USize) = iU - 1 := by rw [if_neg h0]
+    -- the run length after a step, as the run end
+    have s0 : (reU - iU).toNat = reU.toNat - (n + 1) := by
+      rw [USize.toNat_sub_of_le reU iU (show iU.toNat ≤ reU.toNat by omega), hi]
+    have s1 : (reU - (iU - 1)).toNat = reU.toNat - n := by
+      rw [USize.toNat_sub_of_le reU (iU - 1) (show (iU - 1).toNat ≤ reU.toNat by omega), ej]
+    have s2 : ((iU - 1) + 1).toNat = n + 1 := by rw [rt_add _ _ (by rw [ej, rt_one]; omega), ej, rt_one]
+    have hpl : (reU - iU) + 1 = reU - (iU - 1) := by
+      apply USize.toNat_inj.mp
+      rw [rt_add _ _ (by rw [s0, rt_one]; omega), s0, rt_one, s1]; omega
+    have hbe : (iU - 1) + (reU - (iU - 1)) = reU := by
+      apply USize.toNat_inj.mp
+      rw [rt_add _ _ (by rw [ej, s1]; omega), ej, s1]; omega
+    have hone : ((iU - 1) + 1) - (iU - 1) = (1 : USize) := by
+      apply USize.toNat_inj.mp
+      rw [USize.toNat_sub_of_le ((iU - 1) + 1) (iU - 1) (show (iU - 1).toNat ≤ ((iU - 1) + 1).toNat by omega), s2, ej, rt_one]
+      omega
+    have ih1 := fun reU' ps' bs' be' bsc' (h1 : n ≤ reU'.toNat) (h2 : reU'.toNat < 2 ^ 30) =>
+      ih (iU - 1) reU' ej h1 h2 ps' bs' be' bsc'
+    have hj1 : n ≤ ((iU - 1) + 1).toNat := by rw [s2]; omega
+    have hj2 : ((iU - 1) + 1).toNat < 2 ^ 30 := by rw [s2]; omega
+    rw [wlR, wlU2, dif_neg h0, dif_neg h0]
+    simp only [hns, if_true]
+    split
+    · split
+      · rw [ih1 _ _ _ _ _ (by omega) hre, hpl, hbe]
+      · rw [ih1 _ _ _ _ _ (by omega) hre, hpl]
+    · split
+      · rw [ih1 _ _ _ _ _ hj1 hj2, hone]
+      · rw [ih1 _ _ _ _ _ hj1 hj2, hone]
+
 /-- `wl` for the compiled code (`wl_eq_wlF`): `wlI` from the start state (scores 0). -/
 @[inline] def wlF (Q : Nat) (seq qual : ByteArray) (i ns : Nat) (hr : Bool) (pl : Nat) (ps : Int) (bs be : Nat)
     (bsc : Int) : PackedFoldState :=
   if Q ≤ 1000 ∧ i ≤ 10000 ∧ ps = 0 ∧ bsc = 0 then
-    if ns < 1073741824 ∧ pl + i < 1073741824 ∧ bs < 2147483648 ∧ be < 2147483648 then
+    if ns = i ∧ hr = false ∧ pl = 0 ∧ bs = 0 ∧ be = 0 ∧ 0 < i then
+      let j := (i - 1).toUSize
+      let f := fIU (Int64.ofNat Q) (rtGet seq j) (rtGet qual j)
+      wlR (Int64.ofNat Q) 0 seq qual j i.toUSize f j i.toUSize f
+    else if ns < 1073741824 ∧ pl + i < 1073741824 ∧ bs < 2147483648 ∧ be < 2147483648 then
       wlU2 (Int64.ofNat Q) 0 seq qual i.toUSize ns.toUSize hr pl.toUSize 0 bs.toUSize be.toUSize 0
     else wlI (Int64.ofNat Q) seq qual i ns hr pl 0 bs be 0
   else wl Q seq qual i ns hr pl ps bs be bsc
@@ -301,12 +369,38 @@ theorem wlU2_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU : USize),
     have e0 : (0 : Int64).toInt = 0 := rfl
     have hI := wlI_eq Q hQ seq qual i ns hr pl 0 bs be 0 (by omega) (by rw [e0]; omega) (by rw [e0]; omega)
     rw [e0] at hI
+    -- `wl` = `wlU2` within the bounds
+    have hU : ns < 1073741824 → pl + i < 1073741824 → bs < 2147483648 → be < 2147483648 →
+        wl Q seq qual i ns hr pl 0 bs be 0 =
+          wlU2 (Int64.ofNat Q) 0 seq qual i.toUSize ns.toUSize hr pl.toUSize 0 bs.toUSize be.toUSize 0 := by
+      intro h1 h2 h3 h4
+      rw [wlU2_eq _ seq qual i _ (rt_n i (by omega)), wlU_eq _ seq qual i _ _ _ _ _ hr 0 0 (rt_n i (by omega))
+        (by rw [rt_n ns (by omega)]; omega) (by rw [rt_n pl (by omega)]; omega) (by rw [rt_n bs (by omega)]; omega)
+        (by rw [rt_n be (by omega)]; omega), rt_n ns (by omega), rt_n pl (by omega), rt_n bs (by omega),
+        rt_n be (by omega), hI]
     split
-    · rename_i hb
-      rw [wlU2_eq _ seq qual i _ (rt_n i (by omega)), wlU_eq _ seq qual i _ _ _ _ _ hr 0 0 (rt_n i (by omega)) (by rw [rt_n ns (by omega)]; omega)
-        (by rw [rt_n pl (by omega)]; omega) (by rw [rt_n bs (by omega)]; omega) (by rw [rt_n be (by omega)]; omega),
-        rt_n ns (by omega), rt_n pl (by omega), rt_n bs (by omega), rt_n be (by omega), hI]
-    · exact hI.symm
+    · rename_i hf
+      obtain ⟨hns, rfl, rfl, rfl, rfl, hpos⟩ := hf
+      rw [hU (by omega) (by omega) (by omega) (by omega), hns]
+      have hi0 : i.toUSize ≠ 0 := fun e => by
+        have := congrArg USize.toNat e; rw [rt_n i (by omega)] at this; simp at this; omega
+      have hj : i.toUSize - 1 = (i - 1).toUSize := by
+        apply USize.toNat_inj.mp; rw [rt_sub1 _ hi0, rt_n i (by omega), rt_n (i - 1) (by omega)]
+      have hjn : ((i - 1).toUSize).toNat = i - 1 := rt_n (i - 1) (by omega)
+      have hre : i.toUSize = (i - 1).toUSize + 1 := by
+        apply USize.toNat_inj.mp; rw [rt_add _ _ (by rw [hjn, rt_one]; omega), hjn, rt_one, rt_n i (by omega)]; omega
+      have h1 : i.toUSize - (i - 1).toUSize = (1 : USize) := by
+        apply USize.toNat_inj.mp
+        rw [USize.toNat_sub_of_le _ _ (show ((i - 1).toUSize).toNat ≤ (i.toUSize).toNat by rw [hjn, rt_n i (by omega)]; omega),
+          hjn, rt_n i (by omega), rt_one]; omega
+      rw [wlU2, dif_neg hi0]
+      simp only [if_neg hi0, hj, Bool.false_eq_true, ↓reduceIte]
+      rw [wlR_eq _ seq qual (i - 1) _ _ hjn (by rw [rt_n i (by omega)]; omega) (by rw [rt_n i (by omega)]; omega), h1,
+        ← hre]
+    · split
+      · rename_i _ hb
+        exact hU hb.1 hb.2.1 hb.2.2.1 hb.2.2.2
+      · exact hI.symm
   · rfl
 
 /-- The kept window `[s, e)`, or `none` (nothing worth keeping: the best window
