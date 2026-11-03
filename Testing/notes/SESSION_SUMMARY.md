@@ -1557,3 +1557,14 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - 06:1x UTC: merged S-H speed/banddp (bandDPg traceback tail-recursive; HEURISTIC code, re-checked downstream, not proved equal: old while loop is opaque). Ir 2k: NovaSeq -0.5%, HiSeq -1.0%. SAM identical 200k; FUZZ=1 CI green.
 - 06:2x UTC: merged S-G speed/split-budget (pairsAtS: per-pair error budget split; splitEmpty_none + pairsAtS_mem proved). Ir 2k: NovaSeq -3.8%, HiSeq ~0. SAM identical 200k; FUZZ=1 CI green. Usage: paused S-H and S4; S-D (decision run) + S-G continue.
 - 06:5x UTC: merged S-H speed/svany (svAnyR rolling window + unlooked-seed words once per call; proved). Ir 2k: NovaSeq -0.5%, HiSeq -1.6%. SAM identical 200k; FUZZ=1 CI green. S4 corrected IO numbers (real index): NovaSeq 2k Ir align 62%, read 14%, sam 13%, trim ~8%; per 20k chunk @4 cores read 265 ms vs align 676 ms; serial reader caps ~75k pairs/s (~82 Gbp/hr NovaSeq) above ~10 threads -> parallel parse REQUIRED before any 32-thread comparison (minibwa paper 135.8 Gbp/hr). Byte SAM writer patch: research/io2 sam_bytes.patch (-2.4%).
+
+### DECISION RUN (S-D, 07:41 UTC): festive f33be45 + shim_speed.patch vs minibwa c07de5c, 4 threads, SAM to /dev/null, zcat->FIFO input, index load separate, median of 3, 5,000,000 real pairs each
+| set | tool | load | map | Gbp/hr (map) | user+sys | Gbp/core-hr | cores busy |
+|---|---|---|---|---|---|---|---|
+| NovaSeq HG002 (paper's data) 1.51 Gbp | ours | 10.6 s | 176.5 s | 30.8 | 531 s | 10.23 | ~3.0 |
+| | minibwa | 26.5 s | 308.1 s | 17.6 | 1213 s | 4.48 | ~3.9 |
+| | ratio | | **1.75x** | | | **2.28x** | |
+| HiSeq HG002 2x250 2.5 Gbp | ours | 4.6 s | 246.3 s | 36.5 | 602 s | 14.95 | ~2.4 |
+| | minibwa | 33.7 s | 585.3 s | 15.4 | 2296 s | 3.92 | ~3.9 |
+| | ratio | | **2.38x** | | | **3.81x** | |
+minibwa paper: 135.8 Gbp/hr @32 threads = 4.24 Gbp/thread-hr (matches minibwa here). OURS LEAVES CORES IDLE (3.0 / 2.4 of 4): per-chunk barrier + serial reader. Fixing core use is the lever for wall time (shim orchestration: overlap chunks, smaller tasks, parallel parse).
