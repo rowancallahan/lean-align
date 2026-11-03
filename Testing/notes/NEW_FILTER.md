@@ -111,3 +111,23 @@ HiSeq 2k: `ReadTrim.wlU` 56M (~56 Ir per letter), `AdapterTrim.saLoopU` 44M, ins
 - 2k Ir vs festive a4d9f6f: NovaSeq 1158.8M → 1147.0M (−1.0%); HiSeq 1388.3M → 1368.6M (−1.4%). SAM identical on both 2k
   subsets and both full 200k sets; FUZZ=1 CI passes (frozen trimmer contract OK, trimmer audit OK). The rest of
   `trimRecord` is the UTF-8 conversion of the quality (~25M, Spec/Fastq: Rowan's shim).
+
+## speed/trim2 (off festive 37db171): the trimmer loops, round 2 (exact csimp, trimmer theorems untouched)
+With `byte_pipeline.patch` (quality as bytes), HiSeq 2k: `trimRecord` 99.7M of 1134.4M = adapter loop `saLoopV` 48.3M (incl.
+its closure) + window fold 45.3M + all `extract` copies 3.4M. So fusing the steps / avoiding copies is worth little; the
+per-letter loops are. Only 5% of mates are all-ACGT with every Phred > 25, so an "all above threshold" fast path is not
+worth it either.
+- `wlR`: the window fold specialized to `trimReadQ`'s call (`ns = i`, `hr` true after the first letter), the current run
+  kept as its right end (`pl = re − i`): 10 loop arguments instead of 12, no `ns`/`hr` work. `wlR_eq`: `= wlU2`;
+  `wl_eq_wlF` takes that branch for the full-read call (first letter unfolded). 43M → 36M.
+- `saLoopTS`: the TruSeq loop with its masks, mask and shift as literals (`tsConst` by `decide`), the flags dropped, the end
+  test without a closure (`scanTS`, `scanTS_eq`). `saLoopTS_eq`: `= saLoopV` at TruSeq's constants; `cutPosTS_eq`
+  re-proved. 48M → 35M.
+- 2k Ir, festive (String quality) 37db171 → 69de14e: NovaSeq 1147.0M → 1130.9M (−1.4%); HiSeq 1369.2M → 1347.4M (−1.6%).
+  With `byte_pipeline.patch` applied (local only): NovaSeq 956.3M → 940.5M (−1.65%); HiSeq 1134.4M → 1113.8M (−1.8%);
+  `trimRecord` 99.7M → 78.8M.
+- SAM identical on both 2k subsets (both shapes) and both full 200k sets (festive); FUZZ=1 CI passes (frozen trimmer
+  contract OK, trimmer certificate and audit OK).
+- Left: two per-letter loops at ~36 and ~35 Ir per letter (bounds-checked byte reads, the Kadane state; the adapter's
+  bit-parallel step). The loops run in opposite directions (adapter left to right, window right to left from the cut),
+  so they cannot share one pass exactly.
