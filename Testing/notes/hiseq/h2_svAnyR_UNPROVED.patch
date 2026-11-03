@@ -1,0 +1,37 @@
+diff --git a/Aligner/mapper/FastGenWordFilt.lean b/Aligner/mapper/FastGenWordFilt.lean
+index 716525c..119b48a 100644
+--- a/Aligner/mapper/FastGenWordFilt.lean
++++ b/Aligner/mapper/FastGenWordFilt.lean
+@@ -217,15 +217,26 @@ theorem svAnyS_eq (gs : GW) (sv : UInt64) : ∀ k t, svAnyS gs sv t k = svAny gs
+   | zero => intro t; rfl
+   | succ k ih => intro t; simp only [svAnyS, svAny, ih]
+ 
+-/-- `svAny` for the compiled code (`svAny_eq_svAnyF`). -/
++/-- PROTOTYPE: `svAny` on a rolling window (`a` = the 32 fields at the offset, `b` = the next `c` fields of word `u`). -/
++def svAnyR (gs : GW) (sv : UInt64) (k : USize) (a b : UInt64) (c u : USize) : Bool :=
++  if h : k = 0 then false else
++    if (a ^^^ sv) &&& 0x3FFFFFFFFFFFF == 0 then true else
++      let a' := (a >>> 2) ||| (b <<< 62)
++      if c == 1 then svAnyR gs sv (k - 1) a' (gs.getU (u + 1)) 32 (u + 1)
++      else svAnyR gs sv (k - 1) a' (b >>> 2) (c - 1) u
++termination_by k.toNat
++decreasing_by all_goals sorry
++
+ @[inline] def svAnyF (gs : GW) (sv : UInt64) (t k : Nat) : Bool :=
+-  if t + k < 2147483648 then svAnyU gs sv t.toUSize k else svAnyS gs sv t k
++  if t + k < 2147483648 then
++    let tU := t.toUSize
++    let s := tU &&& 31
++    let u := tU >>> 5
++    svAnyR gs sv k.toUSize (gAtWU gs tU 0) (gs.getU (u + 1) >>> (2 * s).toUInt64) (32 - s) (u + 1)
++  else svAnyS gs sv t k
+ 
+ @[csimp] theorem svAny_eq_svAnyF : @svAny = @svAnyF := by
+-  funext gs sv t k
+-  unfold svAnyF; split
+-  · rename_i h; exact (svAnyU_eq gs sv k _ t (usz_n _ (by omega)) (by omega)).symm
+-  · exact (svAnyS_eq gs sv k t).symm
++  sorry
+ 
+ /-- `unlook` by words, for seeds inside the read: read start `s` ↦ field `o + (s − s0)`
+ of `gs` (`s0 = D − n − r`).  The genome is not passed (its count is not touched). -/
