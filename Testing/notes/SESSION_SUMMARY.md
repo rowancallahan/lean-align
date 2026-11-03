@@ -1593,3 +1593,9 @@ minibwa paper: 135.8 Gbp/hr @32 threads = 4.24 Gbp/thread-hr (matches minibwa he
   | NovaSeq 5M | 172.1 (was 176.5) | 31.6 | 9.31 (was 10.23) | 84.3% (was 73%) | 308.1 | 1.79x | 2.08x |
   | HiSeq 5M | 207.2 (was 246.3) | 43.4 | 14.01 (was 14.95) | 77.2% (was 60%) | 585.3 | 2.82x | 3.58x |
   Utilization up, but CPU per pair up ~7-10% (per-job alignPairs setup on 4000-pair jobs). S-G testing bigger jobs (8k/16k/20k) to recover it without a Spec change.
+- PIPELINE v2 (16000-pair jobs, depth 2), S-D 5M rerun (festive 24a250c + pipeline_proto v2 + shim_speed, zcat FIFO, median of 3):
+  | set | map s | Gbp/hr | Gbp/core-hr | util | minibwa map s | map ratio | core-hr ratio |
+  |---|---|---|---|---|---|---|---|
+  | NovaSeq 5M | 160.9 (154.0-166.9) | 33.8 | 9.70 | 85.9% | 308.1 | 1.92x | 2.16x |
+  | HiSeq 5M | 201.2 (198.0-202.8) | 44.7 | 14.37 | 77.4% | 585.3 | 2.91x | 3.67x |
+  vs no pipeline: NovaSeq 176.5 -> 160.9 s (-8.8%), HiSeq 246.3 -> 201.2 s (-18%). v1 full-5M SAM md5 identical to plain festive; v2 SAM identical on 1M (S-G). Remaining gap to minibwa's 94% FIFO util: zcat CPU on 4 cores + S-D box page-cache pressure; plain files on S-G's box reach 0.95-0.97.
