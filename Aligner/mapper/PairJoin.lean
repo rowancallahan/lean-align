@@ -127,6 +127,32 @@ def noPairJS {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : Byt
         let f2 := anchSel ix G R2 s2
         !nearAnyF W (r1.length + f2.length + 1) r1 f2))
 
+/-- `noPairJS` without the second strand's lookups when the first strand has no anchors (`nearAnyF` is then false:
+no near pair), `noPairJS_eqL`. -/
+def noPairJSL {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : ByteArray)
+    (s1 sr1 s2 sr2 : List Nat) : Bool :=
+  fastT P1 R1 && fastT P2 R2 &&
+    selOk P1 R1 s1 && selOk P1 R1 sr1 && selOk P2 R2 s2 && selOk P2 R2 sr2 &&
+    (let W := joinW P1 P2 hi R1.size R2.size
+     let f1 := anchSel ix G R1 s1
+     (f1.isEmpty || (let r2 := anchSel ix G (revCompK R2) sr2; !nearAnyF W (f1.length + r2.length + 1) f1 r2)) &&
+       (let r1 := anchSel ix G (revCompK R1) sr1
+        r1.isEmpty || (let f2 := anchSel ix G R2 s2; !nearAnyF W (r1.length + f2.length + 1) r1 f2)))
+
+theorem nearAnyF_nil (W n : Nat) (ys : List Nat) : nearAnyF W (n + 1) [] ys = false := rfl
+
+theorem skip_empty (W : Nat) (xs ys : List Nat) :
+    (xs.isEmpty || !nearAnyF W (xs.length + ys.length + 1) xs ys) = !nearAnyF W (xs.length + ys.length + 1) xs ys := by
+  cases xs with
+  | nil => simp only [List.isEmpty_nil, Bool.true_or, List.length_nil]; rw [nearAnyF_nil]; rfl
+  | cons x xs => simp
+
+/-- Compiled code runs `noPairJSL`. -/
+@[csimp] theorem noPairJS_eqL : @noPairJS = @noPairJSL := by
+  funext L Pp _ P1 P2 hi ix G R1 R2 s1 sr1 s2 sr2
+  unfold noPairJS noPairJSL
+  simp only [skip_empty]
+
 /-! ## Proofs -/
 
 section fold
@@ -453,3 +479,5 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.nearAnyF_false
 #print axioms MapSpec.Fast.anch_of_hit
 #print axioms MapSpec.Fast.noPairJ_ok
+
+#print axioms MapSpec.Fast.noPairJS_eqL
