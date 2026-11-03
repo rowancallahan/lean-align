@@ -1,22 +1,17 @@
-# Proof map: Spec claim -> theorem -> how to check -> hypotheses -> gaps (for Rowan, 2026-11-03)
+# Proof map: Spec claim -> theorem -> how to check -> hypotheses -> gaps (for Rowan, updated 2026-11-03 to festive-fermi 065f522)
 
-Verification-oriented, not for publication. Spec lines are from this branch's base (festive-fermi `791462a`, your Spec `main 38a5676`).
-**Proof lines are from `origin/speed/floor-real-spec` @ `61e4daa`**, because that is the only branch whose `Proofs/` cover your current Spec.
-I built it and ran `Testing/scripts/CI_check.sh`: `ALL CHECKS PASSED` (frozen checksums ok, mirrors ok, standard axioms only).
-Lean 4.35.0, no network needed. Axiom lines below were printed by me (`lake env lean` on a scratch file), not copied from notes.
+Verification-oriented, not for publication. Spec lines and proof lines are both from festive-fermi `065f522` (it contains `speed/floor-real-spec`, so the
+proofs cover your current Spec: floor `junkScore -100`, top-level `requiredMapBound`, `repetitiveUnknown`/`highlyRepetitiveIn`). Re-checked at this head:
+`lake build` ok (429 jobs) and `Testing/scripts/CI_check.sh` = `ALL CHECKS PASSED` (frozen checksums, mirrors `Proofs/Answer.lean` <-> `Spec/Aligner.lean`, standard axioms only).
+Lean 4.35.0, no network needed. All theorem line numbers below were re-grepped at this head.
 
-## 0. Read this first: three gaps
+## 0. Read this first: two gaps
 
-1. **On `claude/festive-fermi-mf9mo6` (791462a) the proofs do NOT prove your Spec.** `Proofs/Answer.lean` there is the old copy (`junkScore := -16`,
-   no `requiredMapBound`, no `repetitiveUnknown`); `lake build` passes but `CI_check.sh` has the new mirror check that fails
-   (commit message says so). `speed/floor-real-spec` fixes it (`Proofs/Answer.lean mirrors Spec/Aligner.lean`).
-   `speed/report-floor-proofs` is an older round: it proves the `spec/report-floor` revision (`requiredMapBound` as a *field* of `InsertSettings`,
-   no `repetitiveUnknown` / `highlyRepetitiveIn`), so it is NOT your current Spec either. Its note `REPORT_FLOOR_PROOFS.md` still says
-   `junkScore -50` / `hNoLeftover` in the header; the round-3 section (and the code) say `-100`, `SettingsOk`, no `hNoLeftover`. The header is stale.
-2. **`alignPairs_correct` / `alignPairs_end_to_end` are not exactly your statements: they carry one extra hypothesis `SettingsOk insertSettings`
+1. **`alignPairs_correct` / `alignPairs_end_to_end` are not exactly your statements: they carry one extra hypothesis `SettingsOk insertSettings`
    (`junkScore ≤ -16`).** See 2.1.
-3. **No `#print axioms` for the two headline theorems exists anywhere in the repo**, so `CI_check.sh` never checks their axioms
-   (it greps `depends on axioms` lines in the build log; a `sorry` would still show as a warning). I printed them, see 2.1. Suggest adding the two lines to `Proofs/Aligner.lean`.
+2. **Headline axioms are now printed and audited** (this branch): `Proofs/Aligner.lean:773-774` print `Spec.alignPairs_correct` / `Spec.alignPairs_end_to_end`
+   (`[propext, Classical.choice, Quot.sound]`), and `CI_check.sh` now fails if either line is missing from the build log. Before, no `#print axioms` for them existed.
+   Remaining limit: the audit reads the build log, so it only sees what is printed; it does not detect a changed statement.
 
 ## 1. Spec claims that are not the main theorem (`Spec/*.lean` `sorry`s)
 
@@ -37,8 +32,7 @@ Hypotheses: as in Spec (none extra; `exists_best` has `genome ≠ []` in Spec to
 ### 2.1 `alignPairs_correct` (Spec:216) and `alignPairs_end_to_end` (Spec:232)
 
 - Proofs: `Proofs/Aligner.lean:693` and `:753`. Target: `lake build Proofs` (lib `Proofs`, root `Proofs.Aligner`).
-- Check (my scratch file, `import Proofs.Aligner`):
-  `#print axioms Spec.alignPairs_correct` -> `[propext, Classical.choice, Quot.sound]`; same for `Spec.alignPairs_end_to_end` and `Spec.alignOne_correct`. No `sorryAx`.
+- Check: `#print axioms Spec.alignPairs_correct` and `...alignPairs_end_to_end` are at `Proofs/Aligner.lean:773-774` (build log: both `[propext, Classical.choice, Quot.sound]`, no `sorryAx`); `Spec.alignOne_correct` printed in my scratch run, same result.
 - Hypotheses, literally. `alignPairs_correct`: `insertSettings`, `genome`, `trimmedPairs`, `byteGenome`, `hGenome : byteGenome.decode = genome`,
   `index`, `hIndex : index = buildIndex byteGenome`, `bytePairs`, `hMates : bytePairs.map decodePair = trimmedPairs`, **`hSettings : SettingsOk insertSettings`**
   where `def SettingsOk (s) : Prop := s.junkScore ≤ -16` (`Proofs/Aligner.lean:528`). `alignPairs_end_to_end`: `hGenome : GenomeIsDNA genome`,
@@ -154,10 +148,7 @@ The theorem's interface to the shim: `bytePairs`, `index`, `byteGenome`, `hMates
 ## Reproduce
 
 ```
-git checkout origin/speed/floor-real-spec          # proofs for the current Spec (61e4daa)
+git checkout docs/proof-map-2                      # festive-fermi 065f522 + axiom lines + CI check
 PATH=$HOME/.elan/bin:$PATH lake build              # ~7 min cold, 429 jobs
 sh Testing/scripts/CI_check.sh                     # ALL CHECKS PASSED
-echo 'import Proofs.Aligner
-#print axioms Spec.alignPairs_correct
-#print axioms Spec.alignPairs_end_to_end' > /tmp/ax.lean && lake env lean /tmp/ax.lean
 ```

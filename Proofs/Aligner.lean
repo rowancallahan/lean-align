@@ -769,3 +769,6 @@ theorem alignPairs_end_to_end (insertSettings : InsertSettings)
     (Genome.decode_encode hGenome) _ rfl _ hMates hSettings
 
 end Spec
+
+#print axioms Spec.alignPairs_correct
+#print axioms Spec.alignPairs_end_to_end
