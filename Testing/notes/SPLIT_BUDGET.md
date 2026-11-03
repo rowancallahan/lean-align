@@ -36,3 +36,15 @@ Where the second look goes after the split (NovaSeq 2k, prototype profile):
 - SEARCH_IDEAS #2 (region lookups for the partner): at most ~14M (~1.1%), since the near search's cost is kernels.
   Skipped.
 - The same split for the join (`noPairJS`, stage 3): not done.
+
+## Follow-up tried: no `pairsAt` re-run (branch `speed/split-rerun`, off f33be45) — NOT a gain, do not merge
+`pairsAtS` returns the split's own list (`splitPairs`, both parts) when one pair has the top score, since `topW`
+then picks it in any order. On a tie it runs `pairsAt`. `splitPairs_mem` is proved; `pairsAtS_mem` keeps its statement.
+| | f33be45 | split-rerun |
+|---|---|---|
+| NovaSeq 2k Ir | 1163.1M | 1174.4M (+11.2M, +1.0%) |
+| HiSeq 2k Ir | 1411.4M | 1408.1M (−0.2%) |
+SAM is identical on the 2k and full 200k sets, and CI with FUZZ=1 passes. The cost is part 2: when part 1 finds pairs,
+mate 2's full search at `c - a - 1` (plus mate 1's near search) must now run to list every pair, and that costs
+more than the `pairsAt` re-run it replaces. Not worth it as is. A version that only skips the re-run when
+part 2 is cheap would need a cost guess; not tried.
