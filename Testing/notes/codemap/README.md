@@ -6,3 +6,5 @@ directory (/tmp/claude-0/codemap/), edit them before reuse.
 - prune3.py AREA...: deletes DEAD declarations in AREA (never WFA, ReadWindowTrimmer, instances, structures), builds, and on
   each error keeps the deleted names the failing declaration mentions; repeats until the build is clean.
 - size.py: lines, chars and the token proxy (CODEMAP §7).
+- levers.py: per-lever token shares (CODEMAP §12); `python3 levers.py [files]`.
+- proof_compression_FastGenSupp.diff: the §12 proof-compression prototype (7 of 19 theorems; compiled, not committed to the code).

@@ -1,0 +1,133 @@
+--- a/Aligner/mapper/FastGenSupp.lean	2026-11-03 23:28:51.029562489 +0000
++++ b/Aligner/mapper/FastGenSupp.lean	2026-11-03 23:32:25.982970631 +0000
+@@ -38,22 +38,12 @@
+ termination_by a.size - i
+ 
+ theorem advP_eqF (a : Array Nat) (lo : Nat) : ∀ f i, f = a.size - i → advP a lo f i = advF a lo i := by
+-  intro f
+-  induction f with
+-  | zero =>
+-    intro i hf
+-    unfold advP advF
+-    rw [dif_neg (by omega)]
++  intro f; induction f with
++  | zero => intro i hf; unfold advP advF; rw [dif_neg (by omega)]
+   | succ f ih =>
+-    intro i hf
+-    unfold advP
+-    rw [advF]
+-    by_cases h : i < a.size
+-    · rw [dif_pos h, getElem!_pos a i h]
+-      by_cases h2 : a[i] / 16 < lo
+-      · rw [if_pos ⟨h, h2⟩, if_pos h2]; exact ih _ (by omega)
+-      · rw [if_neg (fun e => h2 e.2), if_neg h2]
+-    · rw [dif_neg h, if_neg (fun e => h e.1)]
++    intro i hf; unfold advP; rw [advF]
++    by_cases h : i < a.size <;> simp only [h, dif_pos, dif_neg, getElem!_pos, true_and, false_and, if_false, not_false_eq_true]
++    split <;> first | rfl | exact ih _ (by omega)
+ 
+ /-- `sweepA` with `advF` and an in-place increment, no closure (`sweepA_eqF`). -/
+ def sweepAF (a : Array Nat) (r : Nat) : List Nat → Nat → Nat → Array Nat → Array Nat
+@@ -67,18 +57,7 @@
+ 
+ theorem modify_eq (cnt : Array Nat) (k : Nat) :
+     cnt.modify k (· + 1) = if hk : k < cnt.size then cnt.set k (cnt[k] + 1) else cnt := by
+-  apply Array.ext
+-  · split <;> simp
+-  · intro t h1 h2
+-    split
+-    · rename_i hk
+-      simp only [Array.getElem_modify, Array.getElem_set]
+-      split <;> simp_all
+-    · rename_i hk
+-      simp only [Array.getElem_modify]
+-      split
+-      · rename_i e; subst e; simp only [Array.size_modify] at h1; exact absurd h1 hk
+-      · rfl
++  split <;> ext <;> simp_all [Array.getElem_modify, Array.getElem_set] <;> (try split) <;> simp_all <;> omega
+ 
+ @[csimp] theorem sweepA_eqF : @sweepA = @sweepAF := by
+   funext a r ds k i cnt
+@@ -272,12 +251,7 @@
+ theorem getD_modify (cnt : Array Nat) (k t : Nat) :
+     (cnt.modify k (· + 1)).getD t 0 = cnt.getD t 0 + if t = k ∧ k < cnt.size then 1 else 0 := by
+   simp only [Array.getD_eq_getD_getElem?, Array.getElem?_modify]
+-  by_cases h1 : k = t
+-  · subst h1
+-    by_cases h2 : k < cnt.size
+-    · simp [h2, Array.getElem?_eq_getElem h2]
+-    · simp [h2, Array.getElem?_eq_none (by omega : cnt.size ≤ k)]
+-  · simp [h1, Ne.symm h1]
++  by_cases h1 : k = t <;> by_cases h2 : k < cnt.size <;> simp_all [eq_comm]
+ 
+ /-- The flag of `a` at `D`. -/
+ def fl (a : Array Nat) (r D : Nat) : Nat := if anyNear a (D - r) (D + r) then 1 else 0
+@@ -326,8 +300,7 @@
+ 
+ theorem suppA_cons (a : Array Nat) (acc : List (Array Nat)) (D r : Nat) :
+     suppA (a :: acc) D r = fl a r D + suppA acc D r := by
+-  unfold suppA fl
+-  by_cases h : anyNear a (D - r) (D + r) = true <;> simp [h] <;> omega
++  unfold suppA fl; split <;> simp_all <;> omega
+ 
+ theorem suppCnt_spec (r : Nat) (ds : List Nat) (hds : ds.Pairwise (· ≤ ·)) :
+     ∀ (acc : List (Array Nat)) (cnt : Array Nat), (∀ a ∈ acc, a.toList.Pairwise (· < ·)) → ds.length ≤ cnt.size →
+@@ -367,23 +340,17 @@
+     · omega
+ 
+ theorem incA_pw (a : Array Nat) (h : incA a a.size 0 = true) : a.toList.Pairwise (· < ·) := by
+-  rw [List.pairwise_iff_getElem]
+-  intro x y hx hy hxy
+-  simp only [Array.length_toList] at hx hy
+-  have := incA_spec a a.size 0 h (by omega) x y (Nat.zero_le _) hxy hy
+-  simp only [Array.getElem_toList]
+-  rwa [getElem!_pos a x hx, getElem!_pos a y hy] at this
++  rw [List.pairwise_iff_getElem]; intro x y hx hy hxy
++  simpa [getElem!_pos a x hx, getElem!_pos a y hy] using
++    incA_spec a a.size 0 h (by omega) x y (Nat.zero_le _) hxy (by simpa using hy)
+ 
+ theorem sortedL_pw : ∀ ds : List Nat, sortedL ds = true → ds.Pairwise (· ≤ ·)
+-  | [], _ => List.Pairwise.nil
+-  | [a], _ => List.pairwise_singleton _ a
++  | [], _ | [_], _ => by simp
+   | a :: b :: t, h => by
+     simp only [sortedL, Bool.and_eq_true, decide_eq_true_eq] at h
+     have ih := sortedL_pw (b :: t) h.2
+-    refine List.pairwise_cons.2 ⟨fun x hx => ?_, ih⟩
+-    rcases List.mem_cons.1 hx with rfl | hx
+-    · exact h.1
+-    · exact Nat.le_trans h.1 ((List.pairwise_cons.1 ih).1 x hx)
++    simp only [List.pairwise_cons, List.mem_cons] at ih ⊢
++    exact ⟨fun x hx => hx.elim (· ▸ h.1) (fun hx => Nat.le_trans h.1 (ih.1 x hx)), ih⟩
+ 
+ /-- **The swept supports are `suppA`.** -/
+ theorem suppCntC_get (acc : List (Array Nat)) (r : Nat) (ds : List Nat) (t : Nat) (ht : t < ds.length) :
+@@ -406,23 +373,14 @@
+       (∀ t, t < ds.length → cnt.getD (k + t) 0 = suppA acc (ds.getD t 0) r0) →
+       stageKSP pk body K R G acc us Ls lim r0 cnt ds k b =
+         ds.foldl (fun b D => if wordFilterPacked pk K R G acc us Ls lim b D then body D b else b) b := by
+-  intro ds
+-  induction ds with
++  intro ds; induction ds with
+   | nil => intro k b _; rfl
+   | cons D ds ih =>
+     intro k b h
+-    simp only [stageKSP, List.foldl_cons]
+-    have hs : (if 2 * gapBound sc0 (-((min lim b.pen : Nat) : Int)) = r0 then cnt.getD k 0
+-        else suppA acc D (2 * gapBound sc0 (-((min lim b.pen : Nat) : Int)))) =
+-        suppA acc D (2 * gapBound sc0 (-((min lim b.pen : Nat) : Int))) := by
+-      split
+-      · next e => rw [e]; have := h 0 (by simp); simpa using this
+-      · rfl
+-    rw [hs, kfiltVF_supp]
+-    rw [ih (k + 1) _ (fun t ht => by
+-      have := h (t + 1) (by simp; omega)
+-      rw [show k + (t + 1) = k + 1 + t by omega, List.getD_cons_succ] at this
+-      exact this)]
++    have h0 := h 0 (by simp)
++    simp only [stageKSP, List.foldl_cons, Nat.add_zero, List.getD_cons_zero] at h0 ⊢
++    rw [← ih (k + 1) _ (fun t ht => by simpa [Nat.add_assoc, Nat.add_comm 1] using h (t + 1) (by simp; omega))]
++    split <;> (try subst_vars; rw [h0]) <;> rfl
+ 
+ theorem stageKSS_eq {Gt : Type} [GRead Gt] [PackedOf Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
+     (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
