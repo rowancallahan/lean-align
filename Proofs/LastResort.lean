@@ -529,10 +529,29 @@ def splitOf (c : Nat) (pk : PkMz) (R1 R2 : ByteArray) : Nat :=
     let k := costP pk a s1 + costP pk (c - a - 1) s2
     if k < acc.1 then (k, a) else acc) (today, c)).2
 
+-- the pairs of both parts of the split scoring `≥ -c` (the same members as `pairsAt`: `splitPairs_mem`)
+def splitPairs (sl lo hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) (a : Nat) :
+    List PairHit :=
+  let l1 := hitsKPF pk ByteArray.empty offs pgs R1 a
+  let l2 := hitsKPF pk ByteArray.empty offs pgs R2 (c - a - 1)
+  (properPairsF sl lo hi l1 (hitsKPFN sl hi pk ByteArray.empty offs pgs R2 c l1) ++
+    properPairsF sl lo hi (hitsKPFN sl hi pk ByteArray.empty offs pgs R1 c l2) l2).filter
+    fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
+
+-- one pair (as a value) has the top score, so `topW` picks it whatever the order (or the list is empty)
+def uniqueTop (S : List PairHit) : Bool :=
+  match topW dcost0 S with
+  | none => true
+  | some w => S.all fun p => decide (pairScoreD dcost0 p < pairScoreD dcost0 w) || p == w
+
+-- the split's pairs, unless the top score is tied (then `pairsAt`, whose order decides the tie as today)
 def pairsAtS (sl lo hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
     List PairHit :=
   let a := splitOf c pk R1 R2
-  if a < c && splitEmpty sl lo hi c pk offs pgs R1 R2 a then [] else pairsAt sl lo hi c pk offs pgs R1 R2
+  if a < c then
+    let S := splitPairs sl lo hi c pk offs pgs R1 R2 a
+    if uniqueTop S then S else pairsAt sl lo hi c pk offs pgs R1 R2
+  else pairsAt sl lo hi c pk offs pgs R1 R2
 
 theorem splitEmpty_none {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 m2 : List Char} {ix : Mz.MzIdx}
     {G : PGen} {offs ns : Array Nat} (hcut : cutOk G offs ns = true)
@@ -578,6 +597,34 @@ theorem splitEmpty_none {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} 
     · simp only [Bool.not_eq_eq_eq_not, Bool.not_true, List.any_eq_false] at hs
       exact hs _ hin (by simp [pairScoreD, dcost0]; omega)
 
+theorem splitPairs_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 m2 : List Char} {ix : Mz.MzIdx}
+    {G : PGen} {offs ns : Array Nat} (hcut : cutOk G offs ns = true)
+    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (hchk : Mz.check2P ix G = true)
+    {R1 R2 : ByteArray} (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (a : Nat) (ha : a < c) (p : PairHit) :
+    p ∈ splitPairs sl lo hi c ((ix, G) : PkMz) offs (cutAll G offs ns) R1 R2 a ↔
+      p ∈ properPairs sl lo hi (hitsBoth sc0 (-(c : Int)) g m1) (hitsBoth sc0 (-(c : Int)) g m2) ∧
+        -(c : Int) ≤ pairScoreD dcost0 p := by
+  have K1c := hitsKPF_mem g ix G offs ns hcut hg hchk R1 m1 h1 c hc
+  have K2c := hitsKPF_mem g ix G offs ns hcut hg hchk R2 m2 h2 c hc
+  have K1a := hitsKPF_mem g ix G offs ns hcut hg hchk R1 m1 h1 a (by omega)
+  have K2b := hitsKPF_mem g ix G offs ns hcut hg hchk R2 m2 h2 (c - a - 1) (by omega)
+  unfold splitPairs
+  simp only []
+  rw [List.mem_filter, List.mem_append, properPairsF_eq, properPairsF_eq,
+    pp_near_right (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p, pp_near_left (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
+    mem_properPairs, mem_properPairs, mem_properPairs, K1c, K2c, K1a, K2b, decide_eq_true_eq]
+  obtain ⟨⟨w1, s1⟩, ⟨w2, s2⟩⟩ := p
+  simp only [mem_hitsBoth_T, pairScoreD, dcost0]
+  constructor
+  · rintro ⟨h | h, hs⟩
+    · exact ⟨⟨⟨h.1.1, h.1.2.1, by omega⟩, h.2.1, h.2.2⟩, hs⟩
+    · exact ⟨⟨h.1, ⟨h.2.1.1, h.2.1.2.1, by omega⟩, h.2.2⟩, hs⟩
+  · rintro ⟨⟨hx1, hx2, hpr⟩, hs⟩
+    refine ⟨?_, hs⟩
+    by_cases hA : -(a : Int) ≤ s1
+    · exact .inl ⟨⟨hx1.1, hx1.2.1, hA⟩, hx2, hpr⟩
+    · exact .inr ⟨hx1, ⟨hx2.1, hx2.2.1, by omega⟩, hpr⟩
+
 /-- **The split lists today's pairs**: `pairsAtS` has the members `pairsAt_mem` states. -/
 theorem pairsAtS_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 m2 : List Char} {ix : Mz.MzIdx}
     {G : PGen} {offs ns : Array Nat} (hcut : cutOk G offs ns = true)
@@ -589,11 +636,10 @@ theorem pairsAtS_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1
   unfold pairsAtS
   simp only []
   split
-  · rename_i hif
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at hif
-    simp only [List.not_mem_nil, false_iff, not_and]
-    intro hp hsc
-    exact splitEmpty_none hc hcut hg hchk h1 h2 _ hif.1 hif.2 p hp hsc
+  · rename_i ha
+    split
+    · exact splitPairs_mem hc hcut hg hchk h1 h2 _ ha p
+    · exact pairsAt_mem hc hcut hg hchk h1 h2 p
   · exact pairsAt_mem hc hcut hg hchk h1 h2 p
 
 /-! ### The length-scaled cap (for Rowan's coming `requiredMapBound`)
