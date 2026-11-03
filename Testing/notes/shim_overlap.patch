@@ -1,0 +1,84 @@
+diff --git a/Main.lean b/Main.lean
+index d6e284b..d41abda 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -31,6 +31,7 @@ def main (args : List String) : IO UInt32 := do
+       let raw ← Spec.readChunk reads1 reads2 20000
+       return Spec.trimChunk raw 16)
+     let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
++    let mut older : Task (Except IO.Error Unit) := .pure (.ok ())
+     repeat
+       let chunk ← IO.ofExcept next.get
+       if chunk.isEmpty then
+@@ -50,12 +51,19 @@ def main (args : List String) : IO UInt32 := do
+       -- ║ in file order, that the tasks hand chunks over in order, and that `samChunk` and  ║
+       -- ║ `out.write` put each pair's lines into the file correctly.                        ║
+       -- ╚══════════════════════════════════════════════════════════════════════════════════╝
+-      let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
+-      -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
+-      -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
+-      let text := Spec.samChunk chromosomes chunk results 16
++      -- at most two chunks in flight: wait until the chunk before the previous one is written
++      IO.ofExcept older.get
++      older := writing
+       let previous := writing
+-      writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
++      -- align and format this chunk in its own task, so the next chunk starts while this one finishes;
++      -- the write waits for the previous chunk's write, so the file keeps the input order
++      writing ← IO.asTask (prio := .dedicated) (do
++        let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
++        -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
++        -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
++        let text := Spec.samChunk chromosomes chunk results 16
++        IO.ofExcept previous.get
++        out.write text)
+     IO.ofExcept writing.get
+     return 0
+   | _ =>
+diff --git a/Spec/FROZEN.sha256 b/Spec/FROZEN.sha256
+index 5601fc3..87ea73e 100644
+--- a/Spec/FROZEN.sha256
++++ b/Spec/FROZEN.sha256
+@@ -1,4 +1,4 @@
+ 1aca44fb9f1a322efe7dc00bf04e5328091316b181a0244020d810606718162e  Spec/Alignment.lean
+ bed16299002ab810b77a17f678bbbe92c704130ab61d6ba4123a17efcd649f9f  Spec/Mapping.lean
+ e8bdfff2fee4aa0bbdc41b46273ad855a04ab7d87672df62f696faa2147af1bd  Spec/Aligner.lean
+-8a41529d97c31324296284faead07edb1278a87c0c3298e9b25ea96cc254495f  Spec/Shim.lean
++e728ff5f55c9f2759dd4c1545fba5f27a03e65c4768adc2d0c7e86f65ddd552d  Spec/Shim.lean
+diff --git a/Spec/Shim.lean b/Spec/Shim.lean
+index 22e2738..af70e40 100644
+--- a/Spec/Shim.lean
++++ b/Spec/Shim.lean
+@@ -30,6 +30,7 @@ def main (args : List String) : IO UInt32 := do
+       let raw ← Spec.readChunk reads1 reads2 20000
+       return Spec.trimChunk raw 16)
+     let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
++    let mut older : Task (Except IO.Error Unit) := .pure (.ok ())
+     repeat
+       let chunk ← IO.ofExcept next.get
+       if chunk.isEmpty then
+@@ -49,12 +50,19 @@ def main (args : List String) : IO UInt32 := do
+       -- ║ in file order, that the tasks hand chunks over in order, and that `samChunk` and  ║
+       -- ║ `out.write` put each pair's lines into the file correctly.                        ║
+       -- ╚══════════════════════════════════════════════════════════════════════════════════╝
+-      let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
+-      -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
+-      -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
+-      let text := Spec.samChunk chromosomes chunk results 16
++      -- at most two chunks in flight: wait until the chunk before the previous one is written
++      IO.ofExcept older.get
++      older := writing
+       let previous := writing
+-      writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
++      -- align and format this chunk in its own task, so the next chunk starts while this one finishes;
++      -- the write waits for the previous chunk's write, so the file keeps the input order
++      writing ← IO.asTask (prio := .dedicated) (do
++        let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
++        -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
++        -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
++        let text := Spec.samChunk chromosomes chunk results 16
++        IO.ofExcept previous.get
++        out.write text)
+     IO.ofExcept writing.get
+     return 0
+   | _ =>
