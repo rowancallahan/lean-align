@@ -72,3 +72,18 @@ anchorsOf 12.0M; prepMate redone inside fallbackOfK ~8M. The floor as the DP lim
 - Tried and dropped: `bandCellsJ` carrying the previous row's `H` in a register (+3.6M: the 13-argument cell loop
   gets slower). A real speed-up of the band DP needs a different kernel layout (machine-word arrays), not a
   source-level tweak.
+
+## speed/banddp (off festive 9b81fb5): the band DP's traceback
+`bandDPg` (NovaSeq 2k, 74.6M incl.): cells `bandCellsG` 53.0M over 218 DPs (~95 Ir per cell), traceback `while` loop
+7.7M + `runsOf` 4.6M over 115 tracebacks (~390 Ir per step: the `while` in `Id.run` re-allocates its mutable state
+each iteration), array frees 4.5M.
+- `tbRun`: the traceback as a tail-recursive loop that builds the runs while prepending (same runs as `runsOf`).
+  **Heuristic code, not proved**: the old loop is a `while` (`Loop.forIn`, opaque), so old = new cannot be stated as a
+  theorem. `bandDPg` has no value theorem (only `bandDPg_jump`, about the cells, unaffected) and its result is
+  re-checked downstream (`checkMove`, `mateOf`), so soundness does not depend on it; SAM identity is by test.
+- vs festive 9b81fb5: NovaSeq 1217.4M → 1210.9M (−0.5%), HiSeq 1425.9M → 1411.6M (−1.0%). SAM identical on both 2k
+  subsets and both full 200k sets; FUZZ=1 CI passes (456 theorems).
+- Tried and dropped: the cells on 4-byte little-endian `ByteArray` storage (one bounds check per value, `set!` per byte):
+  `bandCellsB` 69.8M vs `bandCellsJ` 55.2M on HiSeq 2k, i.e. 1.26x SLOWER, before counting the fill. `Array UInt32`
+  holds tagged scalars on 64-bit (no heap boxes), so its per-access cost is a bounds check and a shift; a byte-wise
+  cell costs four loads/stores plus shifts. Earlier: carrying the previous row's `H` in a register was +3.6M.
