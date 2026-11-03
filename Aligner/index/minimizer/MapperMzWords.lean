@@ -191,11 +191,6 @@ theorem allA_iff (B : ByteArray) (n : Nat) :
       refine ⟨by simpa using h 0 (by omega), fun t ht => ?_⟩
       have := h (t + 1) (by omega); rwa [show i + (t + 1) = i + 1 + t by omega] at this
 
-theorem allA_iff' (B : ByteArray) (i j : Nat) (h : i ≤ j) :
-    allA B i j = true ↔ ∀ t < j - i, acgt (B.get! (i + t)) = true := by
-  have := allA_iff B (j - i) i
-  rwa [show i + (j - i) = j by omega] at this
-
 /-- `a[i, i+k) = b[j, j+k)`. -/
 def eqRun (a b : ByteArray) (i j : Nat) : (k : Nat) → Bool
   | 0 => true

@@ -85,20 +85,6 @@ end MapSpec.Mz
 
 namespace MapSpec.Fast
 
-/-- One task per chromosome, each checking with `P` tasks for its entries. -/
-def checkAllMzPar (P : Nat) (idxs : Array Mz.MzIdx) (gbs : Array ByteArray) : Bool :=
-  let tasks := (List.range gbs.size).map fun c =>
-    Task.spawn (prio := .dedicated) fun _ => Mz.check3 idxs[c]! gbs[c]! P
-  tasks.all (·.get)
-
-theorem checkAllMzPar_eq (P : Nat) (idxs : Array Mz.MzIdx) (gbs : Array ByteArray) :
-    checkAllMzPar P idxs gbs = checkAllMz idxs gbs := by
-  unfold checkAllMzPar checkAllMz
-  rw [List.all_map]
-  simp only [Function.comp_def, Mz.check3_eq, Mz.check2_eq]
-  rfl
-
 end MapSpec.Fast
 
 #print axioms MapSpec.Mz.check3_eq
-#print axioms MapSpec.Fast.checkAllMzPar_eq

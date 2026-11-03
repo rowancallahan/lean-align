@@ -230,8 +230,6 @@ def PB.push : PB → UInt8 → PB
 /-- A partial last block keeps flag 0 (slow path). -/
 def PB.finish (s : PB) : PGen := ⟨s.n, 0, if s.n % 4 == 0 then s.w else s.w.push s.cur, pack32 s.ex⟩
 
-def pack (G : ByteArray) : PGen := (G.foldl PB.push (PB.init G.size)).finish
-
 /-- `P` spells `G`: same size, same byte everywhere. -/
 def Rep (P : PGen) (G : ByteArray) : Prop := P.n = G.size ∧ ∀ i, P.get i = G.get! i
 
@@ -377,12 +375,6 @@ theorem bwdMis_same (r : ByteArray) (st len lo : Nat) : ∀ d e k, e - lo = d �
       simp only [h.2, ih']
     · rw [if_neg he, if_neg he]
 
-theorem eqRun_same (b : ByteArray) : ∀ k i j, eqRun x b i j k = eqRun y b i j k := by
-  intro k
-  induction k with
-  | zero => intro i j; rfl
-  | succ k ih => intro i j; simp only [eqRun, h.2, ih]
-
 theorem hamming_same' (r : ByteArray) (a lim i stop m : Nat) :
     hamming r x a lim i stop m = hamming r y a lim i stop m := hamming_same h r a lim stop _ i m rfl
 
@@ -396,25 +388,11 @@ end
 
 /-! The names used by codecs/PairPacked.lean (the kernels at `PGen`). -/
 
-abbrev hammingP (r : ByteArray) (g : PGen) (a lim i stop m : Nat) : Nat := hamming r g a lim i stop m
-abbrev fwdMisP (r : ByteArray) (g : PGen) (st stop i k : Nat) : Nat := fwdMis r g st stop i k
-abbrev bwdMisP (r : ByteArray) (g : PGen) (st len lo e k : Nat) : Nat := bwdMis r g st len lo e k
 abbrev eqRunP (a : PGen) (b : ByteArray) (i j k : Nat) : Bool := eqRun a b i j k
 
 section
 variable {P : PGen} {G : ByteArray} (h : Rep P G)
 include h
-
-theorem hammingP_eq' (r : ByteArray) (a lim i stop m : Nat) :
-    hammingP r P a lim i stop m = hamming r G a lim i stop m := hamming_same' h.same r a lim i stop m
-
-theorem fwdMisP_eq' (r : ByteArray) (st stop i k : Nat) : fwdMisP r P st stop i k = fwdMis r G st stop i k :=
-  fwdMis_same' h.same r st stop i k
-
-theorem bwdMisP_eq' (r : ByteArray) (st len lo e k : Nat) : bwdMisP r P st len lo e k = bwdMis r G st len lo e k :=
-  bwdMis_same' h.same r st len lo e k
-
-theorem eqRunP_eq (b : ByteArray) (k i j : Nat) : eqRunP P b i j k = eqRun G b i j k := eqRun_same h.same b k i j
 
 theorem eqRunP_eqMz (b : ByteArray) : ∀ k i j, eqRunP P b i j k = Mz.eqRun G b i j k := by
   intro k

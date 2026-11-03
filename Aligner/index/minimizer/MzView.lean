@@ -78,36 +78,9 @@ def catOkV (V : GV) (offs : Array Nat) (gbs : Array ByteArray) : Bool :=
   (List.range gbs.size).all fun c =>
     decide (offs[c]! + gbs[c]!.size ≤ V.n) && eqRunV V gbs[c]! offs[c]! 0 gbs[c]!.size
 
-/-- `catOkV`, one task per chromosome. -/
-def catOkVPar (V : GV) (offs : Array Nat) (gbs : Array ByteArray) : Bool :=
-  let tasks := (List.range gbs.size).map fun c => Task.spawn (prio := .dedicated) fun _ =>
-    decide (offs[c]! + gbs[c]!.size ≤ V.n) && eqRunV V gbs[c]! offs[c]! 0 gbs[c]!.size
-  tasks.all (·.get)
-
-theorem catOkVPar_eq (V : GV) (offs : Array Nat) (gbs : Array ByteArray) :
-    catOkVPar V offs gbs = catOkV V offs gbs := by
-  unfold catOkVPar catOkV
-  rw [List.all_map]
-  rfl
-
 section
 variable {V : GV} {G : ByteArray} (h : RepV V G)
 include h
-
-theorem eqRunV_eq (b : ByteArray) : ∀ k i j, eqRunV V b i j k = eqRun G b i j k := by
-  intro k
-  induction k with
-  | zero => intro i j; rfl
-  | succ k ih => intro i j; simp only [eqRunV, eqRun, h.2, ih]; rfl
-
-theorem eqRunV_eqMz (b : ByteArray) : ∀ k i j, eqRunV V b i j k = Mz.eqRun G b i j k := by
-  intro k
-  induction k with
-  | zero => intro i j; rfl
-  | succ k ih => intro i j; simp only [eqRunV, Mz.eqRun, h.2, ih]
-
-theorem catOkV_eq (offs : Array Nat) (gbs : Array ByteArray) : catOkV V offs gbs = catOk G offs gbs := by
-  simp only [catOkV, catOk, h.1, eqRunV_eq h]
 
 end
 
@@ -202,63 +175,6 @@ variable {V : GV} {G : ByteArray} (h : RepV V G)
 include h
 open Mz
 
-theorem okAtV_eq (ix : MzIdx) (R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 t : Nat) :
-    okAtV ix V R s o key bw aw pmo o2 n1 a2 n2 t = Mz.okAt ix G R s o key bw aw pmo o2 n1 a2 n2 t := by
-  simp only [okAtV, Mz.okAt, eqRunV_eqMz h, h.1]
-
-theorem scanAV_eq (ix : MzIdx) (R : ByteArray) (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) :
-    ∀ d t acc, hi - t = d → scanAV ix V R s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =
-      scanA ix G R s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc := by
-  intro d
-  induction d with
-  | zero => intro t acc hd; unfold scanAV scanA; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro t acc hd
-    unfold scanAV scanA
-    have ih' := fun acc => ih (t + 1) acc (by omega)
-    simp only [show t < hi from by omega, if_true, okAtV_eq h, ih']
-
-theorem scanEdgeAV_eq (ix : MzIdx) (R : ByteArray) (side d0 s base bit : Nat) :
-    ∀ d i acc, ix.nr - i = d → scanEdgeAV ix V R side d0 s base bit i acc = scanEdgeA ix G R side d0 s base bit i acc := by
-  intro d
-  induction d with
-  | zero => intro i acc hd; unfold scanEdgeAV scanEdgeA; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro i acc hd
-    unfold scanEdgeAV scanEdgeA
-    have ih' := fun acc => ih (i + 1) acc (by omega)
-    simp only [show i < ix.nr from by omega, if_true, ih', okEdgeV, Mz.okEdge, eqRunV_eqMz h, h.1] <;> rfl
-
-theorem scanRangeAV_eq (R : ByteArray) (s stop base bit : Nat) :
-    ∀ d p acc, stop - p = d → scanRangeAV V R s stop base bit p acc = scanRangeA G R s stop base bit p acc := by
-  intro d
-  induction d with
-  | zero => intro p acc hd; unfold scanRangeAV scanRangeA; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro p acc hd
-    unfold scanRangeAV scanRangeA
-    have ih' := fun acc => ih (p + 1) acc (by omega)
-    simp only [show p < stop from by omega, if_true, ih', Mz.okIn, eqRunV_eqMz h, h.1] <;> rfl
-
-theorem scanInsideAV_eq (ix : MzIdx) (R : ByteArray) (s base bit : Nat) :
-    ∀ d i acc, ix.nr - i = d → scanInsideAV ix V R s base bit i acc = scanInsideA ix G R s base bit i acc := by
-  intro d
-  induction d with
-  | zero => intro i acc hd; unfold scanInsideAV scanInsideA; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro i acc hd
-    unfold scanInsideAV scanInsideA
-    have ih' := fun acc => ih (i + 1) acc (by omega)
-    simp only [show i < ix.nr from by omega, if_true, ih', scanRangeAV_eq h _ _ _ _ _ _ _ _ rfl]
-
-theorem mzLookSV_eq (ix : MzIdx) (R : ByteArray) (s base : Nat) (p : MzP) :
-    mzLookSV ix V R s base p = mzLookS ix G R s base p := by
-  simp only [mzLookSV, mzLookS, lookupPV, lookupP, lookupSeedAV, lookupSeedA, lookupCodeAV, lookupCodeA,
-    fun ix R s o key bw aw pmo o2 n1 a2 n2 hi base bit t acc =>
-      scanAV_eq h ix R s o key bw aw pmo o2 n1 a2 n2 hi base bit _ t acc rfl,
-    fun ix R side d0 s base bit i acc => scanEdgeAV_eq h ix R side d0 s base bit _ i acc rfl,
-    fun ix R s base bit i acc => scanInsideAV_eq h ix R s base bit _ i acc rfl]
-
 end
 
 end MapSpec.Fast
@@ -268,104 +184,6 @@ end MapSpec.Fast
 namespace MapSpec.Mz
 
 open MapSpec.Fast (GV RepV)
-
-def wcUV (B : GV) (i stop : Nat) (x : UInt64) : UInt64 :=
-  if i < stop then
-    let b := B.get i
-    if acgt b then wcUV B (i + 1) stop (x * 4 + (byteCode b).toUInt64) else BADU
-  else x
-termination_by stop - i
-
-def allNotV (B : GV) (i stop : Nat) : Bool :=
-  if i < stop then !acgt (B.get i) && allNotV B (i + 1) stop else true
-termination_by stop - i
-
-def rollToV (G : GV) : (e : Nat) → UInt64 × Nat
-  | 0 => (0, 0)
-  | e + 1 => roll (G.get e) (rollToV G e).1 (rollToV G e).2
-
-def compRV (ix : MzIdx) (G : GV) (fill : ByteArray) (last : Nat) :
-    (n p : Nat) → (x : UInt64) → (g : Nat) → Bool
-  | 0, _, _, _ => true
-  | n + 1, p, x, g =>
-    let s := roll (G.get (p + q - 1)) x g
-    if q ≤ s.2 then
-      let v := s.1.toNat
-      let o := ix.mini v
-      let pm := p + o
-      if pm + 1 = last then compRV ix G fill last n (p + 1) s.1 s.2
-      else
-        let b := ix.hsh (ix.sub v o) >>> ix.kb
-        let t := getU32 fill b
-        decide (ix.loB b ≤ t) && decide (t < ix.hiB b) && ix.posOf (ix.slot t) == pm &&
-          compRV ix G (setU32 fill b (t + 1)) (pm + 1) n (p + 1) s.1 s.2
-    else compRV ix G fill last n (p + 1) s.1 s.2
-
-def entryOkV (ix : MzIdx) (G : GV) (b hi t : Nat) : Bool :=
-  let e := (ix.slot t)
-  let pos := ix.posOf e
-  let tg := ix.tagOf e
-  let x := wcUV G pos (pos + ix.k) 0
-  let h := ix.hsh x.toNat
-  let w1 := ix.c
-  decide (pos + ix.k ≤ G.n) && x != BADU && (h >>> ix.kb) == b &&
-    ix.keyF tg == (h &&& ix.kbM) &&
-    (ix.flagF tg != 0 ||
-      (decide (w1 ≤ pos) && decide (pos + ix.k + w1 ≤ G.n) &&
-        (let bf := wcUV G (pos - w1) pos 0
-         let af := wcUV G (pos + ix.k) (pos + ix.k + w1) 0
-         bf != BADU && af != BADU && ix.befF tg == bf.toNat && ix.aftF tg == af.toNat))) &&
-    (decide (hi ≤ t + 1) || decide (pos < ix.posOf (ix.slot (t + 1))))
-
-def checkBucketV (ix : MzIdx) (G : GV) (b hi : Nat) : (n t : Nat) → Bool
-  | 0, _ => true
-  | n + 1, t => entryOkV ix G b hi t && checkBucketV ix G b hi n (t + 1)
-
-def checkSoundV (ix : MzIdx) (G : GV) : (n b : Nat) → Bool
-  | 0, _ => true
-  | n + 1, b =>
-    checkBucketV ix G b (ix.hiB b) (ix.hiB b - ix.loB b) (ix.loB b) && checkSoundV ix G n (b + 1)
-
-def runOkV (ix : MzIdx) (G : GV) (i : Nat) : Bool :=
-  let a := ix.ra i
-  let b := ix.rb i
-  decide (a < b) && decide (b ≤ G.n) && allNotV G a b &&
-    (decide (b = G.n) || acgt (G.get b)) && (decide (a = 0) || acgt (G.get (a - 1))) &&
-    (decide (ix.nr ≤ i + 1) || decide (b < ix.ra (i + 1)))
-
-def checkRunsV (ix : MzIdx) (G : GV) : (n i : Nat) → Bool
-  | 0, _ => true
-  | n + 1, i => runOkV ix G i && checkRunsV ix G n (i + 1)
-
-def checkCoverV (ix : MzIdx) (G : GV) (c : Nat) : (n x : Nat) → Bool
-  | 0, _ => true
-  | n + 1, x =>
-    if acgt (G.get x) then checkCoverV ix G c n (x + 1)
-    else
-      let c := advance ix x ix.nr c
-      decide (c < ix.nr) && decide (ix.ra c ≤ x) && decide (x < ix.rb c) && checkCoverV ix G c n (x + 1)
-
-/-- `check2` reading a view. -/
-def check2V (ix : MzIdx) (G : GV) : Bool :=
-  checkParams ix && checkSoundV ix G (2 ^ ix.B) 0 &&
-    (let s := rollToV G (q - 1); compRV ix G ix.hint 0 (G.n + 1 - q) 0 s.1 s.2) &&
-    checkRunsV ix G ix.nr 0 && checkCoverV ix G 0 G.n 0
-
-/-- `checkSoundV` on `P` tasks (as `checkSoundPar`). -/
-def checkSoundParV (ix : MzIdx) (G : GV) (P : Nat) : Bool :=
-  let N := 2 ^ ix.B
-  let P := max P 1
-  let ch := (N + P - 1) / P
-  let tasks := (List.range P).map fun j =>
-    Task.spawn (prio := .dedicated) fun _ => checkSoundV ix G (min ((j + 1) * ch) N - j * ch) (j * ch)
-  tasks.all (·.get)
-
-/-- `check2V` with the per-entry pass on `P` tasks, run beside the sequential passes. -/
-def check3V (ix : MzIdx) (G : GV) (P : Nat) : Bool :=
-  let seq := Task.spawn (prio := .dedicated) fun _ =>
-    (let s := rollToV G (q - 1); compRV ix G ix.hint 0 (G.n + 1 - q) 0 s.1 s.2) &&
-      checkRunsV ix G ix.nr 0 && checkCoverV ix G 0 G.n 0
-  checkParams ix && checkSoundParV ix G P && seq.get
 
 /-! ### Builder (copy of `buildW`) -/
 
@@ -438,25 +256,6 @@ section
 variable {V : GV} {G : ByteArray} (h : RepV V G)
 include h
 
-theorem wcUV_eq (stop : Nat) : ∀ d i x, stop - i = d → wcUV V i stop x = wcU G i stop x := by
-  intro d
-  induction d with
-  | zero => intro i x hd; unfold wcUV wcU; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro i x hd
-    unfold wcUV wcU
-    have ih' := fun x => ih (i + 1) x (by omega)
-    simp only [show i < stop from by omega, if_true, h.2, ih']
-
-theorem allNotV_eq (stop : Nat) : ∀ d i, stop - i = d → allNotV V i stop = allNot G i stop := by
-  intro d
-  induction d with
-  | zero => intro i hd; unfold allNotV allNot; rw [if_neg (by omega), if_neg (by omega)]
-  | succ d ih =>
-    intro i hd
-    unfold allNotV allNot
-    simp only [show i < stop from by omega, if_true, h.2, ih (i + 1) (by omega)]
-
 theorem allAV_eq (stop : Nat) : ∀ d i, stop - i = d → allAV V i stop = allA G i stop := by
   intro d
   induction d with
@@ -475,57 +274,6 @@ theorem wcGoV_eq (stop : Nat) : ∀ d i x, stop - i = d → wcGoV V i stop x = w
     unfold wcGoV wcGo
     have ih' := fun x => ih (i + 1) x (by omega)
     simp only [show i < stop from by omega, if_true, h.2, ih']
-
-theorem rollToV_eq : ∀ e, rollToV V e = rollTo G e := by
-  intro e
-  induction e with
-  | zero => rfl
-  | succ e ih => simp only [rollToV, rollTo, h.2, ih]
-
-theorem compRV_eq (ix : MzIdx) : ∀ n fill last p x g, compRV ix V fill last n p x g = compR ix G fill last n p x g := by
-  intro n
-  induction n with
-  | zero => intro fill last p x g; rfl
-  | succ n ih => intro fill last p x g; simp only [compRV, compR, h.2, ih]
-
-theorem checkSoundV_eq (ix : MzIdx) : ∀ n b, checkSoundV ix V n b = checkSound ix G n b := by
-  have eo : ∀ b hi t, entryOkV ix V b hi t = entryOk ix G b hi t := fun b hi t => by
-    simp only [entryOkV, entryOk, h.1, fun i stop x => wcUV_eq h stop _ i x rfl]
-  have cb : ∀ b hi n t, checkBucketV ix V b hi n t = checkBucket ix G b hi n t := fun b hi n => by
-    induction n with
-    | zero => intro t; rfl
-    | succ n ih => intro t; simp only [checkBucketV, checkBucket, eo, ih]
-  intro n
-  induction n with
-  | zero => intro b; rfl
-  | succ n ih => intro b; simp only [checkSoundV, checkSound, cb, ih]
-
-theorem checkRunsV_eq (ix : MzIdx) : ∀ n i, checkRunsV ix V n i = checkRuns ix G n i := by
-  intro n
-  induction n with
-  | zero => intro i; rfl
-  | succ n ih =>
-    intro i
-    simp only [checkRunsV, checkRuns, runOkV, runOk, h.1, h.2, ih, fun i stop => allNotV_eq h stop _ i rfl]
-
-theorem checkCoverV_eq (ix : MzIdx) : ∀ n c x, checkCoverV ix V c n x = checkCover ix G c n x := by
-  intro n
-  induction n with
-  | zero => intro c x; rfl
-  | succ n ih => intro c x; simp only [checkCoverV, checkCover, h.2, ih]
-
-theorem check2V_eq' (ix : MzIdx) : check2V ix V = check2 ix G := by
-  simp only [check2V, check2, checkSoundV_eq h, rollToV_eq h, compRV_eq h, checkRunsV_eq h,
-    checkCoverV_eq h, h.1]
-
-theorem check3V_eq' (ix : MzIdx) (P : Nat) : check3V ix V P = check2 ix G := by
-  have e : checkSoundParV ix V P = checkSoundPar ix G P := by
-    simp only [checkSoundParV, checkSoundPar, soundChunk, checkSoundV_eq h]
-  rw [check2_eq, ← check3_eq ix G P]
-  simp only [check3V, check3, e, rollToV_eq h, compRV_eq h, checkRunsV_eq h, checkCoverV_eq h, h.1]
-  show _ = (checkParams ix && checkSoundPar ix G P && _ && _ && _)
-  simp only [Bool.and_assoc]
-  rfl
 
 theorem slotAtV_eq (ix : MzIdx) (pm hh : Nat) : slotAtV ix V pm hh = slotAt ix G pm hh := by
   simp only [slotAtV, slotAt, h.1, fun i stop => allAV_eq h stop _ i rfl, fun i stop x => wcGoV_eq h stop _ i x rfl]
@@ -553,12 +301,6 @@ theorem buildWV_eq' (k B c sw t : Nat) : buildWV V k B c sw t = buildW G k B c s
   simp only [buildWV, buildW, h.1, h.2, foldMinsV_eq h, slotAtV_eq h, panicWithPosWithDecl, panic, panicCore]
 
 end
-
-theorem check2V_eq (ix : MzIdx) (V : GV) : check2V ix V = check2 ix (Fast.unpackV V) :=
-  check2V_eq' (Fast.repV_unpack V) ix
-
-theorem check3V_eq (ix : MzIdx) (V : GV) (P : Nat) : check3V ix V P = check2V ix V := by
-  rw [check3V_eq' (Fast.repV_unpack V), check2V_eq]
 
 /-- **Low-memory builder = in-memory builder**: reading the chromosomes through
 the view gives exactly `buildW` on their concatenation `G` (any `G` the view
@@ -592,33 +334,8 @@ theorem ilG_congrG (R1 R2 : ByteArray) (gbs2 : Array ByteArray) (offs : Array Na
   | zero => intro s1 s2 b; rfl
   | succ f ih => intro s1 s2 b; simp only [ilG, GS.adv, hG, ih]
 
-/-- A mapper whose index ignores `G` gives the same answers for any `G`. -/
-theorem pairFastGB_congrG (P lo hi : Nat) (offs : Array Nat) (gbs : Array ByteArray) (R1 R2 : ByteArray) :
-    pairFastGB P lo hi ix G offs gbs R1 R2 = pairFastGB P lo hi ix G' offs gbs R1 R2 := by
-  simp only [pairFastGB, mapFastGB, mapChromsGB, ilG_congrG ix G G' hG]
-
 end
-
-/-- **Proper pairs, whole genome held once.**  Chromosomes `gbs` (byte-encoded),
-the view `V` checked against them (`catOkV`), and a minimizer index passing the
-checker over the view: the mapper (run with an empty `G`) is `pairSpec`. -/
-theorem pairFastGB_view_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
-    (R1 R2 : ByteArray) (ix : Mz.MzIdx) (V : GV) (offs : Array Nat)
-    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOkV V offs gbs = true)
-    (hchk : Mz.check2V ix V = true) :
-    pairFastGB P lo hi (ix, V) ByteArray.empty offs gbs R1 R2 = pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
-  have hr := repV_unpack V
-  rw [pairFastGB_congrG (ix, V) ByteArray.empty (unpackV V) (fun _ _ _ _ => rfl)]
-  refine pairFastGB_eq_pairSpec P lo hi g m1 m2 gbs R1 R2 (ix, V) (unpackV V) offs hg h1 h2
-    (by rw [← catOkV_eq hr]; exact hcat) ?_
-  intro R' s base _
-  show LookOkS _ R' s base 0 (mzLookSV ix V R' s base (mzPrep ix (seedHashAt R' s)))
-  rw [mzLookSV_eq hr]
-  exact mzLookS_ok ix _ R' s base (by rw [← Mz.check2_eq, ← Mz.check2V_eq]; exact hchk)
 
 end MapSpec.Fast
 
-#print axioms MapSpec.Fast.catOkVPar_eq
-#print axioms MapSpec.Mz.check3V_eq
 #print axioms MapSpec.Mz.buildWV_eq
-#print axioms MapSpec.Fast.pairFastGB_view_eq_pairSpec

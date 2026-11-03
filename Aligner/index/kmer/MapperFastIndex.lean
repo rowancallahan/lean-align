@@ -523,7 +523,6 @@ theorem firstOdd_spec (B : ByteArray) (stop : Nat) :
     · next ha =>
       exact ⟨Nat.le_refl _, hi, fun k h1 h2 => by omega, fun _ => by simpa using ha⟩
 
-
 theorem scanBucket_toList (ent : ByteArray) (key : Nat) (base bit hi : Nat) :
     ∀ d t acc, hi - t = d → (scanBucket ent key base bit hi t acc).toList = acc.toList ++
       (List.range' t (hi - t)).filterMap (fun t => if u32 ent (2 * t + 1) == key then
@@ -558,7 +557,6 @@ theorem scanOdd_toList (G R : ByteArray) (ps : ByteArray) (o s base bit : Nat) :
     by_cases hk : (o ≤ u32 ps t && u32 ps t - o + q ≤ G.size && eqRun G R (u32 ps t - o) s q) = true
     · rw [if_pos hk, if_pos hk, Array.toList_push, List.append_assoc]; rfl
     · rw [if_neg hk, if_neg hk]
-
 
 /-! ### The fused seed encoder -/
 
@@ -773,9 +771,6 @@ theorem lookupSeed_spec (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : j < 4) (hc
           simp only [Bool.and_eq_true, decide_eq_true_eq, hp']
           exact ⟨⟨by omega, hp1⟩, (eqRun_spec G R q _ _).2 hp2⟩), hp']
         rfl
-
-theorem hLook_ok (ix : HIdx) (G R : ByteArray) (j : Nat) (hj : j < 4) (hchk : checkIdx ix G = true) :
-    LookOk G R j (hLook.look ix G R j (hLook.prep ix (seedHash R j))) := lookupSeed_spec ix G R j hj hchk
 
 end MapSpec.Fast
 

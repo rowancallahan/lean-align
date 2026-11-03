@@ -1094,7 +1094,6 @@ theorem ixB_k (G : ByteArray) : (ixB G).k = 22 := by dsimp only [ixB]; rfl
 theorem ixB_kb (G : ByteArray) : (ixB G).kb = 18 := by dsimp only [ixB]; rfl
 theorem ixB_B (G : ByteArray) : (ixB G).B = 26 := by dsimp only [ixB]; rfl
 theorem ixB_c (G : ByteArray) : (ixB G).c = 0 := by dsimp only [ixB]; rfl
-theorem ixB_kf (G : ByteArray) : (ixB G).kf = (ix0 G).kf := by dsimp only [ixB]
 theorem ixB_kbM (G : ByteArray) : (ixB G).kbM = 2 ^ (ix0 G).kf - 1 := by dsimp only [ixB]; rfl
 theorem ixB_fM (G : ByteArray) : (ixB G).fM = 0 := by dsimp only [ixB]; rfl
 theorem ixB_fsh (G : ByteArray) : (ixB G).fsh = (ix0 G).kf := by dsimp only [ixB]; simp [mkIdx]

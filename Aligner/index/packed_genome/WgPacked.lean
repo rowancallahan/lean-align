@@ -59,18 +59,7 @@ namespace MapSpec.Fast
 
 open MapSpec AlignmentSpec
 
-/-- A mapper whose index ignores `G` gives the same answers for any `G`. -/
-theorem mapFastGB_congrG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G G' : ByteArray)
-    (hG : ∀ R s base p, LookG.look ix G R s base p = LookG.look ix G' R s base p) (P : Nat) (offs : Array Nat)
-    (gbs : Array ByteArray) (R : ByteArray) : mapFastGB P ix G offs gbs R = mapFastGB P ix G' offs gbs R := by
-  simp only [mapFastGB, mapChromsGB, ilG_congrG ix G G' hG]
-
 /-! ## Length dispatch on the packed genome -/
-
-/-- `pairDispatch` on the packed chromosomes `pgs` (lookups in the bundled genome). -/
-def pairDispatchP (lo hi : Nat) (ix : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
-    Option ((Placement × Int) × (Placement × Int)) :=
-  pairLazy lo hi (mapFastGBP (penOf R1) ix offs pgs R1) (fun _ => mapFastGBP (penOf R2) ix offs pgs R2)
 
 theorem lookOk_pk (ix : Mz.MzIdx) (G : PGen) (hchk : Mz.check2P ix G = true) :
     ∀ (R' : ByteArray) s base, s + q ≤ R'.size →
@@ -80,41 +69,6 @@ theorem lookOk_pk (ix : Mz.MzIdx) (G : PGen) (hchk : Mz.check2P ix G = true) :
   show LookOkS (Mz.unpack G) R' s base 0 (mzLookSP ix G R' s base (mzPrep ix (seedHashAt R' s)))
   rw [mzLookSP_eq (Mz.rep_unpack G)]
   exact mzLookS_ok ix _ R' s base (by rw [← Mz.check2_eq, ← Mz.check2P_eq (Mz.rep_unpack G)]; exact hchk)
-
-/-- **Packed genome, length dispatch** (`T = −16` / `−12` per mate). -/
-theorem pairDispatchP_mz_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen)
-    (offs ns : Array Nat) (R1 R2 : ByteArray) (hcut : cutOk G offs ns = true)
-    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2)
-    (hchk : Mz.check2P ix G = true) :
-    pairDispatchP lo hi (ix, G) offs (cutAll G offs ns) R1 R2 =
-      pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
-  have e : pairDispatchP lo hi (ix, G) offs (cutAll G offs ns) R1 R2 =
-      pairDispatch lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
-    unfold pairDispatchP pairDispatch; rw [pairLazy_match, mapFastGBP_eq, mapFastGBP_eq]; rfl
-  rw [e]
-  exact pairDispatch_eq_pairSpecT lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut)
-    (lookOk_pk ix G hchk)
-
-/-- **Byte chromosomes, genome held once as a view, length dispatch.** -/
-theorem pairDispatch_view_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (gbs : Array ByteArray)
-    (R1 R2 : ByteArray) (ix : Mz.MzIdx) (V : GV) (offs : Array Nat)
-    (hg : GenomeBytes gbs g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (hcat : catOkV V offs gbs = true)
-    (hchk : Mz.check2V ix V = true) :
-    pairDispatch lo hi (ix, V) ByteArray.empty offs gbs R1 R2 =
-      pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
-  have hr := repV_unpack V
-  have e : pairDispatch lo hi (ix, V) ByteArray.empty offs gbs R1 R2 =
-      pairDispatch lo hi (ix, V) (unpackV V) offs gbs R1 R2 := by
-    unfold pairDispatch
-    rw [mapFastGB_congrG (ix, V) ByteArray.empty (unpackV V) (fun _ _ _ _ => rfl),
-      mapFastGB_congrG (ix, V) ByteArray.empty (unpackV V) (fun _ _ _ _ => rfl)]
-  rw [e]
-  refine pairDispatch_eq_pairSpecT lo hi g m1 m2 gbs R1 R2 (ix, V) (unpackV V) offs hg h1 h2
-    (by rw [← catOkV_eq hr]; exact hcat) ?_
-  intro R' s base _
-  show LookOkS _ R' s base 0 (mzLookSV ix V R' s base (mzPrep ix (seedHashAt R' s)))
-  rw [mzLookSV_eq hr]
-  exact mzLookS_ok ix _ R' s base (by rw [← Mz.check2_eq, ← Mz.check2V_eq]; exact hchk)
 
 /-! ## Word kernels with the chromosome bytes read through `GRead` (copies) -/
 
@@ -295,13 +249,6 @@ def kerGKG (R : ByteArray) (K : RP) (G : Gt) (P : PGen) (st len lim : Nat) : Nat
   else if st + len ≤ P.n then gappedLG R G K P st len lim
   else lim + 1
 
-@[inline] def twoGapCG (R : ByteArray) (G : Gt) (st len : Nat) : Bool :=
-  let n := R.size
-  let A := fwdMis R G st n 0 1
-  let B := bwdMis R G st len 0 n 1
-  (len == n || len == n + 2 || len + 2 == n) &&
-    (hamming R G (st + 1) 0 (A + 1) (B - 1) 0 == 0 || st == 0 || hamming R G (st - 1) 0 (A + 1) (B - 1) 0 == 0)
-
 @[inline] def twoGapCABG (R : ByteArray) (G : Gt) (st len A B : Nat) : Bool :=
   let n := R.size
   (len == n || len == n + 2 || len + 2 == n) &&
@@ -315,12 +262,6 @@ variable [Inhabited Gt]
   let B := bwdLG R G K pvs[c]! st len 0 1
   if !twoGapCABG R G st len A B then 17
   else if twoGapBP R G st len A B then 16
-  else bandPen 16 R gbs ⟨c, st, len⟩
-
-@[inline] def twoGap16G (R : ByteArray) (gbs : Array Gt) (c st len : Nat) : Nat :=
-  let G := gbs[c]!
-  if !twoGapCG R G st len then 17
-  else if twoGapB R G st len then 16
   else bandPen 16 R gbs ⟨c, st, len⟩
 
 def ker16KG (R : ByteArray) (K : RP) (gbs : Array Gt) (pvs : Array PGen) (c st len : Nat) : Nat :=
@@ -408,32 +349,6 @@ theorem isortN_eq (l : List Nat) : l.mergeSort (fun a b => decide (a ≤ b)) = i
       (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) l
   · exact isortN_sorted l
   · exact (List.mergeSort_perm l _).trans (isortN_perm l).symm
-
-/-- The diagonals `x / 16` of the slices, read off each array by `foldr` (`flatD_eq`). -/
-def flatD : List (Array Nat) → List Nat
-  | [] => []
-  | arr :: rest => arr.foldr (fun x r => x / 16 :: r) (flatD rest)
-
-theorem foldr_div16 (init : List Nat) : ∀ l : List Nat,
-    l.foldr (fun x r => x / 16 :: r) init = l.map (· / 16) ++ init
-  | [] => rfl
-  | x :: xs => by simp only [List.foldr_cons, List.map_cons, List.cons_append, foldr_div16 init xs]
-
-theorem flatD_eq : ∀ acc : List (Array Nat), flatD acc = acc.flatMap fun arr => arr.toList.map (· / 16)
-  | [] => rfl
-  | arr :: rest => by
-    rw [flatD, List.flatMap_cons, ← flatD_eq rest, ← Array.foldr_toList, foldr_div16]
-
-/-- `diags` sorting a short list by insertion, the slices read without intermediate lists (`diags_eqI`). -/
-def diagsI (acc : List (Array Nat)) : List Nat :=
-  let l := flatD acc
-  dedupAdj (if l.length ≤ 16 then isortN l else l.mergeSort fun a b => decide (a ≤ b))
-
-/-- `diags` by insertion sort (compiled code runs `diagsM`). -/
-theorem diags_eqI : @diags = @diagsI := by
-  funext acc
-  unfold diags diagsI
-  simp only [flatD_eq, isortN_eq, ite_self]
 
 /-- Stages K and B of one chromosome, the letter filter (`chromKBFG_eq`: the same). -/
 def chromKBFG0 (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
@@ -699,22 +614,6 @@ theorem chromKBFG_eqK [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P 
 
 end
 
-/-- One read, word kernels, packed chromosomes `pgs` only (they are also the kernels' words). -/
-def mapFastGBKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) : Option (Placement × Int) :=
-  if fastT P R then decodeP pgs.size P (mapChromsGBKG P ix G offs pgs pgs R)
-  else mapSpecBoth sc0 (-(P : Int)) (decodeGenomeB (pgs.map Mz.unpack)) (decodeBytes R)
-
-/-- Proper pairs at `T = −P`, word kernels, packed genome. -/
-def pairFastGBKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P lo hi : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option ((Placement × Int) × (Placement × Int)) :=
-  pairLazy lo hi (mapFastGBKP P ix G offs pgs R1) (fun _ => mapFastGBKP P ix G offs pgs R2)
-
-/-- Length dispatch, word kernels, packed genome. -/
-def pairDispatchKP {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lo hi : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) : Option ((Placement × Int) × (Placement × Int)) :=
-  pairLazy lo hi (mapFastGBKP (penOf R1) ix G offs pgs R1) (fun _ => mapFastGBKP (penOf R2) ix G offs pgs R2)
-
 /-! ## Proofs: same bytes, same kernels -/
 
 section
@@ -744,9 +643,6 @@ theorem kerGKG_same (R : ByteArray) (K : RP) (P : PGen) (st len lim : Nat) :
     kerGKG R K x P st len lim = kerGKG R K y P st len lim := by
   simp only [kerGKG, hamming_same' h, kerG3G_same h, gappedLG_same h]
 
-theorem twoGapCG_same (R : ByteArray) (st len : Nat) : twoGapCG R x st len = twoGapCG R y st len := by
-  simp only [twoGapCG, fwdMis_same' h, bwdMis_same' h, hamming_same' h]
-
 theorem twoGapCABG_same (R : ByteArray) (st len A B : Nat) :
     twoGapCABG R x st len A B = twoGapCABG R y st len A B := by
   simp only [twoGapCABG, hamming_same' h]
@@ -757,16 +653,10 @@ end
 theorem kerGKG_bytes (R : ByteArray) (K : RP) (G : ByteArray) (P : PGen) (st len lim : Nat) :
     kerGKG R K G P st len lim = kerGK R K G P st len lim := rfl
 
-theorem twoGapCG_bytes (R G : ByteArray) (st len : Nat) : twoGapCG R G st len = twoGapC R G st len := rfl
-
 section
 variable {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] {xs : Array G1} {ys : Array G2}
   (h : SameA xs ys)
 include h
-
-theorem twoGap16G_same (R : ByteArray) (c st len : Nat) :
-    twoGap16G R xs c st len = twoGap16G R ys c st len := by
-  simp only [twoGap16G, twoGapCG_same (h.2 c), twoGapB_same (h.2 c), bandPen_same h]
 
 theorem twoGap16KG_same (R : ByteArray) (K : RP) (pvs : Array PGen) (c st len : Nat) :
     twoGap16KG R K xs pvs c st len = twoGap16KG R K ys pvs c st len := by
@@ -894,56 +784,8 @@ theorem mapChromsGBK_eq_rep {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) 
   · funext c st len l; exact kerHK_eq R _ _ hrep c st len l
   · funext c st len l; exact kerHK_eq (revCompB R) _ _ hrep c st len l
 
-theorem mapFastGBKP_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (P : Nat) (ix : L) (G : ByteArray)
-    (offs : Array Nat) (pgs : Array PGen) (R : ByteArray) :
-    mapFastGBKP P ix G offs pgs R = mapFastGB P ix G offs (pgs.map Mz.unpack) R := by
-  unfold mapFastGBKP mapFastGB
-  rw [mapChromsGBKG_unpack, mapChromsGBK_eq_rep P ix G offs _ pgs (repAllK_unpack pgs)]
-  simp
-
 /-! ## Top theorems -/
-
-/-- **Packed genome, word kernels, one `T = −P`.** -/
-theorem pairFastGBKP_mz_eq_pairSpec (P lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen)
-    (offs ns : Array Nat) (R1 R2 : ByteArray) (hcut : cutOk G offs ns = true)
-    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2)
-    (hchk : Mz.check2P ix G = true) :
-    pairFastGBKP P lo hi ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
-      pairSpec sc0 (-(P : Int)) lo hi g m1 m2 := by
-  have e : pairFastGBKP P lo hi ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
-      pairFastGB P lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
-    unfold pairFastGBKP pairFastGB
-    rw [pairLazy_match, mapFastGBKP_eq, mapFastGBKP_eq,
-      mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl),
-      mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl)]
-    rfl
-  rw [e]
-  exact pairFastGB_eq_pairSpec P lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut)
-    (lookOk_pk ix G hchk)
-
-/-- **Packed genome, word kernels, length dispatch** (`T = −16` / `−12` per mate). -/
-theorem pairDispatchKP_mz_eq (lo hi : Nat) (g : Genome) (m1 m2 : List Char) (ix : Mz.MzIdx) (G : PGen)
-    (offs ns : Array Nat) (R1 R2 : ByteArray) (hcut : cutOk G offs ns = true)
-    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (h1 : Encodes R1 m1) (h2 : Encodes R2 m2)
-    (hchk : Mz.check2P ix G = true) :
-    pairDispatchKP lo hi ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
-      pairSpecT (-(penOf R1 : Int)) (-(penOf R2 : Int)) lo hi g m1 m2 := by
-  have e : pairDispatchKP lo hi ((ix, G) : PkMz) ByteArray.empty offs (cutAll G offs ns) R1 R2 =
-      pairDispatch lo hi ((ix, G) : PkMz) (Mz.unpack G) offs ((cutAll G offs ns).map Mz.unpack) R1 R2 := by
-    unfold pairDispatchKP pairDispatch
-    rw [pairLazy_match, mapFastGBKP_eq, mapFastGBKP_eq,
-      mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl),
-      mapFastGB_congrG ((ix, G) : PkMz) ByteArray.empty (Mz.unpack G) (fun _ _ _ _ => rfl)]
-    rfl
-  rw [e]
-  exact pairDispatch_eq_pairSpecT lo hi g m1 m2 _ R1 R2 _ _ offs hg h1 h2 (catOk_cut G offs ns hcut)
-    (lookOk_pk ix G hchk)
 
 end MapSpec.Fast
 
 #print axioms MapSpec.Mz.check3P_eq
-#print axioms MapSpec.Fast.pairDispatchP_mz_eq
-#print axioms MapSpec.Fast.pairDispatch_view_eq
-#print axioms MapSpec.Fast.mapFastGBKP_eq
-#print axioms MapSpec.Fast.pairFastGBKP_mz_eq_pairSpec
-#print axioms MapSpec.Fast.pairDispatchKP_mz_eq
