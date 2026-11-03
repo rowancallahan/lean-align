@@ -339,6 +339,71 @@ theorem lanesAnyV_eq (gs : GW) (wj : UInt64) (c : Nat) (jU : USize) (full : UInt
     · exact ih _ (by rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ kU.toNat; rw [usz_lit 1 (by decide)]; omega),
         usz_lit 1 (by decide)]; omega) _ _
 
+/-- `lanesAnyV` with the two field words of `gAtWU` kept while the word index `(t >>> 5) + jU` stays the same
+(`lanesAnyW_eq`): no `GW.getU` per step. -/
+def lanesAnyW (gs : GW) (wj m : UInt64) (jU : USize) (full F : UInt64) (t k u : USize) (a b : UInt64) : UInt64 :=
+  if h : k = 0 then F else
+    let s := t &&& 31
+    let F := F ||| laneZ (fold (wj ^^^ comb a b s.toNat (2 * s).toUInt64 (64 - 2 * s).toUInt64) &&& m)
+    if F &&& full == full then F else
+      let u' := ((t + 1) >>> 5) + jU
+      if u' == u then lanesAnyW gs wj m jU full F (t + 1) (k - 1) u a b
+      else lanesAnyW gs wj m jU full F (t + 1) (k - 1) u' (gs.getU u') (gs.getU (u' + 1))
+termination_by k.toNat
+decreasing_by
+  all_goals
+    have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+      usz_lit 1 (by decide)]
+    omega
+
+theorem lanesAnyW_eq (gs : GW) (wj m : UInt64) (jU : USize) (full : UInt64) :
+    ∀ n (k : USize), k.toNat = n → ∀ (t : USize) (F : UInt64),
+      lanesAnyW gs wj m jU full F t k ((t >>> 5) + jU) (gs.getU ((t >>> 5) + jU)) (gs.getU ((t >>> 5) + jU + 1)) =
+        lanesAnyV gs wj m jU full F t k := by
+  intro n
+  induction n with
+  | zero =>
+    intro k hk t F
+    have : k = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [lanesAnyW, lanesAnyV, dif_pos this, dif_pos this]
+  | succ n ih =>
+    intro k hk t F
+    have h0 : k ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    have hk1 : (k - 1).toNat = n := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]; omega
+    rw [lanesAnyW, lanesAnyV, dif_neg h0, dif_neg h0]
+    simp only [gAtWU]
+    have key : ∀ F' : UInt64,
+        (if (F' &&& full == full) = true then F' else
+          if ((t + 1) >>> 5 + jU == t >>> 5 + jU) = true then
+            lanesAnyW gs wj m jU full F' (t + 1) (k - 1) (t >>> 5 + jU) (gs.getU (t >>> 5 + jU)) (gs.getU (t >>> 5 + jU + 1))
+          else lanesAnyW gs wj m jU full F' (t + 1) (k - 1) ((t + 1) >>> 5 + jU) (gs.getU ((t + 1) >>> 5 + jU))
+            (gs.getU ((t + 1) >>> 5 + jU + 1))) =
+        (if (F' &&& full == full) = true then F' else lanesAnyV gs wj m jU full F' (t + 1) (k - 1)) := by
+      intro F'
+      by_cases hc : (F' &&& full == full) = true
+      · simp only [hc, if_true]
+      · simp only [hc, Bool.false_eq_true, if_false]
+        by_cases heq : ((t + 1) >>> 5 + jU == t >>> 5 + jU) = true
+        · rw [if_pos heq]
+          have e : (t + 1) >>> 5 + jU = t >>> 5 + jU := by simpa using heq
+          rw [← e]
+          exact ih _ hk1 _ _
+        · rw [if_neg heq]
+          exact ih _ hk1 _ _
+    exact key _
+
+/-- Compiled `lanesAnyV`. -/
+@[inline] def lanesAnyV0 (gs : GW) (wj m : UInt64) (jU : USize) (full F : UInt64) (t k : USize) : UInt64 :=
+  let u := (t >>> 5) + jU
+  lanesAnyW gs wj m jU full F t k u (gs.getU u) (gs.getU (u + 1))
+
+@[csimp] theorem lanesAnyV_eqW : @lanesAnyV = @lanesAnyV0 := by
+  funext gs wj m jU full F t k
+  exact (lanesAnyW_eq gs wj m jU full k.toNat k rfl t F).symm
+
 /-- `lanesAny` (its slow path; not rewritten by `csimp`). -/
 def lanesAnyS (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t : Nat) : Nat → UInt64
   | 0 => F
@@ -393,6 +458,80 @@ def fineE (K : RP) (gs : GW) (o n r m need : Nat) : Nat → Nat → Nat → Bool
       let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
       let F := if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full
       fineE K gs o n r m need (j + 1) k (acc + lc F)
+
+/-- `fineE` on machine words: genome words by `gAtWU`, the field mask precomputed, the shift scan by `lanesAnyV`
+(`fineEV_eq`). -/
+def fineEV (K : RP) (gs : GW) (oU tU rU : USize) (n m need : Nat) : Nat → Nat → Nat → Bool
+  | _, 0, acc => decide (need ≤ acc)
+  | j, k + 1, acc =>
+    if need ≤ acc then true
+    else if acc + (m - 4 * j) < need then false
+    else
+      let jU := j.toUSize
+      let wj := K.w.getD j 0
+      let lm := lowM (n - 32 * j)
+      let full := fullL (min 4 (m - 4 * j))
+      let F := laneZ (fold (wj ^^^ gAtWU gs tU jU) &&& lm) &&& full
+      let F := if F == full then F else lanesAnyV gs wj lm jU full F oU rU &&& full
+      fineEV K gs oU tU rU n m need (j + 1) k (acc + lc F)
+
+theorem fineEV_eq (K : RP) (gs : GW) (o n r m need : Nat) :
+    ∀ k j acc, o + 2 * r + 1 + 32 * (j + k) < 2147483648 →
+      fineEV K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize n m need j k acc = fineE K gs o n r m need j k acc := by
+  intro k
+  induction k with
+  | zero => intro j acc _; rfl
+  | succ k ih =>
+    intro j acc hb
+    rw [fineEV, fineE]
+    simp only []
+    split
+    · rfl
+    · split
+      · rfl
+      · have hw : gAtWU gs (o + r).toUSize j.toUSize = gAtW gs (o + r + 32 * j) :=
+          gAtWU_eq gs _ _ (o + r) j (usz_n _ (by omega)) (usz_n _ (by omega)) (by omega)
+        have hl : lanesAny K gs n j (fullL (min 4 (m - 4 * j)))
+            (laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& fullL (min 4 (m - 4 * j))) o (2 * r + 1) =
+            lanesAnyV gs (K.w.getD j 0) (lowM (n - 32 * j)) j.toUSize (fullL (min 4 (m - 4 * j)))
+              (laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& fullL (min 4 (m - 4 * j)))
+              o.toUSize (2 * r + 1).toUSize := by
+          rw [lanesAny_eq_lanesAnyF]; unfold lanesAnyF; rw [if_pos (by omega)]
+        rw [hl]
+        simp only [mAt, lowF_eqM, hw]
+        exact ih _ _ (by omega)
+
+/-- `fineE` (its slow path; not rewritten by `csimp`). -/
+def fineES (K : RP) (gs : GW) (o n r m need : Nat) : Nat → Nat → Nat → Bool
+  | _, 0, acc => decide (need ≤ acc)
+  | j, k + 1, acc =>
+    if need ≤ acc then true
+    else if acc + (m - 4 * j) < need then false
+    else
+      let full := fullL (min 4 (m - 4 * j))
+      let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
+      let F := if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full
+      fineES K gs o n r m need (j + 1) k (acc + lc F)
+
+theorem fineES_eq (K : RP) (gs : GW) (o n r m need : Nat) :
+    ∀ k j acc, fineES K gs o n r m need j k acc = fineE K gs o n r m need j k acc := by
+  intro k
+  induction k with
+  | zero => intro j acc; rfl
+  | succ k ih => intro j acc; simp only [fineES, fineE, ih]
+
+/-- `fineE` for the compiled code (`fineE_eqC`). -/
+@[inline] def fineEC (K : RP) (gs : GW) (o n r m need j k acc : Nat) : Bool :=
+  if o + 2 * r + 1 + 32 * (j + k) < 2147483648 then
+    fineEV K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize n m need j k acc
+  else fineES K gs o n r m need j k acc
+
+@[csimp] theorem fineE_eqC : @fineE = @fineEC := by
+  funext K gs o n r m need j k acc
+  unfold fineEC
+  split
+  · rename_i h; exact (fineEV_eq K gs o n r m need k j acc h).symm
+  · exact (fineES_eq K gs o n r m need k j acc).symm
 
 /-- The word path applies: packed read, the window `[D − n − r, D + r)` inside the
 chromosome and in all-ACGT blocks, pieces of 8 letters 8 apart. -/
