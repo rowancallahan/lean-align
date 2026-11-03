@@ -1516,3 +1516,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - ~03:31: walk router-hit reuse is not possible exactly (TierOut keeps only the best placements); walk-stop not merged (changes output for -0.6%). NOTE: Testing/notes/shim_speed.patch no longer applies after fastq-failfast; S5 is rebasing it (docs/shim-patches). S-D: SECOND_INDEX_PLAN (short/syncmer seeds for a finer pigeonhole). S-F: fineE.
 - ~03:36: merged speed/allbytes (fast-forward e1c55ea): the FASTQ check runs as one byte loop (csimp, proved); NovaSeq 2k -5.6% Ir; SAM identical.
 - ~03:43: merged speed/fine-filter (S-F: fineE/lanesAny exact rewrites, -1.3% NovaSeq Ir; SAM identical).
+- ~03:46: S4 same-session headline, no patch, 1034f63 (before allbytes and fine-filter) vs 0e48158: NovaSeq HEAD 1.40x the baseline wall (9.8 vs 7.0 s; minibwa 17.4 s, so 1.78x vs 2.47x); HiSeq 1.21x (10.4 vs 8.6; 3.06x vs 3.69x). The HEAD cost includes adapter trimming and the fastq checks.
