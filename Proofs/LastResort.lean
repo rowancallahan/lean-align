@@ -471,9 +471,16 @@ theorem runsIx_ok {pgs : Array PGen} {g : MapSpec.Genome} (hg : GenomeBytes (pgs
   rw [hrc]
   exact cigarOk_of_hit hx hwin
 
--- every proper pair of the mates' hits within `c` scoring `≥ -c` (as `pairGXE` lists them)
+-- every proper pair of the mates' hits within `c` scoring `≥ -c` (as `pairGXE` lists them). The mate whose
+-- rarest seeds cost less (`costP`) is searched in full first, the other only near its hits (`keepN`); either
+-- order lists the same pairs (`pairsAt_mem`), possibly in another order
 def pairsAt (sl lo hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
     List PairHit :=
+  if costP pk c (prepMate pk R2) < costP pk c (prepMate pk R1) then
+    let lY := hitsKPF pk ByteArray.empty offs pgs R2 c
+    (properPairsF sl lo hi (hitsKPFN sl hi pk ByteArray.empty offs pgs R1 c lY) lY).filter
+      fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
+  else
   let lX := hitsKPF pk ByteArray.empty offs pgs R1 c
   (properPairsF sl lo hi lX (hitsKPFN sl hi pk ByteArray.empty offs pgs R2 c lX)).filter
     fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
@@ -488,8 +495,11 @@ theorem pairsAt_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 
   have K1 := hitsKPF_mem g ix G offs ns hcut hg hchk R1 m1 h1 c hc
   have K2 := hitsKPF_mem g ix G offs ns hcut hg hchk R2 m2 h2 c hc
   unfold pairsAt
-  rw [List.mem_filter, properPairsF_eq, pp_near_right (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
-    decide_eq_true_eq, mem_properPairs, mem_properPairs, K1, K2]
+  split
+  · rw [List.mem_filter, properPairsF_eq, pp_near_left (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
+      decide_eq_true_eq, mem_properPairs, mem_properPairs, K1, K2]
+  · rw [List.mem_filter, properPairsF_eq, pp_near_right (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
+      decide_eq_true_eq, mem_properPairs, mem_properPairs, K1, K2]
 
 /-! ### The length-scaled cap (for Rowan's coming `requiredMapBound`)
 
