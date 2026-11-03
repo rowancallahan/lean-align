@@ -346,6 +346,14 @@ spoiled blocks `sp` (`bandEndP_spec`). -/
 def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
   (acc.filter fun arr => anyNear arr (D - r) (D + r)).length
 
+/-- `suppA` counted without building the filtered list (`suppA_eqC`). -/
+@[inline] def suppAC (acc : List (Array Nat)) (D r : Nat) : Nat :=
+  acc.countP fun arr => anyNear arr (D - r) (D + r)
+
+@[csimp] theorem suppA_eqC : @suppA = @suppAC := by
+  funext acc D r
+  unfold suppA suppAC; rw [List.countP_eq_length_filter]
+
 /-- The distinct diagonals of the anchors, supported by at least `need` seeds within `r`. -/
 def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=
   (diags acc).filter fun D => decide (need ≤ suppA acc D r)
