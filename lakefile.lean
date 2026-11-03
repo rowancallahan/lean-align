@@ -111,22 +111,12 @@ lean_lib IndexPackedGenome where   -- 2-bit packed genome
   srcDir := "Aligner/index/packed_genome"
   roots := #[`MapperPGen, `MapperPacked, `MzBuildP, `MzPacked, `WgPacked]
 
-@[default_target]
-lean_lib IndexRepeatMask where   -- repeat masking
-  srcDir := "Aligner/index/repeat_mask"
-  roots := #[`RepeatMask]
-
-@[default_target]
-lean_lib IndexSketch where   -- seed sketches
-  srcDir := "Aligner/index/sketch"
-  roots := #[`MapperSketch]
-
 -- ──────────────────────────── mapper (main code) ────────────────────────────
 
 @[default_target]
 lean_lib Mapper where   -- tier router, pair search, batching: the code alignPairs runs
   srcDir := "Aligner/mapper"
-  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TieCut, `TierHeur, `TierOpt, `TierRouter, `BandCellsJProof]
+  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenSupp, `FastGenWordFilt, `FastMapper, `FastMapperMz, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRouter, `PairUnique, `ParMap, `ParStream, `ReadTrim, `SeedMapper, `SeedMapper2, `TieCut, `TierHeur, `TierOpt, `TierRouter, `BandCellsJProof]
 
 @[default_target]
 lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
