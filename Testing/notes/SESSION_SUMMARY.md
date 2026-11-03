@@ -1470,3 +1470,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - Claude MAY edit Spec/Sam.lean and Spec/Fastq.lean (plus their Proofs/ mirrors).
 - Claude may NOT edit Spec/Aligner.lean, Spec/Alignment.lean, Spec/Mapping.lean or Spec/Shim.lean (Main.lean mirrors the Shim); Rowan works on those.
 - Rowan will merge claude/festive-fermi-mf9mo6 with main.
+- Index RAM budget (Rowan, 2026-11-03): the loaded index may be up to just under 8 GB (today ~5.3 GB), e.g. for the heavy-25-mer table plus a combined longer/shorter-seed index.
