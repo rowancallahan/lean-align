@@ -348,6 +348,55 @@ theorem wlR_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU reU : USiz
       · rw [ih1 _ _ _ _ _ hj1 hj2, hone]
       · rw [ih1 _ _ _ _ _ hj1 hj2, hone]
 
+theorem rtGet_of (B : ByteArray) (p : USize) (h : p.toNat < B.size) : rtGet B p = B.uget p h := by
+  rw [rtGet_eq, getElem!_pos B p.toNat h]; rfl
+
+/-- `wlR` with no bounds check: `hb` carries `i ≤ size` for both arrays, so `uget` needs no test (`wlRc_eq`). -/
+def wlRc (Q z : Int64) (seq qual : ByteArray) (i re : USize) (ps : Int64) (bs be : USize) (bsc : Int64)
+    (hb : i.toNat ≤ seq.size ∧ i.toNat ≤ qual.size) : PackedFoldState :=
+  if h : i = 0 then ⟨0, true, re.toNat, ps.toInt, bs.toNat, be.toNat, bsc.toInt⟩
+  else
+    let j := i - 1
+    have hj : j.toNat = i.toNat - 1 := rt_sub1 i h
+    have hi : i.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    have hb' : j.toNat ≤ seq.size ∧ j.toNat ≤ qual.size := by omega
+    let f := fIU Q (seq.uget j (by omega)) (qual.uget j (by omega))
+    if z < ps then
+      let ps' := f + ps
+      if bsc ≤ ps' then wlRc Q z seq qual j re ps' j re ps' hb' else wlRc Q z seq qual j re ps' bs be bsc hb'
+    else if bsc ≤ f then wlRc Q z seq qual j (j + 1) f j (j + 1) f hb'
+    else wlRc Q z seq qual j (j + 1) f bs be bsc hb'
+termination_by i.toNat
+decreasing_by
+  all_goals
+    have : i.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    first | omega | (rw [rt_sub1 i h]; omega)
+
+theorem wlRc_eq (Q z : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (i re : USize) ps bs be bsc hb, i.toNat = n →
+    wlRc Q z seq qual i re ps bs be bsc hb = wlR Q z seq qual i re ps bs be bsc := by
+  intro n
+  induction n with
+  | zero =>
+    intro i re ps bs be bsc hb hi
+    have h0 : i = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
+    rw [wlRc, wlR, dif_pos h0, dif_pos h0]
+  | succ n ih =>
+    intro i re ps bs be bsc hb hi
+    have h0 : i ≠ 0 := fun e => by rw [e] at hi; simp at hi
+    have ej : (i - 1).toNat = n := by rw [rt_sub1 i h0, hi]; rfl
+    rw [wlRc, wlR, dif_neg h0, dif_neg h0]
+    simp only [rtGet_of seq (i - 1) (by omega), rtGet_of qual (i - 1) (by omega)]
+    split
+    · split
+      · exact ih _ _ _ _ _ _ _ ej
+      · exact ih _ _ _ _ _ _ _ ej
+    · split
+      · exact ih _ _ _ _ _ _ _ ej
+      · exact ih _ _ _ _ _ _ _ ej
+
+theorem wlRc_eq' (Q z : Int64) (seq qual : ByteArray) (i re : USize) ps bs be bsc hb :
+    wlRc Q z seq qual i re ps bs be bsc hb = wlR Q z seq qual i re ps bs be bsc := wlRc_eq Q z seq qual _ i re ps bs be bsc hb rfl
+
 /-- `wl` for the compiled code (`wl_eq_wlF`): `wlI` from the start state (scores 0). -/
 @[inline] def wlF (Q : Nat) (seq qual : ByteArray) (i ns : Nat) (hr : Bool) (pl : Nat) (ps : Int) (bs be : Nat)
     (bsc : Int) : PackedFoldState :=
@@ -355,7 +404,8 @@ theorem wlR_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU reU : USiz
     if ns = i ∧ hr = false ∧ pl = 0 ∧ bs = 0 ∧ be = 0 ∧ 0 < i then
       let j := (i - 1).toUSize
       let f := fIU (Int64.ofNat Q) (rtGet seq j) (rtGet qual j)
-      wlR (Int64.ofNat Q) 0 seq qual j i.toUSize f j i.toUSize f
+      if hb : j.toNat ≤ seq.size ∧ j.toNat ≤ qual.size then wlRc (Int64.ofNat Q) 0 seq qual j i.toUSize f j i.toUSize f hb
+      else wlR (Int64.ofNat Q) 0 seq qual j i.toUSize f j i.toUSize f
     else if ns < 1073741824 ∧ pl + i < 1073741824 ∧ bs < 2147483648 ∧ be < 2147483648 then
       wlU2 (Int64.ofNat Q) 0 seq qual i.toUSize ns.toUSize hr pl.toUSize 0 bs.toUSize be.toUSize 0
     else wlI (Int64.ofNat Q) seq qual i ns hr pl 0 bs be 0
@@ -381,6 +431,7 @@ theorem wlR_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU reU : USiz
     split
     · rename_i hf
       obtain ⟨hns, rfl, rfl, rfl, rfl, hpos⟩ := hf
+      simp only [wlRc_eq', dite_eq_ite, ite_self]
       rw [hU (by omega) (by omega) (by omega) (by omega), hns]
       have hi0 : i.toUSize ≠ 0 := fun e => by
         have := congrArg USize.toNat e; rw [rt_n i (by omega)] at this; simp at this; omega

@@ -1,0 +1,524 @@
+diff --git a/Proofs/Fastq.lean b/Proofs/Fastq.lean
+index d6dfbf6..5a9d47f 100644
+--- a/Proofs/Fastq.lean
++++ b/Proofs/Fastq.lean
+@@ -24,12 +24,77 @@ structure FastqReader where
+ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
+   return { handle, buffer := ← IO.mkRef ByteArray.empty, pos := ← IO.mkRef 0 }
+ 
++-- the first newline byte at or after `i` (or `bytes.size` when there is none), within `fuel` steps
++def findNewlineGo (bytes : ByteArray) : (fuel i : Nat) → Nat
++  | 0, i => i
++  | fuel + 1, i => if i < bytes.size && bytes[i]! != 10 then findNewlineGo bytes fuel (i + 1) else i
++
+ -- the first newline byte at or after `i` (or `bytes.size` when there is none)
+-def findNewline (bytes : ByteArray) (i : Nat) : Nat := Id.run do
+-  let mut j := i
+-  while j < bytes.size && bytes[j]! != 10 do
+-    j := j + 1
+-  return j
++def findNewline (bytes : ByteArray) (i : Nat) : Nat := findNewlineGo bytes (bytes.size - i) i
++
++/-! Bounds-check-free versions for the compiled code (`@[csimp]`, proved equal): the loops read by `uget`
++with the bound carried as a proof argument. -/
++
++theorem usize_le (a : ByteArray) : a.usize.toNat ≤ a.size := by
++  show a.size.toUSize.toNat ≤ a.size
++  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
++
++theorem usize_eq (a : ByteArray) (h : a.size < 4294967296) : a.usize.toNat = a.size := by
++  show a.size.toUSize.toNat = a.size
++  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
++
++theorem toNat_toUSize (n : Nat) (h : n < 4294967296) : n.toUSize.toNat = n := by
++  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
++
++theorem toNat_sub1 (a : USize) (h : a ≠ 0) : (a - 1).toNat = a.toNat - 1 := by
++  have : a.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
++  rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ a.toNat; rw [USize.toNat_one]; omega), USize.toNat_one]
++
++theorem toNat_add1 (a : USize) (h : a.toNat < 4294967295) : (a + 1).toNat = a.toNat + 1 := by
++  have hs := USize.le_size
++  rw [USize.size_eq_two_pow] at hs
++  rw [USize.toNat_add, USize.toNat_one, Nat.mod_eq_of_lt (by omega)]
++
++-- `findNewlineGo` by `uget`
++def findNewlineU (bytes : @& ByteArray) (hs : bytes.size < 4294967296) (j : USize) (hj : j.toNat ≤ bytes.size) : USize :=
++  if h : j < bytes.usize then
++    have hl : j.toNat < bytes.size := Nat.lt_of_lt_of_le h (usize_le bytes)
++    if bytes.uget j hl != 10 then findNewlineU bytes hs (j + 1) (by rw [toNat_add1 j (by omega)]; omega) else j
++  else j
++termination_by bytes.size - j.toNat
++decreasing_by
++  rw [toNat_add1 j (by omega)]; omega
++
++theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀ k (j : USize) hj,
++    bytes.size - j.toNat = k → (findNewlineU bytes hs j hj).toNat = findNewlineGo bytes k j.toNat
++  | 0, j, hj, hk => by
++    rw [findNewlineU, dif_neg (fun h => by have : j.toNat < bytes.usize.toNat := h; rw [usize_eq bytes hs] at this; omega)]
++    rfl
++  | k + 1, j, hj, hk => by
++    have hl : j.toNat < bytes.size := by omega
++    rw [findNewlineU, dif_pos (show j < bytes.usize from show j.toNat < bytes.usize.toNat by rw [usize_eq bytes hs]; exact hl),
++      findNewlineGo,
++      getElem!_pos bytes j.toNat hl]
++    dsimp only
++    have hg : ∀ hl', bytes.uget j hl' = bytes[j.toNat] := fun _ => rfl
++    simp only [hg]
++    by_cases hb : (bytes[j.toNat] != 10) = true
++    · rw [if_pos hb, if_pos (by simp [hl, hb]), findNewlineU_eq bytes hs k (j + 1) _ (by rw [toNat_add1 j (by omega)]; omega),
++        toNat_add1 j (by omega)]
++    · rw [if_neg hb, if_neg (by simp [hb])]
++
++@[inline] def findNewlineF (bytes : ByteArray) (i : Nat) : Nat :=
++  if h : i ≤ bytes.size ∧ bytes.size < 4294967296 then
++    (findNewlineU bytes h.2 i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
++  else findNewlineGo bytes (bytes.size - i) i
++
++@[csimp] theorem findNewline_eq : @findNewline = @findNewlineF := by
++  funext bytes i
++  unfold findNewline findNewlineF
++  split
++  · rename_i h
++    rw [findNewlineU_eq bytes h.2 (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
++  · rfl
+ 
+ -- the next line without its "\n" (or "\r\n"); none at the end of the file
+ def FastqReader.line (reader : FastqReader) : IO (Option ByteArray) := do
+@@ -58,7 +123,35 @@ def allBytes (p : UInt8 → Bool) (bytes : ByteArray) : Bool := Nat.all bytes.si
+   | 0 => true
+   | n + 1 => p bytes[n]! && allBytesGo p bytes n
+ 
+-@[inline] def allBytesF (p : UInt8 → Bool) (bytes : ByteArray) : Bool := allBytesGo p bytes bytes.size
++-- `allBytesGo` by `uget`: `allBytesU_eq`
++@[specialize] def allBytesU (p : UInt8 → Bool) (bytes : ByteArray) (i : USize) (h : i.toNat ≤ bytes.size) : Bool :=
++  if h0 : i = 0 then true
++  else
++    have hj : (i - 1).toNat = i.toNat - 1 := toNat_sub1 i h0
++    have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++    p (bytes.uget (i - 1) (by omega)) && allBytesU p bytes (i - 1) (by omega)
++termination_by i.toNat
++decreasing_by
++  have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++  rw [toNat_sub1 i h0]; omega
++
++theorem allBytesU_eq (p : UInt8 → Bool) (bytes : ByteArray) : ∀ n (i : USize) h, i.toNat = n →
++    allBytesU p bytes i h = allBytesGo p bytes n
++  | 0, i, h, hi => by
++    have h0 : i = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
++    rw [allBytesU, dif_pos h0, allBytesGo]
++  | n + 1, i, h, hi => by
++    have h0 : i ≠ 0 := fun e => by rw [e] at hi; simp at hi
++    have ej : (i - 1).toNat = n := by rw [toNat_sub1 i h0, hi]; rfl
++    rw [allBytesU, dif_neg h0, allBytesGo]
++    dsimp only
++    rw [allBytesU_eq p bytes n (i - 1) _ ej, getElem!_pos bytes n (by omega)]
++    congr 2
++    show bytes[(i - 1).toNat] = _
++    simp only [ej]
++
++@[inline] def allBytesF (p : UInt8 → Bool) (bytes : ByteArray) : Bool :=
++  if bytes.size < 4294967296 then allBytesU p bytes bytes.usize (usize_le bytes) else allBytesGo p bytes bytes.size
+ 
+ theorem allBytesGo_eq (p : UInt8 → Bool) (bytes : ByteArray) :
+     ∀ n, allBytesGo p bytes n = Nat.all n fun i _ => p bytes[i]!
+@@ -67,7 +160,12 @@ theorem allBytesGo_eq (p : UInt8 → Bool) (bytes : ByteArray) :
+ 
+ @[csimp] theorem allBytes_eq : @allBytes = @allBytesF := by
+   funext p bytes
+-  exact (allBytesGo_eq p bytes bytes.size).symm
++  unfold allBytesF
++  split
++  · rename_i h
++    rw [allBytesU_eq p bytes _ bytes.usize _ (usize_eq bytes h)]
++    exact (allBytesGo_eq p bytes bytes.size).symm
++  · exact (allBytesGo_eq p bytes bytes.size).symm
+ 
+ -- the letters the spec's `GenomeIsDNA` allows: A C G T N
+ def isDnaByte (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84 || b == 78
+@@ -82,6 +180,68 @@ def parseRecord (header letters plus quality : ByteArray) : Except String FastqR
+   else if !allBytes (fun b => 33 ≤ b && b ≤ 126) quality then .error "quality outside '!'..'~'"
+   else .ok { name := String.fromUTF8! (header.extract 1 header.size), letters, quality := String.fromUTF8! quality }
+ 
++/-! `parseRecord` without re-validating the quality as UTF-8: it was just checked to be ASCII `'!'..'~'`
++(`parseRecord_eq`, `@[csimp]`). -/
++
++theorem utf8Encode_ascii (l : List UInt8) (h : ∀ x ∈ l, x < 128) :
++    (l.map fun x => Char.ofNat x.toNat).utf8Encode = l.toByteArray := by
++  induction l with
++  | nil => simp
++  | cons x xs ih =>
++    have hx : x < 128 := h x (by simp)
++    rw [List.map_cons, List.utf8Encode_cons, ih (fun y hy => h y (by simp [hy])), List.utf8Encode_singleton]
++    have hn : x.toNat < 128 := by simpa [UInt8.lt_iff_toNat_lt] using hx
++    have hv : Nat.isValidChar x.toNat := Or.inl (by omega)
++    have hc : (Char.ofNat x.toNat).val.toNat = x.toNat := by
++      simp [Char.ofNat, hv, Char.ofNatAux]
++    have : String.utf8EncodeChar (Char.ofNat x.toNat) = [x] := by
++      simp only [String.utf8EncodeChar, hc]
++      rw [if_pos (by omega)]
++      simp
++    rw [this]
++    exact (List.toByteArray_append (l := [x]) (l' := xs)).symm
++
++theorem validUTF8_of_allBytes (p : UInt8 → Bool) (hp : ∀ x, p x = true → x < 128) (b : ByteArray)
++    (h : allBytes p b = true) : b.IsValidUTF8 := by
++  have hall : ∀ i (hi : i < b.size), p b[i]! = true := by
++    intro i hi; unfold allBytes at h; rw [Nat.all_eq_finRange_all] at h; simp at h; rw [getElem!_pos b i hi]; exact h ⟨i, hi⟩
++  have ha : ∀ x ∈ b.data.toList, x < 128 := by
++    intro x hx
++    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
++    have hi' : i < b.size := by simpa using hi
++    have := hall i hi'
++    rw [getElem!_pos b i hi'] at this
++    exact hp _ (by simpa [ByteArray.getElem_eq_getElem_data] using this)
++  exact .intro (b.data.toList.map fun x => Char.ofNat x.toNat) (by
++    rw [utf8Encode_ascii _ ha]
++    apply ByteArray.ext
++    simp [List.data_toByteArray])
++
++def parseRecordF (header letters plus quality : ByteArray) : Except String FastqRecord :=
++  if !(0 < header.size && header[0]! == 64 && allBytes (fun b => 32 ≤ b && b ≤ 126) header) then
++    .error "header line is not '@' + printable ASCII"
++  else if !(0 < plus.size && plus[0]! == 43) then .error "third line of a record does not start with '+'"
++  else if !allBytes isDnaByte letters then .error "letters other than A C G T N (lowercase, IUPAC)"
++  else if hq : allBytes (fun b => 33 ≤ b && b ≤ 126) quality then
++    .ok { name := String.fromUTF8! (header.extract 1 header.size), letters,
++          quality := String.fromUTF8 quality (validUTF8_of_allBytes _
++            (fun x hx => by simp only [Bool.and_eq_true, decide_eq_true_eq] at hx
++                            exact UInt8.lt_of_le_of_lt hx.2 (by decide)) quality hq) }
++  else .error "quality outside '!'..'~'"
++
++@[csimp] theorem parseRecord_eq : @parseRecord = @parseRecordF := by
++  funext header letters plus quality
++  unfold parseRecord parseRecordF
++  split; · rfl
++  split; · rfl
++  split; · rfl
++  split
++  · rename_i hq; simp at hq; rw [dif_neg (by simp [hq])]
++  · rename_i hq; simp at hq; rw [dif_pos hq]
++    have e : ∀ h, String.fromUTF8! quality = String.fromUTF8 quality h := fun h => by
++      unfold String.fromUTF8!; rw [dif_pos h]
++    rw [e]
++
+ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some header ← reader.line | return none
+   let cut := throw (IO.userError "FASTQ: file ends inside a record")
+diff --git a/Proofs/Sam.lean b/Proofs/Sam.lean
+index 9695337..e0f5fc8 100644
+--- a/Proofs/Sam.lean
++++ b/Proofs/Sam.lean
+@@ -56,6 +56,50 @@ def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.
+     out := out.push (f bytes[bytes.size - 1 - i]!)
+   return out
+ 
++-- `reverseMapBytes` by `uget`, last byte first (`reverseMapBytes_eq`, `@[csimp]`)
++def revMapU (f : UInt8 → UInt8) (bytes out : ByteArray) (i : USize) (h : i.toNat ≤ bytes.size) : ByteArray :=
++  if h0 : i = 0 then out
++  else
++    have hj : (i - 1).toNat = i.toNat - 1 := toNat_sub1 i h0
++    have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++    revMapU f bytes (out.push (f (bytes.uget (i - 1) (by omega)))) (i - 1) (by omega)
++termination_by i.toNat
++decreasing_by
++  have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++  rw [toNat_sub1 i h0]; omega
++
++theorem revMapU_eq (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ m (i : USize) out h, i.toNat = m → m ≤ bytes.size →
++    revMapU f bytes out i h =
++      (List.range' (bytes.size - m) m).foldl (fun b a => b.push (f bytes[bytes.size - 1 - a]!)) out
++  | 0, i, out, h, hi, _ => by
++    have h0 : i = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
++    rw [revMapU, dif_pos h0]; rfl
++  | m + 1, i, out, h, hi, hm => by
++    have h0 : i ≠ 0 := fun e => by rw [e] at hi; simp at hi
++    have ej : (i - 1).toNat = m := by rw [toNat_sub1 i h0, hi]; rfl
++    rw [revMapU, dif_neg h0]
++    dsimp only
++    rw [revMapU_eq f bytes m (i - 1) _ _ ej (by omega), List.range'_succ, List.foldl_cons,
++      show bytes.size - (m + 1) + 1 = bytes.size - m by omega,
++      show bytes.size - 1 - (bytes.size - (m + 1)) = m by omega, getElem!_pos bytes m (by omega)]
++    congr 3
++    show bytes[(i - 1).toNat] = _
++    simp only [ej]
++
++@[inline] def reverseMapBytesF (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray :=
++  if bytes.size < 4294967296 then revMapU f bytes (ByteArray.emptyWithCapacity bytes.size) bytes.usize (usize_le bytes)
++  else reverseMapBytes f bytes
++
++@[csimp] theorem reverseMapBytes_eq : @reverseMapBytes = @reverseMapBytesF := by
++  funext f bytes
++  unfold reverseMapBytesF
++  split
++  · rename_i h
++    rw [revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes h) (Nat.le_refl _), Nat.sub_self]
++    unfold reverseMapBytes
++    simp
++  · rfl
++
+ -- SEQ and QUAL as on the forward strand of the reference: reversed (and complemented) on reverse.
+ -- Byte for byte the same as decoding to letters and back for the ASCII letters reads are made of.
+ -- A mate trimmed away entirely has no letters: SEQ and QUAL are "*".
+diff --git a/Spec/Fastq.lean b/Spec/Fastq.lean
+index d6dfbf6..5a9d47f 100644
+--- a/Spec/Fastq.lean
++++ b/Spec/Fastq.lean
+@@ -24,12 +24,77 @@ structure FastqReader where
+ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
+   return { handle, buffer := ← IO.mkRef ByteArray.empty, pos := ← IO.mkRef 0 }
+ 
++-- the first newline byte at or after `i` (or `bytes.size` when there is none), within `fuel` steps
++def findNewlineGo (bytes : ByteArray) : (fuel i : Nat) → Nat
++  | 0, i => i
++  | fuel + 1, i => if i < bytes.size && bytes[i]! != 10 then findNewlineGo bytes fuel (i + 1) else i
++
+ -- the first newline byte at or after `i` (or `bytes.size` when there is none)
+-def findNewline (bytes : ByteArray) (i : Nat) : Nat := Id.run do
+-  let mut j := i
+-  while j < bytes.size && bytes[j]! != 10 do
+-    j := j + 1
+-  return j
++def findNewline (bytes : ByteArray) (i : Nat) : Nat := findNewlineGo bytes (bytes.size - i) i
++
++/-! Bounds-check-free versions for the compiled code (`@[csimp]`, proved equal): the loops read by `uget`
++with the bound carried as a proof argument. -/
++
++theorem usize_le (a : ByteArray) : a.usize.toNat ≤ a.size := by
++  show a.size.toUSize.toNat ≤ a.size
++  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
++
++theorem usize_eq (a : ByteArray) (h : a.size < 4294967296) : a.usize.toNat = a.size := by
++  show a.size.toUSize.toNat = a.size
++  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
++
++theorem toNat_toUSize (n : Nat) (h : n < 4294967296) : n.toUSize.toNat = n := by
++  rw [Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
++
++theorem toNat_sub1 (a : USize) (h : a ≠ 0) : (a - 1).toNat = a.toNat - 1 := by
++  have : a.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
++  rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ a.toNat; rw [USize.toNat_one]; omega), USize.toNat_one]
++
++theorem toNat_add1 (a : USize) (h : a.toNat < 4294967295) : (a + 1).toNat = a.toNat + 1 := by
++  have hs := USize.le_size
++  rw [USize.size_eq_two_pow] at hs
++  rw [USize.toNat_add, USize.toNat_one, Nat.mod_eq_of_lt (by omega)]
++
++-- `findNewlineGo` by `uget`
++def findNewlineU (bytes : @& ByteArray) (hs : bytes.size < 4294967296) (j : USize) (hj : j.toNat ≤ bytes.size) : USize :=
++  if h : j < bytes.usize then
++    have hl : j.toNat < bytes.size := Nat.lt_of_lt_of_le h (usize_le bytes)
++    if bytes.uget j hl != 10 then findNewlineU bytes hs (j + 1) (by rw [toNat_add1 j (by omega)]; omega) else j
++  else j
++termination_by bytes.size - j.toNat
++decreasing_by
++  rw [toNat_add1 j (by omega)]; omega
++
++theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀ k (j : USize) hj,
++    bytes.size - j.toNat = k → (findNewlineU bytes hs j hj).toNat = findNewlineGo bytes k j.toNat
++  | 0, j, hj, hk => by
++    rw [findNewlineU, dif_neg (fun h => by have : j.toNat < bytes.usize.toNat := h; rw [usize_eq bytes hs] at this; omega)]
++    rfl
++  | k + 1, j, hj, hk => by
++    have hl : j.toNat < bytes.size := by omega
++    rw [findNewlineU, dif_pos (show j < bytes.usize from show j.toNat < bytes.usize.toNat by rw [usize_eq bytes hs]; exact hl),
++      findNewlineGo,
++      getElem!_pos bytes j.toNat hl]
++    dsimp only
++    have hg : ∀ hl', bytes.uget j hl' = bytes[j.toNat] := fun _ => rfl
++    simp only [hg]
++    by_cases hb : (bytes[j.toNat] != 10) = true
++    · rw [if_pos hb, if_pos (by simp [hl, hb]), findNewlineU_eq bytes hs k (j + 1) _ (by rw [toNat_add1 j (by omega)]; omega),
++        toNat_add1 j (by omega)]
++    · rw [if_neg hb, if_neg (by simp [hb])]
++
++@[inline] def findNewlineF (bytes : ByteArray) (i : Nat) : Nat :=
++  if h : i ≤ bytes.size ∧ bytes.size < 4294967296 then
++    (findNewlineU bytes h.2 i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
++  else findNewlineGo bytes (bytes.size - i) i
++
++@[csimp] theorem findNewline_eq : @findNewline = @findNewlineF := by
++  funext bytes i
++  unfold findNewline findNewlineF
++  split
++  · rename_i h
++    rw [findNewlineU_eq bytes h.2 (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
++  · rfl
+ 
+ -- the next line without its "\n" (or "\r\n"); none at the end of the file
+ def FastqReader.line (reader : FastqReader) : IO (Option ByteArray) := do
+@@ -58,7 +123,35 @@ def allBytes (p : UInt8 → Bool) (bytes : ByteArray) : Bool := Nat.all bytes.si
+   | 0 => true
+   | n + 1 => p bytes[n]! && allBytesGo p bytes n
+ 
+-@[inline] def allBytesF (p : UInt8 → Bool) (bytes : ByteArray) : Bool := allBytesGo p bytes bytes.size
++-- `allBytesGo` by `uget`: `allBytesU_eq`
++@[specialize] def allBytesU (p : UInt8 → Bool) (bytes : ByteArray) (i : USize) (h : i.toNat ≤ bytes.size) : Bool :=
++  if h0 : i = 0 then true
++  else
++    have hj : (i - 1).toNat = i.toNat - 1 := toNat_sub1 i h0
++    have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++    p (bytes.uget (i - 1) (by omega)) && allBytesU p bytes (i - 1) (by omega)
++termination_by i.toNat
++decreasing_by
++  have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++  rw [toNat_sub1 i h0]; omega
++
++theorem allBytesU_eq (p : UInt8 → Bool) (bytes : ByteArray) : ∀ n (i : USize) h, i.toNat = n →
++    allBytesU p bytes i h = allBytesGo p bytes n
++  | 0, i, h, hi => by
++    have h0 : i = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
++    rw [allBytesU, dif_pos h0, allBytesGo]
++  | n + 1, i, h, hi => by
++    have h0 : i ≠ 0 := fun e => by rw [e] at hi; simp at hi
++    have ej : (i - 1).toNat = n := by rw [toNat_sub1 i h0, hi]; rfl
++    rw [allBytesU, dif_neg h0, allBytesGo]
++    dsimp only
++    rw [allBytesU_eq p bytes n (i - 1) _ ej, getElem!_pos bytes n (by omega)]
++    congr 2
++    show bytes[(i - 1).toNat] = _
++    simp only [ej]
++
++@[inline] def allBytesF (p : UInt8 → Bool) (bytes : ByteArray) : Bool :=
++  if bytes.size < 4294967296 then allBytesU p bytes bytes.usize (usize_le bytes) else allBytesGo p bytes bytes.size
+ 
+ theorem allBytesGo_eq (p : UInt8 → Bool) (bytes : ByteArray) :
+     ∀ n, allBytesGo p bytes n = Nat.all n fun i _ => p bytes[i]!
+@@ -67,7 +160,12 @@ theorem allBytesGo_eq (p : UInt8 → Bool) (bytes : ByteArray) :
+ 
+ @[csimp] theorem allBytes_eq : @allBytes = @allBytesF := by
+   funext p bytes
+-  exact (allBytesGo_eq p bytes bytes.size).symm
++  unfold allBytesF
++  split
++  · rename_i h
++    rw [allBytesU_eq p bytes _ bytes.usize _ (usize_eq bytes h)]
++    exact (allBytesGo_eq p bytes bytes.size).symm
++  · exact (allBytesGo_eq p bytes bytes.size).symm
+ 
+ -- the letters the spec's `GenomeIsDNA` allows: A C G T N
+ def isDnaByte (b : UInt8) : Bool := b == 65 || b == 67 || b == 71 || b == 84 || b == 78
+@@ -82,6 +180,68 @@ def parseRecord (header letters plus quality : ByteArray) : Except String FastqR
+   else if !allBytes (fun b => 33 ≤ b && b ≤ 126) quality then .error "quality outside '!'..'~'"
+   else .ok { name := String.fromUTF8! (header.extract 1 header.size), letters, quality := String.fromUTF8! quality }
+ 
++/-! `parseRecord` without re-validating the quality as UTF-8: it was just checked to be ASCII `'!'..'~'`
++(`parseRecord_eq`, `@[csimp]`). -/
++
++theorem utf8Encode_ascii (l : List UInt8) (h : ∀ x ∈ l, x < 128) :
++    (l.map fun x => Char.ofNat x.toNat).utf8Encode = l.toByteArray := by
++  induction l with
++  | nil => simp
++  | cons x xs ih =>
++    have hx : x < 128 := h x (by simp)
++    rw [List.map_cons, List.utf8Encode_cons, ih (fun y hy => h y (by simp [hy])), List.utf8Encode_singleton]
++    have hn : x.toNat < 128 := by simpa [UInt8.lt_iff_toNat_lt] using hx
++    have hv : Nat.isValidChar x.toNat := Or.inl (by omega)
++    have hc : (Char.ofNat x.toNat).val.toNat = x.toNat := by
++      simp [Char.ofNat, hv, Char.ofNatAux]
++    have : String.utf8EncodeChar (Char.ofNat x.toNat) = [x] := by
++      simp only [String.utf8EncodeChar, hc]
++      rw [if_pos (by omega)]
++      simp
++    rw [this]
++    exact (List.toByteArray_append (l := [x]) (l' := xs)).symm
++
++theorem validUTF8_of_allBytes (p : UInt8 → Bool) (hp : ∀ x, p x = true → x < 128) (b : ByteArray)
++    (h : allBytes p b = true) : b.IsValidUTF8 := by
++  have hall : ∀ i (hi : i < b.size), p b[i]! = true := by
++    intro i hi; unfold allBytes at h; rw [Nat.all_eq_finRange_all] at h; simp at h; rw [getElem!_pos b i hi]; exact h ⟨i, hi⟩
++  have ha : ∀ x ∈ b.data.toList, x < 128 := by
++    intro x hx
++    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
++    have hi' : i < b.size := by simpa using hi
++    have := hall i hi'
++    rw [getElem!_pos b i hi'] at this
++    exact hp _ (by simpa [ByteArray.getElem_eq_getElem_data] using this)
++  exact .intro (b.data.toList.map fun x => Char.ofNat x.toNat) (by
++    rw [utf8Encode_ascii _ ha]
++    apply ByteArray.ext
++    simp [List.data_toByteArray])
++
++def parseRecordF (header letters plus quality : ByteArray) : Except String FastqRecord :=
++  if !(0 < header.size && header[0]! == 64 && allBytes (fun b => 32 ≤ b && b ≤ 126) header) then
++    .error "header line is not '@' + printable ASCII"
++  else if !(0 < plus.size && plus[0]! == 43) then .error "third line of a record does not start with '+'"
++  else if !allBytes isDnaByte letters then .error "letters other than A C G T N (lowercase, IUPAC)"
++  else if hq : allBytes (fun b => 33 ≤ b && b ≤ 126) quality then
++    .ok { name := String.fromUTF8! (header.extract 1 header.size), letters,
++          quality := String.fromUTF8 quality (validUTF8_of_allBytes _
++            (fun x hx => by simp only [Bool.and_eq_true, decide_eq_true_eq] at hx
++                            exact UInt8.lt_of_le_of_lt hx.2 (by decide)) quality hq) }
++  else .error "quality outside '!'..'~'"
++
++@[csimp] theorem parseRecord_eq : @parseRecord = @parseRecordF := by
++  funext header letters plus quality
++  unfold parseRecord parseRecordF
++  split; · rfl
++  split; · rfl
++  split; · rfl
++  split
++  · rename_i hq; simp at hq; rw [dif_neg (by simp [hq])]
++  · rename_i hq; simp at hq; rw [dif_pos hq]
++    have e : ∀ h, String.fromUTF8! quality = String.fromUTF8 quality h := fun h => by
++      unfold String.fromUTF8!; rw [dif_pos h]
++    rw [e]
++
+ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some header ← reader.line | return none
+   let cut := throw (IO.userError "FASTQ: file ends inside a record")
+diff --git a/Spec/Sam.lean b/Spec/Sam.lean
+index 7088781..588e39f 100644
+--- a/Spec/Sam.lean
++++ b/Spec/Sam.lean
+@@ -56,6 +56,50 @@ def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.
+     out := out.push (f bytes[bytes.size - 1 - i]!)
+   return out
+ 
++-- `reverseMapBytes` by `uget`, last byte first (`reverseMapBytes_eq`, `@[csimp]`)
++def revMapU (f : UInt8 → UInt8) (bytes out : ByteArray) (i : USize) (h : i.toNat ≤ bytes.size) : ByteArray :=
++  if h0 : i = 0 then out
++  else
++    have hj : (i - 1).toNat = i.toNat - 1 := toNat_sub1 i h0
++    have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++    revMapU f bytes (out.push (f (bytes.uget (i - 1) (by omega)))) (i - 1) (by omega)
++termination_by i.toNat
++decreasing_by
++  have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
++  rw [toNat_sub1 i h0]; omega
++
++theorem revMapU_eq (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ m (i : USize) out h, i.toNat = m → m ≤ bytes.size →
++    revMapU f bytes out i h =
++      (List.range' (bytes.size - m) m).foldl (fun b a => b.push (f bytes[bytes.size - 1 - a]!)) out
++  | 0, i, out, h, hi, _ => by
++    have h0 : i = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
++    rw [revMapU, dif_pos h0]; rfl
++  | m + 1, i, out, h, hi, hm => by
++    have h0 : i ≠ 0 := fun e => by rw [e] at hi; simp at hi
++    have ej : (i - 1).toNat = m := by rw [toNat_sub1 i h0, hi]; rfl
++    rw [revMapU, dif_neg h0]
++    dsimp only
++    rw [revMapU_eq f bytes m (i - 1) _ _ ej (by omega), List.range'_succ, List.foldl_cons,
++      show bytes.size - (m + 1) + 1 = bytes.size - m by omega,
++      show bytes.size - 1 - (bytes.size - (m + 1)) = m by omega, getElem!_pos bytes m (by omega)]
++    congr 3
++    show bytes[(i - 1).toNat] = _
++    simp only [ej]
++
++@[inline] def reverseMapBytesF (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray :=
++  if bytes.size < 4294967296 then revMapU f bytes (ByteArray.emptyWithCapacity bytes.size) bytes.usize (usize_le bytes)
++  else reverseMapBytes f bytes
++
++@[csimp] theorem reverseMapBytes_eq : @reverseMapBytes = @reverseMapBytesF := by
++  funext f bytes
++  unfold reverseMapBytesF
++  split
++  · rename_i h
++    rw [revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes h) (Nat.le_refl _), Nat.sub_self]
++    unfold reverseMapBytes
++    simp
++  · rfl
++
+ -- SEQ and QUAL as on the forward strand of the reference: reversed (and complemented) on reverse.
+ -- Byte for byte the same as decoding to letters and back for the ASCII letters reads are made of.
+ -- A mate trimmed away entirely has no letters: SEQ and QUAL are "*".
