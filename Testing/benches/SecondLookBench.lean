@@ -51,7 +51,18 @@ def main (args : List String) : IO UInt32 := do
         let rb : ByteArray := b.letters
         let req := reqOf insertSettings ra rb
         let c := lookCap req
-        if mode == "look" then
+        if mode == "seeds" then
+          for (nm, R) in [("m1", ra), ("m2", rb)] do
+            for (st, Rs) in [("f", R), ("r", revCompK R)] do
+              let m := Rs.size / 25
+              let Ls := Rs.size / m
+              let cells := (List.range m).map fun j =>
+                let p := mzPrep pk.1 (seedHashAt Rs (j * Ls))
+                let b := if p.ok then pk.1.hiB p.b - pk.1.loB p.b else 0
+                let e := if p.ok then (mzLookSP pk.1 pk.2 Rs (j * Ls) 0 p).size else 999999
+                s!"{b}:{e}"
+              IO.println s!"{i} {nm}{st} need {sbound c + 1} of {m} seeds {" ".intercalate cells}"
+        else if mode == "look" then
           let r := lookAt insertSettings req pk offs ns ra rb
           IO.println s!"{i} found {r.found.isSome} bps {r.bestPossibleScore} req {req}"
         else

@@ -53,3 +53,27 @@ where mate 1 is the expensive one; the 20k and 200k sets do.
   had none of these.
 - Remaining exact levers are kernel-level (candidate-diagonal filter ~3.2k Ir per diagonal) or the join's
   budget.
+
+## 4. Rowan's question: are the skipped big-bucket seeds actually rare? (2k subsets, 565d1e8's leftovers)
+`second_look_bench … seeds` prints, per leftover pair, mate and strand, `bucket:exact` for every grid seed
+(`hiB − loB` : `mzLookSP` result size) and how many seeds the pigeonhole needs (`sbound c + 1`).
+- Most leftovers' seeds are rare (exact 0–30). Those pairs are cheap already: each mate's full search takes
+  ≤ 1 ms.
+- The expensive leftovers need 5 of 5 seeds (trimmed 125–149 bp mates have 5 grid seeds and cap 16 needs 5),
+  or 5 of 6 with two repeat seeds. Their big buckets really are repetitive: bucket and exact count track each
+  other (7033 : 4929, 5632 : 4451, 26120 : 21098). A few mixed buckets exist (5632 : 188, 5632 : 252), but
+  never on the seeds that decide.
+- Rare-only completion (look up only seeds with < 50 exact hits; a mate is settled when both strands have
+  ≥ `need` rare seeds):
+
+| | pairs covered | their cost, mate 1 first (565d1e8) | their cost, cheaper mate first (speed/second-look) | uncovered pairs' cost |
+|---|---|---|---|---|
+| NovaSeq | 30 / 33 | 38.7 ms | 6.3 ms | 23.6 ms (pairs 1065, 1654, 1839) |
+| HiSeq | 15 / 16 | 2.5 ms | 2.4 ms | 0.8 ms (pair 1667) |
+- A covered pair is one where one mate's rare seeds settle it. That mate's full second-look search is then
+  already cheap, and the cheaper-mate-first change (§2) picks it. For example pair 518: mate 2 has 5 rare seeds
+  of 6, and its search takes 0.5 ms. So a separate targeted completion would add nothing exact beyond §2.
+- The uncovered pairs (79% of NovaSeq's remaining second-look time) have both mates with two ~4.5k-hit seeds
+  among the 5 needed, so no choice of seeds avoids them. Cheaper proofs there need a finer pigeonhole: more,
+  shorter or overlapping seeds, so that the ~4.5k-hit ones can be dropped. That changes the seed bound
+  (`sbound`, `seedBoundE`) and its proof; it is not a lookup-order change.
