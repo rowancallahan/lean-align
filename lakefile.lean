@@ -297,3 +297,7 @@ lean_exe adapter_bench where              -- benchmark only: CPU and cut counts 
 lean_exe gaveup_k where               -- benchmark only: repeat grid seeds per mate of named pairs (unproved IO)
   srcDir := "Testing/benches"
   root := `GaveUpK
+
+lean_exe diag_count where             -- benchmark only: second-look candidate diagonals vs the seed-count filter (unproved IO)
+  srcDir := "Testing/benches"
+  root := `DiagCount
