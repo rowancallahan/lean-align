@@ -1,0 +1,537 @@
+diff --git a/Main.lean b/Main.lean
+index d6e284b..f6a79a8 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -47,13 +47,13 @@ def main (args : List String) : IO UInt32 := do
+       -- ║      (`trimChunk`, equal to `trimRecord` on every mate: `trimChunk_eq`).          ║
+       -- ║ OUT: `results`, one `PairResult` per pair, in the same order as `chunk`.          ║
+       -- ║ TRUSTED around it (not proved yet): that `readChunk` returns the FASTQ records   ║
+-      -- ║ in file order, that the tasks hand chunks over in order, and that `samChunk` and  ║
++      -- ║ in file order, that the tasks hand chunks over in order, and that `samChunkB` and ║
+       -- ║ `out.write` put each pair's lines into the file correctly.                        ║
+       -- ╚══════════════════════════════════════════════════════════════════════════════════╝
+       let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
+       -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
+       -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
+-      let text := Spec.samChunk chromosomes chunk results 16
++      let text := Spec.samChunkB chromosomes chunk results 16
+       let previous := writing
+       writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+     IO.ofExcept writing.get
+diff --git a/Proofs/Sam.lean b/Proofs/Sam.lean
+index 9695337..cf157b1 100644
+--- a/Proofs/Sam.lean
++++ b/Proofs/Sam.lean
+@@ -151,4 +151,87 @@ def samChunk (chromosomes : ChromosomeList) (chunk : Array (FastqRecord × Fastq
+     text.toUTF8
+   tasks.foldl (fun bytes task => bytes ++ task.get) ByteArray.empty
+ 
++/-! ## Byte writer. The same text as `samLines` / `samChunk`, appended to a `ByteArray` without building Strings
++for the numbers, SEQ and QUAL (Proofs/SamBytes.lean: `samChunkB_eq`, equal to `samChunk` when the letters and
++qualities are ASCII, which the FASTQ reader checks). -/
++
++-- the decimal digits of `n`, appended to `b` (= `b ++ (toString n).toUTF8`, `pushNat_eq`)
++def pushNat (b : ByteArray) (n : Nat) : ByteArray :=
++  if h : n < 10 then b.push (48 + n.toUInt8) else (pushNat b (n / 10)).push (48 + (n % 10).toUInt8)
++termination_by n
++decreasing_by omega
++
++-- `toString i` appended to `b` (`pushInt_eq`)
++def pushInt (b : ByteArray) (i : Int) : ByteArray :=
++  if i < 0 then pushNat (b.push 45) i.natAbs else pushNat b i.toNat
++
++-- `samSequence` as bytes: SEQ and QUAL
++def samSequenceB (record : FastqRecord) (strand : Strand) : ByteArray × ByteArray :=
++  if record.letters.isEmpty then ("*".toUTF8, "*".toUTF8) else
++  match strand with
++  | .forward => (record.letters, record.quality.toUTF8)
++  | .reverse => (reverseMapBytes complementByte record.letters, reverseMapBytes id record.quality.toUTF8)
++
++-- `samLine` appended to `b`, ending without the newline
++def samLineB (b : ByteArray) (qname : String) (flag : Nat) (rname : String) (pos mapq : Nat) (cigar rnext : String)
++    (pnext : Nat) (tlen : Int) (seq qual : ByteArray) (tags : List String) : ByteArray :=
++  let b := pushNat ((b ++ qname.toUTF8).push 9) flag
++  let b := (b.push 9) ++ rname.toUTF8
++  let b := pushNat (b.push 9) pos
++  let b := pushNat (b.push 9) mapq
++  let b := (b.push 9) ++ cigar.toUTF8
++  let b := (b.push 9) ++ rnext.toUTF8
++  let b := pushNat (b.push 9) pnext
++  let b := pushInt (b.push 9) tlen
++  let b := ((b.push 9) ++ seq).push 9 ++ qual
++  tags.foldl (fun b tag => (b.push 9) ++ tag.toUTF8) b
++
++def mappedLineB (b : ByteArray) (chromosomes : ChromosomeList) (record : FastqRecord) (which : Mate)
++    (mate other : MateReport) (answer : PairAnswer) : ByteArray :=
++  let flag := flagPaired + flagProperPair + mateFlag which +
++    reverseFlag mate.placement.strand flagReverse + reverseFlag other.placement.strand flagMateReverse
++  let rname := (chromosomes[mate.placement.chromosome]?.map (·.1)).getD "*"
++  let rnext := if mate.placement.chromosome = other.placement.chromosome then "=" else
++    (chromosomes[other.placement.chromosome]?.map (·.1)).getD "*"
++  let left := min mate.placement.start other.placement.start
++  let right := max mate.placement.stop other.placement.stop
++  let leftmost := mate.placement.start < other.placement.start ||
++    (mate.placement.start = other.placement.start && which = .one)
++  let tlen : Int := if leftmost then right - left else -((right - left : Nat) : Int)
++  let (seq, qual) := samSequenceB record mate.placement.strand
++  samLineB b (samName record.name) flag rname (mate.placement.start + 1) (mapq answer)
++    (cigarText mate.cigar) rnext (other.placement.start + 1) tlen seq qual
++    (s!"AS:i:{mate.score}" :: answerTags answer)
++
++def unmappedLineB (b : ByteArray) (record : FastqRecord) (which : Mate) (tags : List String) : ByteArray :=
++  let flag := flagPaired + flagUnmapped + flagMateUnmapped + mateFlag which
++  let (seq, qual) := samSequenceB record .forward
++  samLineB b (samName record.name) flag "*" 0 0 "*" "*" 0 0 seq qual tags
++
++-- the two SAM lines of one pair (with their newlines) appended to `b`
++def samLinesB (b : ByteArray) (chromosomes : ChromosomeList) (record1 record2 : FastqRecord) (result : PairResult) :
++    ByteArray :=
++  match result with
++  | .trimmedAway mate =>
++      let tags := [s!"XT:Z:trimmedAway{if mate = .one then 1 else 2}"]
++      (unmappedLineB b record1 .one tags).push 10 |> (unmappedLineB · record2 .two tags) |>.push 10
++  | .aligned answer =>
++      match answer.found with
++      | some pair =>
++          (mappedLineB b chromosomes record1 .one pair.mate1 pair.mate2 answer).push 10
++            |> (mappedLineB · chromosomes record2 .two pair.mate2 pair.mate1 answer) |>.push 10
++      | none =>
++          (unmappedLineB b record1 .one (answerTags answer)).push 10
++            |> (unmappedLineB · record2 .two (answerTags answer)) |>.push 10
++
++-- `samChunk` with the byte writer
++def samChunkB (chromosomes : ChromosomeList) (chunk : Array (FastqRecord × FastqRecord))
++    (results : List PairResult) (parts : Nat) : ByteArray :=
++  let pairs := chunk.zip results.toArray
++  let size := (pairs.size + parts - 1) / parts
++  let tasks := (List.range parts).map fun part => Task.spawn fun _ =>
++    (pairs.extract (part * size) ((part + 1) * size)).foldl (init := ByteArray.empty)
++      fun bytes ((record1, record2), result) => samLinesB bytes chromosomes record1 record2 result
++  tasks.foldl (fun bytes task => bytes ++ task.get) ByteArray.empty
++
+ end Spec
+diff --git a/Proofs/SamBytes.lean b/Proofs/SamBytes.lean
+new file mode 100644
+index 0000000..3258813
+--- /dev/null
++++ b/Proofs/SamBytes.lean
+@@ -0,0 +1,284 @@
++import Proofs.Sam
++
++/-! # The byte SAM writer equals the String one (Spec/Sam.lean: `pushNat`, `samLineB`, ..., `samChunkB`).
++`samChunkB_eq`: for chunks whose letters and qualities are ASCII (the FASTQ reader checks `isDnaByte` and `'!'..'~'`),
++`samChunkB = samChunk`. -/
++
++namespace Spec
++
++theorem push_append (b c : ByteArray) (x : UInt8) : (b ++ c).push x = b ++ c.push x := by
++  rw [← ByteArray.append_toByteArray_singleton, ← ByteArray.append_toByteArray_singleton, ByteArray.append_assoc]
++
++theorem digit_bytes (d : Nat) (h : d < 10) :
++    (String.ofList [Nat.digitChar d]).toByteArray = [48 + d.toUInt8].toByteArray := by
++  have : d = 0 ∨ d = 1 ∨ d = 2 ∨ d = 3 ∨ d = 4 ∨ d = 5 ∨ d = 6 ∨ d = 7 ∨ d = 8 ∨ d = 9 := by omega
++  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
++
++theorem pushNat_eq (n : Nat) : ∀ b : ByteArray, pushNat b n = b ++ (toString n).toUTF8 := by
++  induction n using Nat.strongRecOn with
++  | _ n ih =>
++    intro b
++    rw [pushNat]
++    split
++    · rename_i h
++      have : toString n = String.ofList [Nat.digitChar n] := by
++        show Nat.repr n = _
++        rw [Nat.repr, Nat.toDigits_of_lt_base h]
++      rw [this]
++      simp only [String.toUTF8_eq_toByteArray, digit_bytes n h]
++      simp
++    · rename_i h
++      have h10 : 1 < 10 := by decide
++      have hd : n % 10 < 10 := Nat.mod_lt _ (by decide)
++      have key : toString n = toString (n / 10) ++ String.ofList [Nat.digitChar (n % 10)] := by
++        show Nat.repr n = Nat.repr (n / 10) ++ _
++        rw [Nat.repr, Nat.repr, Nat.toDigits_of_base_le h10 (by omega)]
++        simp [String.ofList_append]
++      rw [ih (n / 10) (by omega), key]
++      simp only [String.toUTF8_eq_toByteArray, String.toByteArray_append, digit_bytes _ hd]
++      simp [push_append]
++
++theorem pushInt_eq (b : ByteArray) (i : Int) : pushInt b i = b ++ (toString i).toUTF8 := by
++  unfold pushInt
++  cases i with
++  | ofNat m =>
++    simp only [Int.ofNat_eq_natCast, Int.natCast_nonneg, Int.not_lt.mpr, if_false, Int.toNat_natCast]
++    rw [pushNat_eq]
++    rfl
++  | negSucc m =>
++    simp only [Int.natAbs_negSucc]
++    rw [if_pos (Int.negSucc_lt_zero m), pushNat_eq]
++    show _ = b ++ (Int.repr (Int.negSucc m)).toUTF8
++    simp only [Int.repr, String.toUTF8_eq_toByteArray, String.toByteArray_append]
++    have h1 : "-".toByteArray = [45].toByteArray := by decide
++    have h2 : (toString (Nat.succ m)).toByteArray = (Nat.succ m).repr.toByteArray := rfl
++    rw [h1, h2, ← ByteArray.append_assoc, ByteArray.append_toByteArray_singleton]
++
++/-- every byte is below 128 -/
++def Ascii (b : ByteArray) : Prop := ∀ x ∈ b.data.toList, x < 128
++
++theorem utf8Encode_ascii (l : List UInt8) (h : ∀ x ∈ l, x < 128) :
++    (l.map fun x => Char.ofNat x.toNat).utf8Encode = l.toByteArray := by
++  induction l with
++  | nil => simp
++  | cons x xs ih =>
++    have hx : x < 128 := h x (by simp)
++    rw [List.map_cons, List.utf8Encode_cons, ih (fun y hy => h y (by simp [hy])), List.utf8Encode_singleton]
++    have hn : x.toNat < 128 := by simpa [UInt8.lt_iff_toNat_lt] using hx
++    have hv : Nat.isValidChar x.toNat := Or.inl (by omega)
++    have hc : (Char.ofNat x.toNat).val.toNat = x.toNat := by
++      simp [Char.ofNat, hv, Char.ofNatAux]
++    have : String.utf8EncodeChar (Char.ofNat x.toNat) = [x] := by
++      simp only [String.utf8EncodeChar, hc]
++      rw [if_pos (by omega)]
++      simp
++    rw [this]
++    exact (List.toByteArray_append (l := [x]) (l' := xs)).symm
++
++theorem ascii_push (acc : ByteArray) (v : UInt8) (h : Ascii acc) (hv : v < 128) : Ascii (acc.push v) := by
++  intro x hx
++  simp only [ByteArray.push, Array.toList_push, List.mem_append, List.mem_singleton] at hx
++  rcases hx with hx | rfl
++  · exact h x hx
++  · exact hv
++
++theorem ascii_get (b : ByteArray) (h : Ascii b) (i : Nat) : b[i]! < 128 := by
++  by_cases hi : i < b.size
++  · have : b[i]! = b[i] := by simp [hi]
++    rw [this]
++    have hi' : i < b.data.size := by simpa using hi
++    have hmem : b.data[i] ∈ b.data := Array.getElem_mem hi'
++    exact h _ (by simp [ByteArray.getElem_eq_getElem_data])
++  · have : b[i]! = default := by simp [getElem!_neg, hi]
++    rw [this]; decide
++
++theorem foldl_push_ascii (g : Nat → UInt8) (hg : ∀ a, g a < 128) (l : List Nat) (acc : ByteArray) (h : Ascii acc) :
++    Ascii (l.foldl (fun b a => b.push (g a)) acc) := by
++  induction l generalizing acc with
++  | nil => exact h
++  | cons a l ih => exact ih _ (ascii_push _ _ h (hg a))
++
++theorem ascii_emptyWithCapacity (n : Nat) : Ascii (ByteArray.emptyWithCapacity n) := by
++  intro x hx
++  have : (ByteArray.emptyWithCapacity n).data.toList = [] := rfl
++  rw [this] at hx
++  cases hx
++
++theorem ascii_reverseMapBytes (f : UInt8 → UInt8) (hf : ∀ x, x < 128 → f x < 128) (b : ByteArray) (hb : Ascii b) :
++    Ascii (reverseMapBytes f b) := by
++  unfold reverseMapBytes
++  simp
++  exact foldl_push_ascii (fun a => f b[b.size - 1 - a]!) (fun a => hf _ (ascii_get b hb _)) _ _
++    (ascii_emptyWithCapacity b.size)
++
++theorem isValidUTF8_of_ascii (b : ByteArray) (h : Ascii b) : b.IsValidUTF8 :=
++  .intro (b.data.toList.map fun x => Char.ofNat x.toNat) (by
++    rw [utf8Encode_ascii _ h]
++    apply ByteArray.ext
++    simp [List.data_toByteArray])
++
++theorem fromUTF8!_toUTF8_ascii (b : ByteArray) (h : Ascii b) : (String.fromUTF8! b).toUTF8 = b := by
++  unfold String.fromUTF8!
++  rw [dif_pos (isValidUTF8_of_ascii b h)]
++  rfl
++
++theorem fromUTF8!_toByteArray_ascii (b : ByteArray) (h : Ascii b) : (String.fromUTF8! b).toByteArray = b :=
++  fromUTF8!_toUTF8_ascii b h
++
++theorem complementByte_lt (x : UInt8) (hx : x < 128) : complementByte x < 128 := by
++  unfold complementByte
++  repeat' split
++  all_goals first | decide | exact hx
++
++theorem samSequenceB_eq (record : FastqRecord) (strand : Strand) (hl : Ascii record.letters)
++    (hq : Ascii record.quality.toUTF8) :
++    ((samSequence record strand).1.toUTF8, (samSequence record strand).2.toUTF8) = samSequenceB record strand := by
++  unfold samSequence samSequenceB
++  split
++  · rfl
++  · cases strand
++    · simp [fromUTF8!_toByteArray_ascii _ hl]
++    · have hq' : Ascii record.quality.toByteArray := hq
++      simp [fromUTF8!_toByteArray_ascii _ (ascii_reverseMapBytes _ complementByte_lt _ hl),
++        fromUTF8!_toByteArray_ascii _ (ascii_reverseMapBytes id (fun x hx => hx) _ hq')]
++
++/-- one more tab-separated field -/
++def stepB (acc : ByteArray) (t : String) : ByteArray := (acc.push 9) ++ t.toUTF8
++
++theorem foldl_stepB_append (a : ByteArray) (ys : List String) : ∀ c : ByteArray,
++    ys.foldl stepB (a ++ c) = a ++ ys.foldl stepB c := by
++  induction ys with
++  | nil => intro c; rfl
++  | cons y ys ih =>
++    intro c
++    simp only [List.foldl_cons]
++    have : stepB (a ++ c) y = a ++ stepB c y := by
++      simp [stepB, push_append, ByteArray.append_assoc]
++    rw [this, ih]
++
++theorem intercalate_tab_bytes (x : String) (xs : List String) :
++    ("\t".intercalate (x :: xs)).toUTF8 = xs.foldl stepB x.toUTF8 := by
++  induction xs generalizing x with
++  | nil => simp
++  | cons y ys ih =>
++    rw [String.intercalate_cons_cons]
++    simp only [String.toUTF8_eq_toByteArray, String.toByteArray_append] at ih ⊢
++    rw [ih y, List.foldl_cons]
++    have h9 : "\t".toByteArray = [9].toByteArray := by decide
++    have hs : stepB x.toByteArray y = (x.toByteArray ++ "\t".toByteArray) ++ y.toByteArray := by
++      simp [stepB, h9]
++    rw [hs, foldl_stepB_append]
++
++theorem samLineB_eq (b : ByteArray) (qname : String) (flag : Nat) (rname : String) (pos mapq : Nat) (cigar rnext : String)
++    (pnext : Nat) (tlen : Int) (seq qual : String) (tags : List String) :
++    samLineB b qname flag rname pos mapq cigar rnext pnext tlen seq.toUTF8 qual.toUTF8 tags =
++      b ++ (samLine qname flag rname pos mapq cigar rnext pnext tlen seq qual tags).toUTF8 := by
++  unfold samLineB samLine
++  rw [List.cons_append, intercalate_tab_bytes]
++  simp only [List.cons_append, List.nil_append, List.foldl_cons, pushNat_eq, pushInt_eq, stepB]
++  simp only [push_append, ByteArray.append_assoc]
++  exact foldl_stepB_append b tags _
++
++/-- the letters and qualities of a record are ASCII -/
++def RecordAscii (r : FastqRecord) : Prop := Ascii r.letters ∧ Ascii r.quality.toUTF8
++
++theorem unmappedLineB_eq (b : ByteArray) (record : FastqRecord) (which : Mate) (tags : List String)
++    (h : RecordAscii record) :
++    unmappedLineB b record which tags = b ++ (unmappedLine record which tags).toUTF8 := by
++  unfold unmappedLineB unmappedLine
++  have e := samSequenceB_eq record .forward h.1 h.2
++  rcases hS : samSequence record .forward with ⟨s1, s2⟩
++  rw [hS] at e
++  rw [← e]
++  exact samLineB_eq _ _ _ _ _ _ _ _ _ _ s1 s2 _
++
++theorem mappedLineB_eq (b : ByteArray) (chromosomes : ChromosomeList) (record : FastqRecord) (which : Mate)
++    (mate other : MateReport) (answer : PairAnswer) (h : RecordAscii record) :
++    mappedLineB b chromosomes record which mate other answer =
++      b ++ (mappedLine chromosomes record which mate other answer).toUTF8 := by
++  unfold mappedLineB mappedLine
++  have e := samSequenceB_eq record mate.placement.strand h.1 h.2
++  rcases hS : samSequence record mate.placement.strand with ⟨s1, s2⟩
++  rw [hS] at e
++  rw [← e]
++  exact samLineB_eq _ _ _ _ _ _ _ _ _ _ s1 s2 _
++
++/-- the text `samChunk` builds from the lines of one pair -/
++def linesText (lines : List String) (text : String) : String := lines.foldl (fun text line => text ++ line ++ "\n") text
++
++theorem linesText_append (lines : List String) : ∀ text : String, linesText lines text = text ++ linesText lines "" := by
++  induction lines with
++  | nil => intro text; simp [linesText]
++  | cons l ls ih =>
++    intro text
++    simp only [linesText, List.foldl_cons] at ih ⊢
++    rw [ih (text ++ l ++ "\n"), ih ("" ++ l ++ "\n")]
++    simp [String.append_assoc]
++
++theorem samLinesB_eq (b : ByteArray) (chromosomes : ChromosomeList) (record1 record2 : FastqRecord) (result : PairResult)
++    (h1 : RecordAscii record1) (h2 : RecordAscii record2) :
++    samLinesB b chromosomes record1 record2 result =
++      b ++ (linesText (samLines chromosomes record1 record2 result) "").toUTF8 := by
++  have hnl : "\n".toByteArray = [10].toByteArray := by decide
++  unfold samLinesB samLines
++  split
++  · simp only [linesText, List.foldl_cons, List.foldl_nil, String.toUTF8_eq_toByteArray, String.toByteArray_append,
++      unmappedLineB_eq _ _ _ _ h1, unmappedLineB_eq _ _ _ _ h2, hnl]
++    simp [push_append, ByteArray.append_assoc]
++  · split
++    · simp only [linesText, List.foldl_cons, List.foldl_nil, String.toUTF8_eq_toByteArray, String.toByteArray_append,
++        mappedLineB_eq _ _ _ _ _ _ _ h1, mappedLineB_eq _ _ _ _ _ _ _ h2, hnl]
++      simp [push_append, ByteArray.append_assoc]
++    · simp only [linesText, List.foldl_cons, List.foldl_nil, String.toUTF8_eq_toByteArray, String.toByteArray_append,
++        unmappedLineB_eq _ _ _ _ h1, unmappedLineB_eq _ _ _ _ h2, hnl]
++      simp [push_append, ByteArray.append_assoc]
++
++theorem foldl_samLinesB (chromosomes : ChromosomeList) (l : List ((FastqRecord × FastqRecord) × PairResult))
++    (h : ∀ x ∈ l, RecordAscii x.1.1 ∧ RecordAscii x.1.2) : ∀ text : String,
++    l.foldl (fun bytes ((record1, record2), result) => samLinesB bytes chromosomes record1 record2 result) text.toUTF8 =
++      (l.foldl (fun text ((record1, record2), result) => linesText (samLines chromosomes record1 record2 result) text) text).toUTF8 := by
++  induction l with
++  | nil => intro text; rfl
++  | cons x l ih =>
++    intro text
++    obtain ⟨⟨r1, r2⟩, result⟩ := x
++    have hx := h _ (List.mem_cons_self ..)
++    simp only [List.foldl_cons]
++    have : samLinesB text.toUTF8 chromosomes r1 r2 result =
++        (linesText (samLines chromosomes r1 r2 result) text).toUTF8 := by
++      rw [samLinesB_eq _ _ _ _ _ hx.1 hx.2, linesText_append (samLines chromosomes r1 r2 result) text]
++      simp [String.toUTF8_eq_toByteArray, String.toByteArray_append]
++    rw [this]
++    exact ih (fun y hy => h y (List.mem_cons_of_mem _ hy)) _
++
++/-- **The byte SAM writer produces exactly the bytes of `samChunk`**, for chunks whose letters and qualities are ASCII
++(`isDnaByte` and `'!'..'~'`, checked by the FASTQ reader; trimming only shortens them). -/
++theorem samChunkB_eq (chromosomes : ChromosomeList) (chunk : Array (FastqRecord × FastqRecord))
++    (results : List PairResult) (parts : Nat)
++    (h : ∀ p ∈ chunk, RecordAscii p.1 ∧ RecordAscii p.2) :
++    samChunkB chromosomes chunk results parts = samChunk chromosomes chunk results parts := by
++  unfold samChunkB samChunk
++  have hp : ∀ part, ∀ x ∈ ((chunk.zip results.toArray).extract (part * ((((chunk.zip results.toArray).size + parts - 1) / parts)))
++      ((part + 1) * ((((chunk.zip results.toArray).size + parts - 1) / parts)))).toList, RecordAscii x.1.1 ∧ RecordAscii x.1.2 := by
++    intro part x hx
++    obtain ⟨a, b⟩ := x
++    have hx1 : (a, b) ∈ chunk.zip results.toArray := by
++      obtain ⟨k, hm, hk⟩ := Array.mem_extract_iff_getElem.1 (Array.mem_toList_iff.1 hx)
++      rw [← hk]
++      exact Array.getElem_mem _
++    exact h _ (Array.of_mem_zip hx1).1
++  dsimp only
++  congr 1
++  apply List.map_congr_left
++  intro part _
++  have := foldl_samLinesB chromosomes ((chunk.zip results.toArray).extract (part * ((((chunk.zip results.toArray).size + parts - 1) / parts)))
++      ((part + 1) * ((((chunk.zip results.toArray).size + parts - 1) / parts)))).toList (hp part) ""
++  simp only [Array.foldl_toList] at this
++  show Task.spawn (fun _ => _) = Task.spawn (fun _ => _)
++  congr 1
++  funext _
++  simpa [linesText] using this
++
++end Spec
++
++#print axioms Spec.samChunkB_eq
+diff --git a/Spec/FROZEN.sha256 b/Spec/FROZEN.sha256
+index 5601fc3..c69db6b 100644
+--- a/Spec/FROZEN.sha256
++++ b/Spec/FROZEN.sha256
+@@ -1,4 +1,4 @@
+ 1aca44fb9f1a322efe7dc00bf04e5328091316b181a0244020d810606718162e  Spec/Alignment.lean
+ bed16299002ab810b77a17f678bbbe92c704130ab61d6ba4123a17efcd649f9f  Spec/Mapping.lean
+ e8bdfff2fee4aa0bbdc41b46273ad855a04ab7d87672df62f696faa2147af1bd  Spec/Aligner.lean
+-8a41529d97c31324296284faead07edb1278a87c0c3298e9b25ea96cc254495f  Spec/Shim.lean
++8e22a2e49063125cb8f0af19aa1c83bfacfc79773380bf387e8024dcd2f216b8  Spec/Shim.lean
+diff --git a/Spec/Sam.lean b/Spec/Sam.lean
+index 7088781..178d3b1 100644
+--- a/Spec/Sam.lean
++++ b/Spec/Sam.lean
+@@ -151,4 +151,87 @@ def samChunk (chromosomes : ChromosomeList) (chunk : Array (FastqRecord × Fastq
+     text.toUTF8
+   tasks.foldl (fun bytes task => bytes ++ task.get) ByteArray.empty
+ 
++/-! ## Byte writer. The same text as `samLines` / `samChunk`, appended to a `ByteArray` without building Strings
++for the numbers, SEQ and QUAL (Proofs/SamBytes.lean: `samChunkB_eq`, equal to `samChunk` when the letters and
++qualities are ASCII, which the FASTQ reader checks). -/
++
++-- the decimal digits of `n`, appended to `b` (= `b ++ (toString n).toUTF8`, `pushNat_eq`)
++def pushNat (b : ByteArray) (n : Nat) : ByteArray :=
++  if h : n < 10 then b.push (48 + n.toUInt8) else (pushNat b (n / 10)).push (48 + (n % 10).toUInt8)
++termination_by n
++decreasing_by omega
++
++-- `toString i` appended to `b` (`pushInt_eq`)
++def pushInt (b : ByteArray) (i : Int) : ByteArray :=
++  if i < 0 then pushNat (b.push 45) i.natAbs else pushNat b i.toNat
++
++-- `samSequence` as bytes: SEQ and QUAL
++def samSequenceB (record : FastqRecord) (strand : Strand) : ByteArray × ByteArray :=
++  if record.letters.isEmpty then ("*".toUTF8, "*".toUTF8) else
++  match strand with
++  | .forward => (record.letters, record.quality.toUTF8)
++  | .reverse => (reverseMapBytes complementByte record.letters, reverseMapBytes id record.quality.toUTF8)
++
++-- `samLine` appended to `b`, ending without the newline
++def samLineB (b : ByteArray) (qname : String) (flag : Nat) (rname : String) (pos mapq : Nat) (cigar rnext : String)
++    (pnext : Nat) (tlen : Int) (seq qual : ByteArray) (tags : List String) : ByteArray :=
++  let b := pushNat ((b ++ qname.toUTF8).push 9) flag
++  let b := (b.push 9) ++ rname.toUTF8
++  let b := pushNat (b.push 9) pos
++  let b := pushNat (b.push 9) mapq
++  let b := (b.push 9) ++ cigar.toUTF8
++  let b := (b.push 9) ++ rnext.toUTF8
++  let b := pushNat (b.push 9) pnext
++  let b := pushInt (b.push 9) tlen
++  let b := ((b.push 9) ++ seq).push 9 ++ qual
++  tags.foldl (fun b tag => (b.push 9) ++ tag.toUTF8) b
++
++def mappedLineB (b : ByteArray) (chromosomes : ChromosomeList) (record : FastqRecord) (which : Mate)
++    (mate other : MateReport) (answer : PairAnswer) : ByteArray :=
++  let flag := flagPaired + flagProperPair + mateFlag which +
++    reverseFlag mate.placement.strand flagReverse + reverseFlag other.placement.strand flagMateReverse
++  let rname := (chromosomes[mate.placement.chromosome]?.map (·.1)).getD "*"
++  let rnext := if mate.placement.chromosome = other.placement.chromosome then "=" else
++    (chromosomes[other.placement.chromosome]?.map (·.1)).getD "*"
++  let left := min mate.placement.start other.placement.start
++  let right := max mate.placement.stop other.placement.stop
++  let leftmost := mate.placement.start < other.placement.start ||
++    (mate.placement.start = other.placement.start && which = .one)
++  let tlen : Int := if leftmost then right - left else -((right - left : Nat) : Int)
++  let (seq, qual) := samSequenceB record mate.placement.strand
++  samLineB b (samName record.name) flag rname (mate.placement.start + 1) (mapq answer)
++    (cigarText mate.cigar) rnext (other.placement.start + 1) tlen seq qual
++    (s!"AS:i:{mate.score}" :: answerTags answer)
++
++def unmappedLineB (b : ByteArray) (record : FastqRecord) (which : Mate) (tags : List String) : ByteArray :=
++  let flag := flagPaired + flagUnmapped + flagMateUnmapped + mateFlag which
++  let (seq, qual) := samSequenceB record .forward
++  samLineB b (samName record.name) flag "*" 0 0 "*" "*" 0 0 seq qual tags
++
++-- the two SAM lines of one pair (with their newlines) appended to `b`
++def samLinesB (b : ByteArray) (chromosomes : ChromosomeList) (record1 record2 : FastqRecord) (result : PairResult) :
++    ByteArray :=
++  match result with
++  | .trimmedAway mate =>
++      let tags := [s!"XT:Z:trimmedAway{if mate = .one then 1 else 2}"]
++      (unmappedLineB b record1 .one tags).push 10 |> (unmappedLineB · record2 .two tags) |>.push 10
++  | .aligned answer =>
++      match answer.found with
++      | some pair =>
++          (mappedLineB b chromosomes record1 .one pair.mate1 pair.mate2 answer).push 10
++            |> (mappedLineB · chromosomes record2 .two pair.mate2 pair.mate1 answer) |>.push 10
++      | none =>
++          (unmappedLineB b record1 .one (answerTags answer)).push 10
++            |> (unmappedLineB · record2 .two (answerTags answer)) |>.push 10
++
++-- `samChunk` with the byte writer
++def samChunkB (chromosomes : ChromosomeList) (chunk : Array (FastqRecord × FastqRecord))
++    (results : List PairResult) (parts : Nat) : ByteArray :=
++  let pairs := chunk.zip results.toArray
++  let size := (pairs.size + parts - 1) / parts
++  let tasks := (List.range parts).map fun part => Task.spawn fun _ =>
++    (pairs.extract (part * size) ((part + 1) * size)).foldl (init := ByteArray.empty)
++      fun bytes ((record1, record2), result) => samLinesB bytes chromosomes record1 record2 result
++  tasks.foldl (fun bytes task => bytes ++ task.get) ByteArray.empty
++
+ end Spec
+diff --git a/Spec/Shim.lean b/Spec/Shim.lean
+index 22e2738..10ab081 100644
+--- a/Spec/Shim.lean
++++ b/Spec/Shim.lean
+@@ -46,13 +46,13 @@ def main (args : List String) : IO UInt32 := do
+       -- ║      (`trimChunk`, equal to `trimRecord` on every mate: `trimChunk_eq`).          ║
+       -- ║ OUT: `results`, one `PairResult` per pair, in the same order as `chunk`.          ║
+       -- ║ TRUSTED around it (not proved yet): that `readChunk` returns the FASTQ records   ║
+-      -- ║ in file order, that the tasks hand chunks over in order, and that `samChunk` and  ║
++      -- ║ in file order, that the tasks hand chunks over in order, and that `samChunkB` and ║
+       -- ║ `out.write` put each pair's lines into the file correctly.                        ║
+       -- ╚══════════════════════════════════════════════════════════════════════════════════╝
+       let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
+       -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
+       -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
+-      let text := Spec.samChunk chromosomes chunk results 16
++      let text := Spec.samChunkB chromosomes chunk results 16
+       let previous := writing
+       writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+     IO.ofExcept writing.get
+diff --git a/lakefile.lean b/lakefile.lean
+index 5d832a3..ac59230 100644
+--- a/lakefile.lean
++++ b/lakefile.lean
+@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
+ 
+ @[default_target]
+ lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
+-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Heavy, `Proofs.HeavyBuild, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam, `Proofs.TrimRecord]
++  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Heavy, `Proofs.HeavyBuild, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam, `Proofs.SamBytes, `Proofs.TrimRecord]
+ 
+ @[default_target]
+ lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
