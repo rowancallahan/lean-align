@@ -43,9 +43,8 @@ lane step (~44 Ir) and the word loop's `Nat` bookkeeping (~280 Ir per call).
 
 ## Not done
 - A fused two-word scan (8 lanes per step, `lanesAny2`): prototype (unproved) a further −5M on NovaSeq (−0.35%).
-- The post-filter kernels (`ker16KWG` + `kerGKG`, ~128M inclusive on NovaSeq 2k, 43 shapes per passing diagonal)
-  are now the larger cost in `hitsCKT`; one banded pass per diagonal instead of one kernel per shape would be the
-  next lever there.
+- (Corrected below.) The second look's shape loop after the filter is 49M, not ~128M: most `ker16KWG` / `kerGKG`
+  Ir comes from the router and mate stages that share the specialisation name.
 
 ## speed/next (off festive 6707632): the second look's per-diagonal setup
 Stage profile (NovaSeq 2k, inclusive, total 1426.0M): `alignOneP` 969M: `afterRouter` 432M (`lookAt` 343M on 33 pairs,
