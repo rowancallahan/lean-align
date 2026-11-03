@@ -32,6 +32,70 @@ def sweepA (a : Array Nat) (r : Nat) : List Nat → Nat → Nat → Array Nat �
     let cnt := if i < a.size ∧ a[i]! / 16 ≤ D + r then cnt.modify k (· + 1) else cnt
     sweepA a r ds (k + 1) i cnt
 
+/-- `advP` without fuel (`advP_eqF`). -/
+def advF (a : Array Nat) (lo i : Nat) : Nat :=
+  if h : i < a.size then (if a[i] / 16 < lo then advF a lo (i + 1) else i) else i
+termination_by a.size - i
+
+theorem advP_eqF (a : Array Nat) (lo : Nat) : ∀ f i, f = a.size - i → advP a lo f i = advF a lo i := by
+  intro f
+  induction f with
+  | zero =>
+    intro i hf
+    unfold advP advF
+    rw [dif_neg (by omega)]
+  | succ f ih =>
+    intro i hf
+    unfold advP
+    rw [advF]
+    by_cases h : i < a.size
+    · rw [dif_pos h, getElem!_pos a i h]
+      by_cases h2 : a[i] / 16 < lo
+      · rw [if_pos ⟨h, h2⟩, if_pos h2]; exact ih _ (by omega)
+      · rw [if_neg (fun e => h2 e.2), if_neg h2]
+    · rw [dif_neg h, if_neg (fun e => h e.1)]
+
+/-- `sweepA` with `advF` and an in-place increment, no closure (`sweepA_eqF`). -/
+def sweepAF (a : Array Nat) (r : Nat) : List Nat → Nat → Nat → Array Nat → Array Nat
+  | [], _, _, cnt => cnt
+  | D :: ds, k, i, cnt =>
+    let i := advF a (D - r) i
+    let cnt := if h : i < a.size then
+        (if a[i] / 16 ≤ D + r then (if hk : k < cnt.size then cnt.set k (cnt[k] + 1) else cnt) else cnt)
+      else cnt
+    sweepAF a r ds (k + 1) i cnt
+
+theorem modify_eq (cnt : Array Nat) (k : Nat) :
+    cnt.modify k (· + 1) = if hk : k < cnt.size then cnt.set k (cnt[k] + 1) else cnt := by
+  apply Array.ext
+  · split <;> simp
+  · intro t h1 h2
+    split
+    · rename_i hk
+      simp only [Array.getElem_modify, Array.getElem_set]
+      split <;> simp_all
+    · rename_i hk
+      simp only [Array.getElem_modify]
+      split
+      · rename_i e; subst e; simp only [Array.size_modify] at h1; exact absurd h1 hk
+      · rfl
+
+@[csimp] theorem sweepA_eqF : @sweepA = @sweepAF := by
+  funext a r ds k i cnt
+  induction ds generalizing k i cnt with
+  | nil => rfl
+  | cons D ds ih =>
+    unfold sweepA sweepAF
+    simp only []
+    rw [advP_eqF a _ _ _ rfl, ih]
+    congr 1
+    by_cases h : advF a (D - r) i < a.size
+    · rw [dif_pos h, getElem!_pos a _ h]
+      by_cases h2 : a[advF a (D - r) i] / 16 ≤ D + r
+      · rw [if_pos ⟨h, h2⟩, if_pos h2, modify_eq]
+      · rw [if_neg (fun e => h2 e.2), if_neg h2]
+    · rw [dif_neg h, if_neg (fun e => h e.1)]
+
 /-- The supports of `ds` (sorted arrays, sorted `ds`). -/
 def suppCnt (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
   acc.foldl (fun cnt a => sweepA a r ds 0 0 cnt) (Array.replicate ds.length 0)

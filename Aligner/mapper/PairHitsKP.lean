@@ -1,5 +1,6 @@
 import PairHits
 import WgPacked
+import FastGenSupp
 
 /-!
 # `hitsAtKP`: every hit of a read within a cap, packed genome, word filter, word kernels
@@ -41,14 +42,35 @@ theorem diags_empty (acc : List (Array Nat)) (h : (acc.all fun a => a.isEmpty) =
     simp [this]
   rw [this, List.mergeSort_nil, dedupAdj]
 
-/-- `hitsCK` with the shapes taken once from the table, and nothing done when every slice is empty
-(`hitsCK_eqT`). -/
+/-- A `flatMap` over `ds` reading a per-position value from `cnt` equals the one computing it (`s`). -/
+theorem zipIdx_flatMap {β : Type} (G : Nat → Nat → List β) (s : Nat → Nat) (cnt : Array Nat) :
+    ∀ (ds : List Nat) n, (∀ t, t < ds.length → cnt.getD (n + t) 0 = s (ds.getD t 0)) →
+      (ds.zipIdx n).flatMap (fun p => G p.1 (cnt.getD p.2 0)) = ds.flatMap (fun D => G D (s D)) := by
+  intro ds
+  induction ds with
+  | nil => intro n _; rfl
+  | cons D ds ih =>
+    intro n h
+    rw [List.zipIdx_cons, List.flatMap_cons, List.flatMap_cons]
+    have h0 := h 0 (by simp)
+    simp only [Nat.add_zero, List.getD_cons_zero] at h0
+    rw [h0, ih (n + 1) (fun t ht => by
+      have := h (t + 1) (by simp; omega)
+      rw [show n + (t + 1) = n + 1 + t by omega, List.getD_cons_succ] at this
+      exact this)]
+
+/-- `hitsCK` with the shapes taken once from the table, nothing done when every slice is empty, the
+supports of all diagonals by one sweep (`suppCntC`) and the packed genome looked up once (`hitsCK_eqT`). -/
 def hitsCKT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) : List (Window × Nat) :=
   if acc.all fun a => a.isEmpty then [] else
   let shs := shapesT lim
-  (diags acc).flatMap fun D =>
-    if kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
+  let ds := diags acc
+  let cnt := suppCntC acc (2 * gapBound sc0 (-((min lim (initP lim).pen : Nat) : Int))) ds
+  let pk := pkU pgs2[c]! Ls R.size us
+  ds.zipIdx.flatMap fun p =>
+    let D := p.1
+    if kfiltVF pk K R pgs2[c]! acc us Ls lim (initP lim) D (cnt.getD p.2 0) then
       shs.filterMap fun sh =>
         if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
           let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
@@ -63,6 +85,15 @@ def hitsCKT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Li
   split
   · rename_i h; rw [diags_empty acc h]; rfl
   · simp only [shapesT_eq]
+    exact (zipIdx_flatMap (β := Window × Nat) (fun D x => if kfiltVF (pkU pgs2[c]! Ls R.size us) K R pgs2[c]! acc us Ls lim (initP lim) D x then
+        (shapesAt lim).filterMap fun sh =>
+          if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
+            let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
+            if k ≤ lim then some ((⟨c, (dst R.size D sh).toNat, (wlen R.size sh).toNat⟩ : Window), k) else none
+          else none
+        else [])
+      (fun D => suppA acc D (2 * gapBound sc0 (-((min lim (initP lim).pen : Nat) : Int))))
+      _ (diags acc) 0 (fun t ht => by rw [Nat.zero_add]; exact suppCntC_get acc _ _ t ht)).symm
 
 /-- `hitsS` on packed chromosomes (the read packed once per strand). -/
 def hitsSK {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (G : ByteArray) (offs : Array Nat)

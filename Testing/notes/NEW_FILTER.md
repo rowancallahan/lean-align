@@ -43,6 +43,20 @@ lane step (~44 Ir) and the word loop's `Nat` bookkeeping (~280 Ir per call).
 
 ## Not done
 - A fused two-word scan (8 lanes per step, `lanesAny2`): prototype (unproved) a further −5M on NovaSeq (−0.35%).
-- The post-filter kernels (`ker16KWG` + `kerGKG`, ~128M inclusive on NovaSeq 2k, 43 shapes per passing diagonal)
-  are now the larger cost in `hitsCKT`; one banded pass per diagonal instead of one kernel per shape would be the
-  next lever there.
+- (Corrected below.) The second look's shape loop after the filter is 49M, not ~128M: most `ker16KWG` / `kerGKG`
+  Ir comes from the router and mate stages that share the specialisation name.
+
+## speed/next (off festive 6707632): the second look's per-diagonal setup
+Stage profile (NovaSeq 2k, inclusive, total 1426.0M): `alignOneP` 969M: `afterRouter` 432M (`lookAt` 343M on 33 pairs,
+`hitsCKT` 207M), router `tierPairBP` 254M (`routeGS` 219M), `answerOfPairP` 174M (`fallbackOfK` 135M); FASTQ
+`readChunk` 266M and SAM `samLines` 152M are the shim (`shim_speed.patch`).
+In `hitsCKT` (33.5k diagonals): the support `suppA` (countP + one binary search per seed) 33M, `pkU` / `usIn` /
+`gapBound` per diagonal ~8M; the second look's shape loop is 49M in all (19.6k word kernels, ~2.1k Ir each), so a
+banded pass per diagonal (~11 DP passes for 43 shapes) would not be cheaper.
+- `hitsCKT`: supports of all diagonals by one sweep (`suppCntC`, already proved), `pkU` once, `kfiltVF` per diagonal;
+  `hitsCK_eqT` re-proved (`zipIdx_flatMap`, `suppCntC_get`, `kfiltVF_supp`).
+- `sweepA_eqF`: `sweepA = sweepAF` (`advF` without fuel, `Array.set` instead of `modify` with a closure).
+- NovaSeq 2k 1426.0M → 1403.2M (−1.6%); HiSeq 1470.4M → 1463.6M (−0.5%). SAM identical (2k and full 200k, both sets).
+- Tried and dropped: the same sweep in `hitsCKNT` (+2.1M: `sel` rejects most diagonals, so precomputing all supports
+  costs more); `sweepAF` on `UInt64` (−1.5M only; the sweep is bounded by the anchors it walks); the byte slow path
+  `fineOk` (19M, 289 diagonals of ~4 reads whose window touches a non-ACGT block) is data-specific.
