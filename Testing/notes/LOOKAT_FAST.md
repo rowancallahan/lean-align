@@ -51,3 +51,23 @@ User CPU seconds (`timed.py`), 453394f → c633294; wall time is noisy here (ind
 | low | 23.1 | 22.2 | −4% |
 NovaSeq is three runs per binary (the first base run read the index cold); the other sets are one run each.
 SAM identical on all four full sets (400,197 lines each). `CI_check.sh`: ALL CHECKS PASSED.
+
+## 6. Round 2 (branch `speed/lookat-fast2`, off cb0b08f)
+| commit | change | NovaSeq | HiSeq |
+|---|---|---|---|
+| cb0b08f | base | 1327.6M | 1612.5M |
+| (this branch) | `hitsCKT` / `hitsCKNT`: nothing done on a chromosome whose slices are all empty (`diags_empty`; the existing csimps `hitsCK_eqT` / `hitsCKN_eqT` re-proved) | 1310.7M (−1.3%) | 1603.6M (−0.6%) |
+SAM identical on the four full sets and both 2k subsets; `CI_check.sh` passes. Native user CPU is within noise
+(±5% run to run here) for a 1% change: NovaSeq 32.7 → 29.6 s, HiSeq 32.2 → 33.9 s, one run each.
+
+What is left in the second look (NovaSeq 2k pairs, 1310.7M total; afterLeftover 264M):
+- mate-1 search `hitsKPF` 109M. Kernels: `ker16KWG` 64M over 16k shapes on 766 diagonals; inside it
+  `kerGKG` is 31M at ~1.5k Ir per shape (the gapped word kernel, already on words in n37). Diagonal filter:
+  `fineE` 22M over 6k diagonals, `suppA` 8M. `slicesAt` 25M (two `lbA` per seed per chromosome). Skipping
+  chromosomes before slicing needs the anchor arrays to be sorted (`IncA`) carried through `LookG.look`; not done.
+- mate-2 `hitsKPFNG` 39M (now only chromosomes with a mate-1 hit).
+- `repeatMate` 76M: `lookupPWk` → `scanAWK3` / `scanAWF`, ~33k Ir per bucket scan (`nextK` key filter plus
+  genome checks). A seed with fewer than 500 places needs the whole bucket scanned to know that. Cutting this
+  needs an index-side count per bucket or key, or reuse of the router's own lookups of the same seeds. The
+  router uses base `size − j·Ls` and keeps nothing after `tierPair`, so reuse means threading the arrays
+  through `answerOfPairP`. Not attempted.
