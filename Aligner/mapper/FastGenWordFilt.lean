@@ -116,8 +116,8 @@ def svAny (gs : GW) (sv : UInt64) (t : Nat) : Nat → Bool
   | 0 => false
   | k + 1 => eq25 (gAtW gs t) sv || svAny gs sv (t + 1) k
 
-/-! `svAny` and `lanesAny` on machine words (compiled code only): `svAny_eq_svAnyF`,
-`lanesAny_eq_lanesAnyF` (`@[csimp]`). The loops keep the field offset `t` in `USize` (word
+/-! `svAny` and `lanesAny` on machine words (compiled code only): `svAny_eq_svAnyF` (a rolling window,
+`svAnyR`, below), `lanesAny_eq_lanesAnyF` (`@[csimp]`). The `lanesAny` loops keep the field offset `t` in `USize` (word
 `t >>> 5 + j`, shift `t &&& 31`: `gAtWU`) and read the window words through `GW.getU` (`USize`
 compares); `lanesAnyU` also hoists the read word `K.w.getD j 0` and the field count `n - 32 j`. -/
 
@@ -189,23 +189,6 @@ theorem gAtWU_eq (gs : GW) (tU jU : USize) (t j : Nat) (ht : tU.toNat = t) (hj :
   simp only []
   rw [GW.getU_eq, GW.getU_eq, hu, hu1, hs, c1, c2]
 
-/-- `svAny gs sv t k` with `t` in `USize` (`svAnyU_eq`). -/
-def svAnyU (gs : GW) (sv : UInt64) (t : USize) : Nat → Bool
-  | 0 => false
-  | k + 1 => eq25 (gAtWU gs t 0) sv || svAnyU gs sv (t + 1) k
-
-theorem svAnyU_eq (gs : GW) (sv : UInt64) :
-    ∀ k (tU : USize) t, tU.toNat = t → t + k < 2 ^ 31 → svAnyU gs sv tU k = svAny gs sv t k := by
-  intro k
-  induction k with
-  | zero => intro tU t _ _; rfl
-  | succ k ih =>
-    intro tU t ht hb
-    have e := gAtWU_eq gs tU 0 t 0 ht (usz_lit 0 (by decide)) (by omega)
-    rw [Nat.mul_zero, Nat.add_zero] at e
-    simp only [svAnyU, svAny, e]
-    rw [ih _ _ (by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide), ht]) (by omega)]
-
 /-- `svAny` (its slow path; not rewritten by `csimp`). -/
 def svAnyS (gs : GW) (sv : UInt64) (t : Nat) : Nat → Bool
   | 0 => false
@@ -217,14 +200,147 @@ theorem svAnyS_eq (gs : GW) (sv : UInt64) : ∀ k t, svAnyS gs sv t k = svAny gs
   | zero => intro t; rfl
   | succ k ih => intro t; simp only [svAnyS, svAny, ih]
 
-/-- `svAny` for the compiled code (`svAny_eq_svAnyF`). -/
+/-! `svAny` on a rolling window (`svAny_eq_svAnyF`): the 32 window fields at the current offset in one register `a`,
+one field shifted in per step from a pending word `b` (refilled every 32 steps), as `lanesAnyR` below. -/
+
+/-- Field `p` of the window words. -/
+def wf (gs : GW) (p : Nat) : Nat := dig (gs.get (p / 32)).toNat (p % 32)
+
+theorem gAtW_dig (gs : GW) (T f : Nat) (hf : f < 32) : dig (gAtW gs T).toNat f = wf gs (T + f) := by
+  unfold gAtW wf
+  rw [comb_dig _ _ _ _ (Nat.mod_lt _ (by omega)) hf]
+  split
+  · rw [show (T + f) / 32 = T / 32 by omega, show (T + f) % 32 = T % 32 + f by omega]
+  · rw [show (T + f) / 32 = T / 32 + 1 by omega, show (T + f) % 32 = T % 32 + f - 32 by omega]
+
+theorem roll_eq (gs : GW) (T : Nat) (a b : UInt64) (ha : a = gAtW gs T)
+    (hb : dig b.toNat 0 = wf gs (T + 32)) : (a >>> 2) ||| (b <<< 62) = gAtW gs (T + 1) := by
+  apply UInt64.toNat_inj.mp
+  apply eq_of_dig 32 _ _ (by have := UInt64.toNat_lt ((a >>> 2) ||| (b <<< 62)); simpa using this)
+    (by have := UInt64.toNat_lt (gAtW gs (T + 1)); simpa using this)
+  intro f hf
+  rw [gAtW_dig _ _ _ hf]
+  have h2 : (2 : UInt64).toNat = 2 * 1 := rfl
+  have h62 : (62 : UInt64).toNat = 2 * 31 := rfl
+  by_cases h31 : f < 31
+  · rw [or_dig_l _ _ _ (by rw [shl_dig _ _ 31 f h62 (by omega) hf, if_neg (by omega)]),
+      shr_dig _ _ 1 f h2 (by omega), ha, gAtW_dig _ _ _ (by omega)]
+    congr 1; omega
+  · rw [or_dig_r _ _ _ (by rw [shr_dig _ _ 1 f h2 (by omega)]; exact dig_hi _ _ (by omega)),
+      shl_dig _ _ 31 f h62 (by omega) hf, if_pos (by omega), show f - 31 = 0 by omega, hb]
+    congr 1; omega
+
+/-- The rolling state: `b` holds the `c` fields after the window at `T` (from word `u`). -/
+def RInv (gs : GW) (T : Nat) (b : UInt64) (c u : USize) : Prop :=
+  1 ≤ c.toNat ∧ c.toNat ≤ 32 ∧ T + 32 + c.toNat = 32 * (u.toNat + 1) ∧
+    ∀ f, f < c.toNat → dig b.toNat f = wf gs (T + 32 + f)
+
+theorem rinv_step (gs : GW) (T : Nat) (b : UInt64) (c u : USize) (h : RInv gs T b c u) (hu : u.toNat + 2 < 2 ^ 32) :
+    (if c == 1 then RInv gs (T + 1) (gs.getU (u + 1)) 32 (u + 1) else RInv gs (T + 1) (b >>> 2) (c - 1) u) := by
+  obtain ⟨h1, h32, he, hf⟩ := h
+  have hu1 : (u + 1).toNat = u.toNat + 1 := by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide)]
+  split
+  · rename_i hc
+    have hc1 : c.toNat = 1 := by rw [beq_iff_eq] at hc; rw [hc]; exact usz_lit 1 (by decide)
+    refine ⟨by rw [usz_lit 32 (by decide)]; omega, by rw [usz_lit 32 (by decide)]; omega,
+      by rw [usz_lit 32 (by decide), hu1]; omega, ?_⟩
+    intro f hf'
+    rw [usz_lit 32 (by decide)] at hf'
+    rw [GW.getU_eq, hu1]
+    unfold wf
+    rw [show (T + 1 + 32 + f) / 32 = u.toNat + 1 by omega, show (T + 1 + 32 + f) % 32 = f by omega]
+  · rename_i hc
+    have hc1 : c.toNat ≠ 1 := fun e => hc (by rw [beq_iff_eq]; exact USize.toNat_inj.mp (by rw [e, usz_lit 1 (by decide)]))
+    have hcs : (c - 1).toNat = c.toNat - 1 := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ c.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]
+    refine ⟨by omega, by omega, by omega, ?_⟩
+    intro f hf'
+    rw [shr_dig _ _ 1 f rfl (by omega), hf _ (by omega)]
+    congr 1; omega
+
+/-- `svAny gs sv T k` on the rolling window `a = gAtW gs T`, `b` (`RInv`): `svAnyR_eq`. -/
+def svAnyR (gs : GW) (sv : UInt64) (k : USize) (a b : UInt64) (c u : USize) : Bool :=
+  if h : k = 0 then false else
+    if eq25 a sv then true else
+      let a' := (a >>> 2) ||| (b <<< 62)
+      if c == 1 then svAnyR gs sv (k - 1) a' (gs.getU (u + 1)) 32 (u + 1)
+      else svAnyR gs sv (k - 1) a' (b >>> 2) (c - 1) u
+termination_by k.toNat
+decreasing_by
+  all_goals
+    have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+      usz_lit 1 (by decide)]
+    omega
+
+theorem svAnyR_eq (gs : GW) (sv : UInt64) :
+    ∀ n (k : USize), k.toNat = n → ∀ T a b c u, a = gAtW gs T → RInv gs T b c u → T + n + 64 < 2 ^ 31 →
+      svAnyR gs sv k a b c u = svAny gs sv T n := by
+  intro n
+  induction n with
+  | zero =>
+    intro k hk T a b c u _ _ _
+    have : k = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [svAnyR, dif_pos this]; rfl
+  | succ n ih =>
+    intro k hk T a b c u ha hI hB
+    have h0 : k ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    have hk1 : (k - 1).toNat = n := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]; omega
+    have hu : u.toNat + 2 < 2 ^ 32 := by obtain ⟨_, _, he, _⟩ := hI; omega
+    have ha' : (a >>> 2) ||| (b <<< 62) = gAtW gs (T + 1) :=
+      roll_eq gs T a b ha (by obtain ⟨h1, _, _, hf⟩ := hI; simpa using hf 0 (by omega))
+    have hstep := rinv_step gs T b c u hI hu
+    rw [svAnyR, dif_neg h0, svAny, ← ha]
+    simp only []
+    split
+    · rename_i he; rw [he, Bool.true_or]
+    · rename_i he
+      rw [Bool.eq_false_iff.mpr he, Bool.false_or]
+      split
+      · rename_i hc; rw [if_pos hc] at hstep; exact ih _ hk1 _ _ _ _ _ ha' hstep (by omega)
+      · rename_i hc; rw [if_neg hc] at hstep; exact ih _ hk1 _ _ _ _ _ ha' hstep (by omega)
+
+/-- The rolling state at field offset `t` (`svAnyF`, `wordR`): word `t / 32 + 1` shifted to start at field `t + 32`. -/
+theorem rinv_start (gs : GW) (t : Nat) (ht : t + 64 < 2 ^ 31) :
+    RInv gs t (gs.getU (t.toUSize >>> 5 + 1) >>> (2 * (t.toUSize &&& 31)).toUInt64) (32 - (t.toUSize &&& 31))
+      (t.toUSize >>> 5 + 1) := by
+  have ho : t.toUSize.toNat = t := usz_n _ (by omega)
+  have hs : (t.toUSize &&& 31).toNat = t % 32 := by
+    rw [USize.toNat_and, usz_lit 31 (by decide), ho, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+      Nat.and_two_pow_sub_one_eq_mod]
+  have hu : (t.toUSize >>> 5 + 1).toNat = t / 32 + 1 := by
+    rw [usz_add' _ _ (by rw [usz_shr5, ho, usz_lit 1 (by decide)]; omega), usz_shr5, ho, usz_lit 1 (by decide)]
+  have hc : (32 - (t.toUSize &&& 31)).toNat = 32 - t % 32 := by
+    rw [USize.toNat_sub_of_le _ _ (by show (t.toUSize &&& 31).toNat ≤ (32 : USize).toNat; rw [hs, usz_lit 32 (by decide)]; omega),
+      hs, usz_lit 32 (by decide)]
+  have h2s : ((2 * (t.toUSize &&& 31)).toUInt64).toNat = 2 * (t % 32) := by
+    rw [USize.toNat_toUInt64, usz_mul' _ _ (by rw [hs, usz_lit 2 (by decide)]; omega), usz_lit 2 (by decide), hs]
+  refine ⟨by rw [hc]; omega, by rw [hc]; omega, by rw [hc, hu]; omega, ?_⟩
+  intro f hf'
+  rw [hc] at hf'
+  rw [shr_dig _ _ (t % 32) f h2s (by omega), GW.getU_eq, hu]
+  unfold wf
+  rw [show (t + 32 + f) / 32 = t / 32 + 1 by omega, show (t + 32 + f) % 32 = f + t % 32 by omega]
+
+/-- `svAny` for the compiled code (`svAny_eq_svAnyF`): the rolling scan within its bounds. -/
 @[inline] def svAnyF (gs : GW) (sv : UInt64) (t k : Nat) : Bool :=
-  if t + k < 2147483648 then svAnyU gs sv t.toUSize k else svAnyS gs sv t k
+  if t + k + 64 < 2147483648 then
+    let tU := t.toUSize
+    svAnyR gs sv k.toUSize (gAtWU gs tU 0) (gs.getU (tU >>> 5 + 1) >>> (2 * (tU &&& 31)).toUInt64) (32 - (tU &&& 31))
+      (tU >>> 5 + 1)
+  else svAnyS gs sv t k
 
 @[csimp] theorem svAny_eq_svAnyF : @svAny = @svAnyF := by
   funext gs sv t k
   unfold svAnyF; split
-  · rename_i h; exact (svAnyU_eq gs sv k _ t (usz_n _ (by omega)) (by omega)).symm
+  · rename_i h
+    have ha : gAtWU gs t.toUSize 0 = gAtW gs t := by
+      have := gAtWU_eq gs t.toUSize 0 t 0 (usz_n _ (by omega)) (usz_lit 0 (by decide)) (by omega)
+      rwa [Nat.mul_zero, Nat.add_zero] at this
+    exact (svAnyR_eq gs sv k _ (usz_n _ (by omega)) t _ _ _ _ ha (rinv_start gs t (by omega)) (by omega)).symm
   · exact (svAnyS_eq gs sv k t).symm
 
 /-- `unlook` by words, for seeds inside the read: read start `s` ↦ field `o + (s − s0)`
@@ -1286,38 +1402,6 @@ theorem zt_lane (a g : UInt64) (i : Nat) (hi : i < 4) :
   exact forall_congr' fun f => imp_congr_right fun _ => xor_dig a g _
 
 
-/-- Field `p` of the window words. -/
-def wf (gs : GW) (p : Nat) : Nat := dig (gs.get (p / 32)).toNat (p % 32)
-
-theorem gAtW_dig (gs : GW) (T f : Nat) (hf : f < 32) : dig (gAtW gs T).toNat f = wf gs (T + f) := by
-  unfold gAtW wf
-  rw [comb_dig _ _ _ _ (Nat.mod_lt _ (by omega)) hf]
-  split
-  · rw [show (T + f) / 32 = T / 32 by omega, show (T + f) % 32 = T % 32 + f by omega]
-  · rw [show (T + f) / 32 = T / 32 + 1 by omega, show (T + f) % 32 = T % 32 + f - 32 by omega]
-
-theorem roll_eq (gs : GW) (T : Nat) (a b : UInt64) (ha : a = gAtW gs T)
-    (hb : dig b.toNat 0 = wf gs (T + 32)) : (a >>> 2) ||| (b <<< 62) = gAtW gs (T + 1) := by
-  apply UInt64.toNat_inj.mp
-  apply eq_of_dig 32 _ _ (by have := UInt64.toNat_lt ((a >>> 2) ||| (b <<< 62)); simpa using this)
-    (by have := UInt64.toNat_lt (gAtW gs (T + 1)); simpa using this)
-  intro f hf
-  rw [gAtW_dig _ _ _ hf]
-  have h2 : (2 : UInt64).toNat = 2 * 1 := rfl
-  have h62 : (62 : UInt64).toNat = 2 * 31 := rfl
-  by_cases h31 : f < 31
-  · rw [or_dig_l _ _ _ (by rw [shl_dig _ _ 31 f h62 (by omega) hf, if_neg (by omega)]),
-      shr_dig _ _ 1 f h2 (by omega), ha, gAtW_dig _ _ _ (by omega)]
-    congr 1; omega
-  · rw [or_dig_r _ _ _ (by rw [shr_dig _ _ 1 f h2 (by omega)]; exact dig_hi _ _ (by omega)),
-      shl_dig _ _ 31 f h62 (by omega) hf, if_pos (by omega), show f - 31 = 0 by omega, hb]
-    congr 1; omega
-
-/-- The rolling state: `b` holds the `c` fields after the window at `T` (from word `u`). -/
-def RInv (gs : GW) (T : Nat) (b : UInt64) (c u : USize) : Prop :=
-  1 ≤ c.toNat ∧ c.toNat ≤ 32 ∧ T + 32 + c.toNat = 32 * (u.toNat + 1) ∧
-    ∀ f, f < c.toNat → dig b.toNat f = wf gs (T + 32 + f)
-
 /-- The shift scan on a rolling window: `a` = the 32 fields at the current offset, `b` = the next `c`
 fields (low first), `u` = the word `b` came from. Flags in bit `16i + 15`. -/
 def lanesAnyR (gs : GW) (wj full F : UInt64) (k : USize) (a b : UInt64) (c u : USize) : UInt64 :=
@@ -1334,30 +1418,6 @@ decreasing_by
     rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
       usz_lit 1 (by decide)]
     omega
-
-theorem rinv_step (gs : GW) (T : Nat) (b : UInt64) (c u : USize) (h : RInv gs T b c u) (hu : u.toNat + 2 < 2 ^ 32) :
-    (if c == 1 then RInv gs (T + 1) (gs.getU (u + 1)) 32 (u + 1) else RInv gs (T + 1) (b >>> 2) (c - 1) u) := by
-  obtain ⟨h1, h32, he, hf⟩ := h
-  have hu1 : (u + 1).toNat = u.toNat + 1 := by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide)]
-  split
-  · rename_i hc
-    have hc1 : c.toNat = 1 := by rw [beq_iff_eq] at hc; rw [hc]; exact usz_lit 1 (by decide)
-    refine ⟨by rw [usz_lit 32 (by decide)]; omega, by rw [usz_lit 32 (by decide)]; omega,
-      by rw [usz_lit 32 (by decide), hu1]; omega, ?_⟩
-    intro f hf'
-    rw [usz_lit 32 (by decide)] at hf'
-    rw [GW.getU_eq, hu1]
-    unfold wf
-    rw [show (T + 1 + 32 + f) / 32 = u.toNat + 1 by omega, show (T + 1 + 32 + f) % 32 = f by omega]
-  · rename_i hc
-    have hc1 : c.toNat ≠ 1 := fun e => hc (by rw [beq_iff_eq]; exact USize.toNat_inj.mp (by rw [e, usz_lit 1 (by decide)]))
-    have hcs : (c - 1).toNat = c.toNat - 1 := by
-      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ c.toNat; rw [usz_lit 1 (by decide)]; omega),
-        usz_lit 1 (by decide)]
-    refine ⟨by omega, by omega, by omega, ?_⟩
-    intro f hf'
-    rw [shr_dig _ _ 1 f rfl (by omega), hf _ (by omega)]
-    congr 1; omega
 
 theorem lanesAnyR_bit (gs : GW) (wj full : UInt64) (i : Nat) :
     ∀ n (k : USize), k.toNat = n → ∀ T a b c u F, a = gAtW gs T → RInv gs T b c u → T + n + 64 < 2 ^ 31 →
