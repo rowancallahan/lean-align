@@ -1,6 +1,8 @@
 # Byte specs: DRAFT for Rowan (bytes in, bytes out)
 
-Not built by lake, not in Spec/. Both files type-check with `lake env lean <file>`; the `sorry`s are the lemmas to prove.
+**Start with `ProvisionalSpec.lean`**: one file showing how `Spec/Fastq.lean` and `Spec/Sam.lean` would change (byte `FastqRecord`, whole-file `parseFastq`, `pairUp`, `samFile`), checked against the current Proofs. The other two files hold the lemmas; `LEMMAS.md` is the status.
+
+Not built by lake, not in Spec/. Each file type-checks on its own with `lake env lean <file>`; no `sorry` anywhere.
 
 - `FastqBytes.lean`: `lines`, `parseLines`, `parseFastq bytes` (the records of a FASTQ file, reusing `parseRecord`),
   `pairUp` / `pairsOfFiles` (pairing + mate-name check). Key lemma `parseFastq_append`: parsing a file cut after a

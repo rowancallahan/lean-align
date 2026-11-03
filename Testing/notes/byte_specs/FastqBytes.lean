@@ -3,7 +3,11 @@ import Proofs.Fastq
 what the records of a file ARE, independent of how they are read. Every reader (block reader,
 parallel slice parser) is then proved to return exactly `parseFastq bytes`.
 PROOF STATUS (this file has no `sorry`; `lake env lean` checks it): `parseFastq_append`, `parseSlices_eq`,
-`cutLinesL_spec` / `cutLinesL_boundary`. `pairsOfFiles` is stated, not yet connected to a reader. -/
+`cutLinesL_spec` / `cutLinesL_boundary`; and, for the byte scan, `findNewlineU_eq` (the USize loop computes `nl`),
+`cutLinesL_scanK` / `scanK_boundary` (the serial scan on the buffer = `cutLinesL`, so it cuts at record boundaries),
+`linesFrom_eq` / `parseFastq_slice` (reading lines by position from the shared buffer = `lines` / `parseFastq` of the slice).
+`pairsOfFiles` is stated, not yet connected to a reader. The record type here is today's (String name/quality); the proposal over
+bytes is `ProvisionalSpec.lean`, whose `lines` / `parseLines` / `parseFastq` are textually these. -/
 namespace Spec.Draft
 
 theorem toList_loop (bs : ByteArray) (i : Nat) (r : List UInt8) :
@@ -271,9 +275,297 @@ def pairUp (r1 r2 : List FastqRecord) : Except String (List (FastqRecord × Fast
 def pairsOfFiles (f1 f2 : ByteArray) : Except String (List (FastqRecord × FastqRecord)) := do
   pairUp (← parseFastq f1) (← parseFastq f2)
 
+-- ## The byte scan: the fast newline search, the serial boundary scan, and reading lines by position
+
+-- from research/io `shim_speed.patch`: the USize newline search the shim would use
+theorem usize_le' (a : ByteArray) : a.usize.toNat ≤ a.size := by
+  show a.size.toUSize.toNat ≤ a.size
+  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
+
+def findNewlineU (bytes : @& ByteArray) (j : USize) : USize :=
+  if h : j < bytes.usize then
+    if bytes.uget j (Nat.lt_of_lt_of_le h (usize_le' bytes)) != 10 then findNewlineU bytes (j + 1) else j
+  else j
+termination_by bytes.usize.toNat - j.toNat
+decreasing_by
+  have h' : j.toNat < bytes.usize.toNat := h
+  have := USize.toNat_lt_size bytes.usize
+  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+  rw [USize.toNat_add, USize.toNat_one, Nat.mod_eq_of_lt (by omega)]; omega
+
+-- the spec of "the first newline at or after i (or the end)", by plain recursion (the `while` loop of Spec/Fastq.lean is
+-- `partial` underneath and cannot be unfolded in a proof; stating the scan by recursion is what makes it provable)
+def nl (b : ByteArray) (i : Nat) : Nat :=
+  if h : i < b.size then (if b[i] != 10 then nl b (i + 1) else i) else i
+termination_by b.size - i
+
+theorem nl_ge (b : ByteArray) : ∀ n i, b.size - i = n → i ≤ nl b i
+  | n, i, hn => by
+    unfold nl
+    split
+    · rename_i h
+      split
+      · have := nl_ge b (n - 1) (i + 1) (by omega); omega
+      · exact Nat.le_refl _
+    · exact Nat.le_refl _
+termination_by n => n
+decreasing_by all_goals omega
+
+theorem nl_le (b : ByteArray) : ∀ n i, b.size - i = n → i ≤ b.size → nl b i ≤ b.size
+  | n, i, hn, hi => by
+    unfold nl
+    split
+    · rename_i h
+      split
+      · exact nl_le b (n - 1) (i + 1) (by omega) (by omega)
+      · omega
+    · exact hi
+termination_by n => n
+decreasing_by all_goals omega
+
+-- what `nl` finds: a newline at `nl b i` (when inside), none before it
+theorem nl_spec (b : ByteArray) : ∀ n i, b.size - i = n →
+    (nl b i < b.size → b.data.toList[nl b i]? = some 10) ∧
+    (∀ k, i ≤ k → k < nl b i → b.data.toList[k]? ≠ some 10)
+  | n, i, hn => by
+    have hnl : nl b i = if h : i < b.size then (if b[i] != 10 then nl b (i + 1) else i) else i := by rw [nl]
+    by_cases h : i < b.size
+    · rw [dif_pos h] at hnl
+      by_cases h10 : b[i] != 10
+      · rw [if_pos h10] at hnl
+        have ih := nl_spec b (n - 1) (i + 1) (by omega)
+        have hb : b.data.toList[i]? ≠ some 10 := by
+          simp only [Array.getElem?_toList]
+          rw [Array.getElem?_eq_getElem (by simpa using h)]
+          simpa [ByteArray.getElem_eq_getElem_data] using h10
+        refine ⟨fun hlt => by rw [hnl] at hlt ⊢; exact ih.1 hlt, fun k hk hk2 => ?_⟩
+        rw [hnl] at hk2
+        rcases Nat.eq_or_lt_of_le hk with rfl | hk'
+        · exact hb
+        · exact ih.2 k hk' hk2
+      · rw [if_neg h10] at hnl
+        have : b[i] = 10 := by simpa using h10
+        refine ⟨fun _ => ?_, fun k hk hk2 => by omega⟩
+        rw [hnl]
+        simp only [Array.getElem?_toList]
+        rw [Array.getElem?_eq_getElem (by simpa using h)]
+        simpa [ByteArray.getElem_eq_getElem_data] using this
+    · rw [dif_neg h] at hnl
+      exact ⟨fun hlt => by omega, fun k hk hk2 => by omega⟩
+termination_by n => n
+decreasing_by all_goals omega
+
+-- THE bridge for the fast scan: the USize loop computes `nl` (needs the size guard the shim has: size < 2^32 - 1)
+theorem findNewlineU_eq (b : ByteArray) (hs : b.size < 4294967295) :
+    ∀ n (j : USize), b.size - j.toNat = n → j.toNat ≤ b.size → (findNewlineU b j).toNat = nl b j.toNat
+  | n, j, hn, hj => by
+    have hsz : 4294967296 ≤ USize.size := by
+      rcases USize.size_eq with h | h <;> omega
+    have hP : USize.size = 2 ^ System.Platform.numBits := rfl
+    have hus : b.usize.toNat = b.size := by
+      show b.size.toUSize.toNat = b.size
+      rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+    rw [findNewlineU]
+    by_cases hlt : j < b.usize
+    · have hj' : j.toNat < b.size := by
+        have := USize.lt_iff_toNat_lt.1 hlt; omega
+      rw [dif_pos hlt]
+      have hnl : nl b j.toNat = if b[j.toNat] != 10 then nl b (j.toNat + 1) else j.toNat := by
+        rw [nl, dif_pos hj']
+      rw [hnl]
+      have hu : b.uget j (Nat.lt_of_lt_of_le hlt (usize_le' b)) = b[j.toNat] := rfl
+      rw [hu]
+      split
+      · have hj1 : (j + 1).toNat = j.toNat + 1 := by
+          rw [USize.toNat_add, USize.toNat_one, Nat.mod_eq_of_lt (by omega)]
+        have := findNewlineU_eq b hs (n - 1) (j + 1) (by rw [hj1]; omega) (by rw [hj1]; omega)
+        rw [this, hj1]
+      · rfl
+    · have : ¬ j.toNat < b.size := by
+        intro h; apply hlt; rw [USize.lt_iff_toNat_lt, hus]; exact h
+      rw [dif_neg hlt, nl, dif_neg this]
+termination_by n => n
+decreasing_by all_goals omega
+
+-- ## `nl` cuts `takeLine`
+def D (b : ByteArray) (i : Nat) : List UInt8 := b.data.toList.drop i
+
+theorem D_cons (b : ByteArray) (i : Nat) (h : i < b.size) : D b i = b.data.toList[i]'(by simpa using h) :: D b (i + 1) := by
+  unfold D
+  exact List.drop_eq_getElem_cons _
+
+theorem takeLine_nl (b : ByteArray) : ∀ n i, b.size - i = n → i ≤ b.size →
+    (nl b i < b.size → takeLine (D b i) = ((D b i).take (nl b i - i), some (D b (nl b i + 1)))) ∧
+    (¬ nl b i < b.size → takeLine (D b i) = (D b i, none))
+  | n, i, hn, hi => by
+    have hnl : nl b i = if h : i < b.size then (if b[i] != 10 then nl b (i + 1) else i) else i := by rw [nl]
+    by_cases h : i < b.size
+    · rw [dif_pos h] at hnl
+      rw [D_cons b i h]
+      have hx : b.data.toList[i]'(by simpa using h) = b[i] := by simp [ByteArray.getElem_eq_getElem_data]
+      by_cases h10 : b[i] != 10
+      · rw [if_pos h10] at hnl
+        have ih := takeLine_nl b (n - 1) (i + 1) (by omega) (by omega)
+        have hge := nl_ge b (n - 1) (i + 1) (by omega)
+        have hne : (b.data.toList[i]'(by simpa using h) == 10) = false := by
+          rw [hx]; simpa using h10
+        rw [hnl]
+        refine ⟨fun hlt => ?_, fun hlt => ?_⟩
+        · have := ih.1 hlt
+          unfold takeLine; rw [hne]; simp only [Bool.false_eq_true, if_false]
+          rw [this]
+          have : nl b (i + 1) - i = (nl b (i + 1) - (i + 1)) + 1 := by omega
+          rw [this, List.take_succ_cons]
+        · have := ih.2 hlt
+          unfold takeLine; rw [hne]; simp only [Bool.false_eq_true, if_false]
+          rw [this]
+      · rw [if_neg h10] at hnl
+        have : b[i] = 10 := by simpa using h10
+        rw [hnl]
+        refine ⟨fun _ => ?_, fun hlt => absurd h hlt⟩
+        have : (b.data.toList[i]'(by simpa using h) == 10) = true := by rw [hx]; simpa using this
+        unfold takeLine; rw [this]; simp
+    · have hge : D b i = [] := List.drop_eq_nil_of_le (by simpa using (by omega : b.size ≤ i))
+      rw [dif_neg h] at hnl
+      rw [hge]
+      refine ⟨fun hlt => by omega, fun _ => ?_⟩
+      rfl
+termination_by n => n
+decreasing_by all_goals omega
+
+-- ## The serial boundary scan: position after the k-th newline, by recursion on k (the prototype's `scanLines`, made total)
+def scanK (b : ByteArray) : Nat → Nat → Option Nat
+  | 0, i => some i
+  | k + 1, i => if nl b i < b.size then scanK b k (nl b i + 1) else none
+
+theorem scanK_range (b : ByteArray) : ∀ k i p, i ≤ b.size → scanK b k i = some p → i ≤ p ∧ p ≤ b.size
+  | 0, i, p, hi, h => by simp [scanK] at h; omega
+  | k + 1, i, p, hi, h => by
+    unfold scanK at h
+    split at h
+    · rename_i hlt
+      have hge := nl_ge b _ i rfl
+      have := scanK_range b k (nl b i + 1) p (by omega) h
+      omega
+    · cases h
+
+theorem take_cut (c R : List UInt8) (m : Nat) : (c ++ 10 :: R).take (c.length + 1 + m) = c ++ 10 :: R.take m := by
+  rw [List.take_append, List.take_of_length_le (by omega)]
+  rw [show c.length + 1 + m - c.length = m + 1 by omega, List.take_succ_cons]
+
+-- THE refinement: cutting the list after k lines (`cutLinesL`, whose spec and `Boundary` result are proved above) is exactly what the
+-- byte scan computes on the buffer from position i: the prefix is the bytes `[i, p)`, the rest starts at `p`
+theorem cutLinesL_scanK (b : ByteArray) : ∀ k i, i ≤ b.size →
+    cutLinesL k (D b i) = (scanK b k i).map fun p => ((D b i).take (p - i), D b p)
+  | 0, i, hi => by simp [cutLinesL, scanK]
+  | k + 1, i, hi => by
+    have hT := takeLine_nl b _ i rfl hi
+    have hle := nl_le b _ i rfl hi
+    have hge := nl_ge b _ i rfl
+    unfold cutLinesL scanK
+    by_cases hlt : nl b i < b.size
+    · rw [if_pos hlt, hT.1 hlt]
+      simp only
+      rw [cutLinesL_scanK b k (nl b i + 1) (by omega)]
+      obtain ⟨hsp, hc10⟩ := takeLine_spec (D b i) _ _ (hT.1 hlt)
+      cases hs : scanK b k (nl b i + 1) with
+      | none => rfl
+      | some p =>
+        have hp := scanK_range b k (nl b i + 1) p (by omega) hs
+        simp only [Option.map_some]
+        congr 1
+        have hlen : ((D b i).take (nl b i - i)).length = nl b i - i := by
+          simp [D]; omega
+        generalize hcdef : (D b i).take (nl b i - i) = c at hsp hc10 hlen ⊢
+        generalize hRdef : D b (nl b i + 1) = R at hsp ⊢
+        have hq : (D b i).take (p - i) = c ++ 10 :: R.take (p - (nl b i + 1)) := by
+          have key := take_cut c R (p - (nl b i + 1))
+          rw [hlen, show nl b i - i + 1 + (p - (nl b i + 1)) = p - i by omega, ← hsp] at key
+          exact key
+        rw [hq]
+    · rw [if_neg hlt, (hT.2 hlt)]
+      rfl
+
+theorem extract_mk (b : ByteArray) (s e : Nat) : b.extract s e = ByteArray.mk ((D b s).take (e - s)).toArray := by
+  apply ByteArray.ext
+  rw [ByteArray.data_extract]
+  apply Array.ext'
+  simp [Array.toList_extract, D]
+
+-- the serial scan cuts at a record boundary: `scanK` finds the position after 4n lines, and the bytes `[i, p)` are a `Boundary`
+theorem scanK_boundary (b : ByteArray) (n i p : Nat) (hi : i ≤ b.size) (h : scanK b (4 * n) i = some p) :
+    Boundary (b.extract i p) := by
+  have := cutLinesL_scanK b (4 * n) i hi
+  rw [h] at this
+  rw [extract_mk]
+  exact cutLinesL_boundary n (D b i) _ _ this
+
+-- ## Reading lines by position (what the prototype's `parseOne` does on the shared buffer)
+
+theorem lines_term (c : List UInt8) (h : ∀ x ∈ c, x != 10) :
+    lines (ByteArray.mk (c ++ [10]).toArray) = [stripCR c] := by
+  rw [lines_eq, toList_mk, show c ++ [10] = c ++ 10 :: [] from rfl, List.splitOn_append_cons_self,
+    List.splitOn_eq_singleton (fun h10 => by simpa using h 10 h10), List.splitOn_nil]
+  have he : (stripCR []).size = 0 := by unfold stripCR; simp [ByteArray.size]
+  simp [he]
+
+-- the lines of `[s, e)` read by position: each line is `[s, nl)` (a "\r" before the "\n" dropped), the next starts after it
+def linesFrom (b : ByteArray) (s e : Nat) : List ByteArray :=
+  if s < e then stripCR ((D b s).take (nl b s - s)) :: linesFrom b (nl b s + 1) e else []
+termination_by e - s
+decreasing_by have := nl_ge b _ s rfl; omega
+
+theorem nl_le_of (b : ByteArray) (s k : Nat) (hsk : s ≤ k) (hk : b.data.toList[k]? = some 10) : nl b s ≤ k := by
+  rcases Nat.lt_or_ge k (nl b s) with hlt | hge
+  · exact absurd hk ((nl_spec b _ s rfl).2 k hsk hlt)
+  · exact hge
+
+theorem mk_append (x y : List UInt8) :
+    ByteArray.mk (x ++ y).toArray = ByteArray.mk x.toArray ++ ByteArray.mk y.toArray := by
+  apply ByteArray.ext; simp
+
+-- reading by position equals `lines` of the slice, for a slice that ends with "\n" (every slice of the parallel parser does)
+theorem linesFrom_eq (b : ByteArray) (e : Nat) (he : e ≤ b.size) (hT : b.data.toList[e - 1]? = some 10) :
+    ∀ n s, e - s = n → linesFrom b s e = lines (b.extract s e)
+  | n, s, hn => by
+    by_cases hs : s < e
+    · have hk : e - 1 < b.data.toList.length := by simpa using (List.getElem?_eq_some_iff.1 hT).1
+      have hj : nl b s ≤ e - 1 := nl_le_of b s (e - 1) (by omega) hT
+      have hjs : nl b s < b.size := by omega
+      have hge := nl_ge b _ s rfl
+      have hT' := (takeLine_nl b _ s rfl (by omega)).1 hjs
+      obtain ⟨hsp, hc10⟩ := takeLine_spec (D b s) _ _ hT'
+      have hlen : ((D b s).take (nl b s - s)).length = nl b s - s := by
+        simp [D]; omega
+      rw [linesFrom, if_pos hs]
+      generalize hcdef : (D b s).take (nl b s - s) = c at hsp hc10 hlen ⊢
+      have hl2 : (D b s).take (e - s) = c ++ [10] ++ (D b (nl b s + 1)).take (e - (nl b s + 1)) := by
+        have key := take_cut c (D b (nl b s + 1)) (e - (nl b s + 1))
+        rw [hlen, show nl b s - s + 1 + (e - (nl b s + 1)) = e - s by omega, ← hsp] at key
+        rw [key]; simp
+      have ih := linesFrom_eq b e he hT (e - (nl b s + 1)) (nl b s + 1) rfl
+      rw [extract_mk, hl2, mk_append, lines_append_of_end, lines_term c hc10, ← extract_mk, ← ih]
+      rfl
+    · rw [linesFrom, if_neg hs]
+      have : b.extract s e = ByteArray.empty := ByteArray.extract_eq_empty_iff.2 (by omega)
+      rw [this, lines_empty]
+termination_by n => n
+decreasing_by all_goals omega
+
+
 #print axioms parseFastq_append
 #print axioms parseSlices_eq
 #print axioms cutLinesL_spec
+-- parsing one slice straight from the shared buffer (lines by position) = `parseFastq` of that slice
+theorem parseFastq_slice (b : ByteArray) (s e : Nat) (he : e ≤ b.size) (hT : b.data.toList[e - 1]? = some 10) :
+    parseFastq (b.extract s e) = parseLines (linesFrom b s e) := by
+  rw [linesFrom_eq b e he hT _ s rfl]; rfl
+
 #print axioms cutLinesL_boundary
+#print axioms findNewlineU_eq
+#print axioms cutLinesL_scanK
+#print axioms scanK_boundary
+#print axioms linesFrom_eq
+#print axioms parseFastq_slice
 
 end Spec.Draft
