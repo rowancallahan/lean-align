@@ -152,7 +152,7 @@ def PairAnswer.Correct (insertSettings : InsertSettings) (genome : Genome) (mate
        --this cannot be used to return a found answer so you cannot sneak good pairs into here
        --Even if they are in a repetitive region
        --One of the most important parts of the whole spec and very important to think about
-       answer.found = none ∧ ( mate1.highlyRepetitiveIn genome ) ∨ ( mate2.highlyRepetitiveIn genome )
+       answer.found = none ∧  ( ( mate1.highlyRepetitiveIn genome ) ∨ ( mate2.highlyRepetitiveIn genome ) )
      )
 
 -- `trimmed1`, `trimmed2` are the mates after trimming (`none` = trimmed away)
