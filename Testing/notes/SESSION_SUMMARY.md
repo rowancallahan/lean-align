@@ -1465,3 +1465,8 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
   - a shorter-seed index for short mates.
 - Measurements wanted: K=2 at N=200 (gave-up count, speed, pairs lost at truth); the speed of K=3.
 - Proof side: the .gaveUp proof against Rowan's exact Spec wording (S-D's prototype is the basis; forward strand = lower bound on Genome.occurrences). Check the `.unknown` mirror in Proofs/Answer on main.
+
+### Spec edit rights (Rowan, 2026-11-03 ~02:25 UTC)
+- Claude MAY edit Spec/Sam.lean and Spec/Fastq.lean (plus their Proofs/ mirrors).
+- Claude may NOT edit Spec/Aligner.lean, Spec/Alignment.lean, Spec/Mapping.lean or Spec/Shim.lean (Main.lean mirrors the Shim); Rowan works on those.
+- Rowan will merge claude/festive-fermi-mf9mo6 with main.
