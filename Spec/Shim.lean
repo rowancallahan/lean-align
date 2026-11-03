@@ -3,15 +3,9 @@ import Spec.Sam
 /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
 then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
 Everything here except the boxed `alignPairs` call is unproved plumbing (reading, writing).
-Mates are quality-trimmed as they are read (`Spec.trimRecord`, the proved trimmer); a mate with no
-letters left is trimmed away (`none`). -/
-
--- a chunk of read pairs, as `alignPairs` takes them
-def Spec.chunkPairs (chunk : Array (Spec.FastqRecord × Spec.FastqRecord)) :
-    List (Option ByteArray × Option ByteArray) :=
-  chunk.toList.map fun (record1, record2) =>
-    (if record1.letters.isEmpty then none else some record1.letters,
-     if record2.letters.isEmpty then none else some record2.letters)
+Each chunk is read (`Spec.readChunk`), then its mates are trimmed many at once (`Spec.trimChunk`,
+which runs the proved trimmer `Spec.trimRecord` on every mate); a mate with no letters left is
+trimmed away (`none`, `Spec.chunkPairs` in Spec/Fastq.lean). -/
 
 def main (args : List String) : IO UInt32 := do
   match args with
@@ -32,20 +26,31 @@ def main (args : List String) : IO UInt32 := do
     for line in Spec.samHeader chromosomes do
       out.putStrLn line
     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
-    let mut next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
+    let mut next ← IO.asTask (do
+      let raw ← Spec.readChunk reads1 reads2 20000
+      return Spec.trimChunk raw 16)
     let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
     repeat
       let chunk ← IO.ofExcept next.get
       if chunk.isEmpty then
         break
-      next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
+      next ← IO.asTask (do
+        let raw ← Spec.readChunk reads1 reads2 20000
+        return Spec.trimChunk raw 16)
       -- ╔══════════════════════════════════════════════════════════════════════════════════╗
       -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
       -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
       -- ║ index was built from. Everything around it only reads inputs and writes output.   ║
+      -- ║                                                                                  ║
+      -- ║ IN:  `chunk`, the pairs of this round, already trimmed by the proved trimmer      ║
+      -- ║      (`trimChunk`, equal to `trimRecord` on every mate: `trimChunk_eq`).          ║
+      -- ║ OUT: `results`, one `PairResult` per pair, in the same order as `chunk`.          ║
+      -- ║ TRUSTED around it (not proved yet): that `readChunk` returns the FASTQ records   ║
+      -- ║ in file order, that the tasks hand chunks over in order, and that `samChunk` and  ║
+      -- ║ `out.write` put each pair's lines into the file correctly.                        ║
       -- ╚══════════════════════════════════════════════════════════════════════════════════╝
       let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
-      -- ══════════════════════════════════════════════════════════════════════════════════
+      -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
       -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
       let text := Spec.samChunk chromosomes chunk results 16
       let previous := writing

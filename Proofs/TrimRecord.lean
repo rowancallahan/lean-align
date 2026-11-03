@@ -224,6 +224,32 @@ theorem parseRecord_trim_quality {header letters plus quality : ByteArray} {reco
     exact hqa x (extract_mem _ _ _ x hx)
   exact ⟨hv, trimRecord_quality_bytes record hv⟩
 
+/-! ## Trimming a chunk in parallel -/
+
+theorem trimChunk_prefix (chunk : Array (FastqRecord × FastqRecord)) (size : Nat)
+    (f : FastqRecord × FastqRecord → FastqRecord × FastqRecord) (m : Nat) :
+    ((List.range m).map fun part => Task.spawn fun _ => (chunk.extract (part * size) ((part + 1) * size)).map f).foldl
+      (fun out task => out ++ task.get) #[] = (chunk.extract 0 (m * size)).map f := by
+  induction m with
+  | zero => simp
+  | succ m ih =>
+    rw [List.range_succ, List.map_append, List.foldl_append, ih]
+    simp only [List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil]
+    change _ ++ Array.map f (chunk.extract (m * size) ((m + 1) * size)) = _
+    rw [← Array.map_append, Array.extract_append_extract]
+    congr 2
+    rw [Nat.succ_mul]; omega
+
+/-- `trimChunk` is `trimRecord` on both mates of every pair, in order, however many parts it uses. -/
+theorem trimChunk_eq (chunk : Array (FastqRecord × FastqRecord)) (parts : Nat) (hparts : 0 < parts) :
+    trimChunk chunk parts = chunk.map fun (record1, record2) => (trimRecord record1, trimRecord record2) := by
+  unfold trimChunk
+  simp only []
+  rw [trimChunk_prefix]
+  have h := Nat.lt_div_mul_add (a := chunk.size + parts - 1) hparts
+  generalize (chunk.size + parts - 1) / parts = q at h ⊢
+  rw [Array.extract_eq_self_of_le (by rw [Nat.mul_comm]; omega)]
+
 end Spec
 
 #print axioms Spec.trimRecord_correct
@@ -234,3 +260,4 @@ end Spec
 #print axioms Spec.trimBytes_size
 #print axioms Spec.cutAt_spec
 #print axioms Spec.trimRecord_quality_bytes
+#print axioms Spec.trimChunk_eq

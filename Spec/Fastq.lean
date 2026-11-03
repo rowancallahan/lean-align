@@ -4,7 +4,8 @@ import AdapterTrim
 /-! # Paired FASTQ reading. Unproved (trusted) plumbing for the shim: the file is read in 4 MB blocks
 and split into lines on newline bytes; only the read name and qualities become Strings. Each mate is
 cut at the TruSeq adapter (`AdapterTrim.cutTruSeq`, proved) then quality-trimmed with the proved
-trimmer (`ReadTrim.trimRead`), then dropped if shorter than `minLength` (`AdapterTrim.dropShort`). -/
+trimmer (`ReadTrim.trimRead`), then dropped if shorter than `minLength` (`AdapterTrim.dropShort`). Reading (`readChunk`) and
+trimming (`trimChunk`, many pairs at once) are separate steps. -/
 
 namespace Spec
 
@@ -111,7 +112,8 @@ def trimRecord (record : FastqRecord) : FastqRecord :=
   { record with letters, quality := String.fromUTF8! qual }
 
 -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
--- names differ or one file ends before the other (the files are out of step)
+-- names differ or one file ends before the other (the files are out of step); the pairs come back
+-- untrimmed, as read (`trimChunk` trims them)
 def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecord × FastqRecord)) := do
   let mut chunk := #[]
   for _ in [0:size] do
@@ -125,9 +127,23 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
           throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
       if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
-      chunk := chunk.push (trimRecord record1, trimRecord record2)
+      chunk := chunk.push (record1, record2)
     | none, none => break
     | _, _ => throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
   return chunk
+
+-- trim every pair of a chunk with `trimRecord`, in `parts` tasks running at once; the result is the
+-- pairs in their original order, each trimmed (`trimChunk_eq`, Proofs/TrimRecord.lean)
+def trimChunk (chunk : Array (FastqRecord × FastqRecord)) (parts : Nat) : Array (FastqRecord × FastqRecord) :=
+  let size := (chunk.size + parts - 1) / parts
+  let tasks := (List.range parts).map fun part => Task.spawn fun _ =>
+    (chunk.extract (part * size) ((part + 1) * size)).map fun (record1, record2) => (trimRecord record1, trimRecord record2)
+  tasks.foldl (fun out task => out ++ task.get) #[]
+
+-- a chunk of read pairs, as `alignPairs` takes them: a mate trimmed away (no letters left) is `none`
+def chunkPairs (chunk : Array (FastqRecord × FastqRecord)) : List (Option ByteArray × Option ByteArray) :=
+  chunk.toList.map fun (record1, record2) =>
+    (if record1.letters.isEmpty then none else some record1.letters,
+     if record2.letters.isEmpty then none else some record2.letters)
 
 end Spec
