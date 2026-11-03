@@ -52,7 +52,7 @@ end near
 def hitsCKN (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) (sel : Nat → Bool) : List (Window × Nat) :=
   (diags acc).flatMap fun D =>
-    if sel D && kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
+    if sel D && wordFilter K R pgs2[c]! acc us Ls lim (initP lim) D then
       (shapesAt lim).filterMap fun sh =>
         if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
           let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
@@ -66,7 +66,7 @@ def hitsCKNT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : L
   if acc.all fun a => a.isEmpty then [] else
   let shs := shapesT lim
   (diags acc).flatMap fun D =>
-    if sel D && kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
+    if sel D && wordFilter K R pgs2[c]! acc us Ls lim (initP lim) D then
       shs.filterMap fun sh =>
         if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
           let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim

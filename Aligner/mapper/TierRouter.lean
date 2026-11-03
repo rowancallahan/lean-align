@@ -379,7 +379,7 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
 
 /-- `mapChromsGBFG` with both strands' packed reads given (`mapChromsGBFG_eqP`). -/
 @[specialize] def mapChromsGBFGP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    [PackedOf Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
@@ -392,7 +392,7 @@ def tierPairB (O1 O2 : Option ByteArray) : TierOut :=
   foldUpN (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) n 0 b
 
 theorem mapChromsGBFG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
+    [PackedOf Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) :
     mapChromsGBFG kf1 kf2 P ix G offs gbs R Rr ps pr =
       mapChromsGBFGP kf1 kf2 (packRP R) (packRP Rr) P ix G offs gbs R Rr ps pr := by
@@ -401,7 +401,7 @@ theorem mapChromsGBFG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [L
 
 /-- `mapChromsGBKG` with the reverse complement and both packed reads given (`mapChromsGBKG_eqP`). -/
 @[specialize] def mapChromsGBKGP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
+    [PackedOf Gt] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array Gt) (pvs : Array PGen) (R Rr : ByteArray) (K1 K2 : RP) : Best :=
   let gbs2 := gbs ++ gbs
   let pvs2 := pvs ++ pvs
@@ -411,7 +411,7 @@ theorem mapChromsGBFG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [L
     (prepGK ix R K1 m Ls) (prepGK ix Rr K2 m Ls)
 
 theorem mapChromsGBKG_eqP {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
+    [PackedOf Gt] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array Gt) (pvs : Array PGen) (R : ByteArray) :
     mapChromsGBKG P ix G offs gbs pvs R =
       mapChromsGBKGP P ix G offs gbs pvs R (revCompK R) (packRP R) (packRP (revCompK R)) := by
@@ -464,7 +464,7 @@ theorem regionPenKPS_eq (P lo hi : Nat) (pk : PkMz) (G : ByteArray) (offs : Arra
 /-- `mapChromsGBFGP` with both strands' seed orders `o1`, `o2` given (`mapChromsGBFGPO_eq`: a mate's order is
 the same in every search of it, so it is computed once per pair). -/
 @[specialize] def mapChromsGBFGPO {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    [PackedOf Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) (o1 o2 : List Nat) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs

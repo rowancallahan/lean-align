@@ -6,7 +6,7 @@ import FastGenSupp
 # `hitsAtKP`: every hit of a read within a cap, packed genome, word filter, word kernels
 
 `hitsAtB` (codecs/PairHits.lean) with the chromosomes held 2-bit (`PGen`), the word
-filter `kfiltV` before the kernels and the word kernels `kerHKG`:
+filter `wordFilter` before the kernels and the word kernels `kerHKG`:
 
     hitsAtKP lim ix G offs pgs R = hitsAtB lim ix G offs (pgs.map Mz.unpack) R   (hitsAtKP_eq)
 
@@ -23,7 +23,7 @@ open MapSpec AlignmentSpec
 def hitsCK (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : List (Array Nat))
     (us : List Nat) (Ls : Nat) : List (Window × Nat) :=
   (diags acc).flatMap fun D =>
-    if kfiltV K R pgs2[c]! acc us Ls lim (initP lim) D then
+    if wordFilter K R pgs2[c]! acc us Ls lim (initP lim) D then
       (shapesAt lim).filterMap fun sh =>
         if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
           let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
@@ -67,7 +67,7 @@ def hitsCKT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Li
   let shs := shapesT lim
   let ds := diags acc
   let cnt := suppCntC acc (2 * gapBound sc0 (-((min lim (initP lim).pen : Nat) : Int))) ds
-  let pk := pkU pgs2[c]! Ls R.size us
+  let pk := packedFor pgs2[c]! Ls R.size us
   ds.zipIdx.flatMap fun p =>
     let D := p.1
     if kfiltVF pk K R pgs2[c]! acc us Ls lim (initP lim) D (cnt.getD p.2 0) then
@@ -85,7 +85,7 @@ def hitsCKT (K : RP) (R : ByteArray) (pgs2 : Array PGen) (c lim : Nat) (acc : Li
   split
   · rename_i h; rw [diags_empty acc h]; rfl
   · simp only [shapesT_eq]
-    exact (zipIdx_flatMap (β := Window × Nat) (fun D x => if kfiltVF (pkU pgs2[c]! Ls R.size us) K R pgs2[c]! acc us Ls lim (initP lim) D x then
+    exact (zipIdx_flatMap (β := Window × Nat) (fun D x => if kfiltVF (packedFor pgs2[c]! Ls R.size us) K R pgs2[c]! acc us Ls lim (initP lim) D x then
         (shapesAt lim).filterMap fun sh =>
           if 0 ≤ dst R.size D sh ∧ 0 ≤ wlen R.size sh then
             let k := kerHKG R K pgs2 pgs2 c (dst R.size D sh).toNat (wlen R.size sh).toNat lim
@@ -366,9 +366,9 @@ theorem hitsCK_eq (pgs : Array PGen) (R : ByteArray) (c lim : Nat) (acc : List (
       kerH R (pgs.map Mz.unpack ++ pgs.map Mz.unpack) c st len lim := by
     intro st len
     rw [kerHKG_same hs, kerHKG_bytes, kerHK_eq R _ _ (repAllK_unpack pgs)]
-  have hf : ∀ D, kfiltV (packRP R) R (pgs ++ pgs)[c]! acc us Ls lim (initP lim) D =
+  have hf : ∀ D, wordFilter (packRP R) R (pgs ++ pgs)[c]! acc us Ls lim (initP lim) D =
       kfilt R (pgs.map Mz.unpack ++ pgs.map Mz.unpack)[c]! acc us Ls lim (initP lim) D := by
-    intro D; rw [kfiltV_eq, kfilt_same (hs.2 c)]
+    intro D; rw [wordFilter_eq, kfilt_same (hs.2 c)]
   unfold hitsCK hitsC
   simp only [hk, hf]
 

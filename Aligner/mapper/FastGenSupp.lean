@@ -11,7 +11,7 @@ not decrease, else falls back to `suppA` per diagonal, so in all cases
 
     (suppCntC acc r ds).getD t 0 = suppA acc (ds.getD t 0) r      (t < ds.length; suppCntC_get)
 
-`stageKSS` is `stageKSV` reading the support from such counts while the filter's
+`stageKSS` is `stageWordFilter` reading the support from such counts while the filter's
 radius is still `r0` (`stageKSS_eq`).
 -/
 
@@ -115,7 +115,7 @@ def suppCntC (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
   if sortedL ds && acc.all (fun a => incA a a.size 0) then suppCnt acc r ds
   else (ds.map fun D => suppA acc D r).toArray
 
-/-- `kfiltVP` with the support `s` of `D` given. -/
+/-- `wordFilterPacked` with the support `s` of `D` given. -/
 @[inline] def kfiltVF {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D s : Nat) : Bool :=
   let Q := min lim b.pen
@@ -126,17 +126,17 @@ def suppCntC (acc : List (Array Nat)) (r : Nat) (ds : List Nat) : Array Nat :=
   if fJ ≤ sb then
     match pk with
     | some P =>
-      if wordWin K n r D P then
+      if wordPathOk K n r D P then
         let a := P.o + (D - n - r)
         let o := a % 32
-        let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
-        unlookV K gs o Ls r sb us fJ &&
-          fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
+        let gs := loadWords P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
+        unseenSeedsOk K gs o Ls r sb us fJ &&
+          piecesEnough K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
       else kfilt R G acc us Ls lim b D
     | none => kfilt R G acc us Ls lim b D
   else false
 
-/-- `stageKSS` with `pk = pkU G Ls R.size us` given. -/
+/-- `stageKSS` with `pk = packedFor G Ls R.size us` given. -/
 @[specialize] def stageKSP {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
     (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
     List Nat → Nat → Best → Best
@@ -166,20 +166,20 @@ theorem gb0 (x : Nat) : gapBound sc0 (-(x : Int)) = (x - 6) / 2 := by
   if fJ ≤ sb then
     match pk with
     | some P =>
-      if wordWin K n r D P then
+      if wordPathOk K n r D P then
         let a := P.o + (D - n - r)
         let o := a % 32
-        let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
-        unlookW gs o r sb svs fJ &&
-          fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
+        let gs := loadWords P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
+        unseenSeedsOkWords gs o r sb svs fJ &&
+          piecesEnough K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
       else kfilt R G acc us Ls lim b D
     | none => kfilt R G acc us Ls lim b D
   else false
 
 theorem kfiltVN_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D s : Nat) :
-    kfiltVN pk K R G acc us (svsOf K Ls us) Ls lim b D s acc.length = kfiltVF pk K R G acc us Ls lim b D s := by
-  unfold kfiltVN kfiltVF; simp only [gb0, unlookW_eq]
+    kfiltVN pk K R G acc us (seedWords K Ls us) Ls lim b D s acc.length = kfiltVF pk K R G acc us Ls lim b D s := by
+  unfold kfiltVN kfiltVF; simp only [gb0, unseenSeedsOkWords_eq]
 
 /-- `stageKSP` with `acc.length = aL` given (`stageKSPN_eq`). -/
 @[specialize] def stageKSPN {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
@@ -194,7 +194,7 @@ theorem kfiltVN_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteA
 
 theorem stageKSPN_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
     (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat) :
-    ∀ ds k b, stageKSPN pk body K R G acc us (svsOf K Ls us) Ls lim r0 cnt acc.length ds k b =
+    ∀ ds k b, stageKSPN pk body K R G acc us (seedWords K Ls us) Ls lim r0 cnt acc.length ds k b =
       stageKSP pk body K R G acc us Ls lim r0 cnt ds k b := by
   intro ds
   induction ds with
@@ -205,24 +205,24 @@ theorem stageKSPN_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → B
 @[inline] def stageKSPW {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Best → Best) (K : RP)
     (R : ByteArray) (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
     (ds : List Nat) (k : Nat) (b : Best) : Best :=
-  stageKSPN pk body K R G acc us (svsOf K Ls us) Ls lim r0 cnt acc.length ds k b
+  stageKSPN pk body K R G acc us (seedWords K Ls us) Ls lim r0 cnt acc.length ds k b
 
 @[csimp] theorem stageKSP_eqN : @stageKSP = @stageKSPW := by
   funext Gt _ pk body K R G acc us Ls lim r0 cnt ds k b
   exact (stageKSPN_eq pk body K R G acc us Ls lim r0 cnt ds k b).symm
 
-/-- `stageKSV` over `ds` (from index `k` of the counts `cnt`, supports at radius `r0`). -/
-@[inline] def stageKSS {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
+/-- `stageWordFilter` over `ds` (from index `k` of the counts `cnt`, supports at radius `r0`). -/
+@[inline] def stageKSS {Gt : Type} [GRead Gt] [PackedOf Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
     (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
     (ds : List Nat) (k : Nat) (b : Best) : Best :=
-  stageKSP (pkU G Ls R.size us) body K R G acc us Ls lim r0 cnt ds k b
+  stageKSP (packedFor G Ls R.size us) body K R G acc us Ls lim r0 cnt ds k b
 
 /-! ## Proofs -/
 
 theorem kfiltVF_supp {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) :
     kfiltVF pk K R G acc us Ls lim b D (suppA acc D (2 * gapBound sc0 (-((min lim b.pen : Nat) : Int)))) =
-      kfiltVP pk K R G acc us Ls lim b D := rfl
+      wordFilterPacked pk K R G acc us Ls lim b D := rfl
 
 section
 variable (a : Array Nat) (hs : a.toList.Pairwise (· < ·))
@@ -405,7 +405,7 @@ theorem stageKSP_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Be
     ∀ (ds : List Nat) (k : Nat) (b : Best),
       (∀ t, t < ds.length → cnt.getD (k + t) 0 = suppA acc (ds.getD t 0) r0) →
       stageKSP pk body K R G acc us Ls lim r0 cnt ds k b =
-        ds.foldl (fun b D => if kfiltVP pk K R G acc us Ls lim b D then body D b else b) b := by
+        ds.foldl (fun b D => if wordFilterPacked pk K R G acc us Ls lim b D then body D b else b) b := by
   intro ds
   induction ds with
   | nil => intro k b _; rfl
@@ -424,18 +424,18 @@ theorem stageKSP_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (body : Nat → Be
       rw [show k + (t + 1) = k + 1 + t by omega, List.getD_cons_succ] at this
       exact this)]
 
-theorem stageKSS_eq {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
+theorem stageKSS_eq {Gt : Type} [GRead Gt] [PackedOf Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (cnt : Array Nat)
     (ds : List Nat) (k : Nat) (b : Best)
     (h : ∀ t, t < ds.length → cnt.getD (k + t) 0 = suppA acc (ds.getD t 0) r0) :
-    stageKSS body (packRP R) R G acc us Ls lim r0 cnt ds k b = stageKSV body (packRP R) R G acc us Ls lim ds b :=
+    stageKSS body (packRP R) R G acc us Ls lim r0 cnt ds k b = stageWordFilter body (packRP R) R G acc us Ls lim ds b :=
   stageKSP_eq _ body _ R G acc us Ls lim r0 cnt ds k b h
 
-/-- **`stageKSV` with the swept supports.** -/
-theorem stageKSS_cnt {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
+/-- **`stageWordFilter` with the swept supports.** -/
+theorem stageKSS_cnt {Gt : Type} [GRead Gt] [PackedOf Gt] (body : Nat → Best → Best) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim r0 : Nat) (ds : List Nat) (b : Best) :
     stageKSS body (packRP R) R G acc us Ls lim r0 (suppCntC acc r0 ds) ds 0 b =
-      stageKSV body (packRP R) R G acc us Ls lim ds b :=
+      stageWordFilter body (packRP R) R G acc us Ls lim ds b :=
   stageKSS_eq body R G acc us Ls lim r0 _ ds 0 b (fun t ht => by rw [Nat.zero_add]; exact suppCntC_get acc r0 ds t ht)
 
 end MapSpec.Fast

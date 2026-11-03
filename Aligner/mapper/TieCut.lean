@@ -72,7 +72,7 @@ penalty, minus one when it is a tie). -/
     else (s1, s2, b)
 
 /-- `ilGFG` (any chromosome representation) stopping on `GS.liveT`. -/
-@[specialize] def ilGFGT {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+@[specialize] def ilGFGT {Gt : Type} [GRead Gt] [Inhabited Gt] [PackedOf Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
     (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
     (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
     Nat → GS → GS → Best → GS × GS × Best
@@ -88,7 +88,7 @@ penalty, minus one when it is a tie). -/
     else (s1, s2, b)
 
 /-- `ilGFGT` with the strands' lookup counts carried (`ilGFGNT_eq`). -/
-@[specialize] def ilGFGNT {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+@[specialize] def ilGFGNT {Gt : Type} [GRead Gt] [Inhabited Gt] [PackedOf Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
     (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
     (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
     Nat → GS → GS → Nat → Nat → Best → GS × GS × Best
@@ -104,7 +104,7 @@ penalty, minus one when it is a tie). -/
       ilGFGNT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 r.1 k1 (k2 + 1) r.2
     else (s1, s2, b)
 
-theorem ilGFGNT_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+theorem ilGFGNT_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [PackedOf Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
     (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
     (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) : ∀ (f : Nat) (s1 s2 : GS) (b : Best),
     ilGFGNT kf1 kf2 ix G R1 R2 gbs2 offs n P Ls ps1 ps2 f s1 s2 s1.J.length s2.J.length b =
@@ -128,7 +128,7 @@ theorem ilGFGNT_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} 
       · rfl
 
 /-- `ilGFGNT` from the strands' own counts. -/
-@[inline] def ilGFGWT {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
+@[inline] def ilGFGWT {Gt : Type} [GRead Gt] [Inhabited Gt] [PackedOf Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
     (kf1 kf2 : Ker) (ix : L) (G R1 R2 : ByteArray)
     (gbs2 : Array Gt) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) (f : Nat) (s1 s2 : GS) (b : Best) :
     GS × GS × Best :=
@@ -159,7 +159,7 @@ theorem ilGFGT_bytes {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (
   | zero => intro s1 s2 b; rfl
   | succ f ih => intro s1 s2 b; simp only [ilGFGT, ilGFT, advFG_bytes, ih]
 
-theorem ilGFGT_same {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] [GPk G1] [GPk G2]
+theorem ilGFGT_same {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] [PackedOf G1] [PackedOf G2]
     {xs : Array G1} {ys : Array G2} (h : SameA xs ys) {L Pp : Type} [LookG L Pp] [Inhabited Pp]
     (kf1 kf2 : Ker) (ix : L) (G : ByteArray) (R1 R2 : ByteArray) (offs : Array Nat) (n P Ls : Nat) (ps1 ps2 : Array Pp) :
     ∀ f s1 s2 b, ilGFGT kf1 kf2 ix G R1 R2 xs offs n P Ls ps1 ps2 f s1 s2 b =
@@ -505,7 +505,7 @@ stages passed to `tieCut`; the equalities are the originals' proofs, under the b
 
 /-- `mapChromsGBFG` (any chromosome representation) with the tie cut. -/
 @[specialize] def mapChromsGBFGT {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
+    [PackedOf Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
@@ -521,7 +521,7 @@ stages passed to `tieCut`; the equalities are the originals' proofs, under the b
 /-- `mapChromsGBFGT` with both strands' packed reads and seed orders given (`mapChromsGBFGT_eqPO`); the
 compiled search of `mateKPPO`. -/
 @[specialize] def mapChromsGBFGPOT {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
+    [PackedOf Gt] (kf1 kf2 : Ker) (K1 K2 : RP) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) (o1 o2 : List Nat) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
@@ -534,7 +534,7 @@ compiled search of `mateKPPO`. -/
     foldUpN (fun b c => chromKBFGK K2 kf2 Rr gbs2 (n + c) Q x.2.1.acc[c]! x.2.1.J b) n 0 b) x.2.2
 
 theorem mapChromsGBFGT_eqPO {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
+    [PackedOf Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) :
     mapChromsGBFGT kf1 kf2 P ix G offs gbs R Rr ps pr =
       mapChromsGBFGPOT kf1 kf2 (packRP R) (packRP Rr) P ix G offs gbs R Rr ps pr
@@ -544,7 +544,7 @@ theorem mapChromsGBFGT_eqPO {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} 
 
 /-- `mapChromsGBKG` with the tie cut: the packed chromosomes `pvs`, word kernels. -/
 @[specialize] def mapChromsGBKGT {Gt : Type} [GRead Gt] [Inhabited Gt] {L Pp : Type} [LookG L Pp] [Inhabited Pp]
-    [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
+    [PackedOf Gt] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array Gt) (pvs : Array PGen) (R : ByteArray) : Best :=
   let gbs2 := gbs ++ gbs
   let pvs2 := pvs ++ pvs

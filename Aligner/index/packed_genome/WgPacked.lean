@@ -365,10 +365,10 @@ def chromKBFG0 (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : Li
       (diagsB acc (acc.length - sbound P) (2 * gapBound sc0 (-(Q2 : Int)))) b2
   else b2
 
-/-- Stages K and B of one chromosome, the filter by words where it applies (`kfiltV`;
+/-- Stages K and B of one chromosome, the filter by words where it applies (`wordFilter`;
 the read is packed once, when the chromosome has anchors; stage K reads the seed
 supports from one sweep, `suppCntC`). -/
-def chromKBFG [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
+def chromKBFG [PackedOf Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat)) (J : List Nat)
     (b1 : Best) : Best :=
   match diags acc with
   | [] => b1
@@ -385,7 +385,7 @@ def chromKBFG [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (
   if lim < Q2 then
     let need := acc.length - sbound P
     let r := 2 * gapBound sc0 (-(Q2 : Int))
-    stageKSV (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
+    stageWordFilter (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
       K R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) P
       (ds.filter fun D => decide (need ≤ suppA acc D r)) b2
   else b2
@@ -539,7 +539,7 @@ theorem ilGFGN_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix 
   funext
   simp only [ilGFGW, ilGFGN_eq]
 
-@[specialize] def mapChromsGBFG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
+@[specialize] def mapChromsGBFG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [PackedOf Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
@@ -552,7 +552,7 @@ theorem ilGFGN_eq {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf1 kf2 : Ker) (ix 
   (List.range n).foldl (fun b c => chromKBFG kf2 Rr gbs2 (n + c) P x.2.1.acc[c]! x.2.1.J b) b
 
 /-- `chromKBFG` with the packed read `K` given (`chromKBFG_eqK`: with `K = packRP R`, the same). -/
-def chromKBFGK [GPk Gt] (K : RP) (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat))
+def chromKBFGK [PackedOf Gt] (K : RP) (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat))
     (J : List Nat) (b1 : Best) : Best :=
   match diags acc with
   | [] => b1
@@ -568,18 +568,18 @@ def chromKBFGK [GPk Gt] (K : RP) (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c 
   if lim < Q2 then
     let need := acc.length - sbound P
     let r := 2 * gapBound sc0 (-(Q2 : Int))
-    stageKSV (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
+    stageWordFilter (fun D b => stageB P R gbs c (shapesT Q2) (shifts (gapBound sc0 (-(Q2 : Int)))) [D] b)
       K R gbs[c]! acc (unseen (R.size / 25) J) (R.size / (R.size / 25)) P
       (ds.filter fun D => decide (need ≤ suppA acc D r)) b2
   else b2
 
-theorem chromKBFG_eqK [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat))
+theorem chromKBFG_eqK [PackedOf Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P : Nat) (acc : List (Array Nat))
     (J : List Nat) (b1 : Best) : chromKBFG kf R gbs c P acc J b1 = chromKBFGK (packRP R) kf R gbs c P acc J b1 := by
   unfold chromKBFG chromKBFGK
   split <;> rfl
 
 /-- `mapChromsGBFG` with each strand's read packed once for all chromosomes (`mapChromsGBFG_eqK`). -/
-@[specialize] def mapChromsGBFGK {L Pp : Type} [LookG L Pp] [Inhabited Pp] [GPk Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
+@[specialize] def mapChromsGBFGK {L Pp : Type} [LookG L Pp] [Inhabited Pp] [PackedOf Gt] (kf1 kf2 : Ker) (P : Nat) (ix : L)
     (G : ByteArray) (offs : Array Nat) (gbs : Array Gt) (R Rr : ByteArray) (ps pr : Array Pp) : Best :=
   let n := gbs.size
   let gbs2 := gbs ++ gbs
@@ -600,7 +600,7 @@ theorem chromKBFG_eqK [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt) (c P 
   simp only [chromKBFG_eqK, foldUpN_eq, List.range_eq_range']
 
 /-- `mapChromsGBK` with the chromosomes `gbs` of any representation. -/
-@[specialize] def mapChromsGBKG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [GPk Gt] (P : Nat) (ix : L) (G : ByteArray)
+@[specialize] def mapChromsGBKG {L Pp : Type} [LookG L Pp] [Inhabited Pp] [PackedOf Gt] (P : Nat) (ix : L) (G : ByteArray)
     (offs : Array Nat) (gbs : Array Gt) (pvs : Array PGen) (R : ByteArray) : Best :=
   let gbs2 := gbs ++ gbs
   let pvs2 := pvs ++ pvs
@@ -683,7 +683,7 @@ theorem kerHKG_bytes (R : ByteArray) (K : RP) (gbs : Array ByteArray) (pvs : Arr
 
 /-! ## Proofs: the search -/
 
-theorem chromKBFG_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt)
+theorem chromKBFG_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [PackedOf Gt] (kf : Ker) (R : ByteArray) (gbs : Array Gt)
     (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
     chromKBFG kf R gbs c P acc J b1 = chromKBFG0 kf R gbs c P acc J b1 := by
   unfold chromKBFG chromKBFG0
@@ -691,14 +691,14 @@ theorem chromKBFG_eq {Gt : Type} [GRead Gt] [Inhabited Gt] [GPk Gt] (kf : Ker) (
   generalize diags acc = ds
   cases ds with
   | nil => simp [stageKS]
-  | cons D ds => simp only [stageKSS_cnt, stageKSV_eq]
+  | cons D ds => simp only [stageKSS_cnt, stageWordFilter_eq]
 
 section
 variable {G1 G2 : Type} [GRead G1] [GRead G2] [Inhabited G1] [Inhabited G2] {xs : Array G1} {ys : Array G2}
   (h : SameA xs ys) {L Pp : Type} [LookG L Pp] [Inhabited Pp] (kf kf1 kf2 : Ker) (ix : L) (G : ByteArray)
 include h
 
-theorem chromKBFG_same [GPk G1] [GPk G2] (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
+theorem chromKBFG_same [PackedOf G1] [PackedOf G2] (R : ByteArray) (c P : Nat) (acc : List (Array Nat)) (J : List Nat) (b1 : Best) :
     chromKBFG kf R xs c P acc J b1 = chromKBFG kf R ys c P acc J b1 := by
   rw [chromKBFG_eq, chromKBFG_eq]
   simp only [chromKBFG0, stageKS_same (h.2 c) _ _ (fun D b => stageB_same h _ _ _ _ _ _ b),
