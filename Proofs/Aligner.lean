@@ -2,6 +2,8 @@ import Proofs.Index
 import Proofs.Whole
 import Proofs.LastResort
 import Proofs.GaveUp
+import Proofs.Heavy
+import Proofs.HeavyBuild
 import TierHeur
 import ParMap
 
@@ -20,20 +22,36 @@ open Bridge
 
 /-! ## The index: the minimizer index, the packed genome, and where each chromosome starts -/
 
-abbrev LoadedIndex := MapSpec.Mz.MzIdx × MapSpec.Fast.PGen × Array Nat × Array Nat
+-- (the last two: the heavy 25-mer table and its mask, `Proofs/Heavy.lean`)
+abbrev LoadedIndex := MapSpec.Mz.MzIdx × MapSpec.Fast.PGen × Array Nat × Array Nat × ByteArray × ByteArray
+
+-- the heavy 25-mer table (unproved builder `HeavyBuild.table`), size-capped so that it can be saved
+def heavyTable (gbs : Array ByteArray) : ByteArray :=
+  let H0 := HeavyBuild.table gbs
+  if H0.size < 2 ^ 63 then H0 else ByteArray.empty
+
+theorem heavyTable_size (gbs : Array ByteArray) : (heavyTable gbs).size < 2 ^ 63 := by
+  unfold heavyTable; dsimp only; split
+  · assumption
+  · simp
 
 -- the fast builders the harness uses (bench/WholeGenome.lean `build` and `pmap` modes; `Proofs/Index.lean`)
 def buildLoaded (byteGenome : GenomeFile) : LoadedIndex :=
   let gbs := byteGenome.map (·.2)
   let G := Index.packAll gbs
-  (Index.buildMz gbs G, G, Index.offsOf gbs, gbs.map (·.size))
+  let ix := Index.buildMz gbs G
+  let offs := Index.offsOf gbs
+  let ns := gbs.map (·.size)
+  -- the heavy table and the entries that pass `Heavy.entryOk` on the built index
+  let H := heavyTable gbs
+  (ix, G, offs, ns, H, Heavy.heavyMask (ix, G) offs ns H)
 
 -- one ByteArray: `G.w`, `ix.sl`, the bucket offsets, the small fields, where they start, magic
 -- (`Proofs/Index.lean`). Slot `t` of the loaded index is slot `t - m` of `ix.sl`.
 def saveIndex (loaded : LoadedIndex) : ByteArray :=
-  let (ix, G, offs, ns) := loaded
+  let (ix, G, offs, ns, H, M) := loaded
   let b := ByteArray.emptyWithCapacity (G.w.size + ix.sl.size + ix.offs.size + ix.sw + 4 + G.ex.size +
-    8 * (40 + ix.pm.size + ix.runs.size + offs.size + ns.size))
+    H.size + M.size + 8 * (42 + ix.pm.size + ix.runs.size + offs.size + ns.size))
   let b := Index.pad (b ++ G.w) ix.sw
   let m := b.size / ix.sw
   let b := Index.pad (b ++ ix.sl) 4
@@ -41,6 +59,7 @@ def saveIndex (loaded : LoadedIndex) : ByteArray :=
   let b := Index.putOffs b ix.offs m
   let hp := b.size
   let b := Index.putNats (Index.putNats (Index.putPGen (Index.putMz b ix ob) G) offs) ns
+  let b := Index.putBytes (Index.putBytes b H) M
   Index.putU64 (Index.putNat b hp) Index.magic
 
 -- copies nothing big: `ix.offs`, `ix.sl`, `G.w` are `index` itself; rebuilds `G.ex`, `ix.pm`,
@@ -55,24 +74,27 @@ def loadIndex (index : ByteArray) : Option LoadedIndex :=
     let G ← Index.rdPGen index
     let offs ← Index.rdNats index
     let ns ← Index.rdNats index
+    let H ← Index.rdBytes index
+    let M ← Index.rdBytes index
     if (← get) != index.size - 16 then failure
-    return (ix, G, offs, ns) : Index.Rd LoadedIndex).run' (index.size - 16)
+    return (ix, G, offs, ns, H, M) : Index.Rd LoadedIndex).run' (index.size - 16)
 
 -- the router's hypotheses, as one check run at build time
 def indexOk (byteGenome : GenomeFile) (loaded : LoadedIndex) : Bool :=
-  let (ix, G, offs, ns) := loaded
-  MapSpec.Fast.cutOk G offs ns && MapSpec.Mz.check3P ix G 4 && Index.chromsOk byteGenome G offs ns
+  let (ix, G, offs, ns, H, M) := loaded
+  MapSpec.Fast.cutOk G offs ns && MapSpec.Mz.check3P ix G 4 && Index.chromsOk byteGenome G offs ns &&
+    Heavy.heavyOk (ix, G) offs ns H M
 
 theorem loadIndex_empty : loadIndex ByteArray.empty = none := by
   simp [loadIndex]
 
 theorem indexOk_sound {byteGenome : GenomeFile} {ix : MapSpec.Mz.MzIdx} {G : MapSpec.Fast.PGen}
-    {offs ns : Array Nat} (h : indexOk byteGenome (ix, G, offs, ns) = true) :
+    {offs ns : Array Nat} {H M : ByteArray} (h : indexOk byteGenome (ix, G, offs, ns, H, M) = true) :
     MapSpec.Fast.cutOk G offs ns = true ∧
     MapSpec.GenomeBytes ((MapSpec.Fast.cutAll G offs ns).map MapSpec.Mz.unpack) (oldGenome byteGenome.decode) ∧
-    MapSpec.Mz.check2P ix G = true := by
+    MapSpec.Mz.check2P ix G = true ∧ Heavy.heavyOk (ix, G) offs ns H M = true := by
   simp only [indexOk, Bool.and_eq_true, MapSpec.Mz.check3P_eq] at h
-  exact ⟨h.1.1, Index.chromsOk_sound h.2, h.1.2⟩
+  exact ⟨h.1.1.1, Index.chromsOk_sound h.1.2, h.1.1.2, h.2⟩
 
 -- the index holds everything the aligner needs, the genome included; the check runs on what
 -- `saved` loads to (nothing about saving or loading is proved)
@@ -275,13 +297,13 @@ def shortOk (pk : MapSpec.Fast.PkMz) (c : Nat) (read1 read2 : ByteArray) : Bool 
   decide (min read1.size read2.size < 125) &&
     decide (rareCost pk read1 (c / 4 + 1) + rareCost pk read2 (c / 4 + 1) ≤ shortBudget)
 
--- (stage 5, prototype, proposed Spec) the gave-up answer: the router's answer `a`, still a leftover, with
--- `.gaveUp` when a mate has `gaveUpSeeds` grid seeds repeating `gaveUpRepeats` times or more (`GaveUp.repeatMate`)
+-- (stage 5) the gave-up answer: the router's answer `a`, still a leftover, with `.repetitiveUnknown` when a mate
+-- has `gaveUpSeeds` grid seeds in the heavy 25-mer table (`Heavy.heavyMate`: binary searches, no lookups)
 def gaveUpOn : Bool := true
 
-def gaveUp (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (read1 read2 : ByteArray) (a : PairAnswer) :
+def gaveUp (req : Int) (hv : ByteArray × ByteArray) (read1 read2 : ByteArray) (a : PairAnswer) :
     Option PairAnswer :=
-  if LastResort.Leftover req a ∧ (gaveUpOn && (GaveUp.repeatMate pk offs ns read1 || GaveUp.repeatMate pk offs ns read2))
+  if LastResort.Leftover req a ∧ (gaveUpOn && (Heavy.heavyMate hv.1 hv.2 read1 || Heavy.heavyMate hv.1 hv.2 read2))
   then some { a with uniqueness := .repetitiveUnknown } else none
 
 -- the stage's answer if it is not a leftover, else the next stage
@@ -303,7 +325,8 @@ theorem orElse_ok {P : PairAnswer → Prop} (req : Int) (o : Option PairAnswer) 
 
 -- stages (3)-(6) of the pipeline, after the router and the walk
 def afterRouter (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
-    (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (req : Int) (read1 read2 : ByteArray) (a1 : PairAnswer) (_ : Unit) :
+    (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (hv : ByteArray × ByteArray) (req : Int) (read1 read2 : ByteArray)
+    (a1 : PairAnswer) (_ : Unit) :
     PairAnswer :=
   let c := lookCap req
   orElse req ((joinAt cfg pk pgs c read1 read2).map (answerWith insertSettings req none pk pgs offs ns read1 read2))
@@ -311,17 +334,30 @@ def afterRouter (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (
   orElse req (if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
     fun _ =>
   -- the gave-up answer is taken as it is (it has no pair and no bound below `requiredMapBound`: a leftover)
-  (gaveUp req pk offs ns read1 read2 a1).getD (lookAt insertSettings req pk offs ns read1 read2)
+  (gaveUp req hv read1 read2 a1).getD (lookAt insertSettings req pk offs ns read1 read2)
 
 -- the pipeline: (1) the router with the per-pair settings, its pair re-checked; (2) the walk; (3) the
 -- rarest-seed join; (4) short mates: the second look; (5) the gave-up hook; (6) the second look (`lookAt`).
 -- Each stage's answer is taken unless it is a leftover (`LastResort.Leftover`)
+-- (option, OFF) witness-first: a pair with a mate that `Heavy.heavyMate` flags answers `.repetitiveUnknown` at once,
+-- before the router (it then also gives up on pairs the router would place: Testing/notes/INDEX_COUNTS.md)
+def witnessFirst : Bool := false
+
+-- no pair, the bound 0 (every alignment scores at most 0), a mate highly repetitive
+def witnessAnswer : PairAnswer :=
+  { found := none, bestPossibleScore := 0, uniqueness := .repetitiveUnknown, tier := .boundsOnly }
+
+def witnessHit (hv : ByteArray × ByteArray) (read1 read2 : ByteArray) : Bool :=
+  witnessFirst && (Heavy.heavyMate hv.1 hv.2 read1 || Heavy.heavyMate hv.1 hv.2 read2)
+
 def answerOfReads (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
-    (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (read1 read2 : ByteArray) : PairAnswer :=
+    (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (hv : ByteArray × ByteArray) (read1 read2 : ByteArray) :
+    PairAnswer :=
+  if witnessHit hv read1 read2 then witnessAnswer else
   let req := reqOf insertSettings read1 read2
   let t := MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
   let a1 := answerWith insertSettings req (fallbackFrom req) pk pgs offs ns read1 read2 t
-  orElse req (some a1) (afterRouter insertSettings cfg pk pgs offs ns req read1 read2 a1)
+  orElse req (some a1) (afterRouter insertSettings cfg pk pgs offs ns hv req read1 read2 a1)
 
 def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
@@ -331,12 +367,12 @@ def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loade
   | some read1, some read2 =>
       match loaded with
       | none => .aligned (lookSpec insertSettings chroms read1 read2)
-      | some (ix, G, offs, ns) =>
+      | some (ix, G, offs, ns, H, M) =>
           -- the router searches the packed genome as ONE sequence (offsets `#[0]`, lengths `#[G.n]`):
           -- its seed loop then does not pay per chromosome; `Proofs/Whole.lean` moves the answer
           -- back to the chromosomes, `Proofs/Report.lean` the found pair, `Proofs/LastResort.lean` the rest
           .aligned (answerOfReads insertSettings (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
-            (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2)
+            (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns (H, M) read1 read2)
 
 -- tasks per chunk (any value gives the same results: `ParMap.parMap_eq_map`). Use at least the
 -- machine's core count: each task runs on its own thread, so 16 tasks use at most 16 cores. On 4 cores,
@@ -352,12 +388,13 @@ def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
     pairs.toArray).toList
 
 -- the router's settings and genome view, computed once per chunk (`alignPairs_eqC`)
-abbrev Setup := InsertSettings × MapSpec.Fast.TierCfg × MapSpec.Fast.PkMz × Array MapSpec.Fast.PGen × Array Nat × Array Nat
+abbrev Setup := InsertSettings × MapSpec.Fast.TierCfg × MapSpec.Fast.PkMz × Array MapSpec.Fast.PGen × Array Nat × Array Nat ×
+  (ByteArray × ByteArray)
 
 def chunkSetup (insertSettings : InsertSettings) (loaded : Option LoadedIndex) : Option Setup :=
-  loaded.map fun (ix, G, offs, ns) =>
+  loaded.map fun (ix, G, offs, ns, H, M) =>
     let pgs := MapSpec.Fast.cutAll G #[0] #[G.n]
-    (insertSettings, tierCfg insertSettings (ix, G) #[0] pgs, (ix, G), pgs, offs, ns)
+    (insertSettings, tierCfg insertSettings (ix, G) #[0] pgs, (ix, G), pgs, offs, ns, (H, M))
 
 -- `alignOne` from `chunkSetup`
 def alignOneC (insertSettings : InsertSettings) (chroms : List (List Nat)) (setup : Option Setup)
@@ -368,8 +405,8 @@ def alignOneC (insertSettings : InsertSettings) (chroms : List (List Nat)) (setu
   | some read1, some read2 =>
       match setup with
       | none => .aligned (lookSpec insertSettings chroms read1 read2)
-      | some (insertSettings, cfg, pk, pgs, offs, ns) =>
-          .aligned (answerOfReads insertSettings cfg pk pgs offs ns read1 read2)
+      | some (insertSettings, cfg, pk, pgs, offs, ns, hv) =>
+          .aligned (answerOfReads insertSettings cfg pk pgs offs ns hv read1 read2)
 
 -- `capFor` from the mate's bucket sizes (`capForZ_eq`: the sizes of `prepMate`'s seeds)
 def capForZ (c0 : Nat) (R : ByteArray) (z1 z2 : Array Nat) : Nat :=
@@ -407,7 +444,7 @@ def pairCfgZ (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteAr
 -- lookup stops early when it holds: `Report.chromOfM_eq`)
 abbrev SetupP := Setup × Bool
 
-def withMono (st : Setup) : SetupP := (st, Report.monoOk st.2.2.2.2.1 st.2.2.2.2.2)
+def withMono (st : Setup) : SetupP := (st, Report.monoOk st.2.2.2.2.1 st.2.2.2.2.2.1)
 
 def alignOneP (insertSettings : InsertSettings) (chroms : List (List Nat)) (setup : Option SetupP)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
@@ -417,7 +454,8 @@ def alignOneP (insertSettings : InsertSettings) (chroms : List (List Nat)) (setu
   | some read1, some read2 =>
       match setup with
       | none => .aligned (lookSpec insertSettings chroms read1 read2)
-      | some ((insertSettings, cfg, pk, pgs, offs, ns), ok) =>
+      | some ((insertSettings, cfg, pk, pgs, offs, ns, hv), ok) =>
+          .aligned <| if witnessHit hv read1 read2 then witnessAnswer else
           let req := reqOf insertSettings read1 read2
           let s1 := MapSpec.Fast.prepMz pk read1
           let s2 := MapSpec.Fast.prepMz pk read2
@@ -440,7 +478,7 @@ def alignOneP (insertSettings : InsertSettings) (chroms : List (List Nat)) (setu
                 (MapSpec.Fast.tierPairBP.tierPairBQ cfg' pk #[0] pgs read1 read2 s1 s2 za1 za2 zb1 zb2
                   (MapSpec.Fast.costZS ca sa1 sa2) (MapSpec.Fast.costZS cb sb1 sb2))))
           -- a leftover goes on to the later stages (`answerOfReads`)
-          .aligned (orElse req (some ans) (afterRouter insertSettings cfg pk pgs offs ns req read1 read2 ans))
+          orElse req (some ans) (afterRouter insertSettings cfg pk pgs offs ns hv req read1 read2 ans)
 
 -- the router's caps under `pairCfgZ` are the given ones (equal reads have equal caps)
 theorem pairCfgZ_cap (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b : ByteArray) (f : ByteArray → Nat) :
@@ -457,7 +495,7 @@ theorem pairCfgZ_cap (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz) (a b 
 theorem alignOneP_eq (insertSettings : InsertSettings) (chroms : List (List Nat)) (setup : Option Setup)
     (bytes1 bytes2 : Option ByteArray) :
     alignOneP insertSettings chroms (setup.map withMono) bytes1 bytes2 = alignOneC insertSettings chroms setup bytes1 bytes2 := by
-  rcases bytes1 with _ | a <;> rcases bytes2 with _ | b <;> rcases setup with _ | ⟨iS, cfg, pk, pgs, offs, ns⟩
+  rcases bytes1 with _ | a <;> rcases bytes2 with _ | b <;> rcases setup with _ | ⟨iS, cfg, pk, pgs, offs, ns, hv⟩
   all_goals try rfl
   have hc := pairCfgZ_cap cfg pk a b (fun R => capFor pk (cfg.rcfg.cap1 R) R)
   simp only [Option.map, withMono, alignOneP, alignOneC, capForS_eq, capForZ_eq, Report.answerOfPairP_eq,
@@ -486,7 +524,7 @@ theorem alignOneC_eq (insertSettings : InsertSettings) (chroms : List (List Nat)
     (bytes1 bytes2 : Option ByteArray) :
     alignOneC insertSettings chroms (chunkSetup insertSettings loaded) bytes1 bytes2 =
       alignOne insertSettings chroms loaded bytes1 bytes2 := by
-  rcases bytes1 with _ | _ <;> rcases bytes2 with _ | _ <;> rcases loaded with _ | ⟨ix, G, _, _⟩ <;> rfl
+  rcases bytes1 with _ | _ <;> rcases bytes2 with _ | _ <;> rcases loaded with _ | ⟨ix, G, _, _, _, _⟩ <;> rfl
 
 -- compiled code runs `alignPairsC`
 @[csimp] theorem alignPairs_eqC : @alignPairs = @alignPairsC := by
@@ -597,12 +635,12 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
             (fun _ hx => LastResort.runsSp_ok hx) (fun _ hx => LastResort.runsSp_ok hx)) with h | h
       · exact LastResort.correct_transfer hseq (LastResort.finalize_unknown hu) h
       · exact absurd h.1 (LastResort.look_not_leftover hc hj)
-    | some (ix, G, offs, ns), hcase =>
-      have hLoaded : indexOk byteGenome (ix, G, offs, ns) = true := by
+    | some (ix, G, offs, ns, H, M), hcase =>
+      have hLoaded : indexOk byteGenome (ix, G, offs, ns, H, M) = true := by
         rcases hcase with ⟨h, -⟩ | ⟨_, h, hok⟩
         · cases h
         · cases h; exact hok
-      obtain ⟨hcut, hg, hchk⟩ := indexOk_sound hLoaded
+      obtain ⟨hcut, hg, hchk, hheavy⟩ := indexOk_sound hLoaded
       rw [hGenome] at hg
       have h0 : G.o = 0 := by
         simp only [MapSpec.Fast.cutOk, Bool.and_eq_true, beq_iff_eq] at hcut; exact hcut.1
@@ -659,8 +697,18 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
         · exact h
         · exact absurd h.1 (LastResort.look_not_leftover hc hj)
       have hok0 := hok (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n])) (ix, G) read1 read2)
-      show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _)
+      show PairAnswer.Correct _ _ _ _ (answerOfReads _ _ _ _ _ _ _ _ _)
       unfold answerOfReads
+      -- witness-first (an option)
+      split
+      · rename_i hw
+        simp only [witnessHit, Bool.and_eq_true, Bool.or_eq_true] at hw
+        refine ⟨fun rep h => by simp [witnessAnswer] at h, fun pair _ => ?_, ⟨rfl, ?_⟩⟩
+        · show pair.first.score + pair.second.score ≤ 0
+          have := pair.first.score_nonpos; have := pair.second.score_nonpos; omega
+        · rcases hw.2 with h | h
+          · exact .inl (Heavy.heavyMate_sound hchk hslice hchr hheavy read1 h)
+          · exact .inr (Heavy.heavyMate_sound hchk hslice hchr hheavy read2 h)
       dsimp only
       -- (1, 2) the router and the walk
       refine orElse_ok _ _ _ (fun a ha => by cases ha; exact (key _ _ hok0).imp id And.left) ?_
@@ -682,7 +730,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
         · cases ha; exact .inl hlook
         · cases ha
       -- (5) the gave-up hook (a no-op for now)
-      cases hgv : gaveUp (reqOf insertSettings read1 read2) (ix, G) offs ns read1 read2
+      cases hgv : gaveUp (reqOf insertSettings read1 read2) (H, M) read1 read2
           (answerWith insertSettings (reqOf insertSettings read1 read2) (fallbackFrom (reqOf insertSettings read1 read2))
             (ix, G) (MapSpec.Fast.cutAll G #[0] #[G.n]) offs ns read1 read2
             (MapSpec.Fast.tierPair (pairCfg (tierCfg insertSettings (ix, G) #[0] (MapSpec.Fast.cutAll G #[0] #[G.n]))
@@ -701,8 +749,8 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
           refine ⟨fun rep h => absurd (hleft.1.symm.trans h) (by simp), hb, ?_⟩
           have hw : (decodeRead read1).highlyRepetitiveIn genome ∨ (decodeRead read2).highlyRepetitiveIn genome := by
             rcases hrep.2 with h | h
-            · exact .inl (GaveUp.repeatMate_sound hchk hslice hchr read1 h)
-            · exact .inr (GaveUp.repeatMate_sound hchk hslice hchr read2 h)
+            · exact .inl (Heavy.heavyMate_sound hchk hslice hchr hheavy read1 h)
+            · exact .inr (Heavy.heavyMate_sound hchk hslice hchr hheavy read2 h)
           exact ⟨hleft.1, hw⟩
         · cases ha
 

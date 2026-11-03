@@ -453,35 +453,40 @@ def obOf (ix : Mz.MzIdx) (G : PGen) : Nat := (Index.pad (Index.pad G.w ix.sw ++ 
 def bigOf (ix : Mz.MzIdx) (G : PGen) : ByteArray :=
   Index.putOffs (Index.pad (Index.pad G.w ix.sw ++ ix.sl) 4) ix.offs (mOf ix G)
 
-theorem saveIndex_eq (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) :
-    saveIndex (ix, G, offs, ns) = Index.putU64 (Index.putNat (Index.putNats (Index.putNats
-      (Index.putPGen (Index.putMz (bigOf ix G) ix (obOf ix G)) G) offs) ns) (bigOf ix G).size) Index.magic := by
+theorem saveIndex_eq (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (H M : ByteArray) :
+    saveIndex (ix, G, offs, ns, H, M) = Index.putU64 (Index.putNat (Index.putBytes (Index.putBytes (Index.putNats (Index.putNats
+      (Index.putPGen (Index.putMz (bigOf ix G) ix (obOf ix G)) G) offs) ns) H) M) (bigOf ix G).size) Index.magic := by
   have e : ∀ c, ByteArray.emptyWithCapacity c ++ G.w = G.w := fun c => ByteArray.empty_append
   simp only [saveIndex, e]; rfl
 
 /-- What the loader reads back: the small fields, and the saved bytes as `G.w`, `ix.offs`, `ix.sl`. -/
-theorem loadIndex_saveIndex (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (hf : MzFits ix (obOf ix G))
+theorem loadIndex_saveIndex (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (H M : ByteArray) (hf : MzFits ix (obOf ix G))
     (hn : G.n < 2 ^ 64) (ho : G.o < 2 ^ 64) (he : G.ex.size < 2 ^ 64)
     (hos : offs.size < 2 ^ 64) (hoe : ∀ x ∈ offs, x < 2 ^ 64) (hns : ns.size < 2 ^ 64) (hne : ∀ x ∈ ns, x < 2 ^ 64)
+    (hH : H.size < 2 ^ 64) (hM : M.size < 2 ^ 64)
     (hbig : (bigOf ix G).size < 2 ^ 64) :
-    loadIndex (saveIndex (ix, G, offs, ns)) =
-      some ({ ix with offs := saveIndex (ix, G, offs, ns), ob := obOf ix G, sl := saveIndex (ix, G, offs, ns) },
-        { G with w := saveIndex (ix, G, offs, ns) }, offs, ns) := by
-  generalize hS : saveIndex (ix, G, offs, ns) = S
+    loadIndex (saveIndex (ix, G, offs, ns, H, M)) =
+      some ({ ix with offs := saveIndex (ix, G, offs, ns, H, M), ob := obOf ix G, sl := saveIndex (ix, G, offs, ns, H, M) },
+        { G with w := saveIndex (ix, G, offs, ns, H, M) }, offs, ns, H, M) := by
+  generalize hS : saveIndex (ix, G, offs, ns, H, M) = S
   rw [saveIndex_eq] at hS
   obtain ⟨b1, eb1⟩ : ∃ x, Index.putMz (bigOf ix G) ix (obOf ix G) = x := ⟨_, rfl⟩
   obtain ⟨b2, eb2⟩ : ∃ x, Index.putPGen b1 G = x := ⟨_, rfl⟩
   obtain ⟨b3, eb3⟩ : ∃ x, Index.putNats b2 offs = x := ⟨_, rfl⟩
   obtain ⟨b4, eb4⟩ : ∃ x, Index.putNats b3 ns = x := ⟨_, rfl⟩
-  obtain ⟨b5, eb5⟩ : ∃ x, Index.putNat b4 (bigOf ix G).size = x := ⟨_, rfl⟩
-  rw [eb1, eb2, eb3, eb4, eb5] at hS
-  have hsz : S.size = b4.size + 16 := by rw [← hS, putU64_size, ← eb5, putNat_size]
+  obtain ⟨b4h, eb4h⟩ : ∃ x, Index.putBytes b4 H = x := ⟨_, rfl⟩
+  obtain ⟨b4m, eb4m⟩ : ∃ x, Index.putBytes b4h M = x := ⟨_, rfl⟩
+  obtain ⟨b5, eb5⟩ : ∃ x, Index.putNat b4m (bigOf ix G).size = x := ⟨_, rfl⟩
+  rw [eb1, eb2, eb3, eb4, eb4h, eb4m, eb5] at hS
+  have hsz : S.size = b4m.size + 16 := by rw [← hS, putU64_size, ← eb5, putNat_size]
   have p5 : Pre b5 S := by rw [← hS]; exact pre_putU64 _ _
-  have p4 : Pre b4 S := Pre.trans (b := b5) (by rw [← eb5]; exact pre_putNat _ _) p5
+  have p4m : Pre b4m S := Pre.trans (b := b5) (by rw [← eb5]; exact pre_putNat _ _) p5
+  have p4h : Pre b4h S := Pre.trans (b := b4m) (by rw [← eb4m]; exact pre_putBytes _ _) p4m
+  have p4 : Pre b4 S := Pre.trans (b := b4h) (by rw [← eb4h]; exact pre_putBytes _ _) p4h
   have p3 : Pre b3 S := Pre.trans (b := b4) (by rw [← eb4]; exact pre_putNats _ _) p4
   have p2 : Pre b2 S := Pre.trans (b := b3) (by rw [← eb3]; exact pre_putNats _ _) p3
   have p1 : Pre b1 S := Pre.trans (b := b2) (by rw [← eb2]; exact pre_putPGen _ _) p2
-  have r0 := rdNat_put' b4 S _ hbig (by rw [eb5]; exact p5)
+  have r0 := rdNat_put' b4m S _ hbig (by rw [eb5]; exact p5)
   rw [eb5] at r0
   have r00 := rdU64_put' b5 S Index.magic (by rw [hS]; exact Pre.refl _)
   rw [hS] at r00
@@ -493,11 +498,15 @@ theorem loadIndex_saveIndex (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (hf
   rw [eb3] at r3
   have r4 := rdNats_put' b3 S ns hns hne (by rw [eb4]; exact p4)
   rw [eb4] at r4
+  have r5 := rdBytes_put' b4 S H hH (by rw [eb4h]; exact p4h)
+  rw [eb4h] at r5
+  have r6 := rdBytes_put' b4h S M hM (by rw [eb4m]; exact p4m)
+  rw [eb4m] at r6
   unfold loadIndex
-  rw [if_neg (by omega), show S.size - 16 = b4.size by omega]
-  simp only [StateT.run', bind, StateT.bind, r0, r00, r1, r2, r3, r4, Option.bind_some, pure, StateT.pure,
+  rw [if_neg (by omega), show S.size - 16 = b4m.size by omega]
+  simp only [StateT.run', bind, StateT.bind, r0, r00, r1, r2, r3, r4, r5, r6, Option.bind_some, pure, StateT.pure,
     get, getThe, MonadStateOf.get, StateT.get, set, MonadStateOf.set, StateT.set, bne_self_eq_false, Bool.false_eq_true,
-    ite_false, show b4.size + 16 - 16 = b4.size by omega, hsz]
+    ite_false, show b4m.size + 16 - 16 = b4m.size by omega, hsz]
   rfl
 
 
@@ -505,30 +514,30 @@ theorem u32_pre {a bs : ByteArray} (P : Pre a bs) {i : Nat} (h : 4 * i + 3 < a.s
   unfold u32; dsimp only
   rw [P.2 _ (by omega), P.2 _ (by omega), P.2 _ (by omega), P.2 _ (by omega)]
 
-theorem pre_big_save (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) : Pre (bigOf ix G) (saveIndex (ix, G, offs, ns)) := by
+theorem pre_big_save (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (H M : ByteArray) : Pre (bigOf ix G) (saveIndex (ix, G, offs, ns, H, M)) := by
   rw [saveIndex_eq]
   exact (pre_putMz _ _ _).trans ((pre_putPGen _ _).trans ((pre_putNats _ _).trans ((pre_putNats _ _).trans
-    ((pre_putNat _ _).trans (pre_putU64 _ _)))))
+    ((pre_putBytes _ _).trans ((pre_putBytes _ _).trans ((pre_putNat _ _).trans (pre_putU64 _ _)))))))
 
 theorem pre_pad2_big (ix : Mz.MzIdx) (G : PGen) : Pre (Index.pad (Index.pad G.w ix.sw ++ ix.sl) 4) (bigOf ix G) := by
   unfold bigOf; rw [putOffs_eq]; exact (putOffs_spec _ _ _ _).2.1
 
 /-- The saved bytes start with `G.w`. -/
-theorem save_w (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) : Pre G.w (saveIndex (ix, G, offs, ns)) :=
-  (pre_pad _ _).trans ((pre_append _ _).trans ((pre_pad _ _).trans ((pre_pad2_big ix G).trans (pre_big_save ix G offs ns))))
+theorem save_w (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (H M : ByteArray) : Pre G.w (saveIndex (ix, G, offs, ns, H, M)) :=
+  (pre_pad _ _).trans ((pre_append _ _).trans ((pre_pad _ _).trans ((pre_pad2_big ix G).trans (pre_big_save ix G offs ns H M))))
 
 /-- Slot bytes: byte `j` of `ix.sl` is byte `sw · m + j` of the saved bytes. -/
-theorem save_sl (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (hsw : 0 < ix.sw) (j : Nat) (hj : j < ix.sl.size) :
-    (saveIndex (ix, G, offs, ns)).get! (ix.sw * mOf ix G + j) = ix.sl.get! j := by
+theorem save_sl (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (H M : ByteArray) (hsw : 0 < ix.sw) (j : Nat) (hj : j < ix.sl.size) :
+    (saveIndex (ix, G, offs, ns, H, M)).get! (ix.sw * mOf ix G + j) = ix.sl.get! j := by
   have hm : ix.sw * mOf ix G = (Index.pad G.w ix.sw).size := by
     unfold mOf; have := pad_mod G.w ix.sw hsw; have := Nat.div_add_mod (Index.pad G.w ix.sw).size ix.sw; omega
-  have P := (pre_pad (Index.pad G.w ix.sw ++ ix.sl) 4).trans ((pre_pad2_big ix G).trans (pre_big_save ix G offs ns))
+  have P := (pre_pad (Index.pad G.w ix.sw ++ ix.sl) 4).trans ((pre_pad2_big ix G).trans (pre_big_save ix G offs ns H M))
   rw [hm, P.2 _ (by simp; omega), get_append_right _ _ _ hj]
 
 /-- Bucket offsets: `UInt32` `ob + b` of the saved bytes is offset `b` plus `m` (mod `2^32`). -/
-theorem save_offs (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (b : Nat) (hb : b < ix.offs.size / 4) :
-    getU32 (saveIndex (ix, G, offs, ns)) (obOf ix G + b) = (getU32 ix.offs b + mOf ix G) % 2 ^ 32 := by
-  have P := pre_big_save ix G offs ns
+theorem save_offs (ix : Mz.MzIdx) (G : PGen) (offs ns : Array Nat) (H M : ByteArray) (b : Nat) (hb : b < ix.offs.size / 4) :
+    getU32 (saveIndex (ix, G, offs, ns, H, M)) (obOf ix G + b) = (getU32 ix.offs b + mOf ix G) % 2 ^ 32 := by
+  have P := pre_big_save ix G offs ns H M
   obtain ⟨h1, -, h3⟩ := putOffs_spec (Index.pad (Index.pad G.w ix.sw ++ ix.sl) 4) ix.offs (mOf ix G) (ix.offs.size / 4)
   have hmod := pad_mod (Index.pad G.w ix.sw ++ ix.sl) 4 (by omega)
   have := h3 hmod b hb

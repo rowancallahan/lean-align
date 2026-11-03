@@ -78,7 +78,7 @@ def main (args : List String) : IO Unit := do
   let lim := (args[3]?.getD "100000000").toNat!
   let index ← IO.FS.readBinFile idx
   let insertSettings : InsertSettings := { range := (100, 1000) }
-  let some (ix, G, offs, ns) := (readIndex index).2 | throw (IO.userError "index")
+  let some (ix, G, offs, ns, H, M) := (readIndex index).2 | throw (IO.userError "index")
   let pgs := cutAll G #[0] #[G.n]
   let pk : PkMz := (ix, G)
   let cfg := tierCfg insertSettings pk #[0] pgs
@@ -93,7 +93,7 @@ def main (args : List String) : IO Unit := do
     let b := b0.letters
     if a.isEmpty || b.isEmpty then cnt := add cnt "trimmedAway" 1; continue
     let q0 ← IO.monoNanosNow
-    let ans ← (← IO.mkRef (if q0 == 0 then default else match alignOne insertSettings [] (some (ix, G, offs, ns)) (some a) (some b) with
+    let ans ← (← IO.mkRef (if q0 == 0 then default else match alignOne insertSettings [] (some (ix, G, offs, ns, H, M)) (some a) (some b) with
       | .aligned x => x | _ => default)).get
     let q1 ← IO.monoNanosNow
     cnt := add cnt "map [us]" ((q1 - q0) / 1000)

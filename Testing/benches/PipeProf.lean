@@ -17,7 +17,7 @@ def main (args : List String) : IO Unit := do
   let lim := (args[3]?.getD "100000000").toNat!
   let index ← IO.FS.readBinFile idx
   let insertSettings : InsertSettings := { range := (100, 1000) }
-  let some (ix, G, offs, ns) := (readIndex index).2 | throw (IO.userError "index")
+  let some (ix, G, offs, ns, H, M) := (readIndex index).2 | throw (IO.userError "index")
   let pgs := cutAll G #[0] #[G.n]
   let pk : PkMz := (ix, G)
   let cfg := tierCfg insertSettings pk #[0] pgs
@@ -49,12 +49,12 @@ def main (args : List String) : IO Unit := do
     let s := shortOk pk c a b
     if !s then
       let g0 ← IO.monoNanosNow
-      let g ← (← IO.mkRef (if g0 == 0 then none else gaveUp req pk offs ns a b a1)).get
+      let g ← (← IO.mkRef (if g0 == 0 then none else gaveUp req (H, M) a b a1)).get
       let g1 ← IO.monoNanosNow
       cnt := clock "4 gaveUp check" (g1 - g0) cnt
       if g.isSome then
         cnt := add cnt "closed 4 gaveUp" 1
-        let viaA := match answerOfReads insertSettings cfg pk pgs offs ns a b with
+        let viaA := match answerOfReads insertSettings cfg pk pgs offs ns (H, M) a b with
           | x => uniquenessText x.uniqueness
         let viaP := match alignPairs insertSettings index [(some a, some b)] with
           | [.aligned x] => uniquenessText x.uniqueness | _ => "?"
