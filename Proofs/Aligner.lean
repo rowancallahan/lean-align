@@ -241,6 +241,33 @@ def lookAtG (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkM
     (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
       (LastResort.pairsOfHits insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c lX lY))
 
+-- compiled `lookAtG`: mate 1's hits stop at `gaveUpPlaces` distinct placements (`GaveUp.hitsXS_spec`)
+def lookAtGF (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat)
+    (read1 read2 : ByteArray) (a : PairAnswer) : PairAnswer :=
+  let c := lookCap req
+  let pgs := MapSpec.Fast.cutAll pk.2 offs ns
+  match (if gaveUpPlacesOn then GaveUp.hitsXS req c pk offs pgs read1 else some (LastResort.hitsX c pk offs pgs read1)) with
+  | none => { a with uniqueness := .gaveUp }
+  | some lX =>
+    if gaveUpPlacesOn && GaveUp.manyHits req lX then { a with uniqueness := .gaveUp } else
+    let lY := LastResort.hitsY insertSettings.dovetailSlack insertSettings.range.2 c pk offs pgs read2 lX
+    if gaveUpPlacesOn && GaveUp.manyHits req lY then { a with uniqueness := .gaveUp } else
+    LastResort.finalize insertSettings (LastResort.fitNs ns) req
+      (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
+        (LastResort.pairsOfHits insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c lX lY))
+
+@[csimp] theorem lookAtG_eqF : @lookAtG = @lookAtGF := by
+  funext insertSettings req pk offs ns read1 read2 a
+  unfold lookAtG lookAtGF
+  simp only []
+  have hs := GaveUp.hitsXS_spec req (lookCap req) pk offs (MapSpec.Fast.cutAll pk.2 offs ns) read1
+  cases ho : gaveUpPlacesOn
+  · rfl
+  · simp only [if_true, Bool.true_and]
+    cases hx : GaveUp.hitsXS req (lookCap req) pk offs (MapSpec.Fast.cutAll pk.2 offs ns) read1 with
+    | none => simp only [hs.1 hx, if_true]
+    | some l => simp only [hs.2 l hx]
+
 -- (prototype, proposed Spec) a leftover whose mate has a seed repeating at least `gaveUpRepeats` times is
 -- answered `.gaveUp` instead of the second look (`GaveUp.repeatMate`)
 def gaveUpOn : Bool := true
