@@ -1,6 +1,7 @@
 Shim speed patch for Rowan (frozen files: NOT applied).   git apply Testing/notes/shim_speed.patch
-Base: festive-fermi 562a2f5 (adapter trim merged). Touches Proofs/Fastq.lean, Proofs/Sam.lean and their copies
-Spec/Fastq.lean, Spec/Sam.lean (the same edits).
+REBASED 2026-11-03 onto festive-fermi 5845b97 (after proof/fastq-failfast and proof/trimrecord). Touches Spec/Fastq.lean, Spec/Sam.lean, their copies
+Proofs/Fastq.lean, Proofs/Sam.lean, and Proofs/TrimRecord.lean + Testing/scripts/CI_check.sh (the proofs and axiom list follow the field type change).
+Order: independent of audit_medium_patches/shim_fasta_failfast.patch (applies before or after it). Measurements below are from 562a2f5.
 
 Items, measured cumulatively at 562a2f5 (callgrind Ir of the shim, first 2000 pairs, index load included; base
 NovaSeq 985.5M, HiSeq hg002 2x250 1359.0M). SAM byte-identical to base at every step on both subsets; with all four
@@ -20,8 +21,17 @@ Notes:
   AdapterTrim.cutTruSeq / ReadTrim.trimRead directly. Nothing else in Spec/, Main.lean or the proofs reads the
   field. The SAM text is unchanged.
 
+Rebase notes (what changed against the 562a2f5 version):
+- parseRecord (fail-fast reader) now builds `quality` as the checked ByteArray (no String round trip); readChunk compares letters.size with quality.size.
+- Proofs/TrimRecord.lean: trimBytes takes record.quality directly; trimRecord_correct also states the quality window on the record;
+  trimRecord_quality_bytes / fromUTF8!_toUTF8 are gone (the field is bytes); parseRecord_trim_quality now says (trimRecord record).quality is valid UTF-8
+  for every record parseRecord returns, i.e. the SAM's String.fromUTF8! on QUAL (forward strand) cannot panic. Reverse strand reads them reversed: not proved.
+  CI_check.sh requires the new axiom list (trimRecord_quality_bytes removed).
+- Re-verified at the rebase: CI_check.sh and FUZZ=1 pass; SAM byte-identical to the unpatched binary on the fuzz set and on the first 20k NovaSeq pairs
+  (40000 records).
+
 diff --git a/Proofs/Fastq.lean b/Proofs/Fastq.lean
-index b656414..7a468c6 100644
+index c78ab0d..fb6cef8 100644
 --- a/Proofs/Fastq.lean
 +++ b/Proofs/Fastq.lean
 @@ -12,7 +12,7 @@ namespace Spec
@@ -58,12 +68,16 @@ index b656414..7a468c6 100644
    let mut j := i
    while j < bytes.size && bytes[j]! != 10 do
      j := j + 1
-@@ -55,11 +71,11 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
-   let some _plus ← reader.line | return none
-   let some quality ← reader.line | return none
-   return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
--                quality := String.fromUTF8! quality }
-+                quality := quality }
+@@ -63,7 +79,7 @@ def parseRecord (header letters plus quality : ByteArray) : Except String FastqR
+   else if !(0 < plus.size && plus[0]! == 43) then .error "third line of a record does not start with '+'"
+   else if !allBytes isDnaByte letters then .error "letters other than A C G T N (lowercase, IUPAC)"
+   else if !allBytes (fun b => 33 ≤ b && b ≤ 126) quality then .error "quality outside '!'..'~'"
+-  else .ok { name := String.fromUTF8! (header.extract 1 header.size), letters, quality := String.fromUTF8! quality }
++  else .ok { name := String.fromUTF8! (header.extract 1 header.size), letters, quality }
+ 
+ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some header ← reader.line | return none
+@@ -77,7 +93,7 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
  
  -- a read's name without its comment (after the first space) and without a trailing "/1" or "/2"
  def mateName (name : String) : String :=
@@ -72,7 +86,7 @@ index b656414..7a468c6 100644
    if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
  
  -- shortest mate kept after trimming; shorter mates become empty (trimmed away)
-@@ -69,12 +85,12 @@ def minLength : Nat := 25
+@@ -87,12 +103,12 @@ def minLength : Nat := 25
  -- and qualities at the first TruSeq adapter, keep the best window, and drop a mate shorter than
  -- `minLength`; a mate with nothing worth keeping comes back with no letters (trimmed away)
  def trimRecord (record : FastqRecord) : FastqRecord :=
@@ -87,17 +101,17 @@ index b656414..7a468c6 100644
  
  -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
  -- names differ or one file ends before the other (the files are out of step)
-@@ -85,7 +101,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
-     | some record1, some record2 =>
-       if mateName record1.name != mateName record2.name then
-         throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
+@@ -107,7 +123,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+         let name := mateName record.name
+         unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
+           throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
 -      if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
 +      if record1.letters.size != record1.quality.size || record2.letters.size != record2.quality.size then
          throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
        chunk := chunk.push (trimRecord record1, trimRecord record2)
      | none, none => break
 diff --git a/Proofs/Sam.lean b/Proofs/Sam.lean
-index f74f50b..fc14eb2 100644
+index 9695337..11d2c81 100644
 --- a/Proofs/Sam.lean
 +++ b/Proofs/Sam.lean
 @@ -42,7 +42,7 @@ def cigarText (cigar : Array (Step × Nat)) : String :=
@@ -130,8 +144,123 @@ index f74f50b..fc14eb2 100644
  
  def uniquenessText : Uniqueness → String
    | .unique      => "unique"
+diff --git a/Proofs/TrimRecord.lean b/Proofs/TrimRecord.lean
+index 7c3fc58..498fdff 100644
+--- a/Proofs/TrimRecord.lean
++++ b/Proofs/TrimRecord.lean
+@@ -24,8 +24,8 @@ def trimBytes (letters qual : ByteArray) : ByteArray × ByteArray :=
+   AdapterTrim.dropShort minLength letters qual
+ 
+ theorem trimRecord_eq (record : FastqRecord) :
+-    trimRecord record = { record with letters := (trimBytes record.letters record.quality.toUTF8).1,
+-                                      quality := String.fromUTF8! (trimBytes record.letters record.quality.toUTF8).2 } := by
++    trimRecord record = { record with letters := (trimBytes record.letters record.quality).1,
++                                      quality := (trimBytes record.letters record.quality).2 } := by
+   unfold trimRecord trimBytes
+   simp only []
+   rfl
+@@ -105,35 +105,23 @@ theorem cutAt_spec (letters : ByteArray) :
+     ∀ j, j < cutAt letters → AdapterTrim.matchesAt AdapterTrim.truSeq 6 1 letters j = false :=
+   ⟨AdapterTrim.cut_matches _ _ _ _, AdapterTrim.cut_first _ _ _ _⟩
+ 
+-/-- The quality String of `trimRecord` has the window's bytes, when they are valid UTF-8
+-(they are, for ASCII qualities, which `Spec.readFastqRecord` checks in the patch of audit/medium-fixes only). -/
+-theorem fromUTF8!_toUTF8 (b : ByteArray) (h : b.IsValidUTF8) : (String.fromUTF8! b).toUTF8 = b := by
+-  unfold String.fromUTF8!
+-  rw [dif_pos h]
+-  simp [String.fromUTF8]
+-
+-theorem trimRecord_quality_bytes (record : FastqRecord)
+-    (h : (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8) :
+-    (trimRecord record).quality.toUTF8 = (trimBytes record.letters record.quality.toUTF8).2 := by
+-  rw [trimRecord_eq]
+-  generalize trimBytes record.letters record.quality.toUTF8 = p at h ⊢
+-  exact fromUTF8!_toUTF8 p.2 h
+-
+ /-- **`trimRecord`, stated on the record** (a)-(d): with `cutAt` the adapter cut of the input letters,
+-the output letters are the window `[a, b)` of the input letters, the output quality bytes (before `String.fromUTF8!`)
+-the same window of the input quality bytes, `b ≤ cutAt`, every output letter is A/C/G/T, and the output has no
+-letters or at least `minLength`. -/
++the output letters and qualities are the window `[a, b)` of the input letters / qualities, `b ≤ cutAt`, every output
++letter is A/C/G/T, and the output has no letters or at least `minLength`. -/
+ theorem trimRecord_correct (record : FastqRecord) :
+     ∃ a b, a ≤ b ∧ b ≤ cutAt record.letters ∧ cutAt record.letters ≤ record.letters.size ∧
+       (trimRecord record).letters = record.letters.extract a b ∧
+-      (trimBytes record.letters record.quality.toUTF8).2 = record.quality.toUTF8.extract a b ∧
++      (trimRecord record).quality = record.quality.extract a b ∧
+       (∀ x ∈ (trimRecord record).letters.data, ReadTrim.isACGT x = true) ∧
+       ((trimRecord record).letters.size = 0 ∨ minLength ≤ (trimRecord record).letters.size) := by
+-  obtain ⟨a, b, h1, h2, h3, h4, h5⟩ := trimBytes_window record.letters record.quality.toUTF8
+-  have hl : (trimRecord record).letters = (trimBytes record.letters record.quality.toUTF8).1 := by
++  obtain ⟨a, b, h1, h2, h3, h4, h5⟩ := trimBytes_window record.letters record.quality
++  have hl : (trimRecord record).letters = (trimBytes record.letters record.quality).1 := by
++    rw [trimRecord_eq]
++  have hq : (trimRecord record).quality = (trimBytes record.letters record.quality).2 := by
+     rw [trimRecord_eq]
+-  refine ⟨a, b, h1, h2, h3, ?_, h5, ?_, ?_⟩
++  refine ⟨a, b, h1, h2, h3, ?_, ?_, ?_, ?_⟩
+   · rw [hl, h4]
++  · rw [hq, h5]
+   · rw [hl]; exact trimBytes_acgt _ _
+   · rw [hl]; exact trimBytes_size _ _
+ 
+@@ -187,14 +175,13 @@ theorem extract_mem (b : ByteArray) (i j : Nat) : ∀ x ∈ (b.extract i j).data
+   obtain ⟨k, hk, rfl⟩ := Array.mem_extract_iff_getElem.mp hx
+   exact Array.getElem_mem _
+ 
+-/-- The reader's check discharges the UTF-8 hypothesis: for every record `parseRecord` returns (the reader
+-returns exactly these), the trimmed quality bytes are valid UTF-8 and the quality String of `trimRecord` is
+-exactly those bytes. -/
++/-- The reader's check makes the record's quality String-safe: for every record `parseRecord` returns (the reader
++returns exactly these), the quality bytes of `trimRecord record` are ASCII, hence valid UTF-8, so `String.fromUTF8!`
++on them (Sam.samSequence, forward strand) cannot panic. (The reverse strand reads them reversed; that is not proved here.) -/
+ theorem parseRecord_trim_quality {header letters plus quality : ByteArray} {record : FastqRecord}
+     (h : parseRecord header letters plus quality = .ok record) :
+-    (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8 ∧
+-    (trimRecord record).quality.toUTF8 = (trimBytes record.letters record.quality.toUTF8).2 := by
+-  have hq : allBytes (fun b => 33 ≤ b && b ≤ 126) quality = true ∧ record.quality = String.fromUTF8! quality := by
++    (trimRecord record).quality.IsValidUTF8 := by
++  have hq : allBytes (fun b => 33 ≤ b && b ≤ 126) quality = true ∧ record.quality = quality := by
+     unfold parseRecord at h
+     split at h
+     · cases h
+@@ -205,7 +192,6 @@ theorem parseRecord_trim_quality {header letters plus quality : ByteArray} {reco
+     split at h
+     · cases h
+     rename_i _ _ _ h4
+-    simp only [Bool.not_eq_true', Bool.not_eq_false'] at h4
+     cases h
+     exact ⟨by simpa using h4, rfl⟩
+   obtain ⟨hall, hrec⟩ := hq
+@@ -214,15 +200,12 @@ theorem parseRecord_trim_quality {header letters plus quality : ByteArray} {reco
+     have := allBytes_mem _ _ hall x hx
+     simp only [Bool.and_eq_true, decide_eq_true_eq] at this
+     exact UInt8.lt_iff_toNat_lt.mpr (by have := this.2; simp [UInt8.le_iff_toNat_le] at this; show x.toNat < 128; omega)
+-  have hvalid : quality.IsValidUTF8 := ascii_valid quality hqa
+-  have hbytes : record.quality.toUTF8 = quality := by rw [hrec]; exact fromUTF8!_toUTF8 quality hvalid
+-  obtain ⟨a, b, -, -, -, -, h5⟩ := trimBytes_window record.letters record.quality.toUTF8
+-  have hv : (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8 := by
+-    apply ascii_valid
+-    intro x hx
+-    rw [h5, hbytes] at hx
+-    exact hqa x (extract_mem _ _ _ x hx)
+-  exact ⟨hv, trimRecord_quality_bytes record hv⟩
++  obtain ⟨a, b, -, -, -, -, h5⟩ := trimBytes_window record.letters record.quality
++  have hq' : (trimRecord record).quality = (trimBytes record.letters record.quality).2 := by rw [trimRecord_eq]
++  apply ascii_valid
++  intro x hx
++  rw [hq', h5, hrec] at hx
++  exact hqa x (extract_mem _ _ _ x hx)
+ 
+ end Spec
+ 
+@@ -233,4 +216,3 @@ end Spec
+ #print axioms Spec.trimBytes_acgt
+ #print axioms Spec.trimBytes_size
+ #print axioms Spec.cutAt_spec
+-#print axioms Spec.trimRecord_quality_bytes
 diff --git a/Spec/Fastq.lean b/Spec/Fastq.lean
-index b656414..7a468c6 100644
+index c78ab0d..fb6cef8 100644
 --- a/Spec/Fastq.lean
 +++ b/Spec/Fastq.lean
 @@ -12,7 +12,7 @@ namespace Spec
@@ -168,12 +297,16 @@ index b656414..7a468c6 100644
    let mut j := i
    while j < bytes.size && bytes[j]! != 10 do
      j := j + 1
-@@ -55,11 +71,11 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
-   let some _plus ← reader.line | return none
-   let some quality ← reader.line | return none
-   return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
--                quality := String.fromUTF8! quality }
-+                quality := quality }
+@@ -63,7 +79,7 @@ def parseRecord (header letters plus quality : ByteArray) : Except String FastqR
+   else if !(0 < plus.size && plus[0]! == 43) then .error "third line of a record does not start with '+'"
+   else if !allBytes isDnaByte letters then .error "letters other than A C G T N (lowercase, IUPAC)"
+   else if !allBytes (fun b => 33 ≤ b && b ≤ 126) quality then .error "quality outside '!'..'~'"
+-  else .ok { name := String.fromUTF8! (header.extract 1 header.size), letters, quality := String.fromUTF8! quality }
++  else .ok { name := String.fromUTF8! (header.extract 1 header.size), letters, quality }
+ 
+ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some header ← reader.line | return none
+@@ -77,7 +93,7 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
  
  -- a read's name without its comment (after the first space) and without a trailing "/1" or "/2"
  def mateName (name : String) : String :=
@@ -182,7 +315,7 @@ index b656414..7a468c6 100644
    if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
  
  -- shortest mate kept after trimming; shorter mates become empty (trimmed away)
-@@ -69,12 +85,12 @@ def minLength : Nat := 25
+@@ -87,12 +103,12 @@ def minLength : Nat := 25
  -- and qualities at the first TruSeq adapter, keep the best window, and drop a mate shorter than
  -- `minLength`; a mate with nothing worth keeping comes back with no letters (trimmed away)
  def trimRecord (record : FastqRecord) : FastqRecord :=
@@ -197,17 +330,17 @@ index b656414..7a468c6 100644
  
  -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
  -- names differ or one file ends before the other (the files are out of step)
-@@ -85,7 +101,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
-     | some record1, some record2 =>
-       if mateName record1.name != mateName record2.name then
-         throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
+@@ -107,7 +123,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+         let name := mateName record.name
+         unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
+           throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
 -      if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
 +      if record1.letters.size != record1.quality.size || record2.letters.size != record2.quality.size then
          throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
        chunk := chunk.push (trimRecord record1, trimRecord record2)
      | none, none => break
 diff --git a/Spec/Sam.lean b/Spec/Sam.lean
-index 66697d7..0f228e5 100644
+index 7088781..fb384ba 100644
 --- a/Spec/Sam.lean
 +++ b/Spec/Sam.lean
 @@ -42,7 +42,7 @@ def cigarText (cigar : Array (Step × Nat)) : String :=
@@ -240,3 +373,16 @@ index 66697d7..0f228e5 100644
  
  def uniquenessText : Uniqueness → String
    | .unique      => "unique"
+diff --git a/Testing/scripts/CI_check.sh b/Testing/scripts/CI_check.sh
+index 776bb9e..c9910cd 100644
+--- a/Testing/scripts/CI_check.sh
++++ b/Testing/scripts/CI_check.sh
+@@ -30,7 +30,7 @@ sorries = [l for l in re.findall(r"^warning: (\S+):\d+:\d+: declaration uses .so
+ for n, a in bad: print(f"FAIL non-standard axioms: {n}: [{a}]")
+ for e in errors: print(f"FAIL {e}")
+ for f in sorries: print(f"FAIL sorry outside Spec/: {f}")
+-need = ["Spec.alignPairs_correct", "Spec.alignPairs_end_to_end", "Spec.trimBytes_window", "Spec.trimBytes_acgt", "Spec.trimBytes_size", "Spec.cutAt_spec", "Spec.trimRecord_quality_bytes", "Spec.trimRecord_correct", "Spec.parseRecord_trim_quality"]
++need = ["Spec.alignPairs_correct", "Spec.alignPairs_end_to_end", "Spec.trimBytes_window", "Spec.trimBytes_acgt", "Spec.trimBytes_size", "Spec.cutAt_spec", "Spec.trimRecord_correct", "Spec.parseRecord_trim_quality"]
+ for n in need:
+     if not any(x == n for x, _ in lists): print(f"FAIL no axiom line for the headline theorem {n}"); bad.append(n)
+ if bad or errors or sorries or not lists: sys.exit(1)

@@ -1,0 +1,222 @@
+Shim + Fasta fail-fast patch for Rowan (frozen Spec/Shim.lean: NOT applied).   git apply Testing/notes/audit_medium_patches/shim_fasta_failfast.patch
+Base: festive-fermi 5845b97. Touches Spec/Fasta.lean + Proofs/Fasta.lean (mirror), Spec/Shim.lean + Main.lean (mirror), Spec/FROZEN.sha256 (new Shim checksum).
+Independent of Fastq/Sam: applies before or after Testing/notes/shim_speed.patch (both orders checked with `git apply --check`).
+Changes (audit findings 6, 10, 11, 14; details in Testing/notes/AUDIT_MEDIUM_FIXES.md):
+- readFasta: name = header up to the first space or tab; throw on an empty name, on a letter outside A C G T N, on sequence before the first '>'.
+- sidecar: first line "#index<TAB>size<TAB>FNV-1a64(index)"; readChromosomeList path index throws if it does not match or a line is malformed (toNat?, no toNat!).
+- Shim: MIN/MAX_FRAGMENT parsed with toNat? and thrown on; SAM written to OUT.part and renamed at the end.
+Checked with this patch applied: CI_check.sh passes (FUZZ=1: no violations); SAM byte-identical to the unpatched binary on the fuzz set (600 records)
+and on the first 20k NovaSeq pairs (40000 records; sidecar regenerated in the new format). Old sidecars are rejected: re-run `build`.
+
+diff --git a/Main.lean b/Main.lean
+index 52a0324..8efebe4 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -18,18 +18,22 @@ def main (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+     let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
+-    IO.FS.writeBinFile indexPath (Spec.buildIndex byteGenome)
+-    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome)
++    let index := Spec.buildIndex byteGenome
++    IO.FS.writeBinFile indexPath index
++    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome index)
+     return 0
+   | ["map", indexPath, reads1Path, reads2Path, outPath, minFragment, maxFragment] =>
+-    let insertSettings : Spec.InsertSettings := { range := (minFragment.toNat!, maxFragment.toNat!) }
++    let some minFragment := minFragment.toNat? | throw (IO.userError "MIN_FRAGMENT is not a number")
++    let some maxFragment := maxFragment.toNat? | throw (IO.userError "MAX_FRAGMENT is not a number")
++    let insertSettings : Spec.InsertSettings := { range := (minFragment, maxFragment) }
+     -- TRUSTED: the index file is `buildIndex byteGenome` for the genome (the theorem's `hIndex`),
+-    -- and INDEX.chromosomes lists that genome's names and lengths
++    -- and INDEX.chromosomes lists that genome's names and lengths (checked: it carries this index's size and checksum)
+     let index ← IO.FS.readBinFile indexPath
+-    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
++    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes") index
+     let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
+     let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
+-    let out ← IO.FS.Handle.mk outPath .write
++    -- written to OUT.part and renamed at the end, so a run that stops on an error leaves no SAM under the final name
++    let out ← IO.FS.Handle.mk (outPath ++ ".part") .write
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+@@ -52,6 +56,8 @@ def main (args : List String) : IO UInt32 := do
+       let previous := writing
+       writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+     IO.ofExcept writing.get
++    out.flush
++    IO.FS.rename (outPath ++ ".part") outPath
+     return 0
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
+diff --git a/Proofs/Fasta.lean b/Proofs/Fasta.lean
+index 77c4559..02177b8 100644
+--- a/Proofs/Fasta.lean
++++ b/Proofs/Fasta.lean
+@@ -27,11 +27,17 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+     if 0 < line.size && line[0]! == 62 then
+       if started then
+         chromosomes := chromosomes.push (name, sequence)
+-      name := String.fromUTF8! (line.extract 1 line.size)
++      -- the name is the header up to the first space or tab (as samtools faidx and GATK do)
++      name := ((String.fromUTF8! (line.extract 1 line.size)).takeWhile (fun c => c != ' ' && c != '\t')).toString
++      unless !name.isEmpty do throw (IO.userError "FASTA: empty chromosome name")
+       sequence := ByteArray.empty
+       started := true
+     else if started then
++      unless allBytes isDnaByte line do
++        throw (IO.userError s!"FASTA {name}: letters other than A C G T N (lowercase, IUPAC)")
+       sequence := sequence ++ line
++    else if 0 < line.size then
++      throw (IO.userError "FASTA: sequence before the first '>' line")
+   if started then
+     chromosomes := chromosomes.push (name, sequence)
+   return chromosomes
+@@ -39,15 +45,28 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+ -- chromosome names and lengths, in genome order (saved next to the index at build time)
+ abbrev ChromosomeList := Array (String × Nat)
+ 
+--- one "name<TAB>length" line per chromosome
+-def chromosomeListText (byteGenome : GenomeFile) : String :=
++-- FNV-1a 64 bit over the bytes
++def fnv1a (bytes : ByteArray) : UInt64 := Id.run do
++  let mut h : UInt64 := 14695981039346656037
++  for b in bytes do
++    h := (h ^^^ b.toUInt64) * 1099511628211
++  return h
++
++-- first line "#index<TAB>size<TAB>checksum" of the saved index, then one "name<TAB>length" line per chromosome
++def chromosomeListText (byteGenome : GenomeFile) (index : ByteArray) : String :=
++  s!"#index\t{index.size}\t{fnv1a index}\n" ++
+   String.join (byteGenome.toList.map fun (name, sequence) => s!"{name}\t{sequence.size}\n")
+ 
+-def readChromosomeList (path : String) : IO ChromosomeList := do
++def badList {α : Type} (path why : String) : IO α := throw (IO.userError s!"{path}: {why}")
++
++-- the list saved for exactly this index; a different index, or a damaged list, stops the run
++def readChromosomeList (path : String) (index : ByteArray) : IO ChromosomeList := do
+   let lines := (← IO.FS.readFile path).splitOn "\n" |>.filter (· ≠ "")
+-  return lines.toArray.map fun line =>
+-    match line.splitOn "\t" with
+-    | [name, length] => (name, length.toNat!)
+-    | _ => (line, 0)
++  let header :: rest := lines | badList path "empty"
++  unless header == s!"#index\t{index.size}\t{fnv1a index}" do badList path "was not saved with this index (size or checksum differ)"
++  rest.toArray.mapM fun line => do
++    let [name, length] := line.splitOn "\t" | badList path s!"malformed line '{line}'"
++    let some length := length.toNat? | badList path s!"length '{length}' is not a number"
++    return (name, length)
+ 
+ end Spec
+diff --git a/Spec/FROZEN.sha256 b/Spec/FROZEN.sha256
+index b255e70..47f79ae 100644
+--- a/Spec/FROZEN.sha256
++++ b/Spec/FROZEN.sha256
+@@ -1,4 +1,4 @@
+ 1aca44fb9f1a322efe7dc00bf04e5328091316b181a0244020d810606718162e  Spec/Alignment.lean
+ bed16299002ab810b77a17f678bbbe92c704130ab61d6ba4123a17efcd649f9f  Spec/Mapping.lean
+ e8bdfff2fee4aa0bbdc41b46273ad855a04ab7d87672df62f696faa2147af1bd  Spec/Aligner.lean
+-c12b395662e0265ac5cb40166be03bf4afede52dc6f0684ad7c5cc9f97957b7c  Spec/Shim.lean
++985522ff7863a7344bb672785dfe5610bb680518f4eee8fdb3d6726bb2a9cedb  Spec/Shim.lean
+diff --git a/Spec/Fasta.lean b/Spec/Fasta.lean
+index c607c84..bdd7fed 100644
+--- a/Spec/Fasta.lean
++++ b/Spec/Fasta.lean
+@@ -27,11 +27,17 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+     if 0 < line.size && line[0]! == 62 then
+       if started then
+         chromosomes := chromosomes.push (name, sequence)
+-      name := String.fromUTF8! (line.extract 1 line.size)
++      -- the name is the header up to the first space or tab (as samtools faidx and GATK do)
++      name := ((String.fromUTF8! (line.extract 1 line.size)).takeWhile (fun c => c != ' ' && c != '\t')).toString
++      unless !name.isEmpty do throw (IO.userError "FASTA: empty chromosome name")
+       sequence := ByteArray.empty
+       started := true
+     else if started then
++      unless allBytes isDnaByte line do
++        throw (IO.userError s!"FASTA {name}: letters other than A C G T N (lowercase, IUPAC)")
+       sequence := sequence ++ line
++    else if 0 < line.size then
++      throw (IO.userError "FASTA: sequence before the first '>' line")
+   if started then
+     chromosomes := chromosomes.push (name, sequence)
+   return chromosomes
+@@ -39,15 +45,28 @@ def readFasta (handle : IO.FS.Handle) : IO GenomeFile := do
+ -- chromosome names and lengths, in genome order (saved next to the index at build time)
+ abbrev ChromosomeList := Array (String × Nat)
+ 
+--- one "name<TAB>length" line per chromosome
+-def chromosomeListText (byteGenome : GenomeFile) : String :=
++-- FNV-1a 64 bit over the bytes
++def fnv1a (bytes : ByteArray) : UInt64 := Id.run do
++  let mut h : UInt64 := 14695981039346656037
++  for b in bytes do
++    h := (h ^^^ b.toUInt64) * 1099511628211
++  return h
++
++-- first line "#index<TAB>size<TAB>checksum" of the saved index, then one "name<TAB>length" line per chromosome
++def chromosomeListText (byteGenome : GenomeFile) (index : ByteArray) : String :=
++  s!"#index\t{index.size}\t{fnv1a index}\n" ++
+   String.join (byteGenome.toList.map fun (name, sequence) => s!"{name}\t{sequence.size}\n")
+ 
+-def readChromosomeList (path : String) : IO ChromosomeList := do
++def badList {α : Type} (path why : String) : IO α := throw (IO.userError s!"{path}: {why}")
++
++-- the list saved for exactly this index; a different index, or a damaged list, stops the run
++def readChromosomeList (path : String) (index : ByteArray) : IO ChromosomeList := do
+   let lines := (← IO.FS.readFile path).splitOn "\n" |>.filter (· ≠ "")
+-  return lines.toArray.map fun line =>
+-    match line.splitOn "\t" with
+-    | [name, length] => (name, length.toNat!)
+-    | _ => (line, 0)
++  let header :: rest := lines | badList path "empty"
++  unless header == s!"#index\t{index.size}\t{fnv1a index}" do badList path "was not saved with this index (size or checksum differ)"
++  rest.toArray.mapM fun line => do
++    let [name, length] := line.splitOn "\t" | badList path s!"malformed line '{line}'"
++    let some length := length.toNat? | badList path s!"length '{length}' is not a number"
++    return (name, length)
+ 
+ end Spec
+diff --git a/Spec/Shim.lean b/Spec/Shim.lean
+index 963f393..f3806fe 100644
+--- a/Spec/Shim.lean
++++ b/Spec/Shim.lean
+@@ -17,18 +17,22 @@ def main (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+     let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
+-    IO.FS.writeBinFile indexPath (Spec.buildIndex byteGenome)
+-    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome)
++    let index := Spec.buildIndex byteGenome
++    IO.FS.writeBinFile indexPath index
++    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome index)
+     return 0
+   | ["map", indexPath, reads1Path, reads2Path, outPath, minFragment, maxFragment] =>
+-    let insertSettings : Spec.InsertSettings := { range := (minFragment.toNat!, maxFragment.toNat!) }
++    let some minFragment := minFragment.toNat? | throw (IO.userError "MIN_FRAGMENT is not a number")
++    let some maxFragment := maxFragment.toNat? | throw (IO.userError "MAX_FRAGMENT is not a number")
++    let insertSettings : Spec.InsertSettings := { range := (minFragment, maxFragment) }
+     -- TRUSTED: the index file is `buildIndex byteGenome` for the genome (the theorem's `hIndex`),
+-    -- and INDEX.chromosomes lists that genome's names and lengths
++    -- and INDEX.chromosomes lists that genome's names and lengths (checked: it carries this index's size and checksum)
+     let index ← IO.FS.readBinFile indexPath
+-    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
++    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes") index
+     let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
+     let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
+-    let out ← IO.FS.Handle.mk outPath .write
++    -- written to OUT.part and renamed at the end, so a run that stops on an error leaves no SAM under the final name
++    let out ← IO.FS.Handle.mk (outPath ++ ".part") .write
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+@@ -51,6 +55,8 @@ def main (args : List String) : IO UInt32 := do
+       let previous := writing
+       writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+     IO.ofExcept writing.get
++    out.flush
++    IO.FS.rename (outPath ++ ".part") outPath
+     return 0
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
