@@ -579,6 +579,51 @@ def fallbackOfK (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (slack lo hi 
     c2.findSome? fun x => (pairOf slack lo hi (tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).2
       (tryAt pk pgs offs ns hi R2 t.m2 R1 s1 x).1).filter keep
 
+-- compiled `fallbackOfK`: the partner search (`nearOf`) only when the walked mate has a report (`pairOf` needs both)
+def fallbackOfKL (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (slack lo hi : Nat) (pgs : Array PGen)
+    (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) : Option PairReport :=
+  let s1 : PrepM MzP := prepMate pk R1
+  let s2 : PrepM MzP := prepMate pk R2
+  let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
+  match c1.findSome? fun x =>
+      match mateOf pgs offs ns R1 { t.m1 with pl := some x, cg := t.m1.cg && t.m1.pl == some x } with
+      | none => none
+      | some a => (pairOf slack lo hi (some a)
+          ((nearOf pk pgs hi R2 s2 x.1).bind fun (h, runs) => checkMove pgs offs ns R2 h runs)).filter keep with
+  | some p => some p
+  | none =>
+    let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
+    c2.findSome? fun x =>
+      match mateOf pgs offs ns R2 { t.m2 with pl := some x, cg := t.m2.cg && t.m2.pl == some x } with
+      | none => none
+      | some b => (pairOf slack lo hi
+          ((nearOf pk pgs hi R1 s1 x.1).bind fun (h, runs) => checkMove pgs offs ns R1 h runs) (some b)).filter keep
+
+@[csimp] theorem fallbackOfK_eqL : @fallbackOfK = @fallbackOfKL := by
+  funext keep k pk slack lo hi pgs offs ns R1 R2 t
+  unfold fallbackOfK fallbackOfKL tryAt
+  have e1 : ∀ (R R' : ByteArray) (m : MateX) (s' : PrepM MzP) (x : MapSpec.Placement × Int),
+      (pairOf slack lo hi (mateOf pgs offs ns R { m with pl := some x, cg := m.cg && m.pl == some x })
+        ((nearOf pk pgs hi R' s' x.1).bind fun (h, runs) => checkMove pgs offs ns R' h runs)).filter keep =
+      match mateOf pgs offs ns R { m with pl := some x, cg := m.cg && m.pl == some x } with
+      | none => none
+      | some a => (pairOf slack lo hi (some a)
+          ((nearOf pk pgs hi R' s' x.1).bind fun (h, runs) => checkMove pgs offs ns R' h runs)).filter keep := by
+    intro R R' m s' x
+    cases mateOf pgs offs ns R { m with pl := some x, cg := m.cg && m.pl == some x } <;> simp [pairOf]
+  have e2 : ∀ (R R' : ByteArray) (m : MateX) (s' : PrepM MzP) (x : MapSpec.Placement × Int),
+      (pairOf slack lo hi ((nearOf pk pgs hi R' s' x.1).bind fun (h, runs) => checkMove pgs offs ns R' h runs)
+        (mateOf pgs offs ns R { m with pl := some x, cg := m.cg && m.pl == some x })).filter keep =
+      match mateOf pgs offs ns R { m with pl := some x, cg := m.cg && m.pl == some x } with
+      | none => none
+      | some b => (pairOf slack lo hi
+          ((nearOf pk pgs hi R' s' x.1).bind fun (h, runs) => checkMove pgs offs ns R' h runs) (some b)).filter keep := by
+    intro R R' m s' x
+    cases mateOf pgs offs ns R { m with pl := some x, cg := m.cg && m.pl == some x } with
+    | none => cases (nearOf pk pgs hi R' s' x.1).bind fun (h, runs) => checkMove pgs offs ns R' h runs <;> simp [pairOf]
+    | some b => rfl
+  simp only [e1, e2]
+
 -- the first proper pair (no filter)
 def fallbackOf (k : Nat) (pk : PkMz) (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray)
     (t : TierOut) : Option PairReport :=
