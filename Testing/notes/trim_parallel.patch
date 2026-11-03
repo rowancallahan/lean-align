@@ -1,0 +1,164 @@
+Parallel trimming patch for Rowan (frozen files: NOT applied).   git apply Testing/notes/trim_parallel.patch
+Made against speed/join 0221a57 (festive-fermi 050ef82 + speed/join). Touches Spec/Fastq.lean, Spec/Shim.lean, their copies
+Proofs/Fastq.lean and Main.lean, and Proofs/TrimRecord.lean (new theorem trimChunk_eq). After applying, regenerate the checksum:
+  shasum -a 256 Spec/Alignment.lean Spec/Mapping.lean Spec/Aligner.lean Spec/Shim.lean > Spec/FROZEN.sha256
+(the regeneration is not in the patch).
+- readChunk pushes (record1, record2) untrimmed.
+- trimChunk chunk parts: the chunk is cut into `parts` slices of ceil(size / parts) pairs; each slice is trimmed
+  (trimRecord on both mates) in its own dedicated Task; the slices are concatenated in order. It is self-contained
+  (Spec/Fastq.lean does not import the mapper). It has ParMap.parMap's batch structure, so
+  trimChunk_eq : trimChunk chunk parts = chunk.map (trim both) holds by rfl after ParMap.parMap_eq_map
+  (standard axioms).
+- Shim / Main: both reading tasks become IO.asTask (do let raw <- Spec.readChunk reads1 reads2 20000; return Spec.trimChunk raw 16).
+On top of shim_speed.patch: apply shim_speed first, then this one with `git apply --3way`. One conflict in
+Proofs/TrimRecord.lean at the end of the file: drop the `#print axioms Spec.trimRecord_quality_bytes` line
+(shim_speed removes that theorem) and keep trimChunk_eq.
+Verification is in Testing/notes/TRIM_PARALLEL.md.
+
+diff --git a/Main.lean b/Main.lean
+index 52a0324..d775ac3 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -33,13 +33,17 @@ def main (args : List String) : IO UInt32 := do
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+-    let mut next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
++    let mut next ← IO.asTask (do
++      let raw ← Spec.readChunk reads1 reads2 20000
++      return Spec.trimChunk raw 16)
+     let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
+     repeat
+       let chunk ← IO.ofExcept next.get
+       if chunk.isEmpty then
+         break
+-      next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
++      next ← IO.asTask (do
++        let raw ← Spec.readChunk reads1 reads2 20000
++        return Spec.trimChunk raw 16)
+       -- ╔══════════════════════════════════════════════════════════════════════════════════╗
+       -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
+       -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
+diff --git a/Proofs/Fastq.lean b/Proofs/Fastq.lean
+index c47adb8..eddf6b2 100644
+--- a/Proofs/Fastq.lean
++++ b/Proofs/Fastq.lean
+@@ -110,8 +110,8 @@ def trimRecord (record : FastqRecord) : FastqRecord :=
+   let (letters, qual) := AdapterTrim.dropShort minLength letters qual
+   { record with letters, quality := String.fromUTF8! qual }
+ 
+--- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
+--- names differ or one file ends before the other (the files are out of step)
++-- up to `size` pairs, reading the two FASTQ files in step, UNTRIMMED (`trimChunk` trims them); stops with an
++-- error if two mates' names differ or one file ends before the other (the files are out of step)
+ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecord × FastqRecord)) := do
+   let mut chunk := #[]
+   for _ in [0:size] do
+@@ -125,9 +125,19 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+           throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
+       if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
+         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
+-      chunk := chunk.push (trimRecord record1, trimRecord record2)
++      chunk := chunk.push (record1, record2)
+     | none, none => break
+     | _, _ => throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
+   return chunk
+ 
++-- both mates of every pair trimmed (`trimRecord`), the chunk cut into `parts` slices of `⌈size / parts⌉` pairs, each
++-- slice trimmed in its own task, the slices concatenated in order (`Proofs/TrimRecord.lean`, `trimChunk_eq`: the same
++-- as trimming pair by pair)
++def trimChunk (chunk : Array (FastqRecord × FastqRecord)) (parts : Nat) : Array (FastqRecord × FastqRecord) :=
++  let b := (chunk.size + max parts 1 - 1) / max parts 1
++  let tasks := (List.range (max parts 1)).map fun t =>
++    Task.spawn (prio := .dedicated) fun _ =>
++      (chunk.extract (t * b) ((t + 1) * b)).map fun (record1, record2) => (trimRecord record1, trimRecord record2)
++  tasks.foldl (fun acc t => acc ++ t.get) #[]
++
+ end Spec
+diff --git a/Proofs/TrimRecord.lean b/Proofs/TrimRecord.lean
+index 7c3fc58..4c34eb2 100644
+--- a/Proofs/TrimRecord.lean
++++ b/Proofs/TrimRecord.lean
+@@ -1,4 +1,5 @@
+ import Proofs.Fastq
++import ParMap
+ 
+ /-! # `trimRecord` composes: what the FASTQ glue's trimming guarantees
+ 
+@@ -234,3 +235,16 @@ end Spec
+ #print axioms Spec.trimBytes_size
+ #print axioms Spec.cutAt_spec
+ #print axioms Spec.trimRecord_quality_bytes
++
++namespace Spec
++
++/-- **`trimChunk` trims pair by pair**: the parallel slices give the same chunk as mapping `trimRecord` over both
++mates (`ParMap.parMap_eq_map`). -/
++theorem trimChunk_eq (chunk : Array (FastqRecord × FastqRecord)) (parts : Nat) :
++    trimChunk chunk parts = chunk.map fun (record1, record2) => (trimRecord record1, trimRecord record2) := by
++  rw [← ParMap.parMap_eq_map parts]
++  rfl
++
++end Spec
++
++#print axioms Spec.trimChunk_eq
+diff --git a/Spec/Fastq.lean b/Spec/Fastq.lean
+index c47adb8..eddf6b2 100644
+--- a/Spec/Fastq.lean
++++ b/Spec/Fastq.lean
+@@ -110,8 +110,8 @@ def trimRecord (record : FastqRecord) : FastqRecord :=
+   let (letters, qual) := AdapterTrim.dropShort minLength letters qual
+   { record with letters, quality := String.fromUTF8! qual }
+ 
+--- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
+--- names differ or one file ends before the other (the files are out of step)
++-- up to `size` pairs, reading the two FASTQ files in step, UNTRIMMED (`trimChunk` trims them); stops with an
++-- error if two mates' names differ or one file ends before the other (the files are out of step)
+ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecord × FastqRecord)) := do
+   let mut chunk := #[]
+   for _ in [0:size] do
+@@ -125,9 +125,19 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+           throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
+       if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
+         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
+-      chunk := chunk.push (trimRecord record1, trimRecord record2)
++      chunk := chunk.push (record1, record2)
+     | none, none => break
+     | _, _ => throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
+   return chunk
+ 
++-- both mates of every pair trimmed (`trimRecord`), the chunk cut into `parts` slices of `⌈size / parts⌉` pairs, each
++-- slice trimmed in its own task, the slices concatenated in order (`Proofs/TrimRecord.lean`, `trimChunk_eq`: the same
++-- as trimming pair by pair)
++def trimChunk (chunk : Array (FastqRecord × FastqRecord)) (parts : Nat) : Array (FastqRecord × FastqRecord) :=
++  let b := (chunk.size + max parts 1 - 1) / max parts 1
++  let tasks := (List.range (max parts 1)).map fun t =>
++    Task.spawn (prio := .dedicated) fun _ =>
++      (chunk.extract (t * b) ((t + 1) * b)).map fun (record1, record2) => (trimRecord record1, trimRecord record2)
++  tasks.foldl (fun acc t => acc ++ t.get) #[]
++
+ end Spec
+diff --git a/Spec/Shim.lean b/Spec/Shim.lean
+index 963f393..15d1b8e 100644
+--- a/Spec/Shim.lean
++++ b/Spec/Shim.lean
+@@ -32,13 +32,17 @@ def main (args : List String) : IO UInt32 := do
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+     -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+-    let mut next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
++    let mut next ← IO.asTask (do
++      let raw ← Spec.readChunk reads1 reads2 20000
++      return Spec.trimChunk raw 16)
+     let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
+     repeat
+       let chunk ← IO.ofExcept next.get
+       if chunk.isEmpty then
+         break
+-      next ← IO.asTask (Spec.readChunk reads1 reads2 20000)
++      next ← IO.asTask (do
++        let raw ← Spec.readChunk reads1 reads2 20000
++        return Spec.trimChunk raw 16)
+       -- ╔══════════════════════════════════════════════════════════════════════════════════╗
+       -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
+       -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
