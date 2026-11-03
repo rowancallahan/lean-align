@@ -60,3 +60,15 @@ banded pass per diagonal (~11 DP passes for 43 shapes) would not be cheaper.
 - Tried and dropped: the same sweep in `hitsCKNT` (+2.1M: `sel` rejects most diagonals, so precomputing all supports
   costs more); `sweepAF` on `UInt64` (−1.5M only; the sweep is bounded by the anchors it walks); the byte slow path
   `fineOk` (19M, 289 diagonals of ~4 reads whose window touches a non-ACGT block) is data-specific.
+
+## speed/answer (off festive 050ef82, new-format index): the walk
+answerOfPairP 174.0M (NovaSeq 2k, 1240.2M total) = fallbackOfK 134.6M (290 pairs) + foundOfK 36.5M. fallbackOfK: walk
+steps 113.6M → nearAt 107.4M (385) → nearY 89.8M: bandDPg 51.7M (173 DPs, ~300k Ir each, ~115 Ir per band cell),
+voteD 20.1M (117 votes over the ~1000-letter pair window), winLgU 11.6M (~25 Ir per letter), seedVote 6.9M;
+anchorsOf 12.0M; prepMate redone inside fallbackOfK ~8M. The floor as the DP limit (SMALL_COSTS) is already in.
+- `fallbackOfKP`: the walk takes the router's mate preparations (`s1`, `s2`) instead of recomputing them;
+  `fallbackOfKP_eq` (`prepMz_eq`) keeps `answerOfPairP_eq`. NovaSeq 1240.2M → 1231.5M (−0.7%), HiSeq 1433.3M →
+  1425.1M (−0.6%). SAM identical (2k and full 200k, both sets); FUZZ=1 CI passes.
+- Tried and dropped: `bandCellsJ` carrying the previous row's `H` in a register (+3.6M: the 13-argument cell loop
+  gets slower). A real speed-up of the band DP needs a different kernel layout (machine-word arrays), not a
+  source-level tweak.
