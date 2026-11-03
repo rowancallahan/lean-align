@@ -228,8 +228,13 @@ def preOf (insertSettings : InsertSettings) (r : MateReport) : Bool :=
 
 -- the other mate's DP limit at a walk step: a partner with penalty `≥ r.score - junkScore + 1` puts the pair below
 -- `junkScore` (`keepOf` drops it). At least 9: `TierHeur.nearY` runs its banded DP only for a limit above 8
-def limOf (insertSettings : InsertSettings) (r : MateReport) : Nat :=
-  max 9 (r.score - insertSettings.junkScore + 1).toNat
+-- `walkStop`: a gap-free partner whose pair is at `junkScore` or better is taken without the banded DP (any proper pair
+-- `≥ junkScore` closes the walk). false: the partner is the banded DP's best, as the router's
+def walkStop : Bool := true
+
+def limOf (insertSettings : InsertSettings) (r : MateReport) : Nat × Nat :=
+  (max 9 (r.score - insertSettings.junkScore + 1).toNat,
+   if walkStop then (r.score - insertSettings.junkScore).toNat else 0)
 
 -- the answer from a router output `t`: the found pair re-checked (`Report`), the walk when `fb` allows it, then
 -- the report floor (`LastResort.finalize`)

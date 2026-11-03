@@ -704,7 +704,7 @@ def gapHint (X W : ByteArray) (s : Int) (w e : Nat) : Bool := Id.run do
 shared 11-mers (or `sv`, the read start in the window that the
 read's seeds give), gapless there, then the banded DP (± `w`) when the gapless penalty is over 8.
 (start, length, penalty, runs). -/
-def nearY (X : ByteArray) (G : PGen) (ws we w lim bl ge : Nat) (sv : Option Int) (vf : Bool := true) (wf : Bool := false) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
+def nearY (X : ByteArray) (G : PGen) (ws we w lim bl ge : Nat) (sv : Option Int) (vf : Bool := true) (wf : Bool := false) (stop : Nat := 0) : Option (Nat × Nat × Nat × List (AlignmentSpec.Step × Nat)) := Id.run do
   let n := X.size
   let we := min we G.n
   if n == 0 || we < ws + n then return none
@@ -737,7 +737,8 @@ def nearY (X : ByteArray) (G : PGen) (ws we w lim bl ge : Nat) (sv : Option Int)
     if 4 * mm < lim then
       best := some (a + s1.toNat, n, 4 * mm, [(AlignmentSpec.Step.diag, n)])
       lim := 4 * mm
-  if lim > 8 && (ge == 0 || gapHint X W s1 w ge) then
+  -- `stop`: a gap-free placement with penalty at most `stop` is good enough (no banded DP); 0 changes nothing
+  if lim > 8 && !(best.isSome && lim ≤ stop) && (ge == 0 || gapHint X W s1 w ge) then
     if let some (cs, len, p, runs) := bandAln wf X W s1 w (min lim bl) then
       best := some (a + cs, len, p, runs)
   return best
