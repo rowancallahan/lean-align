@@ -1488,3 +1488,13 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - ~03:05: merged speed/second-look (S-F: the cheaper mate goes genome-wide; proved; SAM identical) → festive 3d63f4b. Native user CPU, 200k: NovaSeq 34.7 → 26.1 s (baseline 16.6); HiSeq 36.0 → 26.2 s (baseline 20.4).
 - S-F: rare-seed completion adds nothing beyond the swap. The few remaining expensive pairs have two ~4.5k-hit seeds among the 5 needed on both mates, so they need a finer pigeonhole (more, shorter or overlapping seeds), i.e. Rowan's short-seed index idea.
 - S-D's stage profile at 565d1e8 (pre-swap): complete search ~55% of the gap, join + gave-up check ~12%; router+walk vs the baseline router is not yet split.
+- ~03:10: CLIPPING_GAP.md (S4). Pairs where we answer none but minibwa has MAPQ >= 30 on both mates: 6,898 NovaSeq / 7,637 HiSeq (3.4 / 3.8%).
+  - Causes, NovaSeq / HiSeq:
+    - not a proper pair under our rules: 26 / 15%;
+    - minibwa clip >= 10 bases: 20 / 42%;
+    - our trimmer removed >= 10 bases: 16 / 28%;
+    - indel-heavy: 10 / 7%;
+    - error-rich: 17 / 6%.
+  - A dovetail slack of 1-2 bases would admit ~220 per set.
+  - With local alignment, the clipped part's pair score passes -100 for 94 / 74%, but beats the -16 bound for only 34 / 16%.
+  - For Rowan's later local-alignment / dovetailSlack decisions.
