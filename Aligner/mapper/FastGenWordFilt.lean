@@ -189,6 +189,24 @@ theorem gAtWU_eq (gs : GW) (tU jU : USize) (t j : Nat) (ht : tU.toNat = t) (hj :
   simp only []
   rw [GW.getU_eq, GW.getU_eq, hu, hu1, hs, c1, c2]
 
+
+/-- `gAtW` (its slow path; not rewritten by `csimp`). -/
+@[inline] def gAtWS (gs : GW) (t : Nat) : UInt64 :=
+  let s := t % 32
+  comb (gs.get (t / 32)) (gs.get (t / 32 + 1)) s (2 * s).toUInt64 (64 - 2 * s).toUInt64
+
+/-- `gAtW` for the compiled code (`gAtW_eqF`): `USize` offsets and `GW.getU`. -/
+@[inline] def gAtWF (gs : GW) (t : Nat) : UInt64 :=
+  if t < 2147483648 then gAtWU gs t.toUSize 0 else gAtWS gs t
+
+@[csimp] theorem gAtW_eqF : @gAtW = @gAtWF := by
+  funext gs t
+  unfold gAtWF; split
+  · rename_i h
+    have := gAtWU_eq gs t.toUSize 0 t 0 (usz_n _ (by omega)) (usz_lit 0 (by decide)) (by omega)
+    rw [Nat.mul_zero, Nat.add_zero] at this
+    exact this.symm
+  · rfl
 /-- `svAny` (its slow path; not rewritten by `csimp`). -/
 def svAnyS (gs : GW) (sv : UInt64) (t : Nat) : Nat → Bool
   | 0 => false
@@ -353,6 +371,24 @@ def unlookV (K : RP) (gs : GW) (o Ls r sb : Nat) : List Nat → Nat → Bool
     let ok := eq25 (gAtW gs (o + A + r)) sv || svAny gs sv (o + A) (2 * r + 1)
     if ok then unlookV K gs o Ls r sb us f
     else if sb < f + 1 then false else unlookV K gs o Ls r sb us (f + 1)
+
+/-- The seeds `us` as (read start, seed word), computed once per read (`unlookW_eq`). -/
+def svsOf (K : RP) (Ls : Nat) (us : List Nat) : List (Nat × UInt64) := us.map fun j => (j * Ls, gAt K.w (j * Ls))
+
+/-- `unlookV` on the seeds' precomputed starts and words (`unlookW_eq`). -/
+def unlookW (gs : GW) (o r sb : Nat) : List (Nat × UInt64) → Nat → Bool
+  | [], _ => true
+  | (A, sv) :: svs, f =>
+    let ok := eq25 (gAtW gs (o + A + r)) sv || svAny gs sv (o + A) (2 * r + 1)
+    if ok then unlookW gs o r sb svs f
+    else if sb < f + 1 then false else unlookW gs o r sb svs (f + 1)
+
+theorem unlookW_eq (K : RP) (gs : GW) (o Ls r sb : Nat) :
+    ∀ us f, unlookW gs o r sb (svsOf K Ls us) f = unlookV K gs o Ls r sb us f := by
+  intro us
+  induction us with
+  | nil => intro f; rfl
+  | cons j us ih => intro f; simp only [svsOf, List.map_cons, unlookW, unlookV] at ih ⊢; simp only [ih]
 
 /-- The seeds `us` lie inside the read (`j·Ls + q ≤ n`). -/
 def usIn (Ls n : Nat) : List Nat → Bool
