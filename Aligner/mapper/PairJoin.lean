@@ -127,6 +127,156 @@ def noPairJS {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : Byt
         let f2 := anchSel ix G R2 s2
         !nearAnyF W (r1.length + f2.length + 1) r1 f2))
 
+/-- `noPairJS` without the second strand's lookups when the first strand has no anchors (`nearAnyF` is then false:
+no near pair), `noPairJS_eqL`. -/
+def noPairJSL {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : ByteArray)
+    (s1 sr1 s2 sr2 : List Nat) : Bool :=
+  fastT P1 R1 && fastT P2 R2 &&
+    selOk P1 R1 s1 && selOk P1 R1 sr1 && selOk P2 R2 s2 && selOk P2 R2 sr2 &&
+    (let W := joinW P1 P2 hi R1.size R2.size
+     let f1 := anchSel ix G R1 s1
+     (f1.isEmpty || (let r2 := anchSel ix G (revCompK R2) sr2; !nearAnyF W (f1.length + r2.length + 1) f1 r2)) &&
+       (let r1 := anchSel ix G (revCompK R1) sr1
+        r1.isEmpty || (let f2 := anchSel ix G R2 s2; !nearAnyF W (r1.length + f2.length + 1) r1 f2)))
+
+theorem nearAnyF_nil (W n : Nat) (ys : List Nat) : nearAnyF W (n + 1) [] ys = false := rfl
+
+theorem skip_empty (W : Nat) (xs ys : List Nat) :
+    (xs.isEmpty || !nearAnyF W (xs.length + ys.length + 1) xs ys) = !nearAnyF W (xs.length + ys.length + 1) xs ys := by
+  cases xs with
+  | nil => simp only [List.isEmpty_nil, Bool.true_or, List.length_nil]; rw [nearAnyF_nil]; rfl
+  | cons x xs => simp
+
+theorem noPairJS_eqL : @noPairJS = @noPairJSL := by
+  funext L Pp _ P1 P2 hi ix G R1 R2 s1 sr1 s2 sr2
+  unfold noPairJS noPairJSL
+  simp only [skip_empty]
+
+/-! ### Compiled join: anchors merged as arrays, the near test over arrays (`noPairJS_eqA`) -/
+
+-- merge of two sorted arrays (`List.merge` with `≤`: `mergeGo_toList`)
+def mergeGo (a b : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
+  if hi : i < a.size then
+    if hj : j < b.size then
+      if a[i] ≤ b[j] then mergeGo a b (i + 1) j (acc.push a[i]) else mergeGo a b i (j + 1) (acc.push b[j])
+    else acc ++ a.extract i a.size
+  else acc ++ b.extract j b.size
+termination_by (a.size - i) + (b.size - j)
+
+theorem drop_cons_getElem (a : Array Nat) (i : Nat) (h : i < a.size) : a.toList.drop i = a[i] :: a.toList.drop (i + 1) := by
+  rw [List.drop_eq_getElem_cons (by simpa using h)]; simp
+
+theorem mergeGo_toList (a b : Array Nat) : ∀ n i j (acc : Array Nat), (a.size - i) + (b.size - j) = n →
+    (mergeGo a b i j acc).toList = acc.toList ++ List.merge (a.toList.drop i) (b.toList.drop j) (fun x y => decide (x ≤ y)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro i j acc hn
+    rw [mergeGo]
+    split
+    · rename_i hi
+      split
+      · rename_i hj
+        rw [drop_cons_getElem a i hi, drop_cons_getElem b j hj]
+        split
+        · rename_i hle
+          rw [ih _ (by omega) (i + 1) j _ rfl, List.cons_merge_cons_pos _ _ _ (by simpa using hle),
+            ← drop_cons_getElem b j hj]
+          simp
+        · rename_i hle
+          rw [ih _ (by omega) i (j + 1) _ rfl, List.cons_merge_cons_neg _ _ _ (by simpa using hle),
+            ← drop_cons_getElem a i hi]
+          simp
+      · rename_i hj
+        rw [List.drop_of_length_le (l := b.toList) (by simp; omega), List.merge_right]
+        simp [Array.toList_extract, List.extract]
+        exact List.take_of_length_le (by simp)
+    · rename_i hi
+      rw [List.drop_of_length_le (l := a.toList) (by simp; omega), List.nil_merge]
+      simp [Array.toList_extract, List.extract]
+      exact List.take_of_length_le (by simp)
+
+def mergeA (a b : Array Nat) : Array Nat := mergeGo a b 0 0 (Array.emptyWithCapacity (a.size + b.size))
+
+theorem mergeA_toList (a b : Array Nat) :
+    (mergeA a b).toList = List.merge a.toList b.toList (fun x y => decide (x ≤ y)) := by
+  unfold mergeA; rw [mergeGo_toList a b _ 0 0 _ rfl]; simp
+
+def anchSelA {L Pp : Type} [LookG L Pp] (ix : L) (G R : ByteArray) (sel : List Nat) : Array Nat :=
+  let m := R.size / 25
+  let Ls := R.size / m
+  sel.foldl (fun acc j => mergeA acc
+    ((LookG.look ix G R (j * Ls) (R.size - j * Ls) (LookG.prep ix (seedHashAt R (j * Ls)))).map (· / 16))) #[]
+
+theorem anchSelA_toList {L Pp : Type} [LookG L Pp] (ix : L) (G R : ByteArray) (sel : List Nat) :
+    (anchSelA ix G R sel).toList = anchSel ix G R sel := by
+  unfold anchSelA anchSel
+  simp only []
+  suffices ∀ (acc : Array Nat), (sel.foldl (fun acc j => mergeA acc
+      ((LookG.look ix G R (j * (R.size / (R.size / 25))) (R.size - j * (R.size / (R.size / 25)))
+        (LookG.prep ix (seedHashAt R (j * (R.size / (R.size / 25)))))).map (· / 16))) acc).toList =
+      sel.foldl (fun acc j => List.merge acc
+        ((LookG.look ix G R (j * (R.size / (R.size / 25))) (R.size - j * (R.size / (R.size / 25)))
+          (LookG.prep ix (seedHashAt R (j * (R.size / (R.size / 25)))))).toList.map (· / 16))
+        (fun a b => decide (a ≤ b))) acc.toList from this #[]
+  induction sel with
+  | nil => intro acc; rfl
+  | cons j l ih =>
+    intro acc
+    simp only [List.foldl_cons]
+    rw [ih, mergeA_toList, Array.toList_map]
+
+-- `nearAnyF` over arrays from positions `i`, `j`
+def nearGo (W : Nat) (a b : Array Nat) : (f i j : Nat) → Bool
+  | 0, _, _ => true
+  | f + 1, i, j =>
+    if hi : i < a.size then
+      if hj : j < b.size then
+        if a[i] + W < b[j] then nearGo W a b f (i + 1) j
+        else if b[j] + W < a[i] then nearGo W a b f i (j + 1)
+        else true
+      else false
+    else false
+
+theorem nearGo_eq (W : Nat) (a b : Array Nat) : ∀ f i j,
+    nearGo W a b f i j = nearAnyF W f (a.toList.drop i) (b.toList.drop j)
+  | 0, _, _ => by simp [nearGo, nearAnyF]
+  | f + 1, i, j => by
+    unfold nearGo
+    split
+    · rename_i hi
+      split
+      · rename_i hj
+        rw [drop_cons_getElem a i hi, drop_cons_getElem b j hj, nearAnyF]
+        split
+        · rw [nearGo_eq W a b f (i + 1) j, ← drop_cons_getElem b j hj]
+        · split
+          · rw [nearGo_eq W a b f i (j + 1), ← drop_cons_getElem a i hi]
+          · rfl
+      · rename_i hj
+        rw [List.drop_of_length_le (l := b.toList) (by simp; omega)]
+        cases a.toList.drop i <;> rfl
+    · rename_i hi
+      rw [List.drop_of_length_le (l := a.toList) (by simp; omega)]
+      rfl
+
+def noPairJSA {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : ByteArray)
+    (s1 sr1 s2 sr2 : List Nat) : Bool :=
+  fastT P1 R1 && fastT P2 R2 &&
+    selOk P1 R1 s1 && selOk P1 R1 sr1 && selOk P2 R2 s2 && selOk P2 R2 sr2 &&
+    (let W := joinW P1 P2 hi R1.size R2.size
+     let f1 := anchSelA ix G R1 s1
+     (f1.isEmpty || (let r2 := anchSelA ix G (revCompK R2) sr2; !nearGo W f1 r2 (f1.size + r2.size + 1) 0 0)) &&
+       (let r1 := anchSelA ix G (revCompK R1) sr1
+        r1.isEmpty || (let f2 := anchSelA ix G R2 s2; !nearGo W r1 f2 (r1.size + f2.size + 1) 0 0)))
+
+/-- Compiled code runs `noPairJSA`. -/
+@[csimp] theorem noPairJS_eqA : @noPairJS = @noPairJSA := by
+  funext L Pp _ P1 P2 hi ix G R1 R2 s1 sr1 s2 sr2
+  rw [noPairJS_eqL]
+  unfold noPairJSL noPairJSA
+  simp only [nearGo_eq, List.drop_zero, anchSelA_toList, ← Array.length_toList, ← Array.isEmpty_toList]
+
 /-! ## Proofs -/
 
 section fold
@@ -453,3 +603,5 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.nearAnyF_false
 #print axioms MapSpec.Fast.anch_of_hit
 #print axioms MapSpec.Fast.noPairJ_ok
+
+#print axioms MapSpec.Fast.noPairJS_eqA
