@@ -31,3 +31,29 @@ NovaSeq / HiSeq: not measurable on 3db69c7 here. Both base and new are killed (o
 low-quality NovaSeq pair (`A00744:46:HV3C3DSXX:2:1103:27218:22420`, mostly Q11): probably mates trimmed below 25
 letters, whose second look scans the genome window by window (`hitsKPF` fallback). gaveUp cannot cover it (no
 25-letter seed). This is a 3db69c7 problem, independent of the prototype.
+
+## On the merged base 1266f07 (minLength 25; rebased, `afterLeftover` shared by `answerOfReads` and `alignOneP`)
+CI + FUZZ green (435 theorems). The OOM pair now runs: base 30.5 s, prototype 1.9 s (5.2 GB).
+
+| set (200k pairs, 4 threads) | gaveUp pairs | wall base → new | CPU base → new | mapped base → new | unique |
+|---|---|---|---|---|---|
+| NovaSeq | 3,356 | 313.8 → 15.1 s | 873.1 → 44.5 s | 187,221 → 186,189 | 164,839 both |
+| HiSeq | 2,520 | 119.6 → 12.5 s | 298.5 → 38.4 s | 186,498 → 185,804 | 169,101 both |
+
+## Rowan's K question: gave-up pairs with ≥ K grid seeds (offsets 0, 25, …) of ≥ 500 in-chromosome hits
+(Testing/benches/GaveUpK.lean; trimmed mates; pair = either mate)
+| set | gave up | K=1 m1 / m2 / pair | K=2 m1 / m2 / pair | K=3 m1 / m2 / pair |
+|---|---|---|---|---|
+| mason (3db69c7) | 2,273 | 1,591 / 1,537 / 2,273 | 1,236 / 1,158 / 1,928 (85%) | 885 / 797 / 1,488 (65%) |
+| low (3db69c7) | 1,184 | 833 / 748 / 1,184 | 705 / 609 / 1,077 (91%) | 628 / 495 / 980 (83%) |
+| NovaSeq | 3,356 | 2,335 / 2,000 / 3,356 | 1,356 / 1,094 / 2,096 (62%) | 931 / 666 / 1,419 (42%) |
+| HiSeq | 2,520 | 1,765 / 1,502 / 2,520 | 1,009 / 918 / 1,688 (67%) | 714 / 618 / 1,223 (49%) |
+
+Pairs failing K = 2 (would get the second look): base maps / at truth, and the second look's CPU on them (min CPU of 3
+warm runs, base − prototype on the subset; the VM's load time makes small numbers noisy):
+| set | K=2 fails | second look maps | at truth | CPU cost | vs. gaveUp's total saving |
+|---|---|---|---|---|---|
+| mason | 345 | 116 | 77 | ~3.6 s | ~395 s |
+| low | 107 | 97 | 69 | ~2.0 s | ~600 s |
+| NovaSeq | 1,260 | 143 (all ≥ −50, none unique) | – | ~20 s | ~829 s |
+| HiSeq | 832 | 119 (all ≥ −50, none unique) | – | ~18 s | ~260 s |
