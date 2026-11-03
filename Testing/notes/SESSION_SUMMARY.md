@@ -1485,3 +1485,6 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
   - PROOF_MAP.md;
   - INDEX_TRICKS.md: weighted minimizers / closed syncmers proved complete; LSH and strobemers are candidates only;
   - SEMI_REPETITIVE_EXAMPLES.md: 2.6% / 1.4% of pairs; half are semi-repetitive, half short or error-rich. Where we answer none, minibwa maps 2,821 / 1,386 of them with MAPQ >= 30, mostly via soft clipping. S4 is measuring the clipping gap.
+- ~03:05: merged speed/second-look (S-F: the cheaper mate goes genome-wide; proved; SAM identical) → festive 3d63f4b. Native user CPU, 200k: NovaSeq 34.7 → 26.1 s (baseline 16.6); HiSeq 36.0 → 26.2 s (baseline 20.4).
+- S-F: rare-seed completion adds nothing beyond the swap. The few remaining expensive pairs have two ~4.5k-hit seeds among the 5 needed on both mates, so they need a finer pigeonhole (more, shorter or overlapping seeds), i.e. Rowan's short-seed index idea.
+- S-D's stage profile at 565d1e8 (pre-swap): complete search ~55% of the gap, join + gave-up check ~12%; router+walk vs the baseline router is not yet split.
