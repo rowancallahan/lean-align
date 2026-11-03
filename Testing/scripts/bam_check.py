@@ -62,8 +62,8 @@ while p < len(b):
     exp_ref = s[2]; got_ref = '*' if ref < 0 else refs[ref][0]
     got_next = '*' if nref_ < 0 else ('=' if nref_ == ref else refs[nref_][0])
     reflen = sum(int(c) for c, o in __import__('re').findall(r'(\d+)([A-Z=])', cig) if o in 'MDN=X')
-    want_bin = reg2bin(pos0, pos0 + reflen) if ref >= 0 else 4680
-    got = [name, str(flag), got_ref, str(pos0 + 1), str(mapq), cig or '*', got_next, str(npos + 1), str(tlen), seq, qual]
+    want_bin = reg2bin(pos0, pos0 + max(reflen, 1)) if ref >= 0 else 4680   # htslib: a record with no reference span covers [pos, pos+1)
+    got = [name, str(flag), got_ref, str(pos0 + 1), str(mapq), cig or '*', got_next, str(npos + 1), str(tlen), seq or '*', qual or '*']   # l_seq 0 prints as *
     assert got == s[:11] and tags == s[11:], f'record {n}: BAM {got + tags} != SAM {s}'
     assert bin_ == want_bin, f'record {n}: bin {bin_} != {want_bin}'
     n += 1

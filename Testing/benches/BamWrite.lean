@@ -19,7 +19,9 @@ open Spec
 
 -- a chunk of read pairs, as `alignPairs` takes them (as Main.lean)
 def chunkPairs (chunk : Array (FastqRecord × FastqRecord)) : List (Option ByteArray × Option ByteArray) :=
-  chunk.toList.map fun (record1, record2) => (some record1.letters, some record2.letters)
+  chunk.toList.map fun (record1, record2) =>
+    (if record1.letters.isEmpty then none else some record1.letters,
+     if record2.letters.isEmpty then none else some record2.letters)
 
 namespace Bam
 

@@ -3,6 +3,7 @@
 # Exit 0 = frozen files match their checksums, everything builds, every
 # certificate and spec file elaborates with standard axioms only and no sorry,
 # and the executable cross-codec check passes.
+# FUZZ=1 sh Testing/scripts/CI_check.sh  also runs the output-fuzz regression (fuzz_ci.sh: tiny generated genome, ~20 s, no hg38).
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 fail=0
@@ -71,6 +72,11 @@ n=$(grep -n '^/-! ## The index and the aligner' Spec/Aligner.lean | cut -d: -f1)
 head -n $((n-1)) Spec/Aligner.lean >"$tmp/lean_align_spec_answer.lean"
 [ -n "$n" ] && sed "1d; \$d; s/^import Proofs.Mapping$/import Spec.Mapping/" Proofs/Answer.lean | cmp -s - "$tmp/lean_align_spec_answer.lean" && echo "Proofs/Answer.lean mirrors Spec/Aligner.lean (up to the holes)" || { echo "FAIL: Proofs/Answer.lean differs from Spec/Aligner.lean"; fail=1; }
 sed "1d; s/^import Proofs.Sam$/import Spec.Sam/" Main.lean | cmp -s - Spec/Shim.lean && echo "Main.lean mirrors Spec/Shim.lean" || { echo "FAIL: Main.lean differs from Spec/Shim.lean"; fail=1; }
+
+if [ "${FUZZ:-0}" = 1 ]; then
+  step "output fuzz (tiny generated genome; known problems print XFAIL and do not fail)"
+  sh Testing/scripts/fuzz_ci.sh || fail=1
+fi
 
 step "result"
 [ $fail -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"

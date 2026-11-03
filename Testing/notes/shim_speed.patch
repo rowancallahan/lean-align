@@ -1,0 +1,236 @@
+Shim speed patch for Rowan (frozen files: NOT applied).   git apply Testing/notes/shim_speed.patch
+Touches Proofs/Fastq.lean, Proofs/Sam.lean and their copies Spec/Fastq.lean, Spec/Sam.lean (the same edits).
+
+Items, measured cumulatively (callgrind Ir of the shim, first 2000 pairs, index load included; base 34832e7:
+NovaSeq 958.6M, HiSeq hg002 2x250 1681.4M). SAM byte-identical to base at every step on both subsets; with all four
+items, also identical on the four full 200k sets (NovaSeq, mason, low, HiSeq), and CI_check.sh passes.
+| step | change | NovaSeq | HiSeq |
+| 1 | reverseMapBytes @[specialize]: f (complementByte / id) was a closure call per byte | -31.5M (-3.3%) | -48.4M (-2.9%) |
+| 2 | samName / mateName: (name.takeWhile (· != ' ')).toString instead of (name.splitOn " ").headD _ | -29.5M (-3.1%) | -20.0M (-1.2%) |
+| 3 | findNewline: USize loop with uget (findNewlineU), the while loop kept as the fallback | -17.7M (-1.8%) | -22.0M (-1.3%) |
+| 4 | FastqRecord.quality : ByteArray (was String): no UTF-8 round trips when reading / trimming; SAM QUAL decoded once | -22.1M (-2.3%) | -39.6M (-2.4%) |
+| all | | 857.8M (-10.5%) | 1551.4M (-7.7%) |
+Notes:
+- Step 2 gives the same string: the part before the first space (splitOn with a non-empty separator always has a
+  first piece; with no space it is the whole name).
+- Step 3's findNewlineU is not proved equal to the while loop (needs a lemma if the file must stay proof-equal);
+  it returns the same index on the four full sets.
+- Step 4 changes a Spec structure's field type (FastqRecord.quality); nothing else in Spec/, Main.lean or the
+  proofs reads it. The SAM text is unchanged.
+
+diff --git a/Proofs/Fastq.lean b/Proofs/Fastq.lean
+index e65183e..f6902e3 100644
+--- a/Proofs/Fastq.lean
++++ b/Proofs/Fastq.lean
+@@ -10,7 +10,7 @@ namespace Spec
+ structure FastqRecord where
+   name    : String
+   letters : ByteArray
+-  quality : String
++  quality : ByteArray
+ 
+ -- a FASTQ file read in blocks: the unread bytes are `buffer` from `pos` on
+ structure FastqReader where
+@@ -22,7 +22,23 @@ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
+   return { handle, buffer := ← IO.mkRef ByteArray.empty, pos := ← IO.mkRef 0 }
+ 
+ -- the first newline byte at or after `i` (or `bytes.size` when there is none)
+-def findNewline (bytes : ByteArray) (i : Nat) : Nat := Id.run do
++theorem usize_le' (a : ByteArray) : a.usize.toNat ≤ a.size := by
++  show a.size.toUSize.toNat ≤ a.size
++  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
++
++def findNewlineU (bytes : @& ByteArray) (j : USize) : USize :=
++  if h : j < bytes.usize then
++    if bytes.uget j (Nat.lt_of_lt_of_le h (usize_le' bytes)) != 10 then findNewlineU bytes (j + 1) else j
++  else j
++termination_by bytes.usize.toNat - j.toNat
++decreasing_by
++  have h' : j.toNat < bytes.usize.toNat := h
++  have := USize.toNat_lt_size bytes.usize
++  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
++  rw [USize.toNat_add, USize.toNat_one, Nat.mod_eq_of_lt (by omega)]; omega
++
++def findNewline (bytes : ByteArray) (i : Nat) : Nat :=
++  if i < bytes.size ∧ bytes.size < 4294967295 then (findNewlineU bytes i.toUSize).toNat else Id.run do
+   let mut j := i
+   while j < bytes.size && bytes[j]! != 10 do
+     j := j + 1
+@@ -53,21 +69,21 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some _plus ← reader.line | return none
+   let some quality ← reader.line | return none
+   return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
+-                quality := String.fromUTF8! quality }
++                quality := quality }
+ 
+ -- a read's name without its comment (after the first space) and without a trailing "/1" or "/2"
+ def mateName (name : String) : String :=
+-  let base := (name.splitOn " ").headD ""
++  let base := (name.takeWhile (· != ' ')).toString
+   if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
+ 
+ -- quality trimming with the proved trimmer: keep the best window of letters and qualities; a mate
+ -- with nothing worth keeping comes back with no letters (trimmed away)
+ def trimRecord (record : FastqRecord) : FastqRecord :=
+-  let qual := record.quality.toUTF8
++  let qual := record.quality
+   match ReadTrim.trimRead record.letters qual with
+   | some (s, e) => { record with letters := record.letters.extract s e,
+-                                 quality := String.fromUTF8! (qual.extract s e) }
+-  | none => { record with letters := ByteArray.empty, quality := "" }
++                                 quality := qual.extract s e }
++  | none => { record with letters := ByteArray.empty, quality := ByteArray.empty }
+ 
+ -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
+ -- names differ or one file ends before the other (the files are out of step)
+@@ -78,7 +94,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+     | some record1, some record2 =>
+       if mateName record1.name != mateName record2.name then
+         throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
+-      if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
++      if record1.letters.size != record1.quality.size || record2.letters.size != record2.quality.size then
+         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
+       chunk := chunk.push (trimRecord record1, trimRecord record2)
+     | none, none => break
+diff --git a/Proofs/Sam.lean b/Proofs/Sam.lean
+index f74f50b..fc14eb2 100644
+--- a/Proofs/Sam.lean
++++ b/Proofs/Sam.lean
+@@ -42,7 +42,7 @@ def cigarText (cigar : Array (Step × Nat)) : String :=
+ 
+ -- QNAME: the FASTQ name up to the first space, without a trailing /1 or /2
+ def samName (name : String) : String :=
+-  let name := (name.splitOn " ").headD name
++  let name := (name.takeWhile (· != ' ')).toString
+   if name.endsWith "/1" || name.endsWith "/2" then (name.dropEnd 2).toString else name
+ 
+ -- `complement` (Mapping.lean) on one byte: A <-> T, C <-> G, everything else unchanged
+@@ -50,7 +50,7 @@ def complementByte (byte : UInt8) : UInt8 :=
+   if byte == 65 then 84 else if byte == 84 then 65 else if byte == 67 then 71 else if byte == 71 then 67 else byte
+ 
+ -- the bytes in reverse order, each through `f`
+-def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.run do
++@[specialize] def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.run do
+   let mut out := ByteArray.emptyWithCapacity bytes.size
+   for i in [0:bytes.size] do
+     out := out.push (f bytes[bytes.size - 1 - i]!)
+@@ -62,9 +62,9 @@ def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.
+ def samSequence (record : FastqRecord) (strand : Strand) : String × String :=
+   if record.letters.isEmpty then ("*", "*") else
+   match strand with
+-  | .forward => (String.fromUTF8! record.letters, record.quality)
++  | .forward => (String.fromUTF8! record.letters, String.fromUTF8! record.quality)
+   | .reverse => (String.fromUTF8! (reverseMapBytes complementByte record.letters),
+-                 String.fromUTF8! (reverseMapBytes id record.quality.toUTF8))
++                 String.fromUTF8! (reverseMapBytes id record.quality))
+ 
+ def uniquenessText : Uniqueness → String
+   | .unique      => "unique"
+diff --git a/Spec/Fastq.lean b/Spec/Fastq.lean
+index e65183e..f6902e3 100644
+--- a/Spec/Fastq.lean
++++ b/Spec/Fastq.lean
+@@ -10,7 +10,7 @@ namespace Spec
+ structure FastqRecord where
+   name    : String
+   letters : ByteArray
+-  quality : String
++  quality : ByteArray
+ 
+ -- a FASTQ file read in blocks: the unread bytes are `buffer` from `pos` on
+ structure FastqReader where
+@@ -22,7 +22,23 @@ def FastqReader.ofHandle (handle : IO.FS.Handle) : IO FastqReader :=
+   return { handle, buffer := ← IO.mkRef ByteArray.empty, pos := ← IO.mkRef 0 }
+ 
+ -- the first newline byte at or after `i` (or `bytes.size` when there is none)
+-def findNewline (bytes : ByteArray) (i : Nat) : Nat := Id.run do
++theorem usize_le' (a : ByteArray) : a.usize.toNat ≤ a.size := by
++  show a.size.toUSize.toNat ≤ a.size
++  rw [Nat.toUSize_eq, USize.toNat_ofNat']; exact Nat.mod_le _ _
++
++def findNewlineU (bytes : @& ByteArray) (j : USize) : USize :=
++  if h : j < bytes.usize then
++    if bytes.uget j (Nat.lt_of_lt_of_le h (usize_le' bytes)) != 10 then findNewlineU bytes (j + 1) else j
++  else j
++termination_by bytes.usize.toNat - j.toNat
++decreasing_by
++  have h' : j.toNat < bytes.usize.toNat := h
++  have := USize.toNat_lt_size bytes.usize
++  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
++  rw [USize.toNat_add, USize.toNat_one, Nat.mod_eq_of_lt (by omega)]; omega
++
++def findNewline (bytes : ByteArray) (i : Nat) : Nat :=
++  if i < bytes.size ∧ bytes.size < 4294967295 then (findNewlineU bytes i.toUSize).toNat else Id.run do
+   let mut j := i
+   while j < bytes.size && bytes[j]! != 10 do
+     j := j + 1
+@@ -53,21 +69,21 @@ def readFastqRecord (reader : FastqReader) : IO (Option FastqRecord) := do
+   let some _plus ← reader.line | return none
+   let some quality ← reader.line | return none
+   return some { name := String.fromUTF8! (header.extract 1 header.size), letters,
+-                quality := String.fromUTF8! quality }
++                quality := quality }
+ 
+ -- a read's name without its comment (after the first space) and without a trailing "/1" or "/2"
+ def mateName (name : String) : String :=
+-  let base := (name.splitOn " ").headD ""
++  let base := (name.takeWhile (· != ' ')).toString
+   if base.endsWith "/1" || base.endsWith "/2" then String.ofList (base.toList.dropLast.dropLast) else base
+ 
+ -- quality trimming with the proved trimmer: keep the best window of letters and qualities; a mate
+ -- with nothing worth keeping comes back with no letters (trimmed away)
+ def trimRecord (record : FastqRecord) : FastqRecord :=
+-  let qual := record.quality.toUTF8
++  let qual := record.quality
+   match ReadTrim.trimRead record.letters qual with
+   | some (s, e) => { record with letters := record.letters.extract s e,
+-                                 quality := String.fromUTF8! (qual.extract s e) }
+-  | none => { record with letters := ByteArray.empty, quality := "" }
++                                 quality := qual.extract s e }
++  | none => { record with letters := ByteArray.empty, quality := ByteArray.empty }
+ 
+ -- up to `size` pairs, reading the two FASTQ files in step; stops with an error if two mates'
+ -- names differ or one file ends before the other (the files are out of step)
+@@ -78,7 +94,7 @@ def readChunk (reads1 reads2 : FastqReader) (size : Nat) : IO (Array (FastqRecor
+     | some record1, some record2 =>
+       if mateName record1.name != mateName record2.name then
+         throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
+-      if record1.letters.size != record1.quality.utf8ByteSize || record2.letters.size != record2.quality.utf8ByteSize then
++      if record1.letters.size != record1.quality.size || record2.letters.size != record2.quality.size then
+         throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
+       chunk := chunk.push (trimRecord record1, trimRecord record2)
+     | none, none => break
+diff --git a/Spec/Sam.lean b/Spec/Sam.lean
+index 66697d7..0f228e5 100644
+--- a/Spec/Sam.lean
++++ b/Spec/Sam.lean
+@@ -42,7 +42,7 @@ def cigarText (cigar : Array (Step × Nat)) : String :=
+ 
+ -- QNAME: the FASTQ name up to the first space, without a trailing /1 or /2
+ def samName (name : String) : String :=
+-  let name := (name.splitOn " ").headD name
++  let name := (name.takeWhile (· != ' ')).toString
+   if name.endsWith "/1" || name.endsWith "/2" then (name.dropEnd 2).toString else name
+ 
+ -- `complement` (Mapping.lean) on one byte: A <-> T, C <-> G, everything else unchanged
+@@ -50,7 +50,7 @@ def complementByte (byte : UInt8) : UInt8 :=
+   if byte == 65 then 84 else if byte == 84 then 65 else if byte == 67 then 71 else if byte == 71 then 67 else byte
+ 
+ -- the bytes in reverse order, each through `f`
+-def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.run do
++@[specialize] def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.run do
+   let mut out := ByteArray.emptyWithCapacity bytes.size
+   for i in [0:bytes.size] do
+     out := out.push (f bytes[bytes.size - 1 - i]!)
+@@ -62,9 +62,9 @@ def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.
+ def samSequence (record : FastqRecord) (strand : Strand) : String × String :=
+   if record.letters.isEmpty then ("*", "*") else
+   match strand with
+-  | .forward => (String.fromUTF8! record.letters, record.quality)
++  | .forward => (String.fromUTF8! record.letters, String.fromUTF8! record.quality)
+   | .reverse => (String.fromUTF8! (reverseMapBytes complementByte record.letters),
+-                 String.fromUTF8! (reverseMapBytes id record.quality.toUTF8))
++                 String.fromUTF8! (reverseMapBytes id record.quality))
+ 
+ def uniquenessText : Uniqueness → String
+   | .unique      => "unique"
