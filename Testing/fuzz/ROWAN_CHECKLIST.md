@@ -1,5 +1,10 @@
 # Rowan's check: type-check + fuzz in five commands
 
+**One command for all of it:** `MINIBWA=... SAMTOOLS=... bash Testing/verify.sh OUT` (steps 1-5 below plus a
+stale-index check and the speed table: index load separate, map-only s, Gbp/hr, Gbp per core-hour, ours vs minibwa).
+It stops at the first failure and ends with `ALL REQUESTED STEPS PASSED`. `STEPS="1 5"` runs a subset.
+**Rebuild the index first** if it predates the heavy table (festive 54196c2): step 2 fails otherwise.
+
 Run from a checkout of `claude/festive-fermi-mf9mo6` (Lean 4.35 on PATH: `export PATH=$HOME/.elan/bin:$PATH`).
 
 1. **Type-check and proofs** (builds everything; checks axioms, the Spec mirrors, FROZEN hashes; ~10-15 min):
