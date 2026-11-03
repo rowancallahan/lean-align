@@ -1,0 +1,13 @@
+TIME novaseq_200k q25: wall 37.1 s, cpu 58.7 s, user 30.3 s, peak 5.43 GB, exit 0
+novaseq_200k q25	pairs 200000	mapped 187599	unique 164839	degenerate 0	unmapped 12401	repetitiveUnknown(gaveUp) 0	score<-50 2793	score<-100 0
+TIME novaseq_200k q20: wall 23.1 s, cpu 46.0 s, user 31.9 s, peak 5.44 GB, exit 0
+novaseq_200k q20	pairs 200000	mapped 185878	unique 164292	degenerate 0	unmapped 14122	repetitiveUnknown(gaveUp) 0	score<-50 3865	score<-100 0
+TIME novaseq_200k q15: wall 22.6 s, cpu 48.1 s, user 33.0 s, peak 5.44 GB, exit 0
+novaseq_200k q15	pairs 200000	mapped 184445	unique 164061	degenerate 0	unmapped 15555	repetitiveUnknown(gaveUp) 0	score<-50 3874	score<-100 0
+TIME hg002_200k q25: wall 19.3 s, cpu 41.1 s, user 28.2 s, peak 5.47 GB, exit 0
+hg002_200k q25	pairs 200000	mapped 187231	unique 169101	degenerate 0	unmapped 12769	repetitiveUnknown(gaveUp) 0	score<-50 2361	score<-100 0
+TIME hg002_200k q20: wall 21.2 s, cpu 47.6 s, user 34.1 s, peak 5.45 GB, exit 0
+hg002_200k q20	pairs 200000	mapped 182588	unique 162439	degenerate 0	unmapped 17412	repetitiveUnknown(gaveUp) 0	score<-50 4189	score<-100 0
+TIME hg002_200k q15: wall 21.4 s, cpu 45.3 s, user 30.9 s, peak 5.46 GB, exit 0
+hg002_200k q15	pairs 200000	mapped 173211	unique 151258	degenerate 0	unmapped 26789	repetitiveUnknown(gaveUp) 0	score<-50 6027	score<-100 0
+RUNQDONE
