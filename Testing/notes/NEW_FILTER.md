@@ -97,3 +97,17 @@ each iteration), array frees 4.5M.
   diagonal (`unlookW_eq`); `gAtW_eqF`: `gAtW` on `USize` offsets / `GW.getU` everywhere (`gAtWU_eq`).
 - 2k Ir vs festive 3dde0e4: NovaSeq 1165.0M → 1158.8M (−0.5%); HiSeq 1410.6M → 1387.5M (−1.6%). SAM identical on
   both 2k subsets and both full 200k sets; FUZZ=1 CI passes (457 theorems, standard axioms).
+
+## speed/trim (off festive a4d9f6f): the trimmer loops (exact csimp, trimmer proofs untouched)
+HiSeq 2k: `ReadTrim.wlU` 56M (~56 Ir per letter), `AdapterTrim.saLoopU` 44M, inside `trimRecord` 127-145M.
+- `wlU2`: the quality fold with the quality in `UInt8` arithmetic (`fIU`; `qcU_eq` by `decide` over the 256 bytes) and the
+  `Int64` zero passed in (a literal `Int64` inside the loop was fetched through `lean_uint64_once` every step). `wlU2_eq`:
+  `= wlU`, so `wl_eq_wlF` holds as before. 56M → 43M.
+- `saLoopV`: the bit-parallel adapter loop without the `Nat` fuel (`saLoopV_eq`: `= saLoopU`); `saCutU_eq` re-proved
+  through it. 44M → 38M.
+- `cutTruSeq_eqF`: TruSeq's letter masks and constants as top-level values (`cutPosTS_eq`; the `cutPosF` conditions for
+  `truSeq` closed by `decide`). Small (−0.4M HiSeq, −1.9M NovaSeq).
+- Tried and dropped: passing `-1000000` in as an argument too (+4M: register pressure); an inlined `isACGT` (no change).
+- 2k Ir vs festive a4d9f6f: NovaSeq 1158.8M → 1147.0M (−1.0%); HiSeq 1388.3M → 1368.6M (−1.4%). SAM identical on both 2k
+  subsets and both full 200k sets; FUZZ=1 CI passes (frozen trimmer contract OK, trimmer audit OK). The rest of
+  `trimRecord` is the UTF-8 conversion of the quality (~25M, Spec/Fastq: Rowan's shim).
