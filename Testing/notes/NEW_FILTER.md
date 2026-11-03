@@ -87,3 +87,13 @@ each iteration), array frees 4.5M.
   `bandCellsB` 69.8M vs `bandCellsJ` 55.2M on HiSeq 2k, i.e. 1.26x SLOWER, before counting the fill. `Array UInt32`
   holds tagged scalars on 64-bit (no heap boxes), so its per-access cost is a bounds check and a shift; a byte-wise
   cell costs four loads/stores plus shifts. Earlier: carrying the previous row's `H` in a register was +3.6M.
+
+## speed/svany (off festive 3dde0e4): the unlooked-seed scan (HiSeq)
+`unlookV` → `svAny` (the 25-letter seeds not looked up, tried at the 2r+1 shifts of a diagonal; ~5 per 2x250 read) was
+50M on HiSeq 2k, 96% of it from the router's `stageKSPN` filter.
+- `svAnyR` (0f62e7e): `svAny` on the rolling window of `lanesAnyR`; `svAnyR_eq` (`roll_eq`, `RInv`, `rinv_step`, moved
+  above it; `rinv_start`). `svAnyU` removed.
+- `unlookW` + `svsOf` (a0d83a6): the seeds' (start, word) pairs computed once per `stageKSPN` call instead of per
+  diagonal (`unlookW_eq`); `gAtW_eqF`: `gAtW` on `USize` offsets / `GW.getU` everywhere (`gAtWU_eq`).
+- 2k Ir vs festive 3dde0e4: NovaSeq 1165.0M → 1158.8M (−0.5%); HiSeq 1410.6M → 1387.5M (−1.6%). SAM identical on
+  both 2k subsets and both full 200k sets; FUZZ=1 CI passes (457 theorems, standard axioms).
