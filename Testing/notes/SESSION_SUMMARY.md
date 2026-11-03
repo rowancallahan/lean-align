@@ -1568,3 +1568,9 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 | | minibwa | 33.7 s | 585.3 s | 15.4 | 2296 s | 3.92 | ~3.9 |
 | | ratio | | **2.38x** | | | **3.81x** | |
 minibwa paper: 135.8 Gbp/hr @32 threads = 4.24 Gbp/thread-hr (matches minibwa here). OURS LEAVES CORES IDLE (3.0 / 2.4 of 4): per-chunk barrier + serial reader. Fixing core use is the lever for wall time (shim orchestration: overlap chunks, smaller tasks, parallel parse).
+- Decision-run mapped % (5M, first-mate primary): NovaSeq ours 93.91% (all proper; MAPQ60 = proved unique 82.48%), minibwa mapped 99.69% / proper 97.65% / MAPQ60 87.51%. HiSeq ours 94.11% (all proper; 85.23%), minibwa 99.76% / 98.01% / 89.31%. Proper-pair gap ~3.7-3.9% = the known clipping gap (CLIPPING_GAP.md). MAPQ not like for like (ours proved, minibwa heuristic).
+
+### LATER (Rowan, not now): quality-aware soft clipping / scoring
+- Soft clipping by quality: after adapter cutting, define match/mismatch cost from the base's quality score, so low-quality ends cost little and get clipped by the score itself (would close part of the clipping gap).
+- Cost: quality attached to every base in the search; memory/speed risk. Mitigation: bin qualities (a few levels), or one binned quality per seed.
+- Trimming could then shrink or move inside the alignment loop instead of being a separate pass.
