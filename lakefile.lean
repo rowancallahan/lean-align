@@ -165,6 +165,10 @@ lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "Testing/benches"
   root := `Proto
 
+lean_exe witness_bench where         -- measurement only: pairs a witness-first check would catch
+  srcDir := "Testing/benches"
+  root := `WitnessBench
+
 lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
   srcDir := "Testing/benches"
   root := `MapBench2
