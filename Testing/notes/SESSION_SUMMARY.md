@@ -1471,3 +1471,4 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - Claude may NOT edit Spec/Aligner.lean, Spec/Alignment.lean, Spec/Mapping.lean or Spec/Shim.lean (Main.lean mirrors the Shim); Rowan works on those.
 - Rowan will merge claude/festive-fermi-mf9mo6 with main.
 - Index RAM budget (Rowan, 2026-11-03): the loaded index may be up to just under 8 GB (today ~5.3 GB), e.g. for the heavy-25-mer table plus a combined longer/shorter-seed index.
+- Spec guide session ended (Rowan). Its README notes are on branch claude/spec-guide-notes (Proofs/README.md, commits 5067108, 29bf14c; main-based). Merge them when festive-fermi and main are merged. Open items for Rowan: Sam label (spec/sam-fix b8c773c), the requiredMapBound comment wording, the shim speed patch, the audit fail-fast patch.
