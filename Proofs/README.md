@@ -57,3 +57,10 @@
 - No new axioms; no `sorry`, `native_decide`, `implemented_by`, `extern`, `unsafe`, `partial` in
   finished proofs. Check with `#print axioms Spec.alignPairs_correct`.
 - Build: `lake build Proofs`. Full re-check: `sh Testing/scripts/check.sh`.
+
+## Note: `.unknown` and `junkScore`
+
+`.unknown` (found = none → bestPossibleScore < requiredMapBound) is satisfiable only if
+`insertSettings.junkScore ≤ requiredMapBound mate1 mate2`. This holds for the default
+`junkScore = -100` since `requiredMapBound ≥ -16`. Keep it true: if `junkScore` ever becomes
+configurable, either carry this as a hypothesis or use `max junkScore (requiredMapBound …)`.
