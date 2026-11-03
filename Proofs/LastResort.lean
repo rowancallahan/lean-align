@@ -491,6 +491,33 @@ theorem pairsAt_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 
   rw [List.mem_filter, properPairsF_eq, pp_near_right (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
     decide_eq_true_eq, mem_properPairs, mem_properPairs, K1, K2]
 
+-- `pairsAt` with the genome-wide search on the cheaper mate (fewer places in its rarest seeds' buckets, `costP`):
+-- mate 2 genome-wide and mate 1 near its hits when mate 2 is cheaper (the near search keeps every hit with a
+-- partner, `NearOk`, whichever side the partner is on). The same proper pairs either way (`pairsAtB_mem`).
+def pairsAtB (sl lo hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
+    List PairHit :=
+  if costP pk c (prepMate pk R2 : PrepM MzP) < costP pk c (prepMate pk R1 : PrepM MzP) then
+    let lY := hitsKPF pk ByteArray.empty offs pgs R2 c
+    (properPairsF sl lo hi (hitsKPFN sl hi pk ByteArray.empty offs pgs R1 c lY) lY).filter
+      fun p => decide (-(c : Int) ≤ pairScoreD dcost0 p)
+  else pairsAt sl lo hi c pk offs pgs R1 R2
+
+theorem pairsAtB_mem {sl lo hi c : Nat} (hc : c ≤ 16) {g : MapSpec.Genome} {m1 m2 : List Char} {ix : Mz.MzIdx}
+    {G : PGen} {offs ns : Array Nat} (hcut : cutOk G offs ns = true)
+    (hg : GenomeBytes ((cutAll G offs ns).map Mz.unpack) g) (hchk : Mz.check2P ix G = true)
+    {R1 R2 : ByteArray} (h1 : Encodes R1 m1) (h2 : Encodes R2 m2) (p : PairHit) :
+    p ∈ pairsAtB sl lo hi c ((ix, G) : PkMz) offs (cutAll G offs ns) R1 R2 ↔
+      p ∈ properPairs sl lo hi (hitsBoth sc0 (-(c : Int)) g m1) (hitsBoth sc0 (-(c : Int)) g m2) ∧
+        -(c : Int) ≤ pairScoreD dcost0 p := by
+  unfold pairsAtB
+  split
+  · have K1 := hitsKPF_mem g ix G offs ns hcut hg hchk R1 m1 h1 c hc
+    have K2 := hitsKPF_mem g ix G offs ns hcut hg hchk R2 m2 h2 c hc
+    dsimp only
+    rw [List.mem_filter, properPairsF_eq, pp_near_left (hitsKPFN_near sl lo hi _ _ _ _ _ c _) p,
+      decide_eq_true_eq, mem_properPairs, mem_properPairs, K1, K2]
+  · exact pairsAt_mem hc hcut hg hchk h1 h2 p
+
 /-! ### The length-scaled cap (for Rowan's coming `requiredMapBound`)
 
 `errorsChecked n = min 4 (n / 25 - 1)`; cap `c = 4 * errorsChecked (shorter mate)`. Every mate of at least 25

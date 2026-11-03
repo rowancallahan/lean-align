@@ -17,6 +17,10 @@ structure St where
   hitsJ : Nat := 0
   hitsRest : Nat := 0
   zero : Nat := 0
+  keepPair : Nat := 0
+  minMate : Nat := 0
+  mate2 : Nat := 0
+  zeroPair : Nat := 0
 
 def lowerBound (a : Array Nat) (x : Nat) : Nat := Id.run do
   let mut lo := 0
@@ -25,6 +29,24 @@ def lowerBound (a : Array Nat) (x : Nat) : Nat := Id.run do
     let mid := (lo + hi) / 2
     if a[mid]! < x then lo := mid + 1 else hi := mid
   return lo
+
+-- the second look's candidate diagonals of one strand (hits of the `sbound c + 1` rarest seeds), sorted, distinct
+def candD (pk : PkMz) (Rs : ByteArray) (c : Nat) : Array Nat := Id.run do
+  let m := Rs.size / 25
+  if m == 0 then return #[]
+  let Ls := Rs.size / m
+  let ps : Array MzP := prepG pk Rs m Ls
+  let J := (ordG (ps.map (LookG.size pk)) m).take (sbound c + 1)
+  let ds := (J.foldl (fun acc j => acc ++
+    (LookG.look pk ByteArray.empty Rs (j * Ls) (Rs.size - j * Ls) ps[j]!).map (· / 16)) #[]).qsort (· < ·)
+  let mut uniq : Array Nat := #[]
+  for d in ds do
+    if uniq.isEmpty || uniq.back! != d then uniq := uniq.push d
+  return uniq
+
+-- candidates of `a` with an element of sorted `b` within `w`
+def nearCount (a b : Array Nat) (w : Nat) : Nat :=
+  a.foldl (fun t d => let i := lowerBound b (d - w); if i < b.size && b[i]! ≤ d + w then t + 1 else t) 0
 
 -- one strand: (candidate diagonals, kept, hits of J, hits of the other seeds)
 def strandStats (pk : PkMz) (Rs : ByteArray) (c : Nat) : Nat × Nat × Nat × Nat := Id.run do
@@ -87,7 +109,12 @@ def main (args : List String) : IO Unit := do
     if (Spec.gaveUp req pk offs ns R1 R2 a1).isSome then continue
     let (d1, k1, h1, x1) := strandStats pk R1 c
     let (d2, k2, h2, x2) := strandStats pk (revCompK R1) c
+    let c1 := candD pk R1 c ++ candD pk (revCompK R1) c
+    let c2 := (candD pk R2 c ++ candD pk (revCompK R2) c).qsort (· < ·)
+    let kp := nearCount c1 c2 (iS.range.2 + R1.size + R2.size)
+    st := { st with minMate := st.minMate + min c1.size c2.size, mate2 := st.mate2 + c2.size }
+    st := { st with keepPair := st.keepPair + kp, zeroPair := st.zeroPair + (if kp == 0 then 1 else 0) }
     st := { st with look := st.look + 1, diagsJ := st.diagsJ + d1 + d2, keep := st.keep + k1 + k2,
                     hitsJ := st.hitsJ + h1 + h2, hitsRest := st.hitsRest + x1 + x2,
                     zero := st.zero + (if k1 + k2 == 0 then 1 else 0) }
-  IO.println s!"pairs {st.pairs}  reach lookAt {st.look}  mate-1 candidate diagonals {st.diagsJ}  keep (count filter) {st.keep}  zero-candidate pairs {st.zero}  hits of J {st.hitsJ}  extra hits (other seeds) {st.hitsRest}"
+  IO.println s!"pairs {st.pairs}  reach lookAt {st.look}  mate-1 candidate diagonals {st.diagsJ}  keep (count filter) {st.keep}  zero-candidate pairs {st.zero}  hits of J {st.hitsJ}  extra hits (other seeds) {st.hitsRest}  keep (mate-2 seed hit within the fragment) {st.keepPair}  zero-candidate pairs (pair filter) {st.zeroPair}  mate-2 candidates {st.mate2}  min(mate1, mate2) candidates {st.minMate}"

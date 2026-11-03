@@ -230,7 +230,7 @@ def lookAt (insertSettings : InsertSettings) (req : Int) (pk : MapSpec.Fast.PkMz
   let pgs := MapSpec.Fast.cutAll pk.2 offs ns
   LastResort.finalize insertSettings (LastResort.fitNs ns) req
     (LastResort.lookAnswer c (LastResort.runsIx pgs read1) (LastResort.runsIx pgs read2)
-      (LastResort.pairsAt insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
+      (LastResort.pairsAtB insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2 c pk offs pgs
         read1 read2))
 
 -- the sum of the `k` rarest seed buckets of a mate, over both strands (what a lookup of those seeds costs)
@@ -634,7 +634,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
         have hc16 : lookCap (reqOf insertSettings read1 read2) ≤ 16 := Nat.min_le_left _ _
         rcases LastResort.finalize_correct (LastResort.fitNs ns) hnone
             (LastResort.lookAnswer_correct insertSettings genome _ _ _ _ _ _
-              (LastResort.pairsAt_mem hc16 hcut hg hchk (encodes_decodeRead _) (encodes_decodeRead _))
+              (LastResort.pairsAtB_mem hc16 hcut hg hchk (encodes_decodeRead _) (encodes_decodeRead _))
               (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)
               (fun x hx => LastResort.runsIx_ok hg (encodes_decodeRead _) hx)) with h | h
         · exact h
