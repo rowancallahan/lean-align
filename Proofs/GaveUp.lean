@@ -357,13 +357,27 @@ theorem seedRepF_eq (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArra
       · rfl
   · rfl
 
+-- `k ≤ l.countP p`, stopping once `k` are found
+def countGE {α : Type} (p : α → Bool) : Nat → List α → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | k + 1, x :: xs => if p x then countGE p k xs else countGE p (k + 1) xs
+
+theorem countGE_eq {α : Type} (p : α → Bool) : ∀ (k : Nat) (l : List α), countGE p k l = decide (k ≤ l.countP p)
+  | 0, _ => by simp [countGE]
+  | _ + 1, [] => by simp [countGE]
+  | k + 1, x :: xs => by
+    unfold countGE
+    rw [List.countP_cons]
+    split <;> rename_i hp <;> simp [hp, countGE_eq p _ xs]
+
 def repeatMateF (pk : MapSpec.Fast.PkMz) (offs ns : Array Nat) (R : ByteArray) : Bool :=
-  gaveUpSeeds ≤ (List.range (R.size / seedLength)).countP fun j => seedRepF pk offs ns R (seedLength * j)
+  countGE (fun j => seedRepF pk offs ns R (seedLength * j)) gaveUpSeeds (List.range (R.size / seedLength))
 
 @[csimp] theorem repeatMate_eqF : @repeatMate = @repeatMateF := by
   funext pk offs ns R
   unfold repeatMate repeatMateF repeatSeeds
-  simp only [seedRepF_eq, List.length_map, List.countP_eq_length_filter]
+  simp only [countGE_eq, seedRepF_eq, List.length_map, List.countP_eq_length_filter]
 
 #print axioms repeatMate_eqF
 
