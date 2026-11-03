@@ -65,8 +65,8 @@ short-seed component.
 | | 39ae4e8 | this branch |
 |---|---|---|
 | index size | 5,326,114,456 B | 5,338,015,764 B (+11.9 MB, +0.22%) |
-| build wall / CPU | BASEBUILD | 31.0 min / 39.1 min user |
-| peak RSS | BASERSS | 10.76 GB |
+| build wall / CPU | 24.8 min / 30.3 min user | 31.0 min / 39.1 min user (+6.2 min wall, +25%) |
+| peak RSS | not recorded (logging failed) | 10.76 GB |
 - Table: 457,742 entries (= 2 × 228,871, the C count). Every entry passed the check: the mask has 457,742 ones.
 - The builder alone (heavy_bench): 4.6 min single-threaded, plus 2.6 min to read the FASTA.
 - Loaded RAM: +11.9 MB per loaded copy. `rdBytes` copies H and M on every load (one per task per chunk).
