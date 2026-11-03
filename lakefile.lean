@@ -281,3 +281,7 @@ lean_exe tie_prof where                   -- benchmark only: shim CPU by router 
 lean_exe adapter_bench where              -- benchmark only: CPU and cut counts of AdapterTrim.cutTruSeq on a FASTQ (unproved IO)
   srcDir := "Testing/benches"
   root := `AdapterBench
+
+lean_exe gaveup_k where               -- benchmark only: repeat grid seeds per mate of named pairs (unproved IO)
+  srcDir := "Testing/benches"
+  root := `GaveUpK
