@@ -1450,3 +1450,7 @@ formalizing FASTQ and SAM (Spec) and writing the blog post.
 - Rowan's Spec: junkScore (floor) -100; requiredMapBound scaled by the shorter mate (cap 4 errors, 25-letter seeds: 0 / -4 / -8 / -12 / -16 at 25 / 50 / 75 / 100 / 125+ bp). Needs junkScore <= requiredMapBound.
 - Proof branch speed/report-floor-proofs (cd00d2c): correct (S3 check: audits 0, no placeholders, no unique pair changed) but 20-60x slower: the complete search runs on repeat pairs. hNoLeftover is still needed for short mates (fixed by the scaled bound) and for pairs on real hg38 (NovaSeq 2.1%, HiSeq 1.3% of pairs end unmapped with XB >= -16).
 - To keep today's speed, Rowan must decide a "gave up" answer. Proposal: `.gaveUp` only with a repeat witness: a 25-letter piece of a mate occurs >= N times in the genome (N ~ 1000), so a non-repetitive pair is always decided at bounded cost. S-B is measuring witness coverage at N = 200/500/1000/5000.
+
+### Finish line (Rowan, 2026-11-03 ~01:40 UTC)
+- Done = report floor + gave-up fully proved (no extra hypothesis beyond settings) AND speed within 5-10% of today's code (festive-fermi 0e48158: NovaSeq ~2.5-2.7x, HiSeq ~3.5x vs minibwa, same box, headline.sh method).
+- Rowan's Spec: repeat witness (K grid seeds, N occurrences) being written now; the "many places" witness (cap the complete search at M good placements) can be added later as one more disjunct if timing needs it.
