@@ -138,7 +138,7 @@ lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
 @[default_target]
 lean_lib Trimmer where
   srcDir := "Aligner/trimmer"
-  roots := #[`ReadWindowTrimmer, `AdapterTrim]
+  roots := #[`ReadWindowTrimmer, `AdapterTrim, `TrimBytes]
 
 -- ───────────────────────────── tool ─────────────────────────────
 

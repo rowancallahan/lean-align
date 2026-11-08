@@ -1,4 +1,5 @@
 import Proofs.Fastq
+import TrimBytes
 
 /-! # `trimRecord` composes: what the FASTQ glue's trimming guarantees
 
@@ -29,6 +30,9 @@ theorem trimRecord_eq (record : FastqRecord) :
   unfold trimRecord trimBytes
   simp only []
   rfl
+
+/-- The byte-list trimmer (`TrimBytes.trimSQ`, for the byte-level FASTQ spec) runs the same three steps. -/
+theorem trimBytes_eq_trimBA (letters qual : ByteArray) : trimBytes letters qual = TrimBytes.trimBA minLength letters qual := rfl
 
 /-- the adapter cut's position (the setting used by the reader: TruSeq, 6, 1) -/
 def cutAt (letters : ByteArray) : Nat := AdapterTrim.cutPos AdapterTrim.truSeq 6 1 letters
@@ -261,3 +265,4 @@ end Spec
 #print axioms Spec.cutAt_spec
 #print axioms Spec.trimRecord_quality_bytes
 #print axioms Spec.trimChunk_eq
+#print axioms Spec.trimBytes_eq_trimBA
