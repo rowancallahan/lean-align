@@ -211,6 +211,9 @@ def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   sorry
 
+-- ▼▼▼▼▼▼▼▼▼▼ TEMPORARY (Rowan): DELETE this block once `mapFiles` is a single function. ▼▼▼▼▼▼▼▼▼▼
+-- It exists only so the per-job shim can make the setup once per worker (variant B, 7-11%).
+-- With `mapFiles`, the setup is shared inside one call, below the Spec, by `@[csimp]`.
 -- what `alignPairs` prepares from the index (the genome view and the aligner's settings), made once and then
 -- reused for any number of chunks: `alignPairsP` on it is `alignPairs` (`alignPairsP_eq`)
 def AlignSetup : Type :=
@@ -226,6 +229,7 @@ def alignPairsP (insertSettings : InsertSettings) (setup : AlignSetup)
 theorem alignPairsP_eq (insertSettings : InsertSettings) (index : ByteArray) :
     alignPairsP insertSettings (chunkSetup insertSettings index) = alignPairs insertSettings index := by
   sorry
+-- ▲▲▲▲▲▲▲▲▲▲ END TEMPORARY: delete down to here (and `alignPairsP_eq` in Proofs, the shim's `setup`). ▲▲▲▲▲▲▲▲▲▲
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
