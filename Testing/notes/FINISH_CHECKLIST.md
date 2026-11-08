@@ -45,6 +45,8 @@ Order matters: make it right, check it, then understand it.
 - THINK LATER: the 1000-base limit is a deliberate short-read limit (fine for 2x150 / 2x250; long reads are rejected).
 - Pairing: the two mate files must have the same number of reads and matching mate names; not in this spec yet.
 - Trimming (on Reads) and the threading/pipeline (parallel parse must equal `parse`) still to connect.
+- Trimming spec (Rowan): must include the TruSeq adapter cut (AdapterTrim.cutTruSeq) before the best-window trim, then dropShort minLength; best-window optimality = trimSQ_best / trimRecord_best (S-H, spec/fastq-bytes-trim).
+- Speed to-do: SAM writing is still ~11-13% of instructions; the floor is ~1-3% (copy SEQ/QUAL, table reverse-complement, a few digit writes per line). A fused writer that emits bytes straight from the alignment results should give ~10%.
 - Names: tabs and spaces allowed; no newline, no carriage return, ASCII only; the QNAME rule (SAM) comes later.
 - TO DO (Rowan): forbid ALL control bytes in names: a `controlBytes` list (0x00-0x1F and 0x7F, i.e. incl. tab and DEL) and `∀ b ∈ r.name, b ∉ controlBytes` in Record.valid (replaces the separate newline / carriage-return lines).
 
