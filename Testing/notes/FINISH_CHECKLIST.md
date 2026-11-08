@@ -40,6 +40,15 @@ Order matters: make it right, check it, then understand it.
 ## 7. Understand it (in your own words)
 - `SHIM_EXPLAINED.md`, `UTILIZATION.md`, `byte_specs/LEMMAS.md`, `Testing/fuzz/ROWAN_CHECKLIST.md`, `SESSION_SUMMARY.md`.
 
+## Quality encoding (Rowan, to do)
+- ONLY Phred+33 is supported right now (bytes '!'..'~' = Phred 0..93). Old Phred+64 files (Illumina 1.3-1.7) are
+  accepted silently today and every quality is read 31 too high: say so in the spec and the README.
+- Add a Phred+64 check: over the first ~10k reads, if the minimum quality byte is >= 64 ('@'), it is Phred+64 (or
+  ambiguous) -> print a clear warning ("looks like Phred+64; convert with `seqtk seq -Q64 -V`") and FAIL FAST (exit 1).
+  Never reject on a high maximum alone (HiFi/ONT go up to '~').
+- Add an option to override it (name to decide, e.g. `--reject-warnings` / `--ignore-warnings`) so a user can run anyway.
+- General rule: data-format warnings fail fast by default; the user opts out explicitly.
+
 ## Later (not before the blog)
 - Quality-aware soft clipping (the ~3.8% proper-pair gap to minibwa is clipping).
 - Proved inflate for .fastq.gz (kim-em/lean-zip; check multi-member gzip, speed).
