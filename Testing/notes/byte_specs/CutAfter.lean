@@ -221,4 +221,349 @@ theorem cutAfter_none (b : ByteArray) (i n p f : Nat) (hi : i ≤ b.size) (h : P
 #print axioms cutAfter_cutLines
 #print axioms cutAfter_none
 
+
+/-! ## Part 3: the reader loop as a pure function of the blocks `readBig` returns -/
+
+-- the slices (copy of FastqSlices.lean)
+def sliceAt (n : Nat) (l : List UInt8) : List (List UInt8) :=
+  if l = [] then [] else
+  match hc : cutLines n l with
+  | some (pre, post) => if hp : pre = [] then [l] else pre :: sliceAt n post
+  | none => [l]
+termination_by l.length
+decreasing_by
+  have h1 := cutLines_spec n l pre post hc
+  have h2 : 0 < pre.length := List.length_pos_iff.2 hp
+  rw [h1, List.length_append]; omega
+
+theorem splitNl_nl_free : ∀ (l c r : List UInt8), splitNl l = some (c, r) → newline ∉ c
+  | [], c, r, h => by simp [splitNl] at h
+  | x :: xs, c, r, h => by
+    unfold splitNl at h
+    split at h
+    · obtain ⟨rfl, rfl⟩ := by simpa using h
+      simp
+    · rename_i hx
+      cases hr : splitNl xs with
+      | none => simp [hr] at h
+      | some p =>
+        obtain ⟨c', r'⟩ := p
+        simp only [hr, Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        have := splitNl_nl_free xs c' r' hr
+        simp only [List.mem_cons, not_or]
+        exact ⟨fun e => hx e.symm, this⟩
+
+theorem splitNl_noNl_append (P Q : List UInt8) (h : newline ∉ P) :
+    splitNl (P ++ Q) = (splitNl Q).map fun (c, r) => (P ++ c, r) := by
+  induction P with
+  | nil => cases hq : splitNl Q <;> simp [hq]
+  | cons x xs ih =>
+    have hx : x ≠ newline := fun e => h (by simp [e])
+    have := ih (fun e => h (List.mem_cons_of_mem _ e))
+    simp only [List.cons_append, splitNl, hx, if_false, this]
+    cases hq : splitNl Q <;> simp [hq]
+
+theorem splitNl_of_mem : ∀ l : List UInt8, newline ∈ l → ∃ c r, splitNl l = some (c, r)
+  | [], h => by simp at h
+  | x :: xs, h => by
+    unfold splitNl
+    by_cases hx : x = newline
+    · exact ⟨[], xs, by simp [hx]⟩
+    · have : newline ∈ xs := by
+        rcases List.mem_cons.1 h with e | e
+        · exact absurd e.symm hx
+        · exact e
+      obtain ⟨c, r, hr⟩ := splitNl_of_mem xs this
+      exact ⟨x :: c, r, by simp [hx, hr]⟩
+
+theorem cutLines_none_of_count : ∀ (n : Nat) (l : List UInt8), l.count newline < n → cutLines n l = none
+  | 0, l, h => by omega
+  | n + 1, l, h => by
+    unfold cutLines
+    cases hs : splitNl l with
+    | none => simp
+    | some p =>
+      obtain ⟨c, r⟩ := p
+      have e := splitNl_spec l c r hs
+      have hc := splitNl_nl_free l c r hs
+      have hcc : c.count newline = 0 := List.count_eq_zero.2 hc
+      rw [e, List.count_append, List.count_cons_self, hcc] at h
+      have := cutLines_none_of_count n r (by omega)
+      simp [this]
+
+theorem cutLines_extend : ∀ (n : Nat) (l pre post R : List UInt8), cutLines n l = some (pre, post) →
+    cutLines n (l ++ R) = some (pre, post ++ R)
+  | 0, l, pre, post, R, h => by
+    simp [cutLines] at h; obtain ⟨rfl, rfl⟩ := h; simp [cutLines]
+  | n + 1, l, pre, post, R, h => by
+    unfold cutLines at h ⊢
+    cases hs : splitNl l with
+    | none => simp [hs] at h
+    | some p =>
+      obtain ⟨c, rest⟩ := p
+      have e := splitNl_spec l c rest hs
+      have hc := splitNl_nl_free l c rest hs
+      cases hr : cutLines n rest with
+      | none => simp [hs, hr] at h
+      | some q =>
+        obtain ⟨p1, p2⟩ := q
+        simp only [hs, hr, Option.bind_some, Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        have hsn : splitNl (l ++ R) = some (c, rest ++ R) := by
+          rw [e, List.append_assoc, List.cons_append]; exact splitNl_append c _ hc
+        simp [hsn, cutLines_extend n rest p1 p2 R hr]
+
+theorem cutLines_pos (n : Nat) (l pre post : List UInt8) (h : cutLines (n + 1) l = some (pre, post)) : pre ≠ [] := by
+  unfold cutLines at h
+  cases hs : splitNl l with
+  | none => simp [hs] at h
+  | some p =>
+    obtain ⟨c, rest⟩ := p
+    cases hr : cutLines n rest with
+    | none => simp [hs, hr] at h
+    | some q =>
+      simp only [hs, hr, Option.bind_some, Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, -⟩ := h
+      simp
+
+-- the carry buffer's scanned prefix `P` (with `count P` newlines) followed by `Q`: the cut continues in `Q`
+theorem cutLines_append_count : ∀ (len : Nat) (P Q : List UInt8) (n : Nat), P.length = len → P.count newline < n →
+    cutLines n (P ++ Q) = (cutLines (n - P.count newline) Q).map fun (a, b) => (P ++ a, b)
+  | len, P, Q, n, hl, hc => by
+    by_cases hm : newline ∈ P
+    · obtain ⟨c, P', hs⟩ := splitNl_of_mem P hm
+      have e := splitNl_spec P c P' hs
+      have hcf := splitNl_nl_free P c P' hs
+      have hcc : c.count newline = 0 := List.count_eq_zero.2 hcf
+      obtain ⟨m, rfl⟩ : ∃ m, n = m + 1 := ⟨n - 1, by omega⟩
+      have hcnt : P.count newline = P'.count newline + 1 := by
+        rw [e, List.count_append, List.count_cons_self, hcc]; omega
+      have hlen : P'.length < len := by rw [← hl, e]; simp; omega
+      have ih := cutLines_append_count P'.length P' Q m rfl (by omega)
+      have hsn : splitNl (P ++ Q) = some (c, P' ++ Q) := by
+        rw [e, List.append_assoc, List.cons_append]; exact splitNl_append c _ hcf
+      have hsucc : cutLines (m + 1) (P ++ Q) = (cutLines m (P' ++ Q)).map fun (pre, post) => (c ++ newline :: pre, post) := by
+        rw [cutLines.eq_2, hsn]; simp only [Option.bind_some]
+      rw [hsucc, ih, show m + 1 - P.count newline = m - P'.count newline by omega]
+      cases hq : cutLines (m - P'.count newline) Q with
+      | none => simp
+      | some q =>
+        obtain ⟨a1, a2⟩ := q
+        simp only [Option.map_some]
+        congr 2
+        rw [e]; simp
+    · have hz : P.count newline = 0 := List.count_eq_zero.2 hm
+      obtain ⟨m, rfl⟩ : ∃ m, n = m + 1 := ⟨n - 1, by omega⟩
+      unfold cutLines
+      rw [splitNl_noNl_append P Q hm, hz]
+      simp only [Nat.sub_zero]
+      cases hs : splitNl Q with
+      | none => simp
+      | some p =>
+        obtain ⟨c, r⟩ := p
+        simp only [Option.map_some, Option.bind_some]
+        cases cutLines m r <;> simp
+
+-- the newline found by `findNewline`, as a split of the bytes from `i` on
+theorem findNewline_split (b : ByteArray) (i : Nat) (h : i ≤ b.size) :
+    (findNewline b i < b.size → i ≤ findNewline b i ∧
+      L b i = (L b i).take (findNewline b i - i) ++ newline :: L b (findNewline b i + 1) ∧
+      newline ∉ (L b i).take (findNewline b i - i)) ∧
+    (¬ findNewline b i < b.size → newline ∉ L b i) := by
+  obtain ⟨h1, h2, h3, h4⟩ := findNewlineGo_spec b (b.size - i) i h (Nat.le_refl _)
+  have hj : findNewline b i = findNewlineGo b (b.size - i) i := rfl
+  rw [← hj] at h1 h2 h3 h4
+  refine ⟨fun hlt => ⟨h1, ?_, h3⟩, fun hlt => ?_⟩
+  · rw [← h4 hlt]; exact L_split b i _ h1
+  · have : findNewline b i = b.size := by omega
+    have h3' := h3
+    rw [this] at h3'
+    have hl : (L b i).take (b.size - i) = L b i := by
+      apply List.take_of_length_le; simp [L]
+    rwa [hl] at h3'
+
+theorem cutAfterR_le (b : ByteArray) : ∀ n p, (cutAfterR b n p).2 ≤ n
+  | 0, p => by simp [cutAfterR]
+  | n + 1, p => by
+    unfold cutAfterR; split
+    · have := cutAfterR_le b n (findNewline b p + 1); simp only []; omega
+    · simp
+
+-- fewer than `n` newlines found: the loop scanned to the end and counted every newline there
+theorem cutAfterR_count (b : ByteArray) : ∀ n i, i ≤ b.size → (cutAfterR b n i).2 < n →
+    (cutAfterR b n i).2 = (L b i).count newline ∧ (cutAfterR b n i).1 = b.size
+  | 0, i, _, h => by simp [cutAfterR] at h
+  | n + 1, i, hi, h => by
+    obtain ⟨hs1, hs2⟩ := findNewline_split b i hi
+    unfold cutAfterR at h ⊢
+    by_cases hlt : findNewline b i < b.size
+    · obtain ⟨hge, hsp, hnc⟩ := hs1 hlt
+      rw [if_pos hlt] at h ⊢
+      simp only [] at h ⊢
+      have ih := cutAfterR_count b n (findNewline b i + 1) (by omega) (by omega)
+      have hcz : ((L b i).take (findNewline b i - i)).count newline = 0 := List.count_eq_zero.2 hnc
+      refine ⟨?_, ih.2⟩
+      have e := congrArg (List.count newline) hsp
+      rw [List.count_append, List.count_cons_self, hcz] at e
+      omega
+    · rw [if_neg hlt] at h ⊢
+      simp [List.count_eq_zero.2 (hs2 hlt)]
+
+theorem data_toList_append (a b : ByteArray) : (a ++ b).data.toList = a.data.toList ++ b.data.toList := by
+  simp [ByteArray.data_append]
+
+-- ## the reader loop of Spec/Shim.lean, as a pure function of the blocks `readBig` returns (nonempty, in order; then it returns empty)
+-- (state: carry buffer, scan position, newlines counted so far, blocks still to come, end of input seen); `fuel` only makes it total
+def readerGo (need : Nat) : Nat → ByteArray → Nat → Nat → List ByteArray → Bool → List ByteArray
+  | 0, _, _, _, _, _ => []
+  | fuel + 1, carry, scan, lines, blocks, eof =>
+    match Pipe.cutAfter carry scan (need - lines) with
+    | (p, f) =>
+      if lines + f = need then
+        carry.extract 0 p :: readerGo need fuel (carry.extract p carry.size) 0 0 blocks eof
+      else if eof then (if 0 < carry.size then [carry] else [])
+      else match blocks with
+        | [] => readerGo need fuel carry carry.size (lines + f) [] true
+        | blk :: rest => readerGo need fuel (carry ++ blk) carry.size (lines + f) rest false
+
+def flat (bs : List ByteArray) : List UInt8 := bs.flatMap (·.data.toList)
+def total (bs : List ByteArray) : Nat := (bs.map (·.size)).sum
+def pot (carry : ByteArray) (bs : List ByteArray) (eof : Bool) : Nat :=
+  2 * (carry.size + total bs) + 2 * bs.length + (if eof then 0 else 1)
+
+theorem sliceAt_nil (n : Nat) : sliceAt n [] = [] := by rw [sliceAt]; simp
+
+theorem sliceAt_none (n : Nat) (l : List UInt8) (hl : l ≠ []) (hn : cutLines n l = none) : sliceAt n l = [l] := by
+  rw [sliceAt, if_neg hl]
+  split
+  · rename_i pre post h; rw [hn] at h; cases h
+  · rfl
+
+theorem sliceAt_some (n : Nat) (l pre post : List UInt8) (h : cutLines n l = some (pre, post)) (hp : pre ≠ []) :
+    sliceAt n l = pre :: sliceAt n post := by
+  have hl : l ≠ [] := by
+    intro hh; rw [hh] at h
+    have := cutLines_spec n [] pre post h
+    exact hp (List.append_eq_nil_iff.1 this.symm).1
+  rw [sliceAt, if_neg hl]
+  split
+  · rename_i pre' post' h'; rw [h] at h'; cases h'; simp [hp]
+  · rename_i h'; rw [h] at h'; cases h'
+
+theorem size_eq_length (b : ByteArray) : b.size = b.data.toList.length := (Array.length_toList).symm
+
+theorem pot_cut (carry : ByteArray) (p : Nat) (bs : List ByteArray) (eof : Bool) (h1 : 0 < p) (h2 : p ≤ carry.size) :
+    pot (carry.extract p carry.size) bs eof < pot carry bs eof := by
+  unfold pot; rw [ByteArray.size_extract]; omega
+
+theorem reader_eq (need : Nat) (hneed : 0 < need) : ∀ (fuel : Nat) (carry : ByteArray) (scan lines : Nat)
+    (bs : List ByteArray) (eof : Bool), pot carry bs eof < fuel → scan ≤ carry.size →
+    (carry.data.toList.take scan).count newline = lines → lines < need → (eof = true → bs = []) →
+    (readerGo need fuel carry scan lines bs eof).map (·.data.toList) = sliceAt need (carry.data.toList ++ flat bs)
+  | 0, carry, scan, lines, bs, eof, hp, _, _, _, _ => by omega
+  | fuel + 1, carry, scan, lines, bs, eof, hp, hscan, hcount, hlines, heof => by
+    unfold readerGo
+    cases hca : Pipe.cutAfter carry scan (need - lines) with
+    | mk p f =>
+    simp only []
+    have hca' := hca
+    rw [cutAfter_eq] at hca'
+    have hlist : carry.data.toList = carry.data.toList.take scan ++ L carry scan := by
+      simp [L]
+    by_cases hcut : lines + f = need
+    · have hfn : f = need - lines := by omega
+      subst hfn
+      rw [if_pos hcut]
+      have hc := cutAfter_cutLines carry scan (need - lines) p hscan hca
+      have hge := cutAfterR_ge carry (need - lines) scan hscan
+      rw [hca'] at hge
+      simp only [] at hge
+      have hext := cutLines_extend _ _ _ _ (flat bs) hc
+      have happ := cutLines_append_count _ (carry.data.toList.take scan) (L carry scan ++ flat bs) need rfl (by omega)
+      rw [hcount, hext] at happ
+      simp only [Option.map_some] at happ
+      have hpos : ((L carry scan).take (p - scan)) ≠ [] := by
+        obtain ⟨m, hm⟩ : ∃ m, need - lines = m + 1 := ⟨need - lines - 1, by omega⟩
+        rw [hm] at hc
+        exact cutLines_pos m _ _ _ hc
+      have hpp : scan < p := by
+        rcases Nat.lt_or_ge scan p with h | h
+        · exact h
+        · exfalso; apply hpos
+          rw [show p - scan = 0 by omega]; simp
+      have hT : carry.data.toList ++ flat bs = carry.data.toList.take scan ++ (L carry scan ++ flat bs) := by
+        conv => lhs; rw [hlist]
+        simp
+      have hsl : sliceAt need (carry.data.toList ++ flat bs) =
+          (carry.data.toList.take p) :: sliceAt need (L carry p ++ flat bs) := by
+        have hne2 : carry.data.toList.take scan ++ (L carry scan).take (p - scan) ≠ [] := by
+          intro hh; exact hpos (List.append_eq_nil_iff.1 hh).2
+        have h5 : carry.data.toList.take scan ++ (L carry scan).take (p - scan) = carry.data.toList.take p := by
+          obtain ⟨d, rfl⟩ : ∃ d, p = scan + d := ⟨p - scan, by omega⟩
+          rw [List.take_add]; simp [L]
+        rw [hT, sliceAt_some need _ _ _ happ hne2, h5]
+      rw [hsl, List.map_cons]
+      have hex : (carry.extract 0 p).data.toList = carry.data.toList.take p := by
+        rw [extract_list]; simp [L]
+      have hex2 : (carry.extract p carry.size).data.toList = L carry p := by
+        rw [extract_list]; apply List.take_of_length_le; simp [L]
+      rw [hex]
+      congr 1
+      have := reader_eq need hneed fuel (carry.extract p carry.size) 0 0 bs eof
+        (by have := pot_cut carry p bs eof (by omega) hge.2; omega) (by omega) (by simp) hneed heof
+      rw [hex2] at this
+      exact this
+    · rw [if_neg hcut]
+      have hfl : f < need - lines := by
+        have := cutAfterR_le carry (need - lines) scan
+        rw [hca'] at this; simp only [] at this; omega
+      have hcn := cutAfterR_count carry (need - lines) scan hscan (by rw [hca']; exact hfl)
+      rw [hca'] at hcn
+      simp only [] at hcn
+      have hcnt : carry.data.toList.count newline = lines + f := by
+        rw [hlist, List.count_append, hcount]; simp [L] at hcn ⊢; omega
+      have hnone : ∀ R : List UInt8, R.count newline < need → cutLines need R = none := fun R h => cutLines_none_of_count need R h
+      by_cases heof' : eof = true
+      · rw [if_pos heof']
+        have hb : bs = [] := heof heof'
+        subst hb
+        simp only [flat, List.flatMap_nil, List.append_nil]
+        by_cases hz : carry.data.toList = []
+        · have : carry.size = 0 := by rw [size_eq_length, hz]; rfl
+          rw [hz, sliceAt_nil]; simp [this]
+        · have : 0 < carry.size := by
+            rw [size_eq_length]; exact List.length_pos_iff.2 hz
+          have hn := hnone carry.data.toList (by omega)
+          rw [sliceAt_none _ _ hz hn, if_pos this]; rfl
+      · rw [if_neg heof']
+        have heof'' : eof = false := by simpa using heof'
+        have hlen : (carry.data.toList.take carry.size) = carry.data.toList :=
+          List.take_of_length_le (by rw [← size_eq_length]; omega)
+        cases bs with
+        | nil =>
+          have := reader_eq need hneed fuel carry carry.size (lines + f) [] true
+            (by subst heof''; unfold pot at hp ⊢; simp [total] at hp ⊢; omega) (by omega)
+            (by rw [hlen, hcnt]) (by omega) (fun _ => rfl)
+          simpa using this
+        | cons blk rest =>
+          have hs : (carry ++ blk).size = carry.size + blk.size := ByteArray.size_append
+          have := reader_eq need hneed fuel (carry ++ blk) carry.size (lines + f) rest false
+            (by subst heof''; unfold pot at hp ⊢; simp [total] at hp ⊢; omega)
+            (by omega)
+            (by rw [data_toList_append, List.take_append_of_le_length (by rw [← size_eq_length]; omega), hlen, hcnt])
+            (by omega) (by simp)
+          rw [data_toList_append, List.append_assoc] at this
+          simpa [flat] using this
+
+-- THE statement: the reader emits exactly the slices of the concatenated blocks (blocks nonempty, as `readBig` returns them)
+theorem reader_correct (k : Nat) (hk : 0 < k) (bs : List ByteArray) :
+    (readerGo (4 * k) (pot ByteArray.empty bs false + 1) ByteArray.empty 0 0 bs false).map (·.data.toList) =
+      sliceAt (4 * k) (flat bs) := by
+  have := reader_eq (4 * k) (by omega) (pot ByteArray.empty bs false + 1) ByteArray.empty 0 0 bs false
+    (by omega) (by simp) (by simp) (by omega) (by simp)
+  simpa using this
+
+#print axioms reader_correct
+
 end Spec.FQ
