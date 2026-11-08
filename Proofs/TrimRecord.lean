@@ -13,7 +13,7 @@ adapter cut, then `ReadTrim.trimRead`, then `AdapterTrim.dropShort minLength`. T
   matches at `c` and at no earlier position.
 * `trimRead_correct`: the same, stated on the read (`FQ.Read`); `trimReadB_toRead`: the shim's `trimReadB` is
   `trimRead`; `parse_trim_quality`: every quality byte of a trimmed read that `FQ.parse` returned is in '!'..'~'.
-* `trimRead_best`: the kept window is the frozen contract's `get_best_window` window of the read cut at the adapter
+* `trimRead_contract` (from `trimRead_best` / `trimRead_best_none`): for every read of ≤ 10 000 letters, the kept window is the frozen contract's `get_best_window` window of the read cut at the adapter
   (`keepWindow`); `trimRead_valid` / `parse_trim_valid`: a trimmed valid read (every read `FQ.parse` returns) is the
   read of a valid record.
 * `trimChunk_eq`: trimming a chunk in parallel is `trimReadB` on both mates of every pair, in order. -/
@@ -258,6 +258,88 @@ theorem trimRead_best (r : FQ.Read) (h : r.sequence.length ≤ 10000) (j : Nat) 
     split <;> split <;> first | omega | simp [ba_extract_list]
   · simp [AdapterTrim.dropShort, ByteArray.size]
 
+theorem sum_const (l : List Int) (c : Int) (h : ∀ x ∈ l, x = c) : l.sum = c * l.length := by
+  induction l with
+  | nil => simp
+  | cons x l ih =>
+    rw [List.sum_cons, ih (fun y hy => h y (by simp [hy])), h x (by simp), List.length_cons]
+    push_cast; rw [Int.mul_add, Int.mul_one, Int.add_comm]
+
+/-- **No A/C/G/T before the TruSeq cut** (all N, or the cut leaves nothing): `trimRead` keeps nothing, and so does the
+frozen contract's answer: its best window is a single base (every base scores −1 000 000), shorter than `minLength`. -/
+theorem trimRead_best_none (r : FQ.Read) (hno : ∀ j, j < (preCut r).1.size → ReadTrim.isACGT (preCut r).1[j]! = false) :
+    trimRead r = keepWindow r (get_best_window [] (ReadTrim.scoresOf (preCut r).1 (preCut r).2)
+      (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ))) := by
+  have hb : trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩ =
+      match ReadTrim.trimRead (preCut r).1 (preCut r).2 with
+      | some (s, e) => AdapterTrim.dropShort minLength ((preCut r).1.extract s e) ((preCut r).2.extract s e)
+      | none => AdapterTrim.dropShort minLength ByteArray.empty ByteArray.empty := by
+    unfold trimBytes preCut
+    rcases AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩ with ⟨l, q⟩
+    dsimp only
+    generalize ReadTrim.trimRead l q = o
+    rcases o with _ | ⟨s, e⟩ <;> rfl
+  have htn : ReadTrim.trimRead (preCut r).1 (preCut r).2 = none := by
+    cases ht : ReadTrim.trimRead (preCut r).1 (preCut r).2 with
+    | none => rfl
+    | some w =>
+      obtain ⟨s, e⟩ := w
+      have ha := ReadTrim.trimRead_def_acgt _ _ s e ht
+      have := ha.2.2 s (Nat.le_refl _) ha.2.1
+      rw [hno s (by omega)] at this; cases this
+  have ht : trimRead r = ⟨r.name, (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).1.data.toList,
+      (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).2.data.toList⟩ := rfl
+  have hl : trimRead r = ⟨r.name, [], []⟩ := by
+    rw [ht, hb, htn]; simp [AdapterTrim.dropShort, ByteArray.size]
+  rw [hl]
+  generalize hw : get_best_window [] (ReadTrim.scoresOf (preCut r).1 (preCut r).2)
+    (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ)) = w
+  rcases w with _ | ⟨s, e⟩
+  · rfl
+  · have hv := get_best_window_returns_a_valid_window _ _ _ _ hw
+    simp only at hv
+    have hm := get_best_window_returns_a_maximum_score _ _ _ _ (s, s + 1) hw (by simp) (by simp only; omega)
+    have hlen : (ReadTrim.scoresOf (preCut r).1 (preCut r).2).length = (preCut r).1.size := by
+      simp [ReadTrim.scoresOf]
+    have hall : ∀ x ∈ (ReadTrim.scoresOf (preCut r).1 (preCut r).2).map (ReadTrim.perBase ReadTrim.defQ),
+        x = -1000000 := by
+      intro x hx
+      simp only [ReadTrim.scoresOf, List.map_map, List.mem_map, List.mem_range, Function.comp] at hx
+      obtain ⟨i, hi, rfl⟩ := hx
+      simp [ReadTrim.perBase, ReadTrim.enc, hno i hi]
+    have hws : ∀ a b, a < b → b ≤ (preCut r).1.size →
+        window_score (ReadTrim.scoresOf (preCut r).1 (preCut r).2)
+          (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ)) (a, b) = -1000000 * ((b - a : Nat) : Int) := by
+      intro a b hab hb'
+      generalize ReadTrim.scoresOf (preCut r).1 (preCut r).2 = S at hall hlen ⊢
+      have hsub : ∀ x ∈ ((S.drop a).take (b - a)).map (ReadTrim.perBase ReadTrim.defQ), x = -1000000 := by
+        intro x hx
+        apply hall x
+        rw [List.mem_map] at hx ⊢
+        obtain ⟨y, hy, rfl⟩ := hx
+        exact ⟨y, List.mem_of_mem_drop (List.mem_of_mem_take hy), rfl⟩
+      unfold window_score
+      show (((S.drop a).take (b - a)).map (ReadTrim.perBase ReadTrim.defQ)).sum = _
+      rw [sum_const _ _ hsub]
+      simp only [List.length_map, List.length_take, List.length_drop, hlen]
+      rw [Nat.min_eq_left (by omega)]
+    rw [hws s (s + 1) (by omega) (by omega), hws s e hv.1 (by omega)] at hm
+    have : e - s < minLength := by unfold minLength; omega
+    simp [keepWindow, this]
+
+/-- **`trimRead` is the frozen contract** after the TruSeq cut, for every read of at most 10 000 letters: it keeps
+`get_best_window`'s window of the cut read when that is at least `minLength` long, else nothing. -/
+theorem trimRead_contract (r : FQ.Read) (h : r.sequence.length ≤ 10000) :
+    trimRead r = keepWindow r (get_best_window [] (ReadTrim.scoresOf (preCut r).1 (preCut r).2)
+      (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ))) := by
+  by_cases hA : ∃ j, j < (preCut r).1.size ∧ ReadTrim.isACGT (preCut r).1[j]! = true
+  · obtain ⟨j, hj, hjA⟩ := hA
+    exact trimRead_best r h j hj hjA
+  · exact trimRead_best_none r (fun j hj => by
+      cases e : ReadTrim.isACGT (preCut r).1[j]!
+      · rfl
+      · exact absurd ⟨j, hj, e⟩ hA)
+
 theorem isACGT_base (x : UInt8) (h : ReadTrim.isACGT x = true) : x ∈ FQ.bases := by
   simp only [ReadTrim.isACGT, Bool.or_eq_true, beq_iff_eq] at h
   simp only [FQ.bases, List.mem_cons, List.not_mem_nil, or_false]
@@ -417,6 +499,8 @@ end Spec
 #print axioms Spec.trimRead_quality_bytes
 #print axioms Spec.trimChunk_eq
 #print axioms Spec.trimRead_best
+#print axioms Spec.trimRead_best_none
+#print axioms Spec.trimRead_contract
 #print axioms Spec.trimRead_valid
 #print axioms Spec.parse_trim_valid
 #print axioms Spec.trimBytes_window

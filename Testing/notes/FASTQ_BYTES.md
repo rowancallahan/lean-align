@@ -106,6 +106,10 @@ New in `Proofs/TrimRecord.lean` (standard axioms; in the CI headline list):
   is exactly the frozen contract's best window of the cut read (from `ReadTrim.trimRead_def_eq_contract`), or nothing
   when there is none or it is shorter than `minLength`. When Rowan's TruSeq cut spec lands, `preCut` is the place to
   state it.
+- `trimRead_best_none`: when nothing before the cut is A/C/G/T (all N, or the cut leaves nothing), `trimRead` keeps
+  nothing and so does the contract: every base scores −1 000 000, so by `get_best_window_returns_a_maximum_score` its best
+  window is one base, shorter than `minLength`. `trimRead_contract` joins the two: `trimRead r = keepWindow r (contract)`
+  for every read of at most 10 000 letters (the spec's reads have at most 1000).
 - `trimRead_valid`: `r.valid → ∃ r', r'.valid ∧ toRead r' = trimRead (toRead r)` (same name and `+` line; letters
   A C G T N, ≤ 1000; quality bytes; equal lengths). `parse_trim_valid`: the same for every read `FQ.parse` returns.
   `parse_trim_quality` (qualities only) is the quality part of it.
