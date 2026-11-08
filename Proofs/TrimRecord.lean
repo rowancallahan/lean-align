@@ -13,6 +13,9 @@ adapter cut, then `ReadTrim.trimRead`, then `AdapterTrim.dropShort minLength`. T
   matches at `c` and at no earlier position.
 * `trimRead_correct`: the same, stated on the read (`FQ.Read`); `trimReadB_toRead`: the shim's `trimReadB` is
   `trimRead`; `parse_trim_quality`: every quality byte of a trimmed read that `FQ.parse` returned is in '!'..'~'.
+* `trimRead_best`: the kept window is the frozen contract's `get_best_window` window of the read cut at the adapter
+  (`keepWindow`); `trimRead_valid` / `parse_trim_valid`: a trimmed valid read (every read `FQ.parse` returns) is the
+  read of a valid record.
 * `trimChunk_eq`: trimming a chunk in parallel is `trimReadB` on both mates of every pair, in order. -/
 
 namespace Spec
@@ -194,6 +197,99 @@ theorem parse_trim_quality (bytes : List UInt8) (reads : List FQ.Read) (h : FQ.p
   simp only [ByteArray.data_extract, Array.toList_extract, List.extract_eq_drop_take] at hx
   exact (hv rec hrec).2.2.2.2.2.2.2.2.2.2.1 x (List.mem_of_mem_drop (List.mem_of_mem_take hx))
 
+/-! ## The kept window is the frozen contract's best window; a trimmed valid read is valid -/
+
+/-- the read's letters and qualities up to the adapter cut: what the quality trimmer sees -/
+def preCut (r : FQ.Read) : ByteArray × ByteArray := AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩
+
+/-- the read with the window `[s, e)` of its letters and qualities kept (none kept when there is no window or it is
+shorter than `minLength`); the name is kept -/
+def keepWindow (r : FQ.Read) : Option (Nat × Nat) → FQ.Read
+  | some (s, e) => if e - s < minLength then ⟨r.name, [], []⟩
+      else ⟨r.name, (r.sequence.drop s).take (e - s), (r.quality.drop s).take (e - s)⟩
+  | none => ⟨r.name, [], []⟩
+
+theorem ba_extract_list (l : List UInt8) (a b : Nat) :
+    ((⟨l.toArray⟩ : ByteArray).extract a b).data.toList = (l.drop a).take (b - a) := by
+  simp [ByteArray.data_extract, List.extract]
+
+/-- **The kept window is the frozen contract's best window** of the read cut at the TruSeq adapter: for a read of at
+most 10 000 letters whose cut part has an A/C/G/T letter, `trimRead` keeps exactly `get_best_window`'s window `[s, e)`
+of the letters and qualities (via `ReadTrim.trimRead_def_eq_contract`), or nothing (no window, or shorter than
+`minLength`). -/
+theorem trimRead_best (r : FQ.Read) (h : r.sequence.length ≤ 10000) (j : Nat) (hj : j < (preCut r).1.size)
+    (hjA : ReadTrim.isACGT (preCut r).1[j]! = true) :
+    trimRead r = keepWindow r (get_best_window [] (ReadTrim.scoresOf (preCut r).1 (preCut r).2)
+      (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ))) := by
+  have hl1 : (preCut r).1 = (⟨r.sequence.toArray⟩ : ByteArray).extract 0 (cutAt ⟨r.sequence.toArray⟩) := rfl
+  have hq1 : (preCut r).2 = (⟨r.quality.toArray⟩ : ByteArray).extract 0 (cutAt ⟨r.sequence.toArray⟩) := rfl
+  have hcut : cutAt ⟨r.sequence.toArray⟩ ≤ r.sequence.length := by
+    have := AdapterTrim.cut_le AdapterTrim.truSeq 6 1 ⟨r.sequence.toArray⟩
+    simpa [ByteArray.size, cutAt] using this
+  have hs : (preCut r).1.size ≤ 10000 := by
+    rw [hl1, ByteArray.size_extract]; simp only [ByteArray.size, List.size_toArray]; omega
+  have hc := ReadTrim.trimRead_def_eq_contract _ (preCut r).2 hs j hj hjA
+  have hb : trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩ =
+      match ReadTrim.trimRead (preCut r).1 (preCut r).2 with
+      | some (s, e) => AdapterTrim.dropShort minLength ((preCut r).1.extract s e) ((preCut r).2.extract s e)
+      | none => AdapterTrim.dropShort minLength ByteArray.empty ByteArray.empty := by
+    unfold trimBytes preCut
+    rcases AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩ with ⟨l, q⟩
+    dsimp only
+    generalize ReadTrim.trimRead l q = o
+    rcases o with _ | ⟨s, e⟩ <;> rfl
+  have ht : trimRead r = ⟨r.name, (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).1.data.toList,
+      (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).2.data.toList⟩ := rfl
+  rw [ht, hb, hc]
+  unfold keepWindow
+  split
+  · rename_i s e hse
+    have ha := ReadTrim.trimRead_def_acgt _ _ s e (hc.trans hse)
+    rw [hl1, ByteArray.size_extract] at ha
+    simp only [ByteArray.size, List.size_toArray] at ha
+    have hsz : ((⟨r.sequence.toArray⟩ : ByteArray).extract 0 (cutAt ⟨r.sequence.toArray⟩)).extract s e =
+        (⟨r.sequence.toArray⟩ : ByteArray).extract s e := by
+      rw [extract_extract_ba, show min (0 + e) (cutAt ⟨r.sequence.toArray⟩) = e by omega]; simp
+    have hqz : ((⟨r.quality.toArray⟩ : ByteArray).extract 0 (cutAt ⟨r.sequence.toArray⟩)).extract s e =
+        (⟨r.quality.toArray⟩ : ByteArray).extract s e := by
+      rw [extract_extract_ba, show min (0 + e) (cutAt ⟨r.sequence.toArray⟩) = e by omega]; simp
+    simp only [hl1, hq1, hsz, hqz, AdapterTrim.dropShort, ByteArray.size_extract]
+    simp only [ByteArray.size, List.size_toArray]
+    split <;> split <;> first | omega | simp [ba_extract_list]
+  · simp [AdapterTrim.dropShort, ByteArray.size]
+
+theorem isACGT_base (x : UInt8) (h : ReadTrim.isACGT x = true) : x ∈ FQ.bases := by
+  simp only [ReadTrim.isACGT, Bool.or_eq_true, beq_iff_eq] at h
+  simp only [FQ.bases, List.mem_cons, List.not_mem_nil, or_false]
+  rcases h with ((h | h) | h) | h <;> simp [h]
+
+/-- **A trimmed valid read is the read of a valid record**: same name and `+` line, letters and qualities the trimmed
+ones (letters still in A C G T N, at most 1000, qualities still quality bytes, the two lengths still equal). -/
+theorem trimRead_valid (r : FQ.Record) (h : r.valid) :
+    ∃ r' : FQ.Record, r'.valid ∧ FQ.toRead r' = trimRead (FQ.toRead r) := by
+  obtain ⟨a, b, h1, h2, h3, hs, hq, hacgt, -⟩ := trimRead_correct (FQ.toRead r)
+  unfold FQ.Record.valid at h
+  obtain ⟨v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12⟩ := h
+  simp only [FQ.toRead] at hs hq hacgt h3 ⊢
+  refine ⟨⟨r.name, (trimRead (FQ.toRead r)).sequence, r.plus, (trimRead (FQ.toRead r)).quality⟩, ?_, ?_⟩
+  · unfold FQ.Record.valid; dsimp only
+    simp only [FQ.toRead] at *
+    refine ⟨v1, v2, v3, v4, v5, v6, fun x hx => isACGT_base x (hacgt x hx), ?_, v9, v10, ?_, ?_⟩
+    · rw [hs]; simp; omega
+    · rw [hq]; exact fun x hx => v11 x (List.mem_of_mem_drop (List.mem_of_mem_take hx))
+    · rw [hs, hq]; simp [v12]
+  · simp only [FQ.toRead]
+    rfl
+
+/-- For every read `FQ.parse` returns, the trimmed read is the read of a valid record. -/
+theorem parse_trim_valid (bytes : List UInt8) (reads : List FQ.Read) (h : FQ.parse bytes = some reads) :
+    ∀ r ∈ reads, ∃ r' : FQ.Record, r'.valid ∧ FQ.toRead r' = trimRead r := by
+  obtain ⟨records, hv, -, hr⟩ := FQ.parse_some bytes reads h
+  intro r hr'
+  rw [← hr] at hr'
+  obtain ⟨rec, hrec, rfl⟩ := List.mem_map.mp hr'
+  exact trimRead_valid rec (hv rec hrec)
+
 /-! ## Trimming a chunk in parallel -/
 
 theorem trimChunk_prefix (chunk : Array (ReadB × ReadB)) (size : Nat)
@@ -320,6 +416,9 @@ end Spec
 #print axioms Spec.trimReadB_toRead
 #print axioms Spec.trimRead_quality_bytes
 #print axioms Spec.trimChunk_eq
+#print axioms Spec.trimRead_best
+#print axioms Spec.trimRead_valid
+#print axioms Spec.parse_trim_valid
 #print axioms Spec.trimBytes_window
 #print axioms Spec.trimBytes_acgt
 #print axioms Spec.trimBytes_size
