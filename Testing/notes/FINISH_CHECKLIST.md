@@ -40,6 +40,13 @@ Order matters: make it right, check it, then understand it.
 ## 7. Understand it (in your own words)
 - `SHIM_EXPLAINED.md`, `UTILIZATION.md`, `byte_specs/LEMMAS.md`, `Testing/fuzz/ROWAN_CHECKLIST.md`, `SESSION_SUMMARY.md`.
 
+## FASTQ spec: important open points (Rowan)
+- New byte spec drafted: scratchpad FastqSpec.lean (Record/Read, Record.valid, toBytes, toRead, parse + parse_correct).
+- THINK LATER: the 1000-base limit is a deliberate short-read limit (fine for 2x150 / 2x250; long reads are rejected).
+- Pairing: the two mate files must have the same number of reads and matching mate names; not in this spec yet.
+- Trimming (on Reads) and the threading/pipeline (parallel parse must equal `parse`) still to connect.
+- Names: tabs and spaces allowed; no newline, no carriage return, ASCII only; the QNAME rule (SAM) comes later.
+
 ## Quality encoding (Rowan, to do)
 - ONLY Phred+33 is supported right now (bytes '!'..'~' = Phred 0..93). Old Phred+64 files (Illumina 1.3-1.7) are
   accepted silently today and every quality is read 31 too high: say so in the spec and the README.
