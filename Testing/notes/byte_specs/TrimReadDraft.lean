@@ -65,6 +65,29 @@ theorem trimRecord_correct (r : Read) :
   obtain ⟨a, b, h⟩ := TrimBytes.trimSQ_correct minLength r.sequence r.quality
   exact ⟨a, b, h.1, h.2.1, h.2.2.1, trivial, h.2.2.2⟩
 
+theorem pair_eta {α β : Type} (p : α × β) : (p.1, p.2) = p := rfl
+
+/-- **The kept window is the frozen contract's best window** of the read cut at the adapter (`TrimBytes.trimSQ_best`):
+for a read of at most 10 000 letters whose cut part has an A/C/G/T letter, the trimmed read keeps its name and has
+`get_best_window`'s window of the letters and qualities, or nothing (no window, or shorter than `minLength`). -/
+theorem trimRecord_best (r : Read) (h : r.sequence.length ≤ 10000) (j : Nat)
+    (hj : j < (TrimBytes.preCut r.sequence r.quality).1.size)
+    (hjA : ReadTrim.isACGT (TrimBytes.preCut r.sequence r.quality).1[j]! = true) :
+    (trimRecord r).name = r.name ∧
+    ((trimRecord r).sequence, (trimRecord r).quality) =
+      TrimBytes.keepWindow minLength r.sequence r.quality (get_best_window [] (ReadTrim.scoresOf
+        (TrimBytes.preCut r.sequence r.quality).1 (TrimBytes.preCut r.sequence r.quality).2)
+        (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ))) := by
+  have hs : (TrimBytes.preCut r.sequence r.quality).1.size ≤ 10000 := by
+    have := AdapterTrim.cut_le AdapterTrim.truSeq 6 1 (TrimBytes.ba r.sequence)
+    have e : (TrimBytes.preCut r.sequence r.quality).1 =
+      (TrimBytes.ba r.sequence).extract 0 (TrimBytes.cutAt (TrimBytes.ba r.sequence)) := rfl
+    rw [e, ByteArray.size_extract, TrimBytes.ba_size]
+    rw [TrimBytes.ba_size] at this; unfold TrimBytes.cutAt; omega
+  have hb := TrimBytes.trimSQ_best minLength r.sequence r.quality hs j hj hjA
+  simp only [trimRecord, true_and]
+  rw [pair_eta, hb]
+
 theorem isBase_mem (x : UInt8) (h : TrimBytes.isBase x = true) : x ∈ bases := by
   simp only [TrimBytes.isBase, Bool.or_eq_true, beq_iff_eq] at h
   simp only [bases, List.mem_cons, List.not_mem_nil, or_false]
@@ -93,4 +116,5 @@ end FQ
 
 #print axioms FQ.trimRecord_correct
 #print axioms FQ.trimRecord_valid
+#print axioms FQ.trimRecord_best
 #print axioms FQ.trimChunk_eq

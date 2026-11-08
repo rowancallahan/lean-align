@@ -125,6 +125,51 @@ theorem trimSQ_correct (minLen : Nat) (seq qual : List UInt8) :
       simpa [List.getElem_take, List.getElem_drop] using this
   · simpa only [trimSQ, hlen] using trimBA_size minLen (ba seq) (ba qual)
 
+/-- The read's letters and qualities up to the adapter cut (what the quality trimmer sees). -/
+def preCut (seq qual : List UInt8) : ByteArray × ByteArray := AdapterTrim.cutTruSeq (ba seq) (ba qual)
+
+/-- The window `[s, e)` of `seq` / `qual`, or nothing when there is none or it is shorter than `minLen`. -/
+def keepWindow (minLen : Nat) (seq qual : List UInt8) : Option (Nat × Nat) → List UInt8 × List UInt8
+  | some (s, e) => if e - s < minLen then ([], []) else ((seq.drop s).take (e - s), (qual.drop s).take (e - s))
+  | none => ([], [])
+
+/-- **The kept window is the frozen contract's best window** of the read cut at the adapter: when the cut read has
+at most 10 000 letters and an A/C/G/T letter, the output is `get_best_window`'s window `[s, e)` of `seq` / `qual`
+(dropped when shorter than `minLen`), and nothing when it returns none. -/
+theorem trimSQ_best (minLen : Nat) (seq qual : List UInt8)
+    (h : (preCut seq qual).1.size ≤ 10000) (j : Nat) (hj : j < (preCut seq qual).1.size)
+    (hjA : ReadTrim.isACGT (preCut seq qual).1[j]! = true) :
+    trimSQ minLen seq qual = keepWindow minLen seq qual (get_best_window []
+      (ReadTrim.scoresOf (preCut seq qual).1 (preCut seq qual).2) (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ))) := by
+  have hc := ReadTrim.trimRead_def_eq_contract _ (preCut seq qual).2 h j hj hjA
+  have hl1 : (preCut seq qual).1 = (ba seq).extract 0 (cutAt (ba seq)) := rfl
+  have hq1 : (preCut seq qual).2 = (ba qual).extract 0 (cutAt (ba seq)) := rfl
+  have hcut : cutAt (ba seq) ≤ (ba seq).size := AdapterTrim.cut_le _ _ _ _
+  have hb : trimBA minLen (ba seq) (ba qual) =
+      match ReadTrim.trimRead (preCut seq qual).1 (preCut seq qual).2 with
+      | some (s, e) => AdapterTrim.dropShort minLen ((preCut seq qual).1.extract s e) ((preCut seq qual).2.extract s e)
+      | none => AdapterTrim.dropShort minLen ByteArray.empty ByteArray.empty := by
+    unfold trimBA preCut
+    rcases AdapterTrim.cutTruSeq (ba seq) (ba qual) with ⟨l, q⟩
+    dsimp only
+    split <;> rfl
+  unfold trimSQ
+  rw [hb]
+  rw [hc]
+  unfold keepWindow
+  split
+  · rename_i s e hse
+    have ha := ReadTrim.trimRead_def_acgt _ _ s e (hc.trans hse)
+    rw [hl1, ByteArray.size_extract] at ha
+    have hsz : ((ba seq).extract 0 (cutAt (ba seq))).extract s e = (ba seq).extract s e := by
+      rw [extract_extract_ba, show min (0 + e) (cutAt (ba seq)) = e by omega]; simp
+    have hqz : ((ba qual).extract 0 (cutAt (ba seq))).extract s e = (ba qual).extract s e := by
+      rw [extract_extract_ba, show min (0 + e) (cutAt (ba seq)) = e by omega]; simp
+    simp only [hl1, hq1, hsz, hqz, AdapterTrim.dropShort, ByteArray.size_extract, ba_size]
+    rw [ba_size] at hcut
+    split <;> split <;> first | omega | simp [ba]
+  · simp [AdapterTrim.dropShort, ByteArray.size]
+
 /-- The letters A C G T N (the spec's `FQ.bases`) as a test. -/
 def isBase (x : UInt8) : Bool := x == 0x41 || x == 0x43 || x == 0x47 || x == 0x54 || x == 0x4E
 
@@ -172,4 +217,5 @@ end TrimBytes
 
 #print axioms TrimBytes.trimSQ_correct
 #print axioms TrimBytes.trimSQ_valid
+#print axioms TrimBytes.trimSQ_best
 #print axioms TrimBytes.trimChunkG_eq
