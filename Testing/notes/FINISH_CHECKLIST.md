@@ -40,6 +40,8 @@ Order matters: make it right, check it, then understand it.
 ## 7. Understand it (in your own words)
 - `SHIM_EXPLAINED.md`, `UTILIZATION.md`, `byte_specs/LEMMAS.md`, `Testing/fuzz/ROWAN_CHECKLIST.md`, `SESSION_SUMMARY.md`.
 
+## REMINDER (Rowan): redo the SAM spec (bytes over Read; QNAME rule; ~15 min-1 h). Lock it before the fused writer starts.
+
 ## FASTQ spec: important open points (Rowan)
 - New byte spec drafted: scratchpad FastqSpec.lean (Record/Read, Record.valid, toBytes, toRead, parse + parse_correct).
 - THINK LATER: the 1000-base limit is a deliberate short-read limit (fine for 2x150 / 2x250; long reads are rejected).
