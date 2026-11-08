@@ -97,3 +97,24 @@ Edge-case differential, 61 cases (local, not committed):
 - **Variant B (per-worker prepared index):** not included. The shim can only call Spec functions, and Spec has no `alignPairsP (chunkSetup index) = alignPairs index` interface yet; in the earlier patch it was a Main-only exception to the mirror rule.
 - **`Testing/benches/*`:** these still use the old `FastqRecord` and are not built by default. They need updating, or removal, before they are next built.
 - **Slicing (trusted, stated in Shim):** the claim that cutting at every 4k-th newline and parsing the slices equals `parse` on the whole file is not proved. `parse_cons` / `toBytes_unique` are the lemmas for it.
+
+## Trimming: best window and validity on `FQ.Read` (S-H)
+
+New in `Proofs/TrimRecord.lean` (standard axioms; in the CI headline list):
+- `trimRead_best`: for a read of at most 10 000 letters whose part before the TruSeq cut (`preCut`) has an A/C/G/T
+  letter, `trimRead r = keepWindow r (get_best_window [] (scoresOf (preCut r)) (map (perBase defQ)))`: the kept window
+  is exactly the frozen contract's best window of the cut read (from `ReadTrim.trimRead_def_eq_contract`), or nothing
+  when there is none or it is shorter than `minLength`. When Rowan's TruSeq cut spec lands, `preCut` is the place to
+  state it.
+- `trimRead_valid`: `r.valid → ∃ r', r'.valid ∧ toRead r' = trimRead (toRead r)` (same name and `+` line; letters
+  A C G T N, ≤ 1000; quality bytes; equal lengths). `parse_trim_valid`: the same for every read `FQ.parse` returns.
+  `parse_trim_quality` (qualities only) is the quality part of it.
+- Compared with what was already here: `trimRead_correct` (window, cut bound, ACGT, empty or ≥ `minLength`) and
+  `trimChunk_eq` (on `ReadB`, with `trimReadB_toRead`) already cover the window/chunk statements of the earlier
+  `TrimBytes` draft (branch spec/fastq-bytes-trim), so that module is not needed.
+
+Cost of List ↔ ByteArray (callgrind, 2k pairs): the shim never converts (`parseFastqB` → `ReadB` → `trimReadB` on
+`ByteArray`s; `toRead` is only in proofs). A variant that trims through `FQ.Read` (`ReadB → toRead → trimRead → back`)
+gives identical SAM but costs NovaSeq 935.5M → 1,315.2M Ir (+41%) and HiSeq 1,099.1M → 1,672.6M Ir (+52%):
+~95k-145k Ir per mate, mostly `List.toArrayAux`, `Array.toList`, allocation and freeing of one cons cell per byte.
+So `List UInt8` stays in the statements and the executed code stays on `ByteArray`, as it is.

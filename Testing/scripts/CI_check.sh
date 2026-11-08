@@ -14,6 +14,7 @@ bad()  { echo "FAIL: $1"; fail=1; }
 HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end
   Spec.trimBytes_window Spec.trimBytes_acgt Spec.trimBytes_size Spec.cutAt_spec
   Spec.trimRead_quality_bytes Spec.trimRead_correct Spec.parse_trim_quality Spec.trimChunk_eq
+  Spec.trimRead_best Spec.trimRead_valid Spec.parse_trim_valid
   Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq"
 
 step "frozen files (checksums)"
