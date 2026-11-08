@@ -13,7 +13,8 @@ bad()  { echo "FAIL: $1"; fail=1; }
 # the theorems that must be in the build, with standard axioms only
 HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end
   Spec.trimBytes_window Spec.trimBytes_acgt Spec.trimBytes_size Spec.cutAt_spec
-  Spec.trimRecord_quality_bytes Spec.trimRecord_correct Spec.parseRecord_trim_quality Spec.trimChunk_eq"
+  Spec.trimRead_quality_bytes Spec.trimRead_correct Spec.parse_trim_quality Spec.trimChunk_eq
+  Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq"
 
 step "frozen files (checksums)"
 (cd Aligner/trimmer && shasum -a 256 -c FROZEN_CONTRACT.sha256) || fail=1
@@ -43,12 +44,15 @@ grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |
   Aligner/PairwiseMain.lean Aligner/LeanAlign/*.lean && bad "forbidden token in the executables"
 grep -nE "IO\." Aligner/LeanAlign/*.lean && bad "IO in the pure library LeanAlign/"
 grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" \
-  Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Fastq.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
+  Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
+  Aligner/io/FastqIO.lean \
   && bad "forbidden token in the shim files"
 [ $fail -eq $before ] && echo "none"
 
 step "copies mirror Spec/"
-for f in Fasta Fastq Sam; do
+python3 -I Testing/scripts/fastq_mirror.py Spec/Fastq.lean Proofs/Fastq.lean \
+  && echo "Proofs/Fastq.lean mirrors Spec/Fastq.lean (up to the holes)" || bad "Proofs/Fastq.lean differs from Spec/Fastq.lean"
+for f in Fasta Sam; do
   sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean \
     && echo "Proofs/$f.lean mirrors Spec/$f.lean" || bad "Proofs/$f.lean differs from Spec/$f.lean"
 done

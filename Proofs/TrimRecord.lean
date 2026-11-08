@@ -1,34 +1,21 @@
-import Proofs.Fastq
+import Proofs.Sam
 
-/-! # `trimRecord` composes: what the FASTQ glue's trimming guarantees
+/-! # Trimming a read: what `trimRead` guarantees (and the QNAME rule on bytes)
 
-`Spec.trimRecord` (Spec/Fastq.lean, mirrored in Proofs/Fastq.lean) is the adapter cut, then `ReadTrim.trimRead`, then
-`AdapterTrim.dropShort minLength`. The pieces are proved in `AdapterTrim` (`cut_*`, `dropShort_size`) and `ReadTrim`
-(`trimRead_acgt`); this file proves what their composition gives, about the letters and the quality BYTES
-(`trimBytes`); the quality String is `String.fromUTF8!` of those bytes.
+`Spec.trimRead` (Spec/Sam.lean, mirrored in Proofs/Sam.lean) is `trimBytes` on the read's letters and quality: the
+adapter cut, then `ReadTrim.trimRead`, then `AdapterTrim.dropShort minLength`. The pieces are proved in `AdapterTrim`
+(`cut_*`, `dropShort_size`) and `ReadTrim` (`trimRead_acgt`); this file proves what their composition gives.
 
-* `trimRecord_window`: the output letters and qualities are the same window `[a, b)` of the input letters / qualities.
-* `trimRecord_acgt`: every output letter is A, C, G or T.
-* `trimRecord_size`: the output is empty or has at least `minLength` letters.
-* `trimRecord_cut`: the window ends at or before the adapter cut `c`; when the cut fires (`c < |letters|`), the adapter
-  matches at `c` and at no earlier position. -/
+* `trimBytes_window`: the output letters and qualities are the same window `[a, b)` of the input letters / qualities.
+* `trimBytes_acgt`: every output letter is A, C, G or T.
+* `trimBytes_size`: the output is empty or has at least `minLength` letters.
+* `cutAt_spec`: the window ends at or before the adapter cut `c`; when the cut fires (`c < |letters|`), the adapter
+  matches at `c` and at no earlier position.
+* `trimRead_correct`: the same, stated on the read (`FQ.Read`); `trimReadB_toRead`: the shim's `trimReadB` is
+  `trimRead`; `parse_trim_quality`: every quality byte of a trimmed read that `FQ.parse` returned is in '!'..'~'.
+* `trimChunk_eq`: trimming a chunk in parallel is `trimReadB` on both mates of every pair, in order. -/
 
 namespace Spec
-
-/-- `trimRecord`'s letters and quality bytes, before the quality bytes become a String. -/
-def trimBytes (letters qual : ByteArray) : ByteArray × ByteArray :=
-  let (letters, qual) := AdapterTrim.cutTruSeq letters qual
-  let (letters, qual) := match ReadTrim.trimRead letters qual with
-    | some (s, e) => (letters.extract s e, qual.extract s e)
-    | none => (ByteArray.empty, ByteArray.empty)
-  AdapterTrim.dropShort minLength letters qual
-
-theorem trimRecord_eq (record : FastqRecord) :
-    trimRecord record = { record with letters := (trimBytes record.letters record.quality.toUTF8).1,
-                                      quality := String.fromUTF8! (trimBytes record.letters record.quality.toUTF8).2 } := by
-  unfold trimRecord trimBytes
-  simp only []
-  rfl
 
 /-- the adapter cut's position (the setting used by the reader: TruSeq, 6, 1) -/
 def cutAt (letters : ByteArray) : Nat := AdapterTrim.cutPos AdapterTrim.truSeq 6 1 letters
@@ -105,37 +92,10 @@ theorem cutAt_spec (letters : ByteArray) :
     ∀ j, j < cutAt letters → AdapterTrim.matchesAt AdapterTrim.truSeq 6 1 letters j = false :=
   ⟨AdapterTrim.cut_matches _ _ _ _, AdapterTrim.cut_first _ _ _ _⟩
 
-/-- The quality String of `trimRecord` has the window's bytes, when they are valid UTF-8
-(they are, for ASCII qualities, which `Spec.readFastqRecord` checks in the patch of audit/medium-fixes only). -/
 theorem fromUTF8!_toUTF8 (b : ByteArray) (h : b.IsValidUTF8) : (String.fromUTF8! b).toUTF8 = b := by
   unfold String.fromUTF8!
   rw [dif_pos h]
   simp [String.fromUTF8]
-
-theorem trimRecord_quality_bytes (record : FastqRecord)
-    (h : (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8) :
-    (trimRecord record).quality.toUTF8 = (trimBytes record.letters record.quality.toUTF8).2 := by
-  rw [trimRecord_eq]
-  generalize trimBytes record.letters record.quality.toUTF8 = p at h ⊢
-  exact fromUTF8!_toUTF8 p.2 h
-
-/-- **`trimRecord`, stated on the record** (a)-(d): with `cutAt` the adapter cut of the input letters,
-the output letters are the window `[a, b)` of the input letters, the output quality bytes (before `String.fromUTF8!`)
-the same window of the input quality bytes, `b ≤ cutAt`, every output letter is A/C/G/T, and the output has no
-letters or at least `minLength`. -/
-theorem trimRecord_correct (record : FastqRecord) :
-    ∃ a b, a ≤ b ∧ b ≤ cutAt record.letters ∧ cutAt record.letters ≤ record.letters.size ∧
-      (trimRecord record).letters = record.letters.extract a b ∧
-      (trimBytes record.letters record.quality.toUTF8).2 = record.quality.toUTF8.extract a b ∧
-      (∀ x ∈ (trimRecord record).letters.data, ReadTrim.isACGT x = true) ∧
-      ((trimRecord record).letters.size = 0 ∨ minLength ≤ (trimRecord record).letters.size) := by
-  obtain ⟨a, b, h1, h2, h3, h4, h5⟩ := trimBytes_window record.letters record.quality.toUTF8
-  have hl : (trimRecord record).letters = (trimBytes record.letters record.quality.toUTF8).1 := by
-    rw [trimRecord_eq]
-  refine ⟨a, b, h1, h2, h3, ?_, h5, ?_, ?_⟩
-  · rw [hl, h4]
-  · rw [hl]; exact trimBytes_acgt _ _
-  · rw [hl]; exact trimBytes_size _ _
 
 theorem ascii_single (x : UInt8) (h : x < 128) :
     [Char.ofNat x.toNat].utf8Encode = ByteArray.mk #[x] := by
@@ -187,47 +147,57 @@ theorem extract_mem (b : ByteArray) (i j : Nat) : ∀ x ∈ (b.extract i j).data
   obtain ⟨k, hk, rfl⟩ := Array.mem_extract_iff_getElem.mp hx
   exact Array.getElem_mem _
 
-/-- The reader's check discharges the UTF-8 hypothesis: for every record `parseRecord` returns (the reader
-returns exactly these), the trimmed quality bytes are valid UTF-8 and the quality String of `trimRecord` is
-exactly those bytes. -/
-theorem parseRecord_trim_quality {header letters plus quality : ByteArray} {record : FastqRecord}
-    (h : parseRecord header letters plus quality = .ok record) :
-    (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8 ∧
-    (trimRecord record).quality.toUTF8 = (trimBytes record.letters record.quality.toUTF8).2 := by
-  have hq : allBytes (fun b => 33 ≤ b && b ≤ 126) quality = true ∧ record.quality = String.fromUTF8! quality := by
-    unfold parseRecord at h
-    split at h
-    · cases h
-    split at h
-    · cases h
-    split at h
-    · cases h
-    split at h
-    · cases h
-    rename_i _ _ _ h4
-    simp only [Bool.not_eq_true', Bool.not_eq_false'] at h4
-    cases h
-    exact ⟨by simpa using h4, rfl⟩
-  obtain ⟨hall, hrec⟩ := hq
-  have hqa : ∀ x ∈ quality.data, x < 128 := by
-    intro x hx
-    have := allBytes_mem _ _ hall x hx
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at this
-    exact UInt8.lt_iff_toNat_lt.mpr (by have := this.2; simp [UInt8.le_iff_toNat_le] at this; show x.toNat < 128; omega)
-  have hvalid : quality.IsValidUTF8 := ascii_valid quality hqa
-  have hbytes : record.quality.toUTF8 = quality := by rw [hrec]; exact fromUTF8!_toUTF8 quality hvalid
-  obtain ⟨a, b, -, -, -, -, h5⟩ := trimBytes_window record.letters record.quality.toUTF8
-  have hv : (trimBytes record.letters record.quality.toUTF8).2.IsValidUTF8 := by
-    apply ascii_valid
-    intro x hx
-    rw [h5, hbytes] at hx
-    exact hqa x (extract_mem _ _ _ x hx)
-  exact ⟨hv, trimRecord_quality_bytes record hv⟩
+/-! ## Stated on the read -/
+
+theorem toArray_ba (b : ByteArray) : (⟨b.data.toList.toArray⟩ : ByteArray) = b := by
+  apply ByteArray.ext; simp
+
+/-- the shim's trimming (on `ReadB`) is the spec's (on `FQ.Read`) -/
+theorem trimReadB_toRead (r : ReadB) : (trimReadB r).toRead = trimRead r.toRead := by
+  unfold trimReadB trimRead ReadB.toRead
+  simp only [toArray_ba]
+
+/-- `trimRead`'s quality is the quality bytes `trimBytes` gives -/
+theorem trimRead_quality_bytes (r : FQ.Read) :
+    (trimRead r).quality = (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).2.data.toList := rfl
+
+/-- **`trimRead`, stated on the read** (a)-(d): with `cutAt` the adapter cut of the input letters, the output
+letters are the window `[a, b)` of the input letters, the output qualities the same window of the input qualities,
+`b ≤ cutAt`, every output letter is A/C/G/T, and the output has no letters or at least `minLength`. -/
+theorem trimRead_correct (r : FQ.Read) :
+    ∃ a b, a ≤ b ∧ b ≤ cutAt ⟨r.sequence.toArray⟩ ∧ cutAt ⟨r.sequence.toArray⟩ ≤ r.sequence.length ∧
+      (trimRead r).sequence = (r.sequence.drop a).take (b - a) ∧
+      (trimRead r).quality = (r.quality.drop a).take (b - a) ∧
+      (∀ x ∈ (trimRead r).sequence, ReadTrim.isACGT x = true) ∧
+      ((trimRead r).sequence = [] ∨ minLength ≤ (trimRead r).sequence.length) := by
+  obtain ⟨a, b, h1, h2, h3, h4, h5⟩ := trimBytes_window ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩
+  have hl : (trimRead r).sequence = (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).1.data.toList := rfl
+  refine ⟨a, b, h1, h2, (by have := h3; simp only [ByteArray.size, List.size_toArray] at this; exact this), ?_, ?_, ?_, ?_⟩
+  · rw [hl, h4, ByteArray.data_extract, Array.toList_extract, List.extract_eq_drop_take]
+  · rw [trimRead_quality_bytes, h5, ByteArray.data_extract, Array.toList_extract, List.extract_eq_drop_take]
+  · rw [hl]; intro x hx; exact trimBytes_acgt _ _ x (by simpa using hx)
+  · rw [hl]
+    rcases trimBytes_size ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩ with h | h
+    · left; apply List.eq_nil_of_length_eq_zero; simpa using h
+    · right; simpa using h
+
+/-- For every read `FQ.parse` returns, the trimmed qualities are quality bytes ('!'..'~'). -/
+theorem parse_trim_quality (bytes : List UInt8) (reads : List FQ.Read) (h : FQ.parse bytes = some reads) :
+    ∀ r ∈ reads, ∀ x ∈ (trimRead r).quality, FQ.qualityByte x = true := by
+  obtain ⟨records, hv, -, hr⟩ := FQ.parse_some bytes reads h
+  intro r hr' x hx
+  rw [← hr] at hr'
+  obtain ⟨rec, hrec, rfl⟩ := List.mem_map.mp hr'
+  obtain ⟨a, b, -, -, -, -, h5⟩ := trimBytes_window ⟨rec.sequence.toArray⟩ ⟨rec.quality.toArray⟩
+  simp only [FQ.toRead] at hx
+  rw [trimRead_quality_bytes, h5] at hx
+  simp only [ByteArray.data_extract, Array.toList_extract, List.extract_eq_drop_take] at hx
+  exact (hv rec hrec).2.2.2.2.2.2.2.2.2.2.1 x (List.mem_of_mem_drop (List.mem_of_mem_take hx))
 
 /-! ## Trimming a chunk in parallel -/
 
-theorem trimChunk_prefix (chunk : Array (FastqRecord × FastqRecord)) (size : Nat)
-    (f : FastqRecord × FastqRecord → FastqRecord × FastqRecord) (m : Nat) :
+theorem trimChunk_prefix (chunk : Array (ReadB × ReadB)) (size : Nat)
+    (f : ReadB × ReadB → ReadB × ReadB) (m : Nat) :
     ((List.range m).map fun part => Task.spawn fun _ => (chunk.extract (part * size) ((part + 1) * size)).map f).foldl
       (fun out task => out ++ task.get) #[] = (chunk.extract 0 (m * size)).map f := by
   induction m with
@@ -240,9 +210,9 @@ theorem trimChunk_prefix (chunk : Array (FastqRecord × FastqRecord)) (size : Na
     congr 2
     rw [Nat.succ_mul]; omega
 
-/-- `trimChunk` is `trimRecord` on both mates of every pair, in order, however many parts it uses. -/
-theorem trimChunk_eq (chunk : Array (FastqRecord × FastqRecord)) (parts : Nat) (hparts : 0 < parts) :
-    trimChunk chunk parts = chunk.map fun (record1, record2) => (trimRecord record1, trimRecord record2) := by
+/-- `trimChunk` is `trimReadB` on both mates of every pair, in order, however many parts it uses. -/
+theorem trimChunk_eq (chunk : Array (ReadB × ReadB)) (parts : Nat) (hparts : 0 < parts) :
+    trimChunk chunk parts = chunk.map fun (read1, read2) => (trimReadB read1, trimReadB read2) := by
   unfold trimChunk
   simp only []
   rw [trimChunk_prefix]
@@ -250,14 +220,109 @@ theorem trimChunk_eq (chunk : Array (FastqRecord × FastqRecord)) (parts : Nat) 
   generalize (chunk.size + parts - 1) / parts = q at h ⊢
   rw [Array.extract_eq_self_of_le (by rw [Nat.mul_comm]; omega)]
 
+/-! ## The QNAME rule on bytes -/
+
+theorem spaceAt_eq (n : ByteArray) : ∀ k i, i ≤ n.size → n.size - i ≤ k →
+    spaceAt n k i = i + ((FQ.L n i).takeWhile (· != 32)).length
+  | 0, i, h1, h2 => by
+    have : i = n.size := by omega
+    subst this; rw [spaceAt, FQ.L_size n _ (Nat.le_refl _)]; simp
+  | k + 1, i, h1, h2 => by
+    rw [spaceAt]
+    by_cases hi : i < n.size
+    · rw [FQ.L_cons n i hi, List.takeWhile_cons]
+      by_cases hb : (n[i]! != 32) = true
+      · rw [if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact ⟨hi, hb⟩), if_pos hb,
+          spaceAt_eq n k (i + 1) (by omega) (by omega)]; simp; omega
+      · rw [if_neg (by simp [hb]), if_neg hb]; simp
+    · rw [if_neg (by simp [hi]), FQ.L_size n i (by omega)]; simp
+
+-- the last two bytes of a list of length at least 2
+theorem drop_two (l : List UInt8) (h : 2 ≤ l.length) :
+    l.drop (l.length - 2) = [l[l.length - 2]'(by omega), l[l.length - 1]'(by omega)] := by
+  rw [List.drop_eq_getElem_cons (by omega), List.drop_eq_getElem_cons (by omega),
+    show l.length - 2 + 1 + 1 = l.length by omega, List.drop_length]
+  simp only [show l.length - 2 + 1 = l.length - 1 by omega]
+
+theorem suffix_two (a b : UInt8) (l : List UInt8) :
+    [a, b].isSuffixOf l = true ↔ ∃ h : 2 ≤ l.length, l[l.length - 2]'(by omega) = a ∧ l[l.length - 1]'(by omega) = b := by
+  rw [List.isSuffixOf_iff_suffix, List.suffix_iff_eq_drop]
+  simp only [List.length_cons, List.length_nil]
+  constructor
+  · intro h
+    have hl : 2 ≤ l.length := by
+      have := congrArg List.length h; simp at this; omega
+    refine ⟨hl, ?_⟩
+    rw [drop_two l hl] at h
+    simp only [List.cons.injEq] at h
+    exact ⟨h.1.symm, h.2.1.symm⟩
+  · rintro ⟨hl, h1, h2⟩
+    rw [drop_two l hl, h1, h2]
+
+theorem qnameB_eq (name : ByteArray) : (qnameB name).data.toList = qnameOf name.data.toList := by
+  have hl : FQ.L name 0 = name.data.toList := by simp [FQ.L]
+  have hs := spaceAt_eq name name.size 0 (Nat.zero_le _) (by omega)
+  rw [hl, Nat.zero_add] at hs
+  unfold qnameB qnameOf
+  simp only []
+  rw [hs]
+  have e := @List.takeWhile_append_dropWhile _ (· != 32) name.data.toList
+  have hlen : name.data.toList.length = name.size := by simp
+  generalize name.data.toList.takeWhile (· != 32) = base at e ⊢
+  generalize name.data.toList.dropWhile (· != 32) = rest at e
+  have hpre : name.data.toList.take base.length = base := by rw [← e]; exact List.take_left' rfl
+  have hle : base.length ≤ name.size := by rw [← hlen, ← e, List.length_append]; omega
+  have hget : ∀ j (hj : j < base.length), name[j]! = base[j] := by
+    intro j hj
+    have hj' : j < name.data.toList.length := by omega
+    rw [getElem!_pos name j (by omega), ByteArray.getElem_eq_getElem_data, ← Array.getElem_toList hj',
+      List.getElem_of_eq hpre.symm hj, List.getElem_take]
+  have hx : ∀ e, e ≤ base.length → (name.extract 0 e).data.toList = base.take e := by
+    intro e he
+    rw [FQ.extract_list, hl, Nat.sub_zero, ← hpre, List.take_take, Nat.min_eq_left he]
+  by_cases h2 : 2 ≤ base.length
+  · have e2 := hget (base.length - 2) (by omega)
+    have e1 := hget (base.length - 1) (by omega)
+    have hdl : base.dropLast.dropLast = base.take (base.length - 2) := by
+      rw [List.dropLast_eq_take, List.dropLast_eq_take, List.take_take, List.length_take]; congr 1; omega
+    by_cases c : (base[base.length - 2]'(by omega) = 47) ∧
+        (base[base.length - 1]'(by omega) = 49 ∨ base[base.length - 1]'(by omega) = 50)
+    · rw [if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, beq_iff_eq, e2, e1]; exact ⟨⟨h2, c.1⟩, c.2⟩),
+        if_pos (by rw [Bool.or_eq_true, suffix_two, suffix_two]; rcases c.2 with c2 | c2
+                   · exact Or.inl ⟨h2, c.1, c2⟩
+                   · exact Or.inr ⟨h2, c.1, c2⟩), hdl, hx _ (by omega)]
+    · rw [if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, beq_iff_eq, e2, e1]
+                     exact fun ⟨⟨_, a⟩, b⟩ => c ⟨a, b⟩),
+        if_neg (by rw [Bool.or_eq_true, suffix_two, suffix_two]
+                   rintro (⟨_, a, b⟩ | ⟨_, a, b⟩)
+                   · exact c ⟨a, Or.inl b⟩
+                   · exact c ⟨a, Or.inr b⟩),
+        hx _ (Nat.le_refl _), List.take_length]
+  · rw [if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq]; omega),
+      if_neg (by rw [Bool.or_eq_true, suffix_two, suffix_two]; rintro (⟨h, -⟩ | ⟨h, -⟩) <;> omega),
+      hx _ (Nat.le_refl _), List.take_length]
+
+theorem qnameOkB_eq (q : ByteArray) : qnameOkB q = qnameOk q.data.toList := by
+  unfold qnameOkB qnameOk
+  have ha := FQ.allBytes_iff (fun c => (33 ≤ c && c ≤ 63) || (65 ≤ c && c ≤ 126)) q
+  simp only [Array.length_toList, ByteArray.size_data]
+  congr 1
+  apply Bool.eq_iff_iff.mpr
+  rw [ha, List.all_eq_true]
+
+/-- the shim's pairing name is the QNAME rule on the spec's read -/
+theorem qnameB_toRead (r : ReadB) : (qnameB r.name).data.toList = qnameOf r.toRead.name := qnameB_eq r.name
+
 end Spec
 
-#print axioms Spec.trimRecord_correct
-#print axioms Spec.parseRecord_trim_quality
-
+#print axioms Spec.trimRead_correct
+#print axioms Spec.parse_trim_quality
+#print axioms Spec.trimReadB_toRead
+#print axioms Spec.trimRead_quality_bytes
+#print axioms Spec.trimChunk_eq
 #print axioms Spec.trimBytes_window
 #print axioms Spec.trimBytes_acgt
 #print axioms Spec.trimBytes_size
 #print axioms Spec.cutAt_spec
-#print axioms Spec.trimRecord_quality_bytes
-#print axioms Spec.trimChunk_eq
+#print axioms Spec.qnameB_eq
+#print axioms Spec.qnameOkB_eq

@@ -2,7 +2,7 @@
 """Edge-case paired FASTQ for the SAM/BAM fuzz run (valid FASTQ: A/C/G/T/N, Phred+33, equal SEQ/QUAL lengths).
    python3 -I fuzz_reads.py GENOME.upper.fa OUT_PREFIX [PAIRS_PER_CATEGORY=150] [SEED=1]  ->  OUT_PREFIX_R1.fq / _R2.fq
 Categories (the read names say which): normal pairs with errors and indels; bad-quality tails/heads and noisy qualities (trimmed);
-adapter-like tails; one mate or both trimmed away; all-N and N-rich reads; reads of 1..101 letters; long reads (400..1000);
+adapter-like tails; one mate or both trimmed away; all-N and N-rich reads; reads of 1..101 letters; long reads (400..1000, the spec's limit);
 mates of different lengths; same-strand mates; mates far apart; mates on different chromosomes; random non-genomic reads;
 identical mates; mate 2 left of mate 1; duplicated pairs; reads next to N runs and at chromosome ends; names with comments."""
 import mmap, random, sys
@@ -69,7 +69,7 @@ for n in (1, 2, 3, 5, 10, 17, 20, 24, 25, 26, 30, 31, 49, 50, 51, 74, 75, 76, 99
         a, b = frag(n, n, n + 150); good(f'short{n}', a, b)
 for n in (400, 500, 700, 1000):
     for _ in range(max(3, per // 30)):
-        a, b = frag(n, n, n + 150); good(f'long{n}', mutate(a), b)
+        a, b = frag(n, n, n + 150); good(f'long{n}', mutate(a)[:1000], b)   # FQ.Record.valid: at most 1000 bases
 for _ in range(per):
     n1, n2 = random.choice([(50, 150), (150, 90), (30, 250), (100, 101)]); a, b = frag(n1, n2, 350); good('lengths_differ', a, b)
 for _ in range(per):

@@ -1,5 +1,5 @@
 import Spec.Aligner
-import Spec.Fastq
+import FastqIO
 
 /-! # The genome FASTA and the saved chromosome list. Unproved (trusted) plumbing for the shim;
 the FASTA parser gets a proof later. -/
