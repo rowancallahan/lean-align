@@ -4,6 +4,7 @@
 # 2. ~2 100 simulated pairs (mason, low, high) + ~800 edge-case pairs (fuzz_reads.py) with fixed seeds;
 # 3. `lean-align map`, then sam_fuzz_check.py: flags, mate fields, TLEN, CIGAR/SEQ/QUAL lengths, '*' handling,
 #    provenance, no CIGAR without an aligned base, no mapped mate under 20 letters: every count must be 0.
+# 4. fastq_cases.py: FASTQ edge cases (CRLF, no final newline, >1000 bases, short names, ...) accepted or rejected as Spec/Fastq says.
 # Needs lake build (lean-align) and python3. Wired into CI_check.sh as `FUZZ=1 sh Testing/scripts/CI_check.sh`.
 set -eu
 cd "$(dirname "$0")/../.."
@@ -21,3 +22,4 @@ done
 echo "$(($(wc -l < "$d/R1.fq") / 4)) pairs"
 "$lean" map "$d/idx" "$d/R1.fq" "$d/R2.fq" "$d/out.sam" 100 1000
 python3 -I Testing/scripts/sam_fuzz_check.py "$d/out.sam" "$d/R1.fq" "$d/R2.fq" "$d/idx.chromosomes"
+python3 -I Testing/scripts/fastq_cases.py "$lean" "$d/idx" "$d/mason_R1.fq" "$d/mason_R2.fq" "$d"
