@@ -103,6 +103,8 @@ def pairUp (r1 r2 : Array ReadB) : Except String (Array (ReadB × ReadB)) := do
 def worker (insertSettings : InsertSettings) (index : ByteArray) (chromosomes : ChromosomeList)
     (jobs : Std.CloseableChannel.Sync (Nat × ByteArray × ByteArray))
     (out : Std.CloseableChannel.Sync (Nat × Except String ByteArray)) : IO Unit := do
+  -- the aligner's setup, made once per worker (`alignPairsP_eq`: using it is `alignPairs`)
+  let setup := chunkSetup insertSettings index
   repeat
     let some (seq, slice1, slice2) ← jobs.recv | break
     match (do pairUp (← parseFastqB slice1) (← parseFastqB slice2)) with
@@ -110,9 +112,10 @@ def worker (insertSettings : InsertSettings) (index : ByteArray) (chromosomes : 
     | .ok raw =>
       let chunk := trimChunk raw 1
       -- ╔══════════════════════════════════════════════════════════════════════════════════╗
-      -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
-      -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
-      -- ║ index was built from. Everything around it only reads inputs and writes output.   ║
+      -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call, which is   ║
+      -- ║ `alignPairs insertSettings index` (`alignPairsP_eq`): one result per pair, in the ║
+      -- ║ same order, and every result's claims hold for the genome the index was built     ║
+      -- ║ from. Everything around it only reads inputs and writes output.                   ║
       -- ║                                                                                  ║
       -- ║ IN:  `chunk`, the pairs of this job, parsed by the proved parser (`parseFastqB`   ║
       -- ║      = `FQ.parse`) and trimmed by the proved trimmer (`trimChunk_eq`).            ║
@@ -121,7 +124,7 @@ def worker (insertSettings : InsertSettings) (index : ByteArray) (chromosomes : 
       -- ║ order, that the jobs are written in order, and that `samChunk` and the writes put ║
       -- ║ each pair's lines into the file correctly.                                        ║
       -- ╚══════════════════════════════════════════════════════════════════════════════════╝
-      let results := alignPairs insertSettings index (chunkPairs chunk)
+      let results := alignPairsP insertSettings setup (chunkPairs chunk)
       -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
       out.send (seq, .ok (samChunk chromosomes chunk results))
 

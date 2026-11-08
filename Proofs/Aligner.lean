@@ -391,12 +391,12 @@ def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
 abbrev Setup := InsertSettings × MapSpec.Fast.TierCfg × MapSpec.Fast.PkMz × Array MapSpec.Fast.PGen × Array Nat × Array Nat ×
   (ByteArray × ByteArray)
 
-def chunkSetup (insertSettings : InsertSettings) (loaded : Option LoadedIndex) : Option Setup :=
+def loadedSetup (insertSettings : InsertSettings) (loaded : Option LoadedIndex) : Option Setup :=
   loaded.map fun (ix, G, offs, ns, H, M) =>
     let pgs := MapSpec.Fast.cutAll G #[0] #[G.n]
     (insertSettings, tierCfg insertSettings (ix, G) #[0] pgs, (ix, G), pgs, offs, ns, (H, M))
 
--- `alignOne` from `chunkSetup`
+-- `alignOne` from `loadedSetup`
 def alignOneC (insertSettings : InsertSettings) (chroms : List (List Nat)) (setup : Option Setup)
     (bytes1 bytes2 : Option ByteArray) : PairResult :=
   match bytes1, bytes2 with
@@ -517,12 +517,12 @@ theorem alignOneP_eq (insertSettings : InsertSettings) (chroms : List (List Nat)
 def alignPairsC (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   let chroms := (readIndex index).1.getD []
-  (ParMap.parMapS parTasks (fun _ => (chunkSetup insertSettings (readIndex index).2).map withMono)
+  (ParMap.parMapS parTasks (fun _ => (loadedSetup insertSettings (readIndex index).2).map withMono)
     (fun setup (bytes1, bytes2) => alignOneP insertSettings chroms setup bytes1 bytes2) pairs.toArray).toList
 
 theorem alignOneC_eq (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
     (bytes1 bytes2 : Option ByteArray) :
-    alignOneC insertSettings chroms (chunkSetup insertSettings loaded) bytes1 bytes2 =
+    alignOneC insertSettings chroms (loadedSetup insertSettings loaded) bytes1 bytes2 =
       alignOne insertSettings chroms loaded bytes1 bytes2 := by
   rcases bytes1 with _ | _ <;> rcases bytes2 with _ | _ <;> rcases loaded with _ | ⟨ix, G, _, _, _, _⟩ <;> rfl
 
@@ -539,6 +539,23 @@ theorem alignPairs_eq_map (insertSettings : InsertSettings) (index : ByteArray)
       pairs.map fun (bytes1, bytes2) =>
         alignOne insertSettings ((readIndex index).1.getD []) (readIndex index).2 bytes1 bytes2 := by
   simp [alignPairs, ParMap.parMap_eq_map]
+
+/-! ## The setup made once, for any number of chunks (`AlignSetup`, `chunkSetup`, `alignPairsP` in Spec) -/
+
+def AlignSetup : Type := List (List Nat) × Option SetupP
+
+def chunkSetup (insertSettings : InsertSettings) (index : ByteArray) : AlignSetup :=
+  ((readIndex index).1.getD [], (loadedSetup insertSettings (readIndex index).2).map withMono)
+
+def alignPairsP (insertSettings : InsertSettings) (setup : AlignSetup)
+    (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
+  pairs.map fun (bytes1, bytes2) => alignOneP insertSettings setup.1 setup.2 bytes1 bytes2
+
+theorem alignPairsP_eq (insertSettings : InsertSettings) (index : ByteArray) :
+    alignPairsP insertSettings (chunkSetup insertSettings index) = alignPairs insertSettings index := by
+  funext pairs
+  rw [alignPairs_eq_map]
+  simp only [alignPairsP, chunkSetup, alignOneP_eq, alignOneC_eq]
 
 -- what the index holds, when it was built from `byteGenome`: the genome's chromosomes, or something checked
 theorem readIndex_buildIndex (byteGenome : GenomeFile) :
@@ -839,3 +856,4 @@ end Spec
 
 #print axioms Spec.alignPairs_correct
 #print axioms Spec.alignPairs_end_to_end
+#print axioms Spec.alignPairsP_eq

@@ -211,6 +211,22 @@ def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   sorry
 
+-- what `alignPairs` prepares from the index (the genome view and the aligner's settings), made once and then
+-- reused for any number of chunks: `alignPairsP` on it is `alignPairs` (`alignPairsP_eq`)
+def AlignSetup : Type :=
+  sorry
+
+def chunkSetup (insertSettings : InsertSettings) (index : ByteArray) : AlignSetup :=
+  sorry
+
+def alignPairsP (insertSettings : InsertSettings) (setup : AlignSetup)
+    (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
+  sorry
+
+theorem alignPairsP_eq (insertSettings : InsertSettings) (index : ByteArray) :
+    alignPairsP insertSettings (chunkSetup insertSettings index) = alignPairs insertSettings index := by
+  sorry
+
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
 theorem alignPairs_correct (insertSettings : InsertSettings)
