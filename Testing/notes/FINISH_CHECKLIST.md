@@ -46,6 +46,7 @@ Order matters: make it right, check it, then understand it.
 - Pairing: the two mate files must have the same number of reads and matching mate names; not in this spec yet.
 - Trimming (on Reads) and the threading/pipeline (parallel parse must equal `parse`) still to connect.
 - Names: tabs and spaces allowed; no newline, no carriage return, ASCII only; the QNAME rule (SAM) comes later.
+- TO DO (Rowan): forbid ALL control bytes in names: a `controlBytes` list (0x00-0x1F and 0x7F, i.e. incl. tab and DEL) and `∀ b ∈ r.name, b ∉ controlBytes` in Record.valid (replaces the separate newline / carriage-return lines).
 
 ## Quality encoding (Rowan, to do)
 - ONLY Phred+33 is supported right now (bytes '!'..'~' = Phred 0..93). Old Phred+64 files (Illumina 1.3-1.7) are
