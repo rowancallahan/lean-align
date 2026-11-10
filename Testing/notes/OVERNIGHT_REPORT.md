@@ -43,3 +43,16 @@ Proved, no sorry, standard axioms, as `process_correct'`: the Spec's exact state
 - 031ba75 (S-H): FASTQ record checks fused into the line scans, errors byte-identical (`@[csimp] parseFastqB_eqF`); parse 48.7M → 32.4M. NovaSeq −1.0%, HiSeq −1.2%. FASTQ edge cases 20/20.
 - Cumulative on fused/writer vs 53c1ab2: NovaSeq 1,831.0M → 1,652.4M (−9.8%), HiSeq 2,049.0M → 1,833.7M (−10.5%), SAM identical.
 - Next: closures and reference counting in the aligner; investigate the fallback tiers redoing work (report only).
+
+## Integration (S-G, spec/mapfiles 4ec347f) and speed of the new build before the optimizations
+CI FUZZ=1: all hashes OK, build OK, all Spec mirrors OK, output fuzz 2917 pairs with no violations, FASTQ cases 20/20. Only failure: the remaining `sorry` (job_eq, being closed now).
+SAM vs festive (tier tags stripped) identical on 200k and 5M, NovaSeq and HiSeq.
+4 cores, 3 interleaved reps, medians (wall / CPU):
+| run | festive 027ef1e | new build |
+|---|---|---|
+| 1M NovaSeq, map only | 22.4 / 85.4 s | 21.7 / 83.4 s |
+| 1M HiSeq, map only | 23.2 / 90.0 s | 23.1 / 89.4 s |
+| 5M NovaSeq FIFO, whole run | 121.7 / 466.4 s | 117.4 / 449.9 s |
+| 5M HiSeq FIFO, whole run | 130.3 / 500.9 s | 128.0 / 490.7 s |
+No slower anywhere. (The ~10% instruction savings on fused/writer are not in these numbers yet.)
+S4 (proof/mapfiles2 70e9215): process_correct now proved inside Proofs/MapFiles.lean with the Spec text unchanged (via copies in Proofs/MapDefs.lean, checked by check_copies.sh); only job_eq left.
