@@ -41,6 +41,7 @@ Order matters: make it right, check it, then understand it.
 - `SHIM_EXPLAINED.md`, `UTILIZATION.md`, `byte_specs/LEMMAS.md`, `Testing/fuzz/ROWAN_CHECKLIST.md`, `SESSION_SUMMARY.md`.
 
 ## REMINDER (Rowan): double-check the locked SAM spec (Spec/Draft/Sam.lean) line by line, field by field against SAMv1 §1.4.
+## REMINDER (Rowan): read process / process_correct / Main line by line (StateM, `.run`, `modifyGet`, `modify`), and compare Main with the theorem.
 ## LATER (Rowan): spec change: `mapStep`/`mapEnd` return an error message (Except String) instead of `none`, so a failed run says why; which message can be a theorem later.
 ## (done) redo the SAM spec (bytes over Read; QNAME rule; ~15 min-1 h). Lock it before the fused writer starts.
 

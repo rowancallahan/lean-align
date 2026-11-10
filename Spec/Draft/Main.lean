@@ -1,4 +1,4 @@
--- DRAFT (Rowan to re-lock): the streaming main; it runs `process` of `process_correct`.
+-- LOCKED (Rowan, 2026-11-10): the streaming main; it runs `process` of `process_correct`.
 import Spec.Draft.MapFiles
 
 open Spec

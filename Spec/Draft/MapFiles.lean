@@ -1,4 +1,4 @@
--- DRAFT (Rowan to re-lock): the end-to-end spec and its streaming form.
+-- LOCKED (Rowan, 2026-11-10): the end-to-end spec and its streaming form.
 import Spec.Draft.Trim
 import Spec.Draft.Sam
 
