@@ -348,6 +348,42 @@ theorem hitsAtKPN_mem {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lim : Nat) (ix 
 
 /-! ## The diagonal choice from the first mate's hits -/
 
+/-! ### PROTOTYPE (exp/keep-index): `keepN` by binary search over the first mate's windows, sorted by
+(chromosome, start) with a running maximum of their ends per chromosome. Unproved here: `keepN` runs it through
+`implemented_by`; the equality proof comes once it is shown to matter. -/
+
+-- the windows (chromosome, start, end) of `ys`, sorted, with the running max end within each chromosome
+def keepTab (ys : List (Placement × Int)) : Array (Nat × Nat × Nat) :=
+  let w := (ys.map fun y => (y.1.1.chr, y.1.1.start, y.1.1.start + y.1.1.len)).toArray.qsort
+    fun a b => a.1 < b.1 || (a.1 == b.1 && a.2.1 < b.2.1)
+  (w.foldl (fun (acc : Array (Nat × Nat × Nat) × Nat × Nat) x =>
+    let (out, pc, pm) := acc
+    let m := if out.size > 0 && pc == x.1 then max pm x.2.2 else x.2.2
+    (out.push (x.1, x.2.1, m), x.1, m)) (#[], 0, 0)).1
+
+-- the number of entries `≤ (c, a)` in (chromosome, start) order
+def keepCount (t : Array (Nat × Nat × Nat)) (c a : Nat) : Nat := Id.run do
+  let mut lo := 0
+  let mut hi := t.size
+  for _ in [0:64] do
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      let e := t[mid]!
+      if e.1 < c || (e.1 == c && e.2.1 ≤ a) then lo := mid + 1 else hi := mid
+  return lo
+
+-- the query on a built table (`K = hi + sl + gb`)
+def keepQ (K n : Nat) (t : Array (Nat × Nat × Nat)) (vc nR D : Nat) : Bool :=
+  let c := if vc < n then vc else vc - n
+  if D + K < nR then false else
+  let k := keepCount t c (D + K - nR)
+  if k == 0 then false else
+  let e := t[k - 1]!
+  e.1 == c && decide (D ≤ e.2.2 + K + nR)
+
+def keepNI (sl hi n gb : Nat) (ys : List (Placement × Int)) (vc nR D : Nat) : Bool :=
+  keepQ (hi + sl + gb) n (keepTab ys) vc nR D
+
 /-- Diagonal `D` of virtual chromosome `vc` (read length `nR`, shift bound `gb`) may hold a
 window with a proper partner among the hits `ys`. -/
 def keepN (sl hi n gb : Nat) (ys : List (Placement × Int)) (vc nR D : Nat) : Bool :=
@@ -368,8 +404,16 @@ theorem shapesAt_fst (lim : Nat) (sh : Int × Int) (h : sh ∈ shapesAt lim) :
   have := (shapes_ok _ _ sh h).1
   omega
 
+-- PROTOTYPE: `hitsKPFN` with the table of `ys` built once, then queried per diagonal
+def hitsKPFNI {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
+    (pgs : Array PGen) (R : ByteArray) (c : Nat) (ys : List (Placement × Int)) : List (Placement × Int) :=
+  let t := keepTab ys
+  match hitsAtKPN c ix G offs pgs R (keepQ (hi + sl + gapBound sc0 (-(c : Int))) pgs.size t) with
+  | some l => l
+  | none => hitsKPF ix G offs pgs R c
+
 /-- The near list of a read at cap `c` given the first mate's hits `ys`. -/
-def hitsKPFN {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
+@[implemented_by hitsKPFNI] def hitsKPFN {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
     (pgs : Array PGen) (R : ByteArray) (c : Nat) (ys : List (Placement × Int)) : List (Placement × Int) :=
   match hitsAtKPN c ix G offs pgs R (keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys) with
   | some l => l
