@@ -78,3 +78,18 @@ Idea A: the walk evaluates all its candidates and keeps the best AS1+AS2 (proved
 | NovaSeq 1M | | 52,430 → 44,035 | 20,952 → 25,089 | 20.8 → 22.4 s |
 | HiSeq 1M | | 40,180 → 35,411 | 15,095 → 16,719 | 25.2 → 25.4 s |
 Mapped counts unchanged; SAM changes only on pairs that were mapped-unknown. Next: cut the NovaSeq time cost (stop early when the candidate is near the bound), steer anchors with the other mate's seeds.
+
+## Speed: final build (festive = spec/mapfiles 64ae73f) vs old festive (e96862d) vs minibwa (S-T)
+1M plain, SAM to /dev/null, taskset 0..T-1, median of 3, index load measured in the run and subtracted. Map-only seconds | Gbp per core-hour (map CPU) | core use.
+| set | threads | old festive | new | minibwa |
+|---|---|---|---|---|
+| NovaSeq (0.60 Gbp) | 1 | 60.9 s / 18.3 / 0.98 | 57.2 s / 19.5 / 0.97 | 175.0 s / 6.3 / 0.99 |
+| | 2 | 31.4 s / 17.8 / 0.97 | 28.1 s / 19.9 / 0.97 | 88.5 s / 6.2 / 0.99 |
+| | 4 | 15.8 s / 17.9 / 0.96 | 14.5 s / 19.7 / 0.95 | 44.3 s / 6.2 / 0.99 |
+| HiSeq (1.0 Gbp) | 1 | 65.3 s / 28.1 / 0.97 | 58.3 s / 31.5 / 0.97 | 333.1 s / 5.4 / 0.99 |
+| | 2 | 32.7 s / 28.7 / 0.95 | 30.3 s / 31.6 / 0.93 | 166.9 s / 5.4 / 0.99 |
+| | 4 | 17.5 s / 28.7 / 0.89 | 16.8 s / 31.5 / 0.85 | 84.4 s / 5.4 / 0.99 |
+- New vs old festive at 4 threads: NovaSeq −8.2% map time / −9.4% CPU; HiSeq −4.0% / −8.8%.
+- New vs minibwa at 4 threads: NovaSeq 3.1× faster wall, 3.2× Gbp per core-hour; HiSeq 5.0× wall, 5.8× per core-hour.
+- SAM md5 = festive with tier tags removed (NovaSeq bcd41c6e…, HiSeq 89fb1ec8…). Reps within ~3%.
+- To look at: HiSeq core use at 4 threads is 0.85 (old 0.89); index load 1.8 s vs 1.5 s.
