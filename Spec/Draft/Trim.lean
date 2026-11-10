@@ -44,8 +44,7 @@ theorem trim_correct (r : FQ.Read) (h : r.sequence.length = r.quality.length) :
       start < stop ∧
       stop ≤ r.sequence.length ∧
       (∀ proposedStart proposedStop,
-        proposedStart < proposedStop →
-        proposedStop ≤ r.sequence.length →
+        (proposedStart < proposedStop ∧ proposedStop ≤ r.sequence.length) →
         windowScore r proposedStart proposedStop ≤ windowScore r start stop) ∧
       trim r =
         match decide (minLength ≤ windowLength) with
