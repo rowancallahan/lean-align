@@ -135,6 +135,10 @@ lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
+lean_lib FastqIO where   -- FASTQ bytes for the shim: block reader, byte parser (proved = Spec.FQ.parse in Proofs/Fastq.lean)
+  srcDir := "Aligner/io"
+  roots := #[`FastqIO]
+
 @[default_target]
 lean_lib Trimmer where
   srcDir := "Aligner/trimmer"
