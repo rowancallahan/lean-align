@@ -168,7 +168,7 @@ def mateLine (chrs : ChromosomeList) (r : FQ.Read) (which : Mate) (result : Pair
 
 -- the two lines of one pair
 def pairLines (chrs : ChromosomeList) (r1 r2 : FQ.Read) (result : PairResult) : List UInt8 :=
-  mateLine chrs r1 .one result ++ mateLine chrs r2 .two result
+  (mateLine chrs r1 .one result) ++ (mateLine chrs r2 .two result)
 
 -- the lines of every pair, in order
 def body (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) :
