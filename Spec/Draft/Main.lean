@@ -24,7 +24,8 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | ["map", indexPath, reads1Path, reads2Path, outPath, minFragment, maxFragment] =>
     let settings : InsertSettings := { range := (minFragment.toNat!, maxFragment.toNat!) }
-    -- TRUSTED: the index file is `buildIndex` of the genome, and INDEX.chromosomes lists its chromosomes
+    -- TRUSTED: the index file is `buildIndex` of the genome,
+    -- and INDEX.chromosomes lists its chromosomes
     let index ← IO.FS.readBinFile indexPath
     let chrs ← readChromosomeList (indexPath ++ ".chromosomes")
     let fastq1 ← IO.FS.Handle.mk reads1Path .read
@@ -32,9 +33,11 @@ def main (args : List String) : IO UInt32 := do
     -- written to OUT.tmp, renamed to OUT only when everything succeeded
     let tmpPath := outPath ++ ".tmp"
     let out ← IO.FS.Handle.mk tmpPath .write
-    -- the header, then `process` of `process_correct`: the FASTQ files are `next`, the output file `emit`
+    -- the header, then `process` exactly as in `process_correct`,
+    -- with the FASTQ files as `nextChunks` and the output file as `out.write`
     out.write ⟨(SamSpec.header chrs).toArray⟩
-    match ← Total.process (nextChunks fastq1 fastq2) out.write fuel (Total.mapInit settings index chrs) with
+    let state := Total.mapInit settings index chrs
+    match ← Total.process (nextChunks fastq1 fastq2) out.write fuel state with
     | some () =>
       out.flush
       IO.FS.rename tmpPath outPath
@@ -47,5 +50,6 @@ def main (args : List String) : IO UInt32 := do
     IO.FS.writeFile (indexPath ++ ".chromosomes") (chromosomeListText genome)
     return 0
   | _ =>
-    IO.eprintln "usage: lean-align build GENOME.fa INDEX\n       lean-align map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
+    IO.eprintln "usage: lean-align build GENOME.fa INDEX"
+    IO.eprintln "       lean-align map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
     return 1
