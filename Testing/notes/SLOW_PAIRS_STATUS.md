@@ -1,22 +1,33 @@
-# Slow pairs: status (2026-11-10 20:20 UTC). TOP PRIORITY before release. Spec stays unchanged.
+# Slow pairs: fixed (2026-11-10)
 
-## Problem
-Single read pairs that take seconds to a minute (normal: ~1 ms). They are low-complexity reads (e.g. 26 A's then other letters; poly-T) trimmed to ~25–30 letters. requiredMapBound = 0; one grid seed, so the repetitive witness cannot apply; the last-resort search (`lookAt` → `pairsAtS`) enumerates hits(mate 1) × hits(mate 2).
-The streaming build writes jobs in order, so one slow job idles the other workers:
-- HiSeq 5M gz (one test box): one 55 s pair; wall 138 s vs old shim 110 s, cores 0.65.
-- NovaSeq streamed 10M: 6 of 625 jobs take 10–30 s; 98 of 297 s with < 4 jobs running. 20M: 19 of 1250 jobs, up to 47 s; 270 of 712 s with < 4 running.
-The old shim has the same slow pairs (55 s alone) but hid them (independent workers, out-of-order buffering, 8.6 GB RSS).
-Repro files: branch bench/slow-pairs (Testing/notes/slow_pairs/: slow1 55–61 s, slow2 5.5–7.5 s, slow3 3–4 s; NovaSeq examples to come under nova/).
+Merged into festive: fix/fast f465a57. Below the Spec, proved, FUZZ=1 CI green, SAM byte-identical.
 
-## Fix (proved, SAM identical): branch fix/slow-pairs 351301d
-`keepTab`/`keepQ`: the partner filter in `hitsKPFN` uses a sorted table + binary search instead of scanning the whole hit list (`keepQ_eq`, via the existing `@[csimp] hitsKPFN_eqG`). FUZZ=1 CI passes. slow1 61.6 → ~2.6 s; slow2, slow3 → ~0 s; SAM byte-identical.
+## Cause
+Single read pairs trimmed or adapter-cut to 25-42 letters, in poly-A, 2-letter repeats or repeat families, took 1-60 s in the last pair-search stage (hits x hits scans). Output is in order, so other workers idled.
 
-## In progress
-- S-G: stop at the first score-0 proper pair in the same order (identical output if `topW` keeps the first maximum; separate proved commit). Combined branch `fix/fast` = fix/slow-pairs + jobs of 4000 pairs + in-flight window 32.
-- S-T: time fix/slow-pairs on its 5M HiSeq / NovaSeq gz (where the stall showed) and on the 3 slow pairs.
-- S-P: slow NovaSeq pairs (trace build 4ced426), then fix/slow-pairs on the streamed 10M / 20M / 40M vs minibwa.
-- If pairs are still slow afterwards: more ideas (no Spec change): an index part for exact low-complexity seeds; budgeted early stop with a pair in hand (allowed by the Spec, changes SAM for those pairs).
+## Fixes (all exact-equality swaps)
+- keepQ: binary-search partner filter (351301d).
+- chromosome gate as a table lookup (c2e0bb6).
+- pair window: only second-mate hits that can start within range are checked (a50a67a).
+- jobs of 4000 pairs, 32 in flight.
 
-## Other candidates (all proved, fuzzed, SAM identical; not merged)
-fix/small-chunks 15365bf (faster newline scan, window 16); fix/small-jobs d4ab3d3 (4000-pair jobs, window 32); fix/cut-tasks b5bd3ca (cutting off the main thread, for 16–32 cores). Dropped: fix/parallel-read (Main change, no gain), fix/dedicated (no gain).
-Trace build for measuring: exp/hol-trace 4ced426 (NEVER MERGE).
+## Results, 4 threads
+| run | before | after | minibwa |
+|---|---|---|---|
+| HiSeq 5M gz wall | 111.0 s | 84.0 s (6164113) | 474.0 s |
+| NovaSeq 5M gz wall | 96.8 s | 83.1 s (6164113) | 255.6 s |
+| NovaSeq streamed 10M | 303.5 s | 196.1 s | 742.8 s (159 s load) |
+| NovaSeq streamed 20M | 717.7 s | 389.0 s | no valid run yet |
+| NovaSeq streamed 40M | - | 778.5 s, 55.9 Gbp/hr | no valid run yet |
+| HiSeq 34M traced, wall | 1317 s | 683 s | running |
+| NovaSeq 40M traced, wall | 1327 s | 757 s | - |
+| jobs > 5 s (HiSeq 34M / Nova 40M) | 25 / 40 | 0 / 0 | - |
+| time with < 4 jobs running | 50% / 39% | 8.5% / 0.3% | - |
+
+Slowest pair after the fix: 0.70 s (HiSeq), 0.57 s (NovaSeq). No pair >= 1 s in 34M + 40M pairs.
+SAM md5 identical: 5M gz both sets, streamed 10M.
+
+## Not done
+- First score-0 pair stop: not needed.
+- Seed reordering / low-complexity index part: not needed; router order would change output.
+- Test pairs: branch bench/slow-pairs.
