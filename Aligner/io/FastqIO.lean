@@ -69,8 +69,8 @@ theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀
     · rw [if_neg hb, if_neg (by simp [hb])]
 
 @[inline] def findNewlineF (bytes : ByteArray) (i : Nat) : Nat :=
-  if h : i ≤ bytes.size ∧ bytes.size < 4294967296 then
-    (findNewlineU bytes h.2 i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
+  if h : i ≤ bytes.size ∧ bytes.size ≤ 4294967295 then
+    (findNewlineU bytes (Nat.lt_succ_of_le h.2) i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
   else findNewlineGo bytes (bytes.size - i) i
 
 @[csimp] theorem findNewline_eq : @findNewline = @findNewlineF := by
@@ -78,7 +78,7 @@ theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀
   unfold findNewline findNewlineF
   split
   · rename_i h
-    rw [findNewlineU_eq bytes h.2 (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
+    rw [findNewlineU_eq bytes (Nat.lt_succ_of_le h.2) (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
   · rfl
 
 -- every byte satisfies `p`
@@ -122,14 +122,14 @@ theorem allBytesU_eq (p : UInt8 → Bool) (bytes : ByteArray) : ∀ n (i : USize
     simp only [ej]
 
 @[inline] def allBytesF (p : UInt8 → Bool) (bytes : ByteArray) : Bool :=
-  if bytes.size < 4294967296 then allBytesU p bytes bytes.usize (usize_le bytes) else allBytesGo p bytes bytes.size
+  if bytes.size ≤ 4294967295 then allBytesU p bytes bytes.usize (usize_le bytes) else allBytesGo p bytes bytes.size
 
 @[csimp] theorem allBytes_eq : @allBytes = @allBytesF := by
   funext p bytes
   unfold allBytesF
   split
   · rename_i h
-    rw [allBytesU_eq p bytes _ bytes.usize _ (usize_eq bytes h)]
+    rw [allBytesU_eq p bytes _ bytes.usize _ (usize_eq bytes (Nat.lt_succ_of_le h))]
     exact (allBytesGo_eq p bytes bytes.size).symm
   · exact (allBytesGo_eq p bytes bytes.size).symm
 

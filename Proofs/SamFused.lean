@@ -28,7 +28,7 @@ decreasing_by
 
 -- `out ++ reverseMapBytes f bytes`
 @[inline] def pushRevMap (f : UInt8 → UInt8) (out bytes : ByteArray) : ByteArray :=
-  if bytes.size < 4294967296 then revPush f bytes out bytes.usize (usize_le bytes)
+  if bytes.size ≤ 4294967295 then revPush f bytes out bytes.usize (usize_le bytes)
   else out ++ reverseMapBytes f bytes
 
 -- `out ++ src.extract 0 n`, copied in place
@@ -158,8 +158,8 @@ theorem pushRevMap_eq (f : UInt8 → UInt8) (out bytes : ByteArray) :
   unfold pushRevMap
   split
   · rename_i h
-    rw [revPush_eq f bytes bytes.size _ _ _ (usize_eq bytes h) (Nat.le_refl _), reverseMapBytes_eq,
-      reverseMapBytesF, if_pos h, revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes h) (Nat.le_refl _),
+    rw [revPush_eq f bytes bytes.size _ _ _ (usize_eq bytes (Nat.lt_succ_of_le h)) (Nat.le_refl _), reverseMapBytes_eq,
+      reverseMapBytesF, if_pos h, revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes (Nat.lt_succ_of_le h)) (Nat.le_refl _),
       foldl_push_out, foldl_push_out (l := List.range' _ _) (out := ByteArray.emptyWithCapacity _)]
     rfl
   · rfl

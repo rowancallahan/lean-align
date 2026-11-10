@@ -95,8 +95,8 @@ theorem spaceAtU_eq (b : ByteArray) (hs : b.size < 4294967296) : ∀ k (j : USiz
     · rw [if_neg hb, if_neg (by simp [hb])]
 
 @[inline] def spaceAtF (b : ByteArray) (fuel i : Nat) : Nat :=
-  if h : i ≤ b.size ∧ b.size < 4294967296 ∧ fuel = b.size - i then
-    (spaceAtU b h.2.1 i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
+  if h : i ≤ b.size ∧ b.size ≤ 4294967295 ∧ fuel = b.size - i then
+    (spaceAtU b (Nat.lt_succ_of_le h.2.1) i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
   else spaceAt b fuel i
 
 @[csimp] theorem spaceAt_eqF : @spaceAt = @spaceAtF := by
@@ -104,7 +104,7 @@ theorem spaceAtU_eq (b : ByteArray) (hs : b.size < 4294967296) : ∀ k (j : USiz
   unfold spaceAtF
   split
   · rename_i h
-    rw [spaceAtU_eq b h.2.1 fuel _ _ (by rw [toNat_toUSize i (by omega)]; omega), toNat_toUSize i (by omega)]
+    rw [spaceAtU_eq b (Nat.lt_succ_of_le h.2.1) fuel _ _ (by rw [toNat_toUSize i (by omega)]; omega), toNat_toUSize i (by omega)]
   · rfl
 
 -- `qnameOf` on bytes (`qnameB_eq`)
@@ -161,7 +161,7 @@ theorem revMapU_eq (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ m (i : USize)
     simp only [ej]
 
 @[inline] def reverseMapBytesF (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray :=
-  if bytes.size < 4294967296 then revMapU f bytes (ByteArray.emptyWithCapacity bytes.size) bytes.usize (usize_le bytes)
+  if bytes.size ≤ 4294967295 then revMapU f bytes (ByteArray.emptyWithCapacity bytes.size) bytes.usize (usize_le bytes)
   else reverseMapBytes f bytes
 
 @[csimp] theorem reverseMapBytes_eq : @reverseMapBytes = @reverseMapBytesF := by
@@ -169,7 +169,7 @@ theorem revMapU_eq (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ m (i : USize)
   unfold reverseMapBytesF
   split
   · rename_i h
-    rw [revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes h) (Nat.le_refl _), Nat.sub_self]
+    rw [revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes (Nat.lt_succ_of_le h)) (Nat.le_refl _), Nat.sub_self]
     unfold reverseMapBytes
     simp
   · rfl
