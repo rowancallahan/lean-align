@@ -51,7 +51,7 @@ def job (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) 
 -- old shim's workers: in Lean's shared pool the loop thread's wait on the oldest job left the workers feed-limited on
 -- some boxes, so `inFlight` is now the number of mapping threads
 def jobPairs : Nat := 16000
-def inFlight : Nat := 4
+def inFlight : Nat := 8
 
 -- one past the first `n` newlines at or after `i`, and how many were found (fewer than `n`: up to the end)
 def advance (b : ByteArray) : (n i : Nat) → Nat × Nat
