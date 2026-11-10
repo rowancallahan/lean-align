@@ -10,14 +10,14 @@ def minLength : Nat := 25
 -- or at least its first 6 letters exactly, running off the read's end
 def cut (r : FQ.Read) : FQ.Read :=
   let adapterAt (i : Nat) : Bool :=
-    let rest := r.sequence.drop i
+    let rest := r.sequence.extract i
     match decide (adapter.length ≤ rest.length) with
     | true =>
       ((adapter.zip rest).filter fun (a, b) => a != b).length ≤ 1
     | false =>
-      6 ≤ rest.length && rest == adapter.take rest.length
+      6 ≤ rest.length && rest == adapter.extract 0 rest.length
   let c := ((List.range r.sequence.length).find? adapterAt).getD r.sequence.length
-  ⟨r.name, r.sequence.take c, r.quality.take c⟩
+  ⟨r.name, r.sequence.extract 0 c, r.quality.extract 0 c⟩
 
 -- Phred - 25 for A C G T; N rules a window out
 def baseScore (b q : UInt8) : Int :=
@@ -28,7 +28,7 @@ def baseScore (b q : UInt8) : Int :=
     -1000000
 
 def windowScore (scores : List Int) (lo hi : Nat) : Int :=
-  ((scores.drop lo).take (hi - lo)).sum
+  (scores.extract lo hi).sum
 
 def trim (r : FQ.Read) : FQ.Read := sorry
 
@@ -42,7 +42,7 @@ theorem trim_correct (r : FQ.Read) :
       trim r =
         match decide (minLength ≤ hi - lo) with
         | true =>
-          ⟨r.name, (r.sequence.drop lo).take (hi - lo), (r.quality.drop lo).take (hi - lo)⟩
+          ⟨r.name, r.sequence.extract lo hi, r.quality.extract lo hi⟩
         | false =>
           ⟨r.name, [], []⟩ := by
   sorry
