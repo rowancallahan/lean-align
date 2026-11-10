@@ -216,4 +216,36 @@ theorem spawn_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (jo
     show Option.map bl (st.job q1[k]! q2[k]!) = spec (bl q1[k]!) (bl q2[k]!)
     rw [hj]; exact hjob _ _
 
+/-! ## `collect` -/
+
+theorem collect_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
+    (st : State) (W F1 F2 : List UInt8) (keep : Nat) (pd : Array (Task (Option ByteArray))) (o : ByteArray)
+    (hI : InvG spec job st W F1 F2) (h : collect keep st.pending ByteArray.empty = some (pd, o)) :
+    InvG spec job { st with pending := pd } (W ++ bl o) F1 F2 ∧ pd.size ≤ keep := by
+  have hv := collect_vals keep st.pending ByteArray.empty
+  rw [h] at hv
+  simp only [Option.map_some] at hv
+  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
+  unfold collectL at hv
+  rw [hvals] at hv
+  have hlen : ((SP.drop K).map fun p => spec p.1 p.2).length = SP.length - K := by simp
+  cases hm : (List.take (((SP.drop K).map fun p => spec p.1 p.2).length - keep)
+      ((SP.drop K).map fun p => spec p.1 p.2)).mapM id with
+  | none => rw [hm] at hv; simp at hv
+  | some ps =>
+    rw [hm] at hv
+    simp only [Option.some.injEq, Prod.mk.injEq] at hv
+    obtain ⟨hpd, ho⟩ := hv
+    generalize ht : ((SP.drop K).map fun p => spec p.1 p.2).length - keep = t at hm hpd
+    have hps := (mapM_id_some _ _).1 hm
+    have htl : t ≤ SP.length - K := by omega
+    refine ⟨⟨SP, K + t, pieces ++ ps, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, by omega, ?_, ?_, ?_⟩, ?_⟩
+    · rw [List.take_add, List.map_append, hpieces, List.map_take, hps, List.map_append]
+    · have ho' : bl o = ps.flatten := by simpa [bl] using ho
+      rw [hW, ho']; simp
+    · simp only []
+      rw [hpd, ← List.map_drop, List.drop_drop, Nat.add_comm]
+    · have : pd.size = (vals pd).length := by simp [vals]
+      rw [this, hpd]; simp; omega
+
 end Spec.FQ.MapStream
