@@ -9,6 +9,12 @@ def text (s : String) : List UInt8 := s.toUTF8.toList
 def num (n : Int) : List UInt8 := text (toString n)
 def line (fields : List (List UInt8)) : List UInt8 := List.intercalate [9] fields ++ [10]
 
+def header (chrs : ChromosomeList) : List UInt8 :=
+  line [text "@HD", text "VN:1.6", text "SO:unsorted"] ++
+  chrs.toList.flatMap (fun (name, len) => line [text "@SQ", text s!"SN:{name}", text s!"LN:{len}"]) ++
+  line [text "@PG", text "ID:lean-align", text "PN:lean-align"]
+
+-- the read name up to the first space, without a trailing /1 or /2
 def qname (name : List UInt8) : List UInt8 :=
   let base := name.takeWhile (· != 32)
   match base.reverse with
@@ -18,38 +24,22 @@ def qname (name : List UInt8) : List UInt8 :=
 def qnameOk (q : List UInt8) : Bool :=
   0 < q.length && q.length ≤ 254 && q.all fun c => (33 ≤ c && c ≤ 63) || (65 ≤ c && c ≤ 126)
 
-def complement : UInt8 → UInt8
-  | 0x41 => 0x54 | 0x54 => 0x41 | 0x43 => 0x47 | 0x47 => 0x43 | b => b
-
-def header (chrs : ChromosomeList) : List UInt8 :=
-  line [text "@HD", text "VN:1.6", text "SO:unsorted"] ++
-  chrs.toList.flatMap (fun (name, len) => line [text "@SQ", text s!"SN:{name}", text s!"LN:{len}"]) ++
-  line [text "@PG", text "ID:lean-align", text "PN:lean-align"]
-
 def chrName (chrs : ChromosomeList) (i : Nat) : List UInt8 :=
   match chrs[i]? with
   | some (name, _) => text name
-  | none => text "*"
+  | none           => text "*"
 
 def cigar (c : Array (Step × Nat)) : List UInt8 :=
   c.toList.flatMap fun (step, n) => num n ++ match step with
     | .diag => text "M" | .gapY => text "I" | .gapX => text "D"
 
-def mateBit : Mate → Nat
-  | .one => 64 | .two => 128
-
-def reverseBit (bit : Nat) : Strand → Nat
-  | .forward => 0 | .reverse => bit
-
+-- SEQ and QUAL as on the reference's forward strand: reverse-complemented for a reverse-strand mate
 def seqQual (r : FQ.Read) (strand : Strand) : List UInt8 × List UInt8 :=
+  let complement : UInt8 → UInt8 := fun | 0x41 => 0x54 | 0x54 => 0x41 | 0x43 => 0x47 | 0x47 => 0x43 | b => b
   match r.sequence, strand with
-  | [], _        => (text "*", text "*")
-  | s, .forward  => (s, r.quality)
-  | s, .reverse  => ((s.map complement).reverse, r.quality.reverse)
-
-def mapq (a : PairAnswer) : Nat :=
-  match a.uniqueness with
-  | .unique => 60 | _ => 0
+  | [], _       => (text "*", text "*")
+  | s, .forward => (s, r.quality)
+  | s, .reverse => ((s.map complement).reverse, r.quality.reverse)
 
 def answerTags (a : PairAnswer) : List (List UInt8) :=
   [text s!"XB:i:{a.bestPossibleScore}",
@@ -62,41 +52,43 @@ def answerTags (a : PairAnswer) : List (List UInt8) :=
      | .deepSearchTie => "deepSearchTie" | .bestUnchecked => "bestUnchecked"
      | .stoppedEarly => "stoppedEarly" | .boundsOnly => "boundsOnly")]
 
--- TLEN: leftmost start to rightmost stop, positive on the leftmost mate (mate 1 on a tie)
-def tlen (which : Mate) (p o : Placement) : Int :=
-  let len : Int := (max p.stop o.stop - min p.start o.start : Nat)
-  match compare p.start o.start, which with
-  | .lt, _ | .eq, .one => len
-  | _, _               => -len
+-- one mate's line: its read, which mate it is, MAPQ, the tags, and where it and its mate were placed (if found)
+def mateLine (chrs : ChromosomeList) (r : FQ.Read) (which : Mate) (mapq : Nat) (tags : List (List UInt8)) :
+    Option (MateReport × MateReport) → List UInt8
+  | none =>
+    let (s, q) := seqQual r .forward
+    let flag := 1 + 4 + 8 + (match which with | .one => 64 | .two => 128)
+    --     QNAME          FLAG      RNAME     POS    MAPQ   CIGAR     RNEXT     PNEXT  TLEN   SEQ QUAL
+    line ([qname r.name, num flag, text "*", num 0, num 0, text "*", text "*", num 0, num 0, s, q] ++ tags)
+  | some (me, other) =>
+    let p := me.placement
+    let o := other.placement
+    let (s, q) := seqQual r p.strand
+    let flag := 1 + 2 + (match which with | .one => 64 | .two => 128) +
+      (match p.strand with | .forward => 0 | .reverse => 16) + (match o.strand with | .forward => 0 | .reverse => 32)
+    let rnext := match decide (p.chromosome = o.chromosome) with
+      | true => text "=" | false => chrName chrs o.chromosome
+    -- TLEN: leftmost start to rightmost stop, positive on the leftmost mate (mate 1 on a tie)
+    let span : Int := (max p.stop o.stop - min p.start o.start : Nat)
+    let tlen := match compare p.start o.start, which with
+      | .lt, _ | .eq, .one => span
+      | _, _               => -span
+    --     QNAME          FLAG      RNAME                     POS              MAPQ      CIGAR
+    line ([qname r.name, num flag, chrName chrs p.chromosome, num (p.start + 1), num mapq, cigar me.cigar,
+    --     RNEXT  PNEXT              TLEN      SEQ QUAL
+           rnext, num (o.start + 1), num tlen, s, q, text s!"AS:i:{me.score}"] ++ tags)
 
-def mapped (chrs : ChromosomeList) (r : FQ.Read) (which : Mate) (me other : MateReport) (a : PairAnswer) :
-    List UInt8 :=
-  let p := me.placement
-  let o := other.placement
-  let (s, q) := seqQual r p.strand
-  let rnext := match decide (p.chromosome = o.chromosome) with
-    | true => text "=" | false => chrName chrs o.chromosome
-  line ([qname r.name,
-         num (1 + 2 + mateBit which + reverseBit 16 p.strand + reverseBit 32 o.strand),
-         chrName chrs p.chromosome, num (p.start + 1), num (mapq a), cigar me.cigar,
-         rnext, num (o.start + 1), num (tlen which p o), s, q,
-         text s!"AS:i:{me.score}"] ++ answerTags a)
-
-def unmapped (r : FQ.Read) (which : Mate) (tags : List (List UInt8)) : List UInt8 :=
-  let (s, q) := seqQual r .forward
-  line ([qname r.name, num (1 + 4 + 8 + mateBit which), text "*", num 0, num 0, text "*", text "*",
-         num 0, num 0, s, q] ++ tags)
-
-def pairLines (chrs : ChromosomeList) (r1 r2 : FQ.Read) : PairResult → List UInt8
-  | .trimmedAway m =>
-    let tags := [text ("XT:Z:trimmedAway" ++ match m with | .one => "1" | .two => "2")]
-    unmapped r1 .one tags ++ unmapped r2 .two tags
-  | .aligned a =>
-    match a.found with
-    | some pair => mapped chrs r1 .one pair.mate1 pair.mate2 a ++ mapped chrs r2 .two pair.mate2 pair.mate1 a
-    | none      => unmapped r1 .one (answerTags a) ++ unmapped r2 .two (answerTags a)
-
+-- the SAM file: the header, then two lines per pair
 def samFile (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) : List UInt8 :=
-  header chrs ++ (pairs.zip results).flatMap fun ((r1, r2), result) => pairLines chrs r1 r2 result
+  header chrs ++ (pairs.zip results).flatMap fun ((r1, r2), result) =>
+    let (placed1, placed2, mapq, tags) := match result with
+      | .trimmedAway m =>
+        (none, none, 0, [text ("XT:Z:trimmedAway" ++ match m with | .one => "1" | .two => "2")])
+      | .aligned a =>
+        let mapq := match a.uniqueness with | .unique => 60 | _ => 0
+        match a.found with
+        | some pair => (some (pair.mate1, pair.mate2), some (pair.mate2, pair.mate1), mapq, answerTags a)
+        | none      => (none, none, mapq, answerTags a)
+    mateLine chrs r1 .one mapq tags placed1 ++ mateLine chrs r2 .two mapq tags placed2
 
 end Spec.SamSpec
