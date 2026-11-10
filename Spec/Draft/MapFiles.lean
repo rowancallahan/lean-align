@@ -9,13 +9,11 @@ def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeL
     (file1 file2 : List UInt8) : Option (List UInt8) :=
   match FQ.parse file1, FQ.parse file2 with
   | some reads1, some reads2 =>
-    let pairs := List.zip (reads1.map trimRead) (reads2.map trimRead)
+    let pairs := List.zip (reads1.map (Trim.trim ∘ Trim.cut)) (reads2.map (Trim.trim ∘ Trim.cut))
     some (SamSpec.samFile chrs pairs (alignPairs settings index (pairs.map alignerInput)))
   | _, _ =>
     none
 where
-  trimRead (r : FQ.Read) : FQ.Read :=
-    Trim.trim (Trim.cut r)
   -- the aligner takes the letters of each mate; a mate trimmed to nothing is `none`
   alignerInput (pair : FQ.Read × FQ.Read) : Option ByteArray × Option ByteArray :=
     let letters (r : FQ.Read) : Option ByteArray :=
