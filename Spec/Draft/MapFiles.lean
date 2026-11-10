@@ -21,7 +21,7 @@ def toAligner (r : FQ.Read) : Option ByteArray :=
 def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (file1 file2 : List UInt8) : Option (List UInt8) := do
   let pairs ← pairUp (← FQ.parse file1) (← FQ.parse file2)
-  let trimmed := pairs.map fun (a, b) => (Trim.trim a, Trim.trim b)
+  let trimmed := pairs.map fun (a, b) => (Trim.trim (Trim.cut a), Trim.trim (Trim.cut b))
   let results := alignPairs settings index (trimmed.map fun (a, b) => (toAligner a, toAligner b))
   pure (SamSpec.samFile chrs trimmed results)
 
