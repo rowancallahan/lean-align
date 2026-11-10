@@ -10,7 +10,7 @@ Exit 1 on any difference."""
 import sys
 
 spec = open(sys.argv[1]).read().split("\n")
-proofs = open(sys.argv[2]).read().split("\n")
+proofs = [l for l in open(sys.argv[2]).read().split("\n") if not l.startswith("#print axioms")]
 imp = lambda l: l.replace("import Spec.", "import Proofs.", 1) if l.startswith("import Spec.") else l
 spec = [imp(l) for l in spec]
 p = 0

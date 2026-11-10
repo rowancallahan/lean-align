@@ -14,6 +14,7 @@ bad()  { echo "FAIL: $1"; fail=1; }
 HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end
   Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq
   Spec.Trim.trim_correct Spec.Trim.cut_eq Spec.Trim.cut_eq_cutF Spec.Trim.trimB_eq
+  Spec.Total.process_correct Spec.MapCopy.job_eq
   Spec.SamFast.samHeaderB_eq Spec.SamFast.samChunkS_eq Spec.SamFast.samFileS_eq
   Spec.SamFused.samChunkF_eq Spec.SamFused.samChunkS_eq_F"
 
