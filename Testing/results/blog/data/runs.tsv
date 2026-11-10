@@ -1,5 +1,6 @@
 # All timing runs used in the figures. 4 threads (taskset -c 0-3), hg38, output discarded. One row per run or median.
 # wall_s includes index load unless map_s is given (map_s = wall minus in-run index load). cpu_s = aligner user+sys.
+# lane rows (trace box): wall_s = start to exit of the whole run, map_s = wall minus the in-run index load, cpu_s = lean-align user+sys during the map phase only (index-load CPU subtracted; gunzip/curl not included); Gbp rates use exact base counts (HiSeq lane 16.835 Gbp = 33,916,091 pairs, NovaSeq 40M pairs 12.08 Gbp) over map_s and cpu_s.
 # source = the box and method; see ../README.md. NA = not measured.
 experiment	data	pairs	tool	commit	wall_s	map_s	cpu_s	peak_GB	Gbp_hr	Gbp_core_hr	reps	source
 gz5m	hiseq_2x250	5000000	lean-align	f465a57	83.4	81.1	286.2	NA	110.2	31.23	3	timing box, gz FIFOs
@@ -15,9 +16,9 @@ stream	novaseq_2x151	20000000	lean-align	f465a57	389.0	NA	1350.0	5.74	55.9	16.11
 stream	novaseq_2x151	40000000	lean-align	f465a57	778.5	NA	2709.3	5.74	55.9	16.05	1	streaming box, curl|gunzip, md5 sink
 stream	novaseq_2x151	20000000	minibwa	c07de5c	1086.7	NA	4135.9	8.81	20.0	5.26	1	streaming box, resuming downloader, /dev/null
 stream	novaseq_2x151	40000000	minibwa	c07de5c	NA	NA	NA	NA	NA	NA	1	PENDING
-lane	hiseq_2x250	33900000	lean-align-before	64ae73f	1317	NA	3110	5.72	NA	NA	1	trace box, curl|gunzip|head, cat sink, traced
-lane	hiseq_2x250	33900000	lean-align	f465a57	683	NA	2300	5.88	NA	NA	1	trace box, same, traced
-lane	hiseq_2x250	33900000	minibwa	c07de5c	NA	NA	NA	NA	NA	NA	1	PENDING
-lane	novaseq_2x151	40000000	lean-align-before	64ae73f	1327	NA	3648	5.63	NA	NA	1	trace box, traced
-lane	novaseq_2x151	40000000	lean-align	f465a57	757	NA	2738	5.65	NA	NA	1	trace box, traced
-lane	novaseq_2x151	40000000	lean-align	f465a57	771.7	NA	2798	5.65	NA	NA	1	trace box, untraced
+lane	hiseq_2x250	33916091	lean-align-before	64ae73f	1320.5	1317.5	3110.2	5.72	46.0	19.5	1	trace box, curl|gunzip|head, cat sink, traced; trace build = 64ae73f + trace commits
+lane	hiseq_2x250	33916091	lean-align	f465a57	686.3	683.3	2300.2	5.88	88.7	26.3	1	trace box, same, traced; trace build = f465a57 + trace commits
+lane	hiseq_2x250	33916091	minibwa	c07de5c	NA	NA	NA	NA	NA	NA	1	PENDING
+lane	novaseq_2x151	40000000	lean-align-before	64ae73f	1330.6	1327.4	3648.1	5.63	32.8	11.9	1	trace box, traced; trace build = 64ae73f + trace commits
+lane	novaseq_2x151	40000000	lean-align	f465a57	759.6	756.8	2738.2	5.65	57.5	15.9	1	trace box, traced; trace build = f465a57 + trace commits
+lane	novaseq_2x151	40000000	lean-align	f465a57	774.9	771.7	2798.1	5.65	56.4	15.5	1	trace box, untraced

@@ -1,0 +1,46 @@
+# Accuracy and uniqueness vs minibwa. Source: Testing/notes/UNIQUE_VS_MINIBWA.md (festive c25e1e1; lean-align 027ef1e, minibwa c07de5c, measured before the slow-pair fixes)
+# real: first 200k pairs of the bench release's novaseq_200k and hg002_200k (HiSeq 2x250); values are % of all pairs. 'unique' = our XU:Z:unique vs minibwa MAPQ 60 on both mates; pct_q30 = minibwa MAPQ >= 30 on both.
+# agree: of pairs both tools call unique. sim: Testing/benches/sim_pairs.py seed 1, 100k pairs; a pair is correct if both mates start within 10 bp of the truth; class = OUR class (n pairs).
+block	dataset	class	metric	tool	value	n_pairs
+real	novaseq_200k	all	pct_proper_pair	lean-align	93.8	
+real	novaseq_200k	all	pct_proper_pair	minibwa	97.62	
+real	novaseq_200k	all	pct_unique	lean-align	82.42	
+real	novaseq_200k	all	pct_unique	minibwa	84.89	
+real	novaseq_200k	all	pct_q30	minibwa	90.93	
+real	novaseq_200k	all	pct_unknown	lean-align	11.38	
+real	novaseq_200k	all	pct_not_proper	lean-align	6.2	
+real	hiseq_200k	all	pct_proper_pair	lean-align	93.61	
+real	hiseq_200k	all	pct_proper_pair	minibwa	98.06	
+real	hiseq_200k	all	pct_unique	lean-align	84.55	
+real	hiseq_200k	all	pct_unique	minibwa	87.41	
+real	hiseq_200k	all	pct_q30	minibwa	92.29	
+real	hiseq_200k	all	pct_unknown	lean-align	9.06	
+real	hiseq_200k	all	pct_not_proper	lean-align	6.39	
+agree	novaseq_200k	both unique	pct_same_exact_position	both	82.11	
+agree	novaseq_200k	both unique	pct_within_10bp	both	99.25	
+agree	hiseq_200k	both unique	pct_same_exact_position	both	26.72	
+agree	hiseq_200k	both unique	pct_within_10bp	both	75.57	
+sim	mason	all pairs	pct_pair_correct	lean-align	93.91	100000
+sim	mason	all pairs	pct_pair_correct	minibwa	98.03	100000
+sim	low	all pairs	pct_pair_correct	lean-align	96.6	100000
+sim	low	all pairs	pct_pair_correct	minibwa	98.26	100000
+sim	high	all pairs	pct_pair_correct	lean-align	80.87	100000
+sim	high	all pairs	pct_pair_correct	minibwa	97.98	100000
+sim	mason	unique	pct_pair_correct	lean-align	100.0	86604
+sim	mason	unique	pct_pair_correct	minibwa	99.99	86604
+sim	mason	unknown	pct_pair_correct	lean-align	72.94	10017
+sim	mason	unknown	pct_pair_correct	minibwa	84.66	10017
+sim	mason	not proper	pct_pair_correct	lean-align	0	3379
+sim	mason	not proper	pct_pair_correct	minibwa	87.54	3379
+sim	low	unique	pct_pair_correct	lean-align	99.99	94164
+sim	low	unique	pct_pair_correct	minibwa	99.99	94164
+sim	low	unknown	pct_pair_correct	lean-align	45.62	5348
+sim	low	unknown	pct_pair_correct	minibwa	69.67	5348
+sim	low	not proper	pct_pair_correct	lean-align	0	488
+sim	low	not proper	pct_pair_correct	minibwa	76.43	488
+sim	high	unique	pct_pair_correct	lean-align	99.94	59278
+sim	high	unique	pct_pair_correct	minibwa	99.97	59278
+sim	high	unknown	pct_pair_correct	lean-align	90.82	23814
+sim	high	unknown	pct_pair_correct	minibwa	95.19	23814
+sim	high	not proper	pct_pair_correct	lean-align	0	16908
+sim	high	not proper	pct_pair_correct	minibwa	94.96	16908
