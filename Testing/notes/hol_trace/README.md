@@ -19,3 +19,7 @@ through `implemented_by`, `alignPairsP_eq` stubbed). `grep '^P' trace.log | sort
 And every pipeline stage over 5 ms of a pair: `S tid stage ms`, stage one of router / walk / join / short / gaveup /
 look (`Proofs/Aligner.lean` `timeIt`). Stage lines of a pair come before its `P` line, on the same tid.
 `grep '^S' trace.log | awk '{n[$3]++; t[$3]+=$4} END{for(k in n) print k, n[k], t[k]" ms"}'` sums them.
+
+`pmp.sh N OUT CMD...`: gdb stack samples of every thread every 0.5 s (no perf needed), then the most common Lean
+frames (innermost and inclusive). On the slow 2-job run it shows whether the time is in aligner code or in the
+runtime (allocator, `lean_*`, memset/page faults: raw frames are in OUT).
