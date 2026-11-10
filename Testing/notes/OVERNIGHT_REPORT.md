@@ -28,3 +28,6 @@ Next: fused cut+trim (trimming is ~6% of NovaSeq instructions; ~1–2% to gain).
 NovaSeq / HiSeq, % of instructions: alignment 75.9 / 72.4; SAM formatting 8.2 / 9.7 (before the fused writer); trimming 5.7 / 7.6; FASTQ parsing 4.5 / 4.9; slice cutting 2.0 / 2.2; pairing 1.2 / 1.1. Allocation + reference counting 14% (inside the stages); memcpy 3–4%.
 Cheap wins found: big-number literals parsed at runtime (gmpz_init_set_str, 13 calls per pair) 2.4–2.7%; the FASTQ error record built for every valid read 2.0–2.3%. Then allocation/closures in the aligner (~5–7%), one newline scan (~3–4%).
 After S-H's fused writer and trimB csimp (fused/writer): NovaSeq 1,831.0M → 1,742.3M instructions (−4.8%), HiSeq 2,049.0M → 1,929.4M (−5.8%), SAM identical.
+- fe54e60 (S-H): `size < 4294967296` guards made Lean parse "4294967296" from a string on every call (lean_cstr_to_nat, ~630 instructions, 88k calls per 4000 pairs). Rewritten as `size ≤ 4294967295`, same proofs. NovaSeq −4.2%, HiSeq −3.8%.
+- Cumulative on fused/writer vs the new build 53c1ab2: NovaSeq 1,831.0M → 1,668.8M instructions (−8.9%), HiSeq 2,049.0M → 1,855.8M (−9.4%), SAM identical. Wall time pending (S-T).
+- Rule: never compare against a Nat literal ≥ 2^32 in compiled code.
