@@ -17,7 +17,8 @@ Mapped counts and mapped-unknown counts are unchanged; XB is not tightened. SAM 
 | thr -8, k=3 (default) | 188771 / 15760 | 194273 / 5819 |
 | thr -8, k=6 | 188975 / 15933 | 194460 / 5994 |
 | thr -8, k=12 | 189106 / 16042 | 194643 / 6157 |
-| no stop, k=3 | 188813 / 15802 | 194489 / 5985 |
+| no stop, k=3 | 188813 / n.m. | 194489 / n.m. |
+(n.m. = not measured)
 | minibwa c07de5c | 196329 / 17357 | 196486 / 7286 |
 
 ## CPU cost (user+sys, median of 3 interleaved runs, 4 threads, 1M pairs; base drifts between batches, compare within a row)
