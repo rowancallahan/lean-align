@@ -306,4 +306,65 @@ theorem step_some_fail (settings : InsertSettings) (index : ByteArray) (chrs : C
   | none => exact failing_job settings index chrs job _ _ _ _ inFlight hmid hc T1 T2
   | some r => rw [hc] at h; simp at h
 
+/-! ## The end: pair what is left, then one last job -/
+
+theorem pair_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = spec (bl a) (bl b)) (st : State) (W F1 F2 : List UInt8)
+    (hI : InvG spec job st W F1 F2) :
+    let n := min st.queue1.size st.queue2.size
+    InvG spec job ⟨st.job, st.file1, st.file2, st.queue1.extract n st.queue1.size, st.queue2.extract n st.queue2.size,
+      spawnPaired st.job st.queue1 st.queue2 st.pending⟩ W F1 F2 := by
+  intro n
+  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
+  have hn1 : n ≤ st.queue1.size := Nat.min_le_left _ _
+  have hn2 : n ≤ st.queue2.size := Nat.min_le_right _ _
+  have hmap1 := range_getElem st.queue1 n hn1
+  have hmap2 := range_getElem st.queue2 n hn2
+  have hex1 : (st.queue1.extract n st.queue1.size).toList.map bl = (st.queue1.toList.map bl).drop n := by
+    rw [Array.toList_extract, List.extract_eq_drop_take, List.map_take, List.map_drop,
+      List.take_of_length_le (by simp)]
+  have hex2 : (st.queue2.extract n st.queue2.size).toList.map bl = (st.queue2.toList.map bl).drop n := by
+    rw [Array.toList_extract, List.extract_eq_drop_take, List.map_take, List.map_drop,
+      List.take_of_length_le (by simp)]
+  refine ⟨SP ++ (List.range n).map (fun k => (bl st.queue1[k]!, bl st.queue2[k]!)), K, pieces, hj, ok1, ok2, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hW, ?_⟩
+  · intro p hp
+    rcases List.mem_append.1 hp with h | h
+    · exact hSP p h
+    · obtain ⟨k, hk, rfl⟩ := List.mem_map.1 h
+      have m1 : bl st.queue1[k]! ∈ st.queue1.toList.map bl := by
+        have := List.mem_map_of_mem (f := fun k => bl st.queue1[k]!) hk
+        rw [hmap1] at this; exact List.mem_of_mem_take this
+      have m2 : bl st.queue2[k]! ∈ st.queue2.toList.map bl := by
+        have := List.mem_map_of_mem (f := fun k => bl st.queue2[k]!) hk
+        rw [hmap2] at this; exact List.mem_of_mem_take this
+      exact ⟨hq1 _ m1, hq2 _ m2⟩
+  · intro s hs; simp only [] at hs; rw [hex1] at hs; exact hq1 s (List.mem_of_mem_drop hs)
+  · intro s hs; simp only [] at hs; rw [hex2] at hs; exact hq2 s (List.mem_of_mem_drop hs)
+  · simp only [List.map_append, List.flatten_append, List.map_map, Function.comp_def]
+    rw [hex1]
+    have e : (List.map (fun k => bl st.queue1[k]!) (List.range n)).flatten = ((st.queue1.toList.map bl).take n).flatten := by rw [hmap1]
+    rw [e, hF1]
+    have hsplit : (st.queue1.toList.map bl).flatten = ((st.queue1.toList.map bl).take n).flatten ++ ((st.queue1.toList.map bl).drop n).flatten := by
+      rw [← List.flatten_append, List.take_append_drop]
+    rw [hsplit]
+    simp only [List.append_assoc]
+  · simp only [List.map_append, List.flatten_append, List.map_map, Function.comp_def]
+    rw [hex2]
+    have e : (List.map (fun k => bl st.queue2[k]!) (List.range n)).flatten = ((st.queue2.toList.map bl).take n).flatten := by rw [hmap2]
+    rw [e, hF2]
+    have hsplit : (st.queue2.toList.map bl).flatten = ((st.queue2.toList.map bl).take n).flatten ++ ((st.queue2.toList.map bl).drop n).flatten := by
+      rw [← List.flatten_append, List.take_append_drop]
+    rw [hsplit]
+    simp only [List.append_assoc]
+  · simp only [Array.size_extract]
+    omega
+  · simp only [List.length_append]; omega
+  · rw [List.take_append_of_le_length hK]; exact hpieces
+  · rw [spawnPaired_vals, hvals, List.drop_append_of_le_length hK, List.map_append, List.map_map]
+    refine congrArg (_ ++ ·) ?_
+    apply List.map_congr_left
+    intro k hk
+    show Option.map bl (st.job st.queue1[k]! st.queue2[k]!) = spec (bl st.queue1[k]!) (bl st.queue2[k]!)
+    rw [hj]; exact hjob _ _
+
 end Spec.FQ.MapStream
