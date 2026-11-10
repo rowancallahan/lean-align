@@ -80,11 +80,24 @@ def cutSlices (c : Carry) (chunk : ByteArray) : Carry × Array ByteArray :=
   let carry := carry ++ chunk
   go (carry.size + 1) carry scan lines #[]
 
+-- the bytes buffered per file before they are cut in a background task
+def flushBytes : Nat := 8 * 1024 * 1024
+
+-- buffered chunks, joined (one copy)
+def join (b : Array ByteArray) : ByteArray := b.foldl (· ++ ·) ByteArray.empty
+
+-- the newline cutting runs off the loop thread: per file, the last cut (a task: its carry, and the slices it cut),
+-- and the chunks received since it was started; the loop thread only buffers chunks, starts a cut every
+-- `flushBytes`, pairs the slices of finished cuts and spawns the jobs
 structure State where
   job     : ByteArray → ByteArray → Option ByteArray
-  file1   : Carry
-  file2   : Carry
-  -- complete slices of one file waiting for the other file's
+  cut1    : Task (Carry × Array ByteArray)
+  cut2    : Task (Carry × Array ByteArray)
+  buf1    : Array ByteArray
+  buf2    : Array ByteArray
+  size1   : Nat
+  size2   : Nat
+  -- slices of finished cuts of one file waiting for the other file's
   queue1  : Array ByteArray
   queue2  : Array ByteArray
   pending : Array (Task (Option ByteArray))
@@ -112,27 +125,41 @@ def spawnPaired (job : ByteArray → ByteArray → Option ByteArray) (queue1 que
     pending.push (Task.spawn fun _ => job a b)) pending
 
 def init (job : ByteArray → ByteArray → Option ByteArray) : State :=
-  ⟨job, ⟨ByteArray.empty, 0, 0⟩, ⟨ByteArray.empty, 0, 0⟩, #[], #[], #[]⟩
+  ⟨job, Task.pure (⟨ByteArray.empty, 0, 0⟩, #[]), Task.pure (⟨ByteArray.empty, 0, 0⟩, #[]), #[], #[], 0, 0, #[], #[], #[]⟩
 
--- the next chunk of each file: start the jobs it completes, hand back the oldest jobs' lines;
--- `none` (both files ended): map what is left over as one last job and hand back every job's lines
+-- one file's chunk: buffered; once `flushBytes` are buffered, the previous cut's slices go to the queue and the
+-- buffered bytes are cut after the previous cut's carry, in a task of their own
+def feed (cut : Task (Carry × Array ByteArray)) (buf : Array ByteArray) (size : Nat) (queue : Array ByteArray)
+    (chunk : ByteArray) : Task (Carry × Array ByteArray) × Array ByteArray × Nat × Array ByteArray :=
+  let buf := buf.push chunk
+  let size := size + chunk.size
+  if flushBytes ≤ size then
+    (cut.map (prio := .dedicated) (fun (c, _) => cutSlices c (join buf)), #[], 0, queue ++ cut.get.2)
+  else (cut, buf, size, queue)
+
+-- the next chunk of each file: buffer it (and start a cut), start the jobs of the paired slices, hand back the
+-- oldest jobs' lines; `none` (both files ended): cut what is left, map the leftover as one last job and hand back
+-- every job's lines
 def step (st : State) : Option (ByteArray × ByteArray) → Option (State × ByteArray)
   | some (chunk1, chunk2) =>
-    let ⟨job, file1, file2, queue1, queue2, pending⟩ := st
-    let (file1, s1) := cutSlices file1 chunk1
-    let (file2, s2) := cutSlices file2 chunk2
-    let queue1 := queue1 ++ s1
-    let queue2 := queue2 ++ s2
+    let ⟨job, cut1, cut2, buf1, buf2, size1, size2, queue1, queue2, pending⟩ := st
+    let (cut1, buf1, size1, queue1) := feed cut1 buf1 size1 queue1 chunk1
+    let (cut2, buf2, size2, queue2) := feed cut2 buf2 size2 queue2 chunk2
     let n := min queue1.size queue2.size
     (collect inFlight (spawnPaired job queue1 queue2 pending) ByteArray.empty).map fun (pending, out) =>
-      (⟨job, file1, file2, queue1.extract n queue1.size, queue2.extract n queue2.size, pending⟩, out)
+      (⟨job, cut1, cut2, buf1, buf2, size1, size2, queue1.extract n queue1.size, queue2.extract n queue2.size,
+        pending⟩, out)
   | none =>
-    let ⟨job, file1, file2, queue1, queue2, pending⟩ := st
+    let ⟨job, cut1, cut2, buf1, buf2, _, _, queue1, queue2, pending⟩ := st
+    let last1 := cutSlices cut1.get.1 (join buf1)
+    let last2 := cutSlices cut2.get.1 (join buf2)
+    let queue1 := queue1 ++ cut1.get.2 ++ last1.2
+    let queue2 := queue2 ++ cut2.get.2 ++ last2.2
     let n := min queue1.size queue2.size
     let paired := spawnPaired job queue1 queue2 pending
     -- what is left over: the unpaired slices and the carries, as one last job
-    let rest1 := (queue1.extract n queue1.size).foldl (· ++ ·) ByteArray.empty ++ file1.carry
-    let rest2 := (queue2.extract n queue2.size).foldl (· ++ ·) ByteArray.empty ++ file2.carry
+    let rest1 := (queue1.extract n queue1.size).foldl (· ++ ·) ByteArray.empty ++ last1.1.carry
+    let rest2 := (queue2.extract n queue2.size).foldl (· ++ ·) ByteArray.empty ++ last2.1.carry
     let all := if rest1.isEmpty && rest2.isEmpty then paired else paired.push (Task.spawn fun _ => job rest1 rest2)
     (collect 0 all ByteArray.empty).map fun (_, out) => (init job, out)
 
