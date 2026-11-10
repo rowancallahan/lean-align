@@ -23,3 +23,8 @@ Consequence for the stricter rule (mapped unknown only if XB < bound): ~11% of p
 `samChunkF` writes each job's SAM in one pass into one pre-sized buffer; `samChunkF_eq : samChunkF = samChunkS` with `@[csimp]`, standard axioms. SAM identical.
 callgrind, 4000 pairs: NovaSeq 1,831.0M → 1,747.3M instructions (−4.6%); HiSeq 2,049.0M → 1,934.1M (−5.6%). The writer itself: 149M → 70M.
 Next: fused cut+trim (trimming is ~6% of NovaSeq instructions; ~1–2% to gain).
+
+## Where the time goes (S-P, callgrind on festive 027ef1e, 4000 pairs; notes/profile-027ef1e, Testing/notes/PROFILE.md)
+NovaSeq / HiSeq, % of instructions: alignment 75.9 / 72.4; SAM formatting 8.2 / 9.7 (before the fused writer); trimming 5.7 / 7.6; FASTQ parsing 4.5 / 4.9; slice cutting 2.0 / 2.2; pairing 1.2 / 1.1. Allocation + reference counting 14% (inside the stages); memcpy 3–4%.
+Cheap wins found: big-number literals parsed at runtime (gmpz_init_set_str, 13 calls per pair) 2.4–2.7%; the FASTQ error record built for every valid read 2.0–2.3%. Then allocation/closures in the aligner (~5–7%), one newline scan (~3–4%).
+After S-H's fused writer and trimB csimp (fused/writer): NovaSeq 1,831.0M → 1,742.3M instructions (−4.8%), HiSeq 2,049.0M → 1,929.4M (−5.8%), SAM identical.
