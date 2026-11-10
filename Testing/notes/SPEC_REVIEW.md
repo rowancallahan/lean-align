@@ -25,3 +25,25 @@ LOW
 16. Very different record sizes in the two files: mapStep buffers the surplus of one file (memory only).
 
 Checked fine: Main vs process_correct (short reads, one file ending first, temp-file rename, fuel bound), process_correct pins the output given mapReads, parse unique, prepPairs counts, trim_correct satisfiable and non-vacuous, cut = TruSeq common prefix (random hit rates ~1e-4 / ~3e-4 per read), every SAM field per SAMv1 §1.4.
+
+# Round 2 (S-R, same commit, read only)
+
+HIGH
+1. Lowercase genome letters (soft-masked FASTA, e.g. UCSC hg38.fa: ~half lowercase) are kept by readFasta and compared case-sensitively, so a read in an Alu mismatches every base. Our benchmarks use hg38.upper.fa, so the numbers are unaffected; a user with the UCSC file would get silently wrong results. Fix: at build, assert every letter is in ACGTN (fail fast), next to the name validation.
+2. `repetitiveUnknown` is a free exit: {found = none, bound 0, repetitiveUnknown} is Correct whenever ONE mate has two 25-letter seeds each occurring ≥ 200 times. E.g. mate 1 in an AluY, mate 2 in unique flank, a perfect unique pair exists -> "unmapped" allowed. Fix options: require both mates repetitive; or a non-trivial bound; or no placement of the other mate above the bound.
+3. `unknown` with a found pair promises little: any proper pair ≥ junkScore (-100) may be reported with XU unknown, XB 0. A lazy aligner returning the first proper pair ≥ -100 (tier stoppedEarly) is Correct. Fix: found score ≥ requiredMapBound, or = bestPossibleScore for every tier except stoppedEarly.
+
+MEDIUM
+4. "Not found" (unknown) promises no proper pair ≥ requiredMapBound: 0 for mates of 25-49 letters, -4 for 50-74, ... -16 from 125 letters, from the shorter mate. 2×150 with 5 mismatches (-20) may be left unmapped. Not vacuous; document the sensitivity limit.
+5. `unique` (MAPQ 60) is unique among proper pairs only; a wrong fragment range changes what MAPQ 60 means. Document next to mapq.
+6. One mate trimmed away makes the whole pair unmapped (the spec says so consistently). Is that intended? (Already noted: map the surviving mate single-end later.)
+7. The chunk model can't say "this file ended": an empty/truncated R1 with a 50 GB R2 makes mapStep buffer all of R2 before failing. Fix: chunks as Option ByteArray × Option ByteArray (none = ended). Also reject a line after 1001 bytes instead of buffering to the newline (allowed, not required).
+8. Only a space ends the QNAME, not a tab: "@read0001\tBC:Z:ACGT" (samtools fastq -T, UMI tools) fails the whole run.
+
+LOW
+9. FASTQ variants: Casava 1.8 and old /1 /2 headers fine; '+' repeats need the full line; N-only and empty reads fine (trimmed away). SRA "@SRR….1.1"/".1.2" names differ -> run fails. Trailing blank line, no final newline, CRLF, '.', lowercase -> run fails (defensible; message should name file and record). Phred+64 read as high quality (documented to-do). Control bytes allowed in the name comment (harmless).
+10. min > max fragment: every pair unmapped, exit 0. Assert min ≤ max.
+11. Output path equal to an input path destroys the input; an input named OUT.tmp is truncated. Assert the three paths differ.
+12. @SQ LN / POS above 2^31-1 not excluded; add to build validation.
+
+Checked fine: no SAM injection from FASTQ (QNAME printable without '@', SEQ ACGTN, QUAL 0x21-0x7E); binary/gzip input fails at the first byte; PairResult.Correct satisfiable for every input; "always not found" fails outside the repetitive exit; multimapper and unique claims are strong; per-record memory bounded.
