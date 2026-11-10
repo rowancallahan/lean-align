@@ -37,3 +37,6 @@ After S-H's fused writer and trimB csimp (fused/writer): NovaSeq 1,831.0M → 1,
 - Loss at 4 threads: end-of-run idle 2.3%, start 0.4%, steady 0.9%, plus ~2.3% "in a job but not on CPU" (page faults, allocation, preemption by reader/writer threads).
 - Smaller jobs (8000/4000/2000 pairs) cut the end idle from 0.38 s to 0.09 s but the wall-time change is within noise; more jobs in flight: nothing. Scheduling is worth ≤ 1–2% at 4 threads.
 - For 16/32 threads (estimate): 16000-pair jobs leave too few per worker (2 per worker at 32 threads; tail ~10–15%). Use 2000–4000-pair jobs in streaming (no measured cost), one shared ordered queue, ordering window ~4×threads jobs. At 32 threads the single reader pair and the ordered writer may become the limit; measure reader/writer MB/s there.
+
+## process_correct (S4, proof/mapfiles2 506ebe8)
+Proved, no sorry, standard axioms, as `process_correct'`: the Spec's exact statement, assuming one lemma `job_eq` (a fast job = mapReads of its two slices), which S-G is proving. Covers carries, slices of 4·16000 lines, up to 8 jobs in flight, any chunk sizes, a step failing exactly when mapReads of the whole files fails, and the last job when one file has more slices. Remaining: job_eq, and closing the sorry in Proofs/MapFiles without changing the Spec text (generic proof applied there, or exact copies).
