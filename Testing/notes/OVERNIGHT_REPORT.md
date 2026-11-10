@@ -31,3 +31,9 @@ After S-H's fused writer and trimB csimp (fused/writer): NovaSeq 1,831.0M → 1,
 - fe54e60 (S-H): `size < 4294967296` guards made Lean parse "4294967296" from a string on every call (lean_cstr_to_nat, ~630 instructions, 88k calls per 4000 pairs). Rewritten as `size ≤ 4294967295`, same proofs. NovaSeq −4.2%, HiSeq −3.8%.
 - Cumulative on fused/writer vs the new build 53c1ab2: NovaSeq 1,831.0M → 1,668.8M instructions (−8.9%), HiSeq 2,049.0M → 1,855.8M (−9.4%), SAM identical. Wall time pending (S-T).
 - Rule: never compare against a Nat literal ≥ 2^32 in compiled code.
+
+## Core use (S-U, festive 027ef1e on a 4-core box; SAM md5 identical across all 42 runs per set)
+- No heavy tail: job time max/median 1.31 (HiSeq), 1.20 (NovaSeq). Workers busy 96.3–97.5% of the run; core use 94.3% (HiSeq), 95.0% (NovaSeq) on this box (not the 88% seen before; different box/state).
+- Loss at 4 threads: end-of-run idle 2.3%, start 0.4%, steady 0.9%, plus ~2.3% "in a job but not on CPU" (page faults, allocation, preemption by reader/writer threads).
+- Smaller jobs (8000/4000/2000 pairs) cut the end idle from 0.38 s to 0.09 s but the wall-time change is within noise; more jobs in flight: nothing. Scheduling is worth ≤ 1–2% at 4 threads.
+- For 16/32 threads (estimate): 16000-pair jobs leave too few per worker (2 per worker at 32 threads; tail ~10–15%). Use 2000–4000-pair jobs in streaming (no measured cost), one shared ordered queue, ordering window ~4×threads jobs. At 32 threads the single reader pair and the ordered writer may become the limit; measure reader/writer MB/s there.
