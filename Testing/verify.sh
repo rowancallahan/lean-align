@@ -7,7 +7,8 @@
 # Needs (see Testing/repro/README.md "Setup"): Lean on PATH, the bench release in Testing/data/prebuilt,
 # MINIBWA=path/to/minibwa (c07de5c), SAMTOOLS=path/to/samtools (step 4 only).
 # Optional: INDEX (default Testing/data/prebuilt/shim.idx), MBINDEX (default Testing/data/prebuilt/mb),
-#           SETS (default "novaseq_200k hg002_200k", files Testing/data/prebuilt/SET_R{1,2}.fq), THREADS (4), REPEAT (3).
+#           P (the read sets' directory, default Testing/data/prebuilt), SETS (default "novaseq_200k hg002_200k",
+#           files $P/SET_R{1,2}.fq; step 2 uses the first), GENOME (step 3, see fuzz_audit.sh), THREADS (4), REPEAT (3).
 #
 # Steps:
 #   1  build + every proof + tiny-genome output fuzz        (CI_check.sh with FUZZ=1)
@@ -19,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 O=$1; mkdir -p "$O"
 STEPS=${STEPS:-"1 2 3 4 5"}
-P=Testing/data/prebuilt
+P=${P:-Testing/data/prebuilt}
 IDX=${INDEX:-$P/shim.idx}; MBI=${MBINDEX:-$P/mb}
 SETS=${SETS:-"novaseq_200k hg002_200k"}; T=${THREADS:-4}; R=${REPEAT:-3}
 LA=.lake/build/bin/lean-align
@@ -39,8 +40,8 @@ if want 1; then
 fi
 
 if want 2; then
-  step 2 "index freshness (2,000 NovaSeq pairs must mostly map)"
-  head -n 8000 $P/novaseq_200k_R1.fq > "$O/s_R1.fq"; head -n 8000 $P/novaseq_200k_R2.fq > "$O/s_R2.fq"
+  step 2 "index freshness (2,000 pairs of ${SETS%% *} must mostly map)"
+  head -n 8000 $P/${SETS%% *}_R1.fq > "$O/s_R1.fq"; head -n 8000 $P/${SETS%% *}_R2.fq > "$O/s_R2.fq"
   $LA map "$IDX" "$O/s_R1.fq" "$O/s_R2.fq" "$O/s.sam" 100 1000
   mapped=$(awk '!/^@/ && int($2/4)%2==0' "$O/s.sam" | wc -l); total=$(awk '!/^@/' "$O/s.sam" | wc -l)
   echo "mapped records: $mapped / $total"

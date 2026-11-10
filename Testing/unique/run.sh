@@ -4,13 +4,16 @@
 set -eu
 cd "$(dirname "$0")/../.."
 o=$1; mkdir -p "$o"; B=.lake/build/bin; U=Testing/unique; MB=${MINIBWA:-minibwa}; ST=${SAMTOOLS:-samtools}
+lake build lean-align kmer_check bam_write > $o/build.log 2>&1 || { tail -20 $o/build.log; exit 1; }
 python3 -I $U/gen_unique_genome.py $o/unique.fa 1
 $B/kmer_check $o/unique.fa 15                                  # exit 1 = some 15-mer twice
 $B/lean-align build $o/unique.fa $o/shim.idx
 $MB index -t 4 $o/unique.fa $o/mb 2> $o/mb_index.log
 for set in "sim 40 7" "sim2 17 11"; do
   read p step seed <<< "$set"
-  python3 -I $U/sim_unique_pairs.py $o/unique.fa $o/$p $step $seed
+  python3 -I $U/sim_unique_pairs.py $o/unique.fa $o/sim_$p $step $seed
+  # leave out the pairs Spec/Trim.lean's adapter cut trims (minibwa does not cut); prints kept / dropped
+  python3 -I Testing/ec2/drop_adapter_pairs.py $o/sim_${p}_R1.fq $o/sim_${p}_R2.fq $o/${p}_R1.fq $o/${p}_R2.fq
   taskset -c 0-3 $B/lean-align map $o/shim.idx $o/${p}_R1.fq $o/${p}_R2.fq $o/ours_$p.sam 100 1000
   $MB map -t 4 $o/mb $o/${p}_R1.fq $o/${p}_R2.fq > $o/mb_$p.sam 2> $o/mb_$p.log
   python3 -I $U/compare_unique.py $o/ours_$p.sam $o/mb_$p.sam > $o/compare_$p.txt
