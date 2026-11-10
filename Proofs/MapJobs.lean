@@ -1,9 +1,9 @@
-import Proofs.MapFiles
+import Proofs.MapDefs
 import Proofs.MapStream
 /-! # `mapReads` is additive over record-aligned slices: the stream's jobs add up to the whole.
 (Layer A of the proof of `process_correct`, Proofs/MapFiles.lean.) -/
-namespace Spec.Total.Jobs
-open Spec Spec.FQ Spec.FQ.MapStream
+namespace Spec.MapCopy.Jobs
+open Spec Spec.FQ Spec.FQ.MapStream Spec.MapCopy
 
 -- `mapReads` once the files are parsed
 def R (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) (r1 r2 : List FQ.Read) :
@@ -173,4 +173,4 @@ theorem mapReads_cut (settings : InsertSettings) (index : ByteArray) (chrs : Chr
 
 #print axioms mapReads_cut
 
-end Spec.Total.Jobs
+end Spec.MapCopy.Jobs

@@ -3,7 +3,7 @@ import Proofs.MapPending
 import Proofs.MapJobs
 /-! # The stream (`MapFast.step`) against `mapReads`: invariant, a successful step, a failing step, the end. -/
 namespace Spec.FQ.MapStream
-open Spec Spec.MapFast Spec.Total Spec.Total.Jobs
+open Spec Spec.MapFast Spec.MapCopy Spec.MapCopy.Jobs
 
 /-! ## List helpers -/
 

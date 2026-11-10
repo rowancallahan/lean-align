@@ -2,6 +2,7 @@
 import Proofs.Trim
 import Proofs.Sam
 import Proofs.MapFast
+import Proofs.MapCorrect
 
 namespace Spec.Total
 open Spec
@@ -92,6 +93,10 @@ theorem process_correct (settings : InsertSettings) (index : ByteArray) (chrs : 
      | some () => some written
      | none    => none)
       = mapReads settings index chrs fastq1 fastq2 := by
-  sorry
+  -- `job_eq` (S-G): one job of the stream is `mapReads` of its two slices
+  have job_eq : ∀ s1 s2, (MapFast.job settings index chrs s1 s2).map bytes =
+      mapReads settings index chrs (bytes s1) (bytes s2) := sorry
+  exact Spec.MapCopy.process_correct' (fun fuel st => process nextChunksList writeList fuel st) (fun f st => rfl)
+    settings index chrs job_eq chunks fuel enough
 
 end Spec.Total
