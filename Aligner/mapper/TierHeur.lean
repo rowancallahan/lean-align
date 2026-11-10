@@ -245,11 +245,122 @@ theorem winLgU_eq (G : PGen) (o : USize) (ho : o.toNat = G.o) (hb : G.o + G.n < 
       simp only [PGen.get, show i < G.n by omega, ↓reduceIte]
     rw [eg]; exact ih _ _ _ e1 (by omega)
 
+theorem nb (k : Nat) (hk : k < 32) : k % System.Platform.numBits = k := by
+  rcases System.Platform.numBits_eq with h | h <;> rw [h] <;> omega
+theorem shr_same (u : USize) (t s : Nat) (hs : s = 2 ∨ s = 6) (ht : t < 4) (h4 : u.toNat % 4 = 0) (hu : u.toNat + 4 < 2 ^ 32) :
+    (u + t.toUSize) >>> s.toUSize = u >>> s.toUSize := by
+  apply USize.toNat_inj.mp
+  have ht' : t.toUSize.toNat = t := pgu_n t (by omega)
+  have hs' : s.toUSize.toNat = s := pgu_n s (by omega)
+  rw [USize.toNat_shiftRight, USize.toNat_shiftRight, pgu_add _ _ (by omega), ht', hs', Nat.shiftRight_eq_div_pow,
+    Nat.shiftRight_eq_div_pow, nb s (by omega)]
+  rcases hs with rfl | rfl <;> simp <;> omega
+theorem sh_t (u : USize) (t : Nat) (ht : t < 4) (h4 : u.toNat % 4 = 0) (hu : u.toNat + 4 < 2 ^ 32) :
+    ((u + t.toUSize).toUInt8 &&& 3) <<< 1 = (2 * t).toUInt8 := by
+  have ht' : t.toUSize.toNat = t := pgu_n t (by omega)
+  have hand : ∀ x : Nat, x &&& 3 = x % 4 := fun x => Nat.and_two_pow_sub_one_eq_mod x 2
+  apply UInt8.toNat_inj.mp
+  simp only [UInt8.toNat_shiftLeft, UInt8.toNat_and, USize.toNat_toUInt8, pgu_add _ _ (show u.toNat + t.toUSize.toNat < 2^32 by omega), ht', hand, Nat.shiftLeft_eq]
+  simp [Nat.toUInt8_eq]
+  rw [hand]
+  omega
+
+theorem wq_lit (n : Nat) (h : n < 2 ^ 32) : ((OfNat.ofNat n : USize)).toNat = n := by
+  rw [USize.toNat_ofNat, Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h USize.le_size)]
+theorem wq_c2 : (1 + 1 : USize) = (2 : Nat).toUSize :=
+  USize.toNat_inj.mp (by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, pgu_n 2 (by omega)])
+theorem wq_c3 : (1 + (1 + 1) : USize) = (3 : Nat).toUSize :=
+  USize.toNat_inj.mp (by rw [pgu_add _ _ (by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one]; omega),
+    pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, pgu_n 3 (by omega)])
+theorem wq_c4 : (1 + (1 + (1 + 1)) : USize) = 4 := by
+  apply USize.toNat_inj.mp
+  rw [wq_lit 4 (by omega), wq_c3, pgu_add _ _ (by rw [pgu_one, pgu_n 3 (by omega)]; omega), pgu_one, pgu_n 3 (by omega)]
+
+/-- `winLgU` taking a packed byte (4 letters) at a time where the block has no exceptions and the place is a
+multiple of 4 (`winLg4_eq`). -/
+def winLg4 (G : PGen) (o : USize) : (fuel : Nat) → USize → ByteArray → ByteArray
+  | 0, _, out => out
+  | f + 1, i, out =>
+    let u := o + i
+    let b : USize := (u >>> (6 : USize)) * (17 : USize)
+    if 4 ≤ f + 1 && u &&& 3 == 0 && pgGet G.w b == 1 then
+      let byte := pgGet G.w (b + 1 + ((u >>> (2 : USize)) &&& 15))
+      winLg4 G o (f + 1 - 4) (i + 4)
+        ((((out.push (letter (byte &&& 3))).push (letter ((byte >>> 2) &&& 3))).push
+          (letter ((byte >>> 4) &&& 3))).push (letter ((byte >>> 6) &&& 3)))
+    else winLg4 G o f (i + 1) (out.push (rawU G u))
+termination_by f => f
+decreasing_by all_goals omega
+
+theorem rawU_quad (G : PGen) (u : USize) (t : Nat) (ht : t < 4) (h4 : u.toNat % 4 = 0) (hu : u.toNat + 4 < 2 ^ 32)
+    (hf : pgGet G.w ((u >>> (6 : USize)) * (17 : USize)) = 1) :
+    rawU G (u + t.toUSize) = letter ((pgGet G.w ((u >>> (6 : USize)) * (17 : USize) + 1 + ((u >>> (2 : USize)) &&& 15))
+      >>> (2 * t).toUInt8) &&& 3) := by
+  have e6 := shr_same u t 6 (Or.inr rfl) ht h4 hu
+  have e2 := shr_same u t 2 (Or.inl rfl) ht h4 hu
+  have h6 : ((6 : Nat).toUSize) = (6 : USize) := rfl
+  have h2 : ((2 : Nat).toUSize) = (2 : USize) := rfl
+  rw [h6] at e6; rw [h2] at e2
+  unfold rawU
+  simp only [e6, e2, hf, sh_t u t ht h4 hu]
+  rfl
+
+theorem winLg4_eq (G : PGen) (o : USize) : ∀ f (i : USize) out, o.toNat + i.toNat + f + 4 < 2 ^ 32 →
+    winLg4 G o f i out = winLgU G o f i out := by
+  intro f
+  induction f using Nat.strongRecOn with
+  | _ f ih =>
+  intro i out hb
+  cases f with
+  | zero => rw [winLg4]; rfl
+  | succ f =>
+    rw [winLg4]
+    dsimp only
+    split
+    · rename_i hc
+      simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hc
+      obtain ⟨⟨h4f, hu3⟩, hfl⟩ := hc
+      have hu : (o + i).toNat = o.toNat + i.toNat := pgu_add _ _ (by omega)
+      have hm : (o + i).toNat % 4 = 0 := by
+        have hand : ∀ x : Nat, x &&& 3 = x % 4 := fun x => Nat.and_two_pow_sub_one_eq_mod x 2
+        have := congrArg USize.toNat hu3
+        rw [USize.toNat_and] at this
+        simp only [USize.toNat_zero] at this
+        rw [wq_lit 3 (by omega), hand] at this
+        exact this
+      obtain ⟨g, rfl⟩ : ∃ g, f = g + 3 := ⟨f - 3, by omega⟩
+      have hi4 : (i + 4).toNat = i.toNat + 4 := by
+        rw [pgu_add i 4 (by rw [wq_lit 4 (by omega)]; omega), wq_lit 4 (by omega)]
+      rw [ih (g + 3 + 1 - 4) (by omega) (i + 4) _ (by rw [hi4]; omega), show g + 3 + 1 - 4 = g by omega]
+      simp only [winLgU]
+      have hu4 : (o + i).toNat + 4 < 2 ^ 32 := by rw [hu]; omega
+      have q := fun t ht => rawU_quad G (o + i) t ht hm hu4 hfl
+      have e1 : o + (i + 1) = (o + i) + (1 : Nat).toUSize := by rw [USize.add_assoc]; rfl
+      have e2 : o + (i + 1 + 1) = (o + i) + (2 : Nat).toUSize := by
+        rw [USize.add_assoc i, wq_c2, ← USize.add_assoc]
+      have e3 : o + (i + 1 + 1 + 1) = (o + i) + (3 : Nat).toUSize := by
+        rw [USize.add_assoc (i + 1), USize.add_assoc i, wq_c3, ← USize.add_assoc]
+      have q0 : rawU G (o + i) = letter ((pgGet G.w ((o + i) >>> (6 : USize) * (17 : USize) + 1 +
+          ((o + i) >>> (2 : USize) &&& 15)) >>> (2 * 0).toUInt8) &&& 3) := by
+        have := q 0 (by omega)
+        rwa [show (0 : Nat).toUSize = 0 from rfl, USize.add_zero] at this
+      have e4 : i + 1 + 1 + 1 + 1 = i + 4 := by
+        rw [USize.add_assoc (i + 1 + 1), USize.add_assoc (i + 1), USize.add_assoc i, wq_c4]
+      rw [e4, e1, e2, e3, q0, q 1 (by omega), q 2 (by omega), q 3 (by omega)]
+      have z : ∀ x : UInt8, x >>> (2 * 0 : Nat).toUInt8 = x := fun x => by
+        apply UInt8.toNat_inj.mp; simp
+      rw [z]
+      rfl
+    · rename_i hc
+      have hi1 : (i + 1).toNat = i.toNat + 1 := by rw [pgu_add i 1 (by rw [pgu_one]; omega), pgu_one]
+      rw [ih f (by omega) (i + 1) _ (by rw [hi1]; omega)]
+      rfl
+
 /-- `winL` for the compiled code (`winL_eq_winLF`). -/
 @[inline] def winLF (G : PGen) (a b : Nat) : ByteArray :=
   let b := min b G.n
-  if G.o + G.n < 4294967295 then
-    winLgU G G.o.toUSize (b - a) a.toUSize (ByteArray.emptyWithCapacity (b - a))
+  if G.o + G.n < 4294967291 then
+    winLg4 G G.o.toUSize (b - a) a.toUSize (ByteArray.emptyWithCapacity (b - a))
   else winLg G (b - a) a (ByteArray.emptyWithCapacity (b - a))
 
 @[csimp] theorem winL_eq_winLF : @winL = @winLF := by
@@ -259,8 +370,9 @@ theorem winLgU_eq (G : PGen) (o : USize) (ho : o.toNat = G.o) (hb : G.o + G.n < 
   split
   · rename_i h
     by_cases ha : a < min b G.n
-    · exact (winLgU_eq G _ (pgu_n _ (by omega)) h (min b G.n - a) _ a _ (pgu_n _ (by omega)) (by omega)).symm
-    · rw [show min b G.n - a = 0 by omega]; rfl
+    · rw [winLg4_eq G _ _ _ _ (by rw [pgu_n _ (by omega), pgu_n _ (by omega)]; omega)]
+      exact (winLgU_eq G _ (pgu_n _ (by omega)) (by omega) (min b G.n - a) _ a _ (pgu_n _ (by omega)) (by omega)).symm
+    · rw [show min b G.n - a = 0 by omega, winLg4]; rfl
   · rfl
 
 /-- Steps as runs. -/
