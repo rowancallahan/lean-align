@@ -42,6 +42,7 @@ Order matters: make it right, check it, then understand it.
 
 ## REMINDER (Rowan): double-check the locked SAM spec (Spec/Draft/Sam.lean) line by line, field by field against SAMv1 §1.4.
 ## REMINDER (Rowan): read process / process_correct / Main line by line (StateM, `.run`, `modifyGet`, `modify`), and compare Main with the theorem.
+## LATER (Rowan, option): cut Spec reading: move parts unused by the end theorem (Alignment: allPaths/alignSpec(_optimal), the kernel slot AlignmentResult/AlignmentKernel*, decodeCigar/cigar_decodes; Mapping: IsUniqueBest/exists_best) into Proofs/.
 ## LATER (Rowan): spec change: `mapStep`/`mapEnd` return an error message (Except String) instead of `none`, so a failed run says why; which message can be a theorem later.
 ## (done) redo the SAM spec (bytes over Read; QNAME rule; ~15 min-1 h). Lock it before the fused writer starts.
 
