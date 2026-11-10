@@ -1,4 +1,4 @@
--- LOCKED (Rowan, 2026-11-10): the end-to-end spec and its streaming form.
+-- DRAFT (Rowan to re-lock): the end-to-end spec and its streaming form.
 import Spec.Draft.Trim
 import Spec.Draft.Sam
 
@@ -34,23 +34,40 @@ def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeL
 
 -- the fast, streaming version: holes, filled below the Spec
 def MapState : Type := sorry
-def mapStart (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) : MapState × ByteArray := sorry
-def mapStep (state : MapState) (block1 block2 : ByteArray) : Option (MapState × ByteArray) := sorry
-def mapEnd (state : MapState) : Option ByteArray := sorry
+def mapInit (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) : MapState := sorry
+-- given the next pair of blocks (none: both files have ended), the next state and the bytes to write
+def mapStep (state : MapState) (blocks : Option (ByteArray × ByteArray)) : Option (MapState × ByteArray) := sorry
 
--- however the two files are cut into blocks: start, one step per pair of blocks (in order),
--- then end; the pieces written, joined, are exactly `mapFiles` of the whole files
-theorem mapFilesFast_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (blocks : List (ByteArray × ByteArray)) :
+-- one loop for the proof and for Main: `next` gives the next pair of blocks, `emit` writes a piece
+def process [Monad m] (next : m (Option (ByteArray × ByteArray))) (emit : ByteArray → m Unit) :
+    (fuel : Nat) → MapState → m (Option Unit)
+  | 0, _ => pure none
+  | fuel + 1, state => do
+    let blocks ← next
+    match mapStep state blocks, blocks with
+    | none, _ =>
+      pure none
+    | some (state', piece), none =>
+      emit piece
+      pure (some ())
+    | some (state', piece), some _ =>
+      emit piece
+      process next emit fuel state'
+
+-- run on a list of blocks (next takes the first, emit appends), `process` writes exactly `mapFiles`
+theorem process_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (blocks : List (ByteArray × ByteArray)) (fuel : Nat) (enough : blocks.length < fuel) :
     let file1 := blocks.flatMap fun (block1, _) => block1.data.toList
     let file2 := blocks.flatMap fun (_, block2) => block2.data.toList
-    let (start, header) := mapStart settings index chrs
-    let step (sofar : MapState × List UInt8) (blockPair : ByteArray × ByteArray) :=
-      (mapStep sofar.1 blockPair.1 blockPair.2).map fun (next, piece) => (next, sofar.2 ++ piece.data.toList)
-    let finish (sofar : MapState × List UInt8) :=
-      (mapEnd sofar.1).map fun last => sofar.2 ++ last.data.toList
-    (blocks.foldlM step (start, header.data.toList)).bind finish
-      = mapFiles settings index chrs file1 file2 := by
+    let next : StateM (List (ByteArray × ByteArray) × List UInt8) (Option (ByteArray × ByteArray)) :=
+      modifyGet fun (rest, out) =>
+        match rest with
+        | []         => (none, ([], out))
+        | b :: later => (some b, (later, out))
+    let emit (piece : ByteArray) : StateM (List (ByteArray × ByteArray) × List UInt8) Unit :=
+      modify fun (rest, out) => (rest, out ++ piece.data.toList)
+    let (result, (_, written)) := (process next emit fuel (mapInit settings index chrs)).run (blocks, [])
+    result.map (fun () => written) = mapFiles settings index chrs file1 file2 := by
   sorry
 
 end Spec.Total

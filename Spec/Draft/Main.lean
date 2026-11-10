@@ -1,4 +1,4 @@
--- LOCKED (Rowan, 2026-11-10): the streaming main; read it against `mapFilesFast_correct`.
+-- DRAFT (Rowan to re-lock): the streaming main; it runs `process` of `process_correct`.
 import Spec.Draft.MapFiles
 
 open Spec
@@ -10,33 +10,15 @@ def fail (tmpPath why : String) : IO UInt32 := do
   IO.eprintln s!"lean-align: {why}"
   return 1
 
--- the IO run of `mapFilesFast_correct` (Spec/Draft/MapFiles.lean): start, one step per pair of blocks, end
-def mapFilesFast (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (file1 file2 out : IO.FS.Handle) : IO (Option Unit) := do
-  -- start
-  let (start, header) := Total.mapStart settings index chrs
-  out.write header
-  -- one step per pair of blocks, in order
-  let mut state := start
-  repeat
-    let block1 ← file1.read blockSize
-    let block2 ← file2.read blockSize
-    match block1.isEmpty && block2.isEmpty with
-    | true  => break
-    | false =>
-      match Total.mapStep state block1 block2 with
-      | some (next, piece) =>
-        out.write piece
-        state := next
-      | none =>
-        return none
-  -- end
-  match Total.mapEnd state with
-  | some last =>
-    out.write last
-    return some ()
-  | none =>
-    return none
+def fuel : Nat := 2 ^ 64
+
+-- the next pair of blocks, one from each file; none when both files have ended
+def nextBlocks (file1 file2 : IO.FS.Handle) : IO (Option (ByteArray × ByteArray)) := do
+  let block1 ← file1.read blockSize
+  let block2 ← file2.read blockSize
+  match block1.isEmpty && block2.isEmpty with
+  | true  => return none
+  | false => return some (block1, block2)
 
 def main (args : List String) : IO UInt32 := do
   match args with
@@ -50,7 +32,8 @@ def main (args : List String) : IO UInt32 := do
     -- written to OUT.tmp, renamed to OUT only when everything succeeded
     let tmpPath := outPath ++ ".tmp"
     let out ← IO.FS.Handle.mk tmpPath .write
-    match ← mapFilesFast settings index chrs file1 file2 out with
+    -- `process` of `process_correct`, with the files as `next` and the output file as `emit`
+    match ← Total.process (nextBlocks file1 file2) out.write fuel (Total.mapInit settings index chrs) with
     | some () =>
       out.flush
       IO.FS.rename tmpPath outPath
