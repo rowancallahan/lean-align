@@ -37,24 +37,19 @@ def mapStart (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeL
 def mapStep (state : MapState) (block1 block2 : ByteArray) : Option (MapState × ByteArray) := sorry
 def mapEnd (state : MapState) : Option ByteArray := sorry
 
--- run it over the two files' blocks, in order
-def mapFilesFast (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (blocks : List (ByteArray × ByteArray)) : Option (List UInt8) :=
-  let (state, header) := mapStart settings index chrs
-  (go state blocks).map (header.data.toList ++ ·)
-where
-  go (state : MapState) : List (ByteArray × ByteArray) → Option (List UInt8)
-    | [] => (mapEnd state).map (·.data.toList)
-    | (block1, block2) :: rest =>
-      match mapStep state block1 block2 with
-      | some (next, piece) => (go next rest).map (piece.data.toList ++ ·)
-      | none               => none
-
--- however the two files are cut into blocks, the fast version gives exactly `mapFiles`
+-- however the two files are cut into blocks: start, one step per pair of blocks (in order),
+-- then end; the pieces written, joined, are exactly `mapFiles` of the whole files
 theorem mapFilesFast_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (blocks : List (ByteArray × ByteArray)) :
-    mapFilesFast settings index chrs blocks =
-      mapFiles settings index chrs (blocks.flatMap (·.1.data.toList)) (blocks.flatMap (·.2.data.toList)) := by
+    let file1 := blocks.flatMap fun (block1, _) => block1.data.toList
+    let file2 := blocks.flatMap fun (_, block2) => block2.data.toList
+    let (start, header) := mapStart settings index chrs
+    let step (sofar : MapState × List UInt8) (blockPair : ByteArray × ByteArray) :=
+      (mapStep sofar.1 blockPair.1 blockPair.2).map fun (next, piece) => (next, sofar.2 ++ piece.data.toList)
+    let finish (sofar : MapState × List UInt8) :=
+      (mapEnd sofar.1).map fun last => sofar.2 ++ last.data.toList
+    (blocks.foldlM step (start, header.data.toList)).bind finish
+      = mapFiles settings index chrs file1 file2 := by
   sorry
 
 end Spec.Total
