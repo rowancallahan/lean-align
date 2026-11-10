@@ -26,7 +26,7 @@ Throughput stays flat from 10M to 40M pairs after the fix, and drops with run si
 | novaseq_2x151 | 10000000 | lean-align | f465a57 | 196.1 | n/m | 676.1 | 5.73 | 55.4 | 16.08 | 1 |
 | novaseq_2x151 | 20000000 | lean-align | f465a57 | 389.0 | n/m | 1350.0 | 5.74 | 55.9 | 16.11 | 1 |
 | novaseq_2x151 | 40000000 | lean-align | f465a57 | 778.5 | n/m | 2709.3 | 5.74 | 55.9 | 16.05 | 1 |
-| novaseq_2x151 | 10000000 | minibwa | c07de5c | 742.8 | 583.9 | n/m | n/m | 14.6 | 4.87 | 1 |
+| novaseq_2x151 | 10000000 | minibwa | c07de5c | 742.8 | 583.9 | 2233.3 | 8.79 | 14.6 | 4.87 | 1 |
 | novaseq_2x151 | 20000000 | minibwa | c07de5c | 1086.7 | n/m | 4135.9 | 8.81 | 20.0 | 5.26 | 1 |
 | novaseq_2x151 | 40000000 | minibwa | c07de5c | 2192.6 | n/m | 8364.7 | 8.81 | 19.8 | 5.20 | 1 |
 
@@ -38,7 +38,7 @@ The slow-pair fix cuts wall time by 42 to 48 percent on both. minibwa on the sam
 |---|---|---|---|---|---|---|---|---|---|---|
 | hiseq_2x250 | 33916091 | lean-align-before | 64ae73f | 1320.5 | 1317.5 | 3110.2 | 5.72 | 46.0 | 19.5 | 1 |
 | hiseq_2x250 | 33916091 | lean-align | f465a57 | 686.3 | 683.3 | 2300.2 | 5.88 | 88.7 | 26.3 | 1 |
-| hiseq_2x250 | 33916091 | minibwa | c07de5c | n/m | n/m | n/m | n/m | n/m | n/m | 1 |
+| hiseq_2x250 | 33916091 | minibwa | c07de5c | 3494.7 | 3488.0 | 13383 | 8.61 | 17.3 | 4.53 | 1 |
 | novaseq_2x151 | 40000000 | lean-align-before | 64ae73f | 1330.6 | 1327.4 | 3648.1 | 5.63 | 32.8 | 11.9 | 1 |
 | novaseq_2x151 | 40000000 | lean-align | f465a57 | 759.6 | 756.8 | 2738.2 | 5.65 | 57.5 | 15.9 | 1 |
 | novaseq_2x151 | 40000000 | lean-align | f465a57 | 774.9 | 771.7 | 2798.1 | 5.65 | 56.4 | 15.5 | 1 |
