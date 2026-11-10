@@ -15,7 +15,8 @@ HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end Spec.alignPairsP_eq
   Spec.trimBytes_window Spec.trimBytes_acgt Spec.trimBytes_size Spec.cutAt_spec
   Spec.trimRead_quality_bytes Spec.trimRead_correct Spec.parse_trim_quality Spec.trimChunk_eq
   Spec.trimRead_best Spec.trimRead_best_none Spec.trimRead_contract Spec.trimRead_valid Spec.parse_trim_valid
-  Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq"
+  Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq
+  Spec.Trim.trim_correct"
 
 step "frozen files (checksums)"
 (cd Aligner/trimmer && shasum -a 256 -c FROZEN_CONTRACT.sha256) || fail=1
@@ -46,13 +47,15 @@ grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |
 grep -nE "IO\." Aligner/LeanAlign/*.lean && bad "IO in the pure library LeanAlign/"
 grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" \
   Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
-  Aligner/io/FastqIO.lean \
+  Aligner/io/FastqIO.lean Proofs/Draft/*.lean \
   && bad "forbidden token in the shim files"
 [ $fail -eq $before ] && echo "none"
 
 step "copies mirror Spec/"
 python3 -I Testing/scripts/fastq_mirror.py Spec/Fastq.lean Proofs/Fastq.lean \
   && echo "Proofs/Fastq.lean mirrors Spec/Fastq.lean (up to the holes)" || bad "Proofs/Fastq.lean differs from Spec/Fastq.lean"
+python3 -I Testing/scripts/draft_mirror.py Spec/Draft/Trim.lean Proofs/Draft/Trim.lean trim trim_correct \
+  && echo "Proofs/Draft/Trim.lean mirrors Spec/Draft/Trim.lean (up to the holes)" || bad "Proofs/Draft/Trim.lean differs from Spec/Draft/Trim.lean"
 for f in Fasta Sam; do
   sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean \
     && echo "Proofs/$f.lean mirrors Spec/$f.lean" || bad "Proofs/$f.lean differs from Spec/$f.lean"
