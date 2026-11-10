@@ -1,6 +1,7 @@
 -- LOCKED (Rowan, 2026-11-10): the end-to-end spec and its streaming form.
-import Spec.Draft.Trim
-import Spec.Draft.Sam
+import Proofs.Trim
+import Proofs.Sam
+import Proofs.MapFast
 
 namespace Spec.Total
 open Spec
@@ -41,12 +42,12 @@ def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeL
   | none       => none
 
 -- the fast, streaming version: holes, filled below the Spec
-def MapState : Type := sorry
+def MapState : Type := MapFast.State
 def mapInit (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) :
-    MapState := sorry
+    MapState := MapFast.init (MapFast.job settings index chrs)
 -- given the next chunk of each FASTQ file (none: both have ended): the next state, and SAM lines
 def mapStep (state : MapState) (chunks : Option (ByteArray × ByteArray)) :
-    Option (MapState × ByteArray) := sorry
+    Option (MapState × ByteArray) := MapFast.step state chunks
 
 -- one loop for the proof and for Main: `next` gives the next chunks, `emit` writes SAM lines
 def process [Monad m] (next : m (Option (ByteArray × ByteArray))) (emit : ByteArray → m Unit) :

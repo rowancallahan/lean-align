@@ -47,33 +47,30 @@ grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |
   Aligner/PairwiseMain.lean Aligner/LeanAlign/*.lean && bad "forbidden token in the executables"
 grep -nE "IO\." Aligner/LeanAlign/*.lean && bad "IO in the pure library LeanAlign/"
 grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" \
-  Main.lean Spec/Draft/Main.lean Proofs/MapFast.lean Spec/Fasta.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
-  Aligner/io/FastqIO.lean Proofs/Draft/*.lean \
+  Main.lean Spec/Fasta.lean Proofs/Fasta.lean Proofs/Fastq.lean Aligner/io/FastqIO.lean \
+  Proofs/Trim.lean Proofs/TrimCore.lean Proofs/TrimFast.lean Proofs/Sam.lean Proofs/SamFast.lean Proofs/SamBytes.lean \
+  Proofs/MapFast.lean Proofs/MapFiles.lean \
   && bad "forbidden token in the shim files"
 [ $fail -eq $before ] && echo "none"
 
 step "copies mirror Spec/"
 python3 -I Testing/scripts/fastq_mirror.py Spec/Fastq.lean Proofs/Fastq.lean \
   && echo "Proofs/Fastq.lean mirrors Spec/Fastq.lean (up to the holes)" || bad "Proofs/Fastq.lean differs from Spec/Fastq.lean"
-python3 -I Testing/scripts/draft_mirror.py Spec/Draft/Trim.lean Proofs/Draft/Trim.lean trim trim_correct \
-  && echo "Proofs/Draft/Trim.lean mirrors Spec/Draft/Trim.lean (up to the holes)" || bad "Proofs/Draft/Trim.lean differs from Spec/Draft/Trim.lean"
+python3 -I Testing/scripts/draft_mirror.py Spec/Trim.lean Proofs/Trim.lean trim trim_correct \
+  && echo "Proofs/Trim.lean mirrors Spec/Trim.lean (up to the holes)" || bad "Proofs/Trim.lean differs from Spec/Trim.lean"
 sed -e "s/^import Proofs.Answer$/import Spec.Aligner/" -e "s/^import Proofs.Fasta$/import Spec.Fasta/" \
-  -e "s/^import Proofs.Fastq$/import Spec.Fastq/" Proofs/Draft/Sam.lean | cmp -s - Spec/Draft/Sam.lean \
-  && echo "Proofs/Draft/Sam.lean mirrors Spec/Draft/Sam.lean" || bad "Proofs/Draft/Sam.lean differs from Spec/Draft/Sam.lean"
-for f in Fasta Sam; do
-  sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean \
-    && echo "Proofs/$f.lean mirrors Spec/$f.lean" || bad "Proofs/$f.lean differs from Spec/$f.lean"
-done
+  -e "s/^import Proofs.Fastq$/import Spec.Fastq/" Proofs/Sam.lean | cmp -s - Spec/Sam.lean \
+  && echo "Proofs/Sam.lean mirrors Spec/Sam.lean" || bad "Proofs/Sam.lean differs from Spec/Sam.lean"
+python3 -I Testing/scripts/holes_mirror.py Spec/MapFiles.lean Proofs/MapFiles.lean \
+  && echo "Proofs/MapFiles.lean mirrors Spec/MapFiles.lean (up to the holes)" || bad "Proofs/MapFiles.lean differs from Spec/MapFiles.lean"
+sed "s/^import Proofs\./import Spec./" Proofs/Fasta.lean | cmp -s - Spec/Fasta.lean \
+  && echo "Proofs/Fasta.lean mirrors Spec/Fasta.lean" || bad "Proofs/Fasta.lean differs from Spec/Fasta.lean"
 n=$(grep -n '^/-! ## The index and the aligner' Spec/Aligner.lean | cut -d: -f1)
 head -n $((n - 1)) Spec/Aligner.lean > "$tmp/spec_answer.lean"
 [ -n "$n" ] && sed "1d; \$d; s/^import Proofs.Mapping$/import Spec.Mapping/" Proofs/Answer.lean | cmp -s - "$tmp/spec_answer.lean" \
   && echo "Proofs/Answer.lean mirrors Spec/Aligner.lean (up to the holes)" || bad "Proofs/Answer.lean differs from Spec/Aligner.lean"
-for f in MapFiles; do
-  python3 -I Testing/scripts/holes_mirror.py Spec/Draft/$f.lean Proofs/Draft/$f.lean \
-    && echo "Proofs/Draft/$f.lean mirrors Spec/Draft/$f.lean (up to the holes)" || bad "Proofs/Draft/$f.lean differs from Spec/Draft/$f.lean"
-done
-sed "s/^import Proofs.Draft.MapFiles$/import Spec.Draft.MapFiles/" Main.lean | cmp -s - Spec/Draft/Main.lean \
-  && echo "Main.lean mirrors Spec/Draft/Main.lean" || bad "Main.lean differs from Spec/Draft/Main.lean"
+# Main.lean is the spec of the executable itself (in Spec/FROZEN.sha256); it imports the filled-in Proofs/MapFiles
+grep -q "^import Proofs.MapFiles$" Main.lean && echo "Main.lean imports Proofs.MapFiles" || bad "Main.lean does not import Proofs.MapFiles"
 
 if [ "${FUZZ:-0}" = 1 ]; then
   step "output fuzz (tiny generated genome)"

@@ -1,280 +1,183 @@
+-- LOCKED (Rowan, 2026-11-10): the SAM output spec. Rowan still has to re-check it line by line.
+import Proofs.Answer
 import Proofs.Fasta
 import Proofs.Fastq
-import FastqIO
-import ReadTrim
-import AdapterTrim
 
-/-! # From reads to SAM
+namespace Spec.SamSpec
+open Spec
 
-* `ReadB.toRead`: the shim's reads (`ReadB`, bytes; FastqIO) are the spec's `FQ.Read`s.
-* The QNAME rule (`qnameOf`): a read's name up to the first space, without a trailing "/1" or "/2". Mates are paired
-  by it (the shim); a QNAME must be 1..254 bytes in '!'..'?' or 'A'..'~' (`qnameOk`).
-* Trimming (`trimRead`): the adapter cut, the quality window, the minimum length (proved pieces; Proofs/TrimRecord.lean).
-* SAM output: two lines per pair, with the pair answer in custom tags (XB best possible pair score, XU uniqueness,
-  XT tier), written as bytes. Unproved (trusted) formatting for the shim. -/
+def text (s : String) : List UInt8 := s.toUTF8.toList
+def num (n : Int) : List UInt8 := text (toString n)
+def line (fields : List (List UInt8)) : List UInt8 := List.intercalate [9] fields ++ [10]
 
-namespace Spec
+def header (chrs : ChromosomeList) : List UInt8 :=
+  line [text "@HD", text "VN:1.6", text "SO:unsorted"] ++
+  chrs.toList.flatMap (fun (name, len) => line [text "@SQ", text s!"SN:{name}", text s!"LN:{len}"]) ++
+  line [text "@PG", text "ID:lean-align", text "PN:lean-align"]
 
-def samHeader (chromosomes : ChromosomeList) : List String :=
-  ["@HD\tVN:1.6\tSO:unsorted"] ++
-  chromosomes.toList.map (fun (name, length) => s!"@SQ\tSN:{name}\tLN:{length}") ++
-  ["@PG\tID:lean-align\tPN:lean-align"]
-
--- SAM flag bits
-def flagPaired       : Nat := 1
-def flagProperPair   : Nat := 2
-def flagUnmapped     : Nat := 4
-def flagMateUnmapped : Nat := 8
-def flagReverse      : Nat := 16
-def flagMateReverse  : Nat := 32
-def flagFirst        : Nat := 64
-def flagSecond       : Nat := 128
-
-def mateFlag : Mate → Nat
-  | .one => flagFirst
-  | .two => flagSecond
-
-def reverseFlag (strand : Strand) (bit : Nat) : Nat :=
-  match strand with
-  | .forward => 0
-  | .reverse => bit
-
--- SAM letters: M = read and reference, I = read only, D = reference only
-def stepLetter : Step → String
-  | .diag => "M"
-  | .gapY => "I"
-  | .gapX => "D"
-
--- e.g. "50M1I49M"
-def cigarText (cigar : Array (Step × Nat)) : String :=
-  String.join (cigar.toList.map fun (step, count) => toString count ++ stepLetter step)
-
-
-/-! ## Reads, names, trimming -/
-
--- the shim's read as the spec's read
-def ReadB.toRead (r : ReadB) : FQ.Read := ⟨r.name.data.toList, r.seq.data.toList, r.qual.data.toList⟩
-
--- the SAM QNAME of a read name (the name after '@'): up to the first space, without a trailing "/1" or "/2"
-def qnameOf (name : List UInt8) : List UInt8 :=
+-- the name up to the first space, without /1 or /2
+def qname (name : List UInt8) : List UInt8 :=
   let base := name.takeWhile (· != 32)
-  if [47, 49].isSuffixOf base || [47, 50].isSuffixOf base then base.dropLast.dropLast else base
+  match base.reverse with
+  | 0x31 :: 0x2F :: rest | 0x32 :: 0x2F :: rest =>
+    rest.reverse
+  | _ =>
+    base
 
--- a SAM QNAME: 1..254 bytes, each in '!'..'?' or 'A'..'~'
 def qnameOk (q : List UInt8) : Bool :=
   0 < q.length && q.length ≤ 254 && q.all fun c => (33 ≤ c && c ≤ 63) || (65 ≤ c && c ≤ 126)
 
--- the first space at or after `i` (or the end)
-def spaceAt (b : ByteArray) : (fuel i : Nat) → Nat
-  | 0, i => i
-  | f + 1, i => if i < b.size && b[i]! != 32 then spaceAt b f (i + 1) else i
+def chrName (chrs : ChromosomeList) (i : Nat) : List UInt8 :=
+  match chrs[i]? with
+  | some (name, _) => text name
+  | none           => text "*"
 
--- `qnameOf` on bytes (`qnameB_eq`, Proofs/TrimRecord.lean)
-def qnameB (name : ByteArray) : ByteArray :=
-  let e := spaceAt name name.size 0
-  if 2 ≤ e && name[e - 2]! == 47 && (name[e - 1]! == 49 || name[e - 1]! == 50) then name.extract 0 (e - 2)
-  else name.extract 0 e
+-- where this mate and the other mate were placed (none: not placed)
+def placed (which : Mate) (result : PairResult) : Option (MateReport × MateReport) :=
+  match result, which with
+  | .aligned a, .one     => a.found.map fun pair => (pair.mate1, pair.mate2)
+  | .aligned a, .two     => a.found.map fun pair => (pair.mate2, pair.mate1)
+  | .trimmedAway _, _    => none
 
--- `qnameOk` on bytes (`qnameOkB_eq`)
-def qnameOkB (q : ByteArray) : Bool :=
-  0 < q.size && q.size ≤ 254 && allBytes (fun c => (33 ≤ c && c ≤ 63) || (65 ≤ c && c ≤ 126)) q
+def reverseBit (m : MateReport) (bit : Nat) : Nat :=
+  match m.placement.strand with
+  | .forward => 0
+  | .reverse => bit
 
--- shortest mate kept after trimming; shorter mates become empty (trimmed away)
-def minLength : Nat := 25
+def flag (which : Mate) (p : Option (MateReport × MateReport)) : Nat :=
+  let mateBit :=
+    match which with
+    | .one => 64
+    | .two => 128
+  match p with
+  | none             => 1 + 4 + 8 + mateBit
+  | some (me, other) => 1 + 2 + mateBit + reverseBit me 16 + reverseBit other 32
 
--- adapter cut, then quality trimming, then the minimum length, all with proved functions: cut letters
--- and qualities at the first TruSeq adapter, keep the best window, and drop a mate shorter than
--- `minLength`; a mate with nothing worth keeping comes back with no letters (trimmed away)
-def trimBytes (letters qual : ByteArray) : ByteArray × ByteArray :=
-  let (letters, qual) := AdapterTrim.cutTruSeq letters qual
-  let (letters, qual) := match ReadTrim.trimRead letters qual with
-    | some (s, e) => (letters.extract s e, qual.extract s e)
-    | none => (ByteArray.empty, ByteArray.empty)
-  AdapterTrim.dropShort minLength letters qual
+def rname (chrs : ChromosomeList) (p : Option (MateReport × MateReport)) : List UInt8 :=
+  match p with
+  | none         => text "*"
+  | some (me, _) => chrName chrs me.placement.chromosome
 
--- a read, trimmed (the name is kept)
-def trimRead (read : FQ.Read) : FQ.Read :=
-  let trimmed := trimBytes ⟨read.sequence.toArray⟩ ⟨read.quality.toArray⟩
-  ⟨read.name, trimmed.1.data.toList, trimmed.2.data.toList⟩
+def pos (p : Option (MateReport × MateReport)) : Nat :=
+  match p with
+  | none         => 0
+  | some (me, _) => me.placement.start + 1
 
--- `trimRead` on the shim's reads (`trimReadB_toRead`)
-def trimReadB (read : ReadB) : ReadB :=
-  let trimmed := trimBytes read.seq read.qual
-  { read with seq := trimmed.1, qual := trimmed.2 }
+def mapq (result : PairResult) (p : Option (MateReport × MateReport)) : Nat :=
+  match result, p with
+  | .aligned a, some _ =>
+    match a.uniqueness with
+    | .unique => 60
+    | _       => 0
+  | _, _ => 0
 
--- trim every pair of a chunk with `trimReadB`, in `parts` tasks running at once; the result is the
--- pairs in their original order, each trimmed (`trimChunk_eq`, Proofs/TrimRecord.lean)
-def trimChunk (chunk : Array (ReadB × ReadB)) (parts : Nat) : Array (ReadB × ReadB) :=
-  let size := (chunk.size + parts - 1) / parts
-  let tasks := (List.range parts).map fun part => Task.spawn fun _ =>
-    (chunk.extract (part * size) ((part + 1) * size)).map fun (read1, read2) => (trimReadB read1, trimReadB read2)
-  tasks.foldl (fun out task => out ++ task.get) #[]
+def cigar (p : Option (MateReport × MateReport)) : List UInt8 :=
+  let letter (step : Step) : String :=
+    match step with
+    | .diag => "M"
+    | .gapY => "I"
+    | .gapX => "D"
+  match p with
+  | none         => text "*"
+  | some (me, _) => me.cigar.toList.flatMap fun (step, n) => num n ++ text (letter step)
 
--- a chunk of read pairs, as `alignPairs` takes them: a mate trimmed away (no letters left) is `none`
-def chunkPairs (chunk : Array (ReadB × ReadB)) : List (Option ByteArray × Option ByteArray) :=
-  chunk.toList.map fun (read1, read2) =>
-    (if read1.seq.isEmpty then none else some read1.seq,
-     if read2.seq.isEmpty then none else some read2.seq)
+def rnext (chrs : ChromosomeList) (p : Option (MateReport × MateReport)) : List UInt8 :=
+  match p with
+  | none => text "*"
+  | some (me, other) =>
+    match decide (me.placement.chromosome = other.placement.chromosome) with
+    | true  => text "="
+    | false => chrName chrs other.placement.chromosome
 
-/-! ## SAM text -/
+def pnext (p : Option (MateReport × MateReport)) : Nat :=
+  match p with
+  | none            => 0
+  | some (_, other) => other.placement.start + 1
 
--- `complement` (Mapping.lean) on one byte: A <-> T, C <-> G, everything else unchanged
-def complementByte (byte : UInt8) : UInt8 :=
-  if byte == 65 then 84 else if byte == 84 then 65 else if byte == 67 then 71 else if byte == 71 then 67 else byte
+-- leftmost start to rightmost stop, positive on the leftmost mate (mate 1 on a tie)
+def tlen (which : Mate) (p : Option (MateReport × MateReport)) : Int :=
+  match p with
+  | none => 0
+  | some (me, other) =>
+    let a := me.placement
+    let b := other.placement
+    let span : Int := (max a.stop b.stop - min a.start b.start : Nat)
+    match compare a.start b.start, which with
+    | .lt, _ | .eq, .one => span
+    | _, _               => -span
 
--- the bytes in reverse order, each through `f`
-def reverseMapBytes (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray := Id.run do
-  let mut out := ByteArray.emptyWithCapacity bytes.size
-  for i in [0:bytes.size] do
-    out := out.push (f bytes[bytes.size - 1 - i]!)
-  return out
+def strand (p : Option (MateReport × MateReport)) : Strand :=
+  match p with
+  | none         => .forward
+  | some (me, _) => me.placement.strand
 
--- `reverseMapBytes` by `uget`, last byte first (`reverseMapBytes_eq`, `@[csimp]`)
-def revMapU (f : UInt8 → UInt8) (bytes out : ByteArray) (i : USize) (h : i.toNat ≤ bytes.size) : ByteArray :=
-  if h0 : i = 0 then out
-  else
-    have hj : (i - 1).toNat = i.toNat - 1 := toNat_sub1 i h0
-    have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
-    revMapU f bytes (out.push (f (bytes.uget (i - 1) (by omega)))) (i - 1) (by omega)
-termination_by i.toNat
-decreasing_by
-  have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
-  rw [toNat_sub1 i h0]; omega
+-- SEQ on the reference's forward strand: reverse-complemented on the reverse strand
+def seq (r : FQ.Read) (p : Option (MateReport × MateReport)) : List UInt8 :=
+  let complement (b : UInt8) : UInt8 :=
+    match b with
+    | 0x41 => 0x54
+    | 0x54 => 0x41
+    | 0x43 => 0x47
+    | 0x47 => 0x43
+    | _    => b
+  match r.sequence, strand p with
+  | [], _       => text "*"
+  | s, .forward => s
+  | s, .reverse => (s.map complement).reverse
 
-theorem revMapU_eq (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ m (i : USize) out h, i.toNat = m → m ≤ bytes.size →
-    revMapU f bytes out i h =
-      (List.range' (bytes.size - m) m).foldl (fun b a => b.push (f bytes[bytes.size - 1 - a]!)) out
-  | 0, i, out, h, hi, _ => by
-    have h0 : i = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
-    rw [revMapU, dif_pos h0]; rfl
-  | m + 1, i, out, h, hi, hm => by
-    have h0 : i ≠ 0 := fun e => by rw [e] at hi; simp at hi
-    have ej : (i - 1).toNat = m := by rw [toNat_sub1 i h0, hi]; rfl
-    rw [revMapU, dif_neg h0]
-    dsimp only
-    rw [revMapU_eq f bytes m (i - 1) _ _ ej (by omega), List.range'_succ, List.foldl_cons,
-      show bytes.size - (m + 1) + 1 = bytes.size - m by omega,
-      show bytes.size - 1 - (bytes.size - (m + 1)) = m by omega, getElem!_pos bytes m (by omega)]
-    congr 3
-    show bytes[(i - 1).toNat] = _
-    simp only [ej]
+def qual (r : FQ.Read) (p : Option (MateReport × MateReport)) : List UInt8 :=
+  match r.sequence, strand p with
+  | [], _       => text "*"
+  | _, .forward => r.quality
+  | _, .reverse => r.quality.reverse
 
-@[inline] def reverseMapBytesF (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray :=
-  if bytes.size < 4294967296 then revMapU f bytes (ByteArray.emptyWithCapacity bytes.size) bytes.usize (usize_le bytes)
-  else reverseMapBytes f bytes
+-- AS (this mate's score), XB (no pair scores higher), XU (uniqueness)
+def tags (result : PairResult) (p : Option (MateReport × MateReport)) : List (List UInt8) :=
+  let score :=
+    match p with
+    | none         => []
+    | some (me, _) => [text s!"AS:i:{me.score}"]
+  let answer :=
+    match result with
+    | .trimmedAway .one => [text "XT:Z:trimmedAway1"]
+    | .trimmedAway .two => [text "XT:Z:trimmedAway2"]
+    | .aligned a =>
+      let uniqueness :=
+        match a.uniqueness with
+        | .unique            => "unique"
+        | .multimapper       => "multimapper"
+        | .unknown           => "unknown"
+        | .repetitiveUnknown => "repetitiveUnknown"
+      -- tier (XT) left out for now
+      [text s!"XB:i:{a.bestPossibleScore}", text s!"XU:Z:{uniqueness}"]
+  score ++ answer
 
-@[csimp] theorem reverseMapBytes_eq : @reverseMapBytes = @reverseMapBytesF := by
-  funext f bytes
-  unfold reverseMapBytesF
-  split
-  · rename_i h
-    rw [revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes h) (Nat.le_refl _), Nat.sub_self]
-    unfold reverseMapBytes
-    simp
-  · rfl
+def mateLine (chrs : ChromosomeList) (r : FQ.Read) (which : Mate) (result : PairResult) : List UInt8 :=
+  let p := placed which result
+  line ([qname r.name,           -- QNAME
+         num (flag which p),     -- FLAG
+         rname chrs p,           -- RNAME
+         num (pos p),            -- POS
+         num (mapq result p),    -- MAPQ
+         cigar p,                -- CIGAR
+         rnext chrs p,           -- RNEXT
+         num (pnext p),          -- PNEXT
+         num (tlen which p),     -- TLEN
+         seq r p,                -- SEQ
+         qual r p]               -- QUAL
+        ++ tags result p)
 
-def uniquenessText : Uniqueness → String
-  | .unique      => "unique"
-  | .multimapper => "multimapper"
-  | .unknown     => "unknown"
-  | .repetitiveUnknown => "repetitiveUnknown"
+-- the two lines of one pair
+def pairLines (chrs : ChromosomeList) (r1 r2 : FQ.Read) (result : PairResult) : List UInt8 :=
+  (mateLine chrs r1 .one result) ++ (mateLine chrs r2 .two result)
 
-def tierText : Tier → String
-  | .eachMateUnique    => "eachMateUnique"
-  | .quickSearchUnique => "quickSearchUnique"
-  | .deepSearchUnique  => "deepSearchUnique"
-  | .quickSearchTie    => "quickSearchTie"
-  | .deepSearchTie     => "deepSearchTie"
-  | .bestUnchecked     => "bestUnchecked"
-  | .stoppedEarly      => "stoppedEarly"
-  | .boundsOnly        => "boundsOnly"
+-- the lines of every pair, in order
+def body (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) :
+    List UInt8 :=
+  (List.map (fun ((r1, r2), result) => pairLines chrs r1 r2 result) (List.zip pairs results)).flatten
 
--- MAPQ (stand-in): 60 when proved unique, else 0
-def mapq (answer : PairAnswer) : Nat :=
-  match answer.uniqueness with
-  | .unique => 60
-  | _       => 0
+def samFile (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) :
+    List UInt8 :=
+  (header chrs) ++ (body chrs pairs results)
 
--- custom tags: XB best possible pair score, XU uniqueness, XT tier
-def answerTags (answer : PairAnswer) : List String :=
-  [s!"XB:i:{answer.bestPossibleScore}", s!"XU:Z:{uniquenessText answer.uniqueness}",
-   s!"XT:Z:{tierText answer.tier}"]
-
--- the decimal digits of `n`, appended to `b` (= `b ++ (toString n).toUTF8`)
-def pushNat (b : ByteArray) (n : Nat) : ByteArray :=
-  if h : n < 10 then b.push (48 + n.toUInt8) else (pushNat b (n / 10)).push (48 + (n % 10).toUInt8)
-termination_by n
-decreasing_by omega
-
--- `toString i` appended to `b`
-def pushInt (b : ByteArray) (i : Int) : ByteArray :=
-  if i < 0 then pushNat (b.push 45) i.natAbs else pushNat b i.toNat
-
--- SEQ and QUAL as on the forward strand of the reference: reversed (and complemented) on reverse.
--- A mate trimmed away entirely has no letters: SEQ and QUAL are "*".
-def samSequence (read : ReadB) (strand : Strand) : ByteArray × ByteArray :=
-  if read.seq.isEmpty then ("*".toUTF8, "*".toUTF8) else
-  match strand with
-  | .forward => (read.seq, read.qual)
-  | .reverse => (reverseMapBytes complementByte read.seq, reverseMapBytes id read.qual)
-
--- one SAM line appended to `b` (no newline): the eleven fields in SAM order, then the tags, tab-separated
-def samLine (b : ByteArray) (qname : ByteArray) (flag : Nat) (rname : String) (pos mapq : Nat) (cigar rnext : String)
-    (pnext : Nat) (tlen : Int) (seq qual : ByteArray) (tags : List String) : ByteArray :=
-  let b := pushNat ((b ++ qname).push 9) flag
-  let b := (b.push 9) ++ rname.toUTF8
-  let b := pushNat (b.push 9) pos
-  let b := pushNat (b.push 9) mapq
-  let b := (b.push 9) ++ cigar.toUTF8
-  let b := (b.push 9) ++ rnext.toUTF8
-  let b := pushNat (b.push 9) pnext
-  let b := pushInt (b.push 9) tlen
-  let b := ((b.push 9) ++ seq).push 9 ++ qual
-  tags.foldl (fun b tag => (b.push 9) ++ tag.toUTF8) b
-
--- a mate of a found pair: SAM positions are 1-based, so POS is start + 1
-def mappedLine (b : ByteArray) (chromosomes : ChromosomeList) (read : ReadB) (which : Mate)
-    (mate other : MateReport) (answer : PairAnswer) : ByteArray :=
-  let flag := flagPaired + flagProperPair + mateFlag which +
-    reverseFlag mate.placement.strand flagReverse + reverseFlag other.placement.strand flagMateReverse
-  let rname := (chromosomes[mate.placement.chromosome]?.map (·.1)).getD "*"
-  let rnext := if mate.placement.chromosome = other.placement.chromosome then "=" else
-    (chromosomes[other.placement.chromosome]?.map (·.1)).getD "*"
-  -- TLEN: leftmost start to rightmost stop; positive on the leftmost mate
-  let left := min mate.placement.start other.placement.start
-  let right := max mate.placement.stop other.placement.stop
-  let leftmost := mate.placement.start < other.placement.start ||
-    (mate.placement.start = other.placement.start && which = .one)
-  let tlen : Int := if leftmost then right - left else -((right - left : Nat) : Int)
-  let (seq, qual) := samSequence read mate.placement.strand
-  samLine b (qnameB read.name) flag rname (mate.placement.start + 1) (mapq answer)
-    (cigarText mate.cigar) rnext (other.placement.start + 1) tlen seq qual
-    (s!"AS:i:{mate.score}" :: answerTags answer)
-
--- a mate with no alignment reported
-def unmappedLine (b : ByteArray) (read : ReadB) (which : Mate) (tags : List String) : ByteArray :=
-  let flag := flagPaired + flagUnmapped + flagMateUnmapped + mateFlag which
-  let (seq, qual) := samSequence read .forward
-  samLine b (qnameB read.name) flag "*" 0 0 "*" "*" 0 0 seq qual tags
-
--- the two SAM lines of one pair, each with its newline, appended to `b`
-def samLines (b : ByteArray) (chromosomes : ChromosomeList) (read1 read2 : ReadB) (result : PairResult) :
-    ByteArray :=
-  match result with
-  | .trimmedAway mate =>
-      let tags := [s!"XT:Z:trimmedAway{if mate = .one then 1 else 2}"]
-      (unmappedLine ((unmappedLine b read1 .one tags).push 10) read2 .two tags).push 10
-  | .aligned answer =>
-      match answer.found with
-      | some pair =>
-          (mappedLine ((mappedLine b chromosomes read1 .one pair.mate1 pair.mate2 answer).push 10)
-            chromosomes read2 .two pair.mate2 pair.mate1 answer).push 10
-      | none =>
-          (unmappedLine ((unmappedLine b read1 .one (answerTags answer)).push 10) read2 .two (answerTags answer)).push 10
-
--- one chunk's SAM text, in pair order (after the proved call)
-def samChunk (chromosomes : ChromosomeList) (chunk : Array (ReadB × ReadB)) (results : List PairResult) : ByteArray :=
-  (chunk.zip results.toArray).foldl (init := ByteArray.empty)
-    fun bytes ((read1, read2), result) => samLines bytes chromosomes read1 read2 result
-
-end Spec
+end Spec.SamSpec

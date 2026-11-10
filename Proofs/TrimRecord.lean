@@ -1,4 +1,4 @@
-import Proofs.Sam
+import Proofs.SamBytes
 
 /-! # Trimming a read: what `trimRead` guarantees (and the QNAME rule on bytes)
 

@@ -1,4 +1,4 @@
-import Proofs.Draft.Sam
+import Proofs.Sam
 import Proofs.TrimRecord
 
 /-! # The byte SAM writer is `SamSpec.samFile`

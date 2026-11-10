@@ -1,6 +1,6 @@
 -- LOCKED (Rowan, 2026-11-10): the trimming spec.
 import Proofs.Fastq
-import Proofs.Draft.TrimCore
+import Proofs.TrimCore
 
 namespace Spec.Trim
 open Spec.FQ

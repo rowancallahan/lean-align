@@ -1,4 +1,4 @@
-import Proofs.Draft.Trim
+import Proofs.Trim
 
 /-! # The spec's cut and trim are the fast byte code
 
