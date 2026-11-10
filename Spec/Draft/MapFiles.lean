@@ -4,12 +4,19 @@ import Spec.Draft.Sam
 namespace Spec.Total
 open Spec
 
-def pairUp (r1 r2 : List FQ.Read) : Option (List (FQ.Read × FQ.Read)) :=
-  if r1.length = r2.length ∧ (r1.zip r2).all fun (a, b) =>
-      SamSpec.qname a.name = SamSpec.qname b.name ∧ SamSpec.qnameOk (SamSpec.qname a.name)
-  then some (r1.zip r2) else none
+def pairUp : List FQ.Read → List FQ.Read → Option (List (FQ.Read × FQ.Read))
+  | [], [] => some []
+  | a :: as, b :: bs =>
+    let q := SamSpec.qname a.name
+    match q == SamSpec.qname b.name && SamSpec.qnameOk q with
+    | true  => (pairUp as bs).map ((a, b) :: ·)
+    | false => none
+  | _, _ => none
 
-def toAligner (r : FQ.Read) : Option ByteArray := if r.sequence = [] then none else some ⟨r.sequence.toArray⟩
+def toAligner (r : FQ.Read) : Option ByteArray :=
+  match r.sequence with
+  | [] => none
+  | s  => some ⟨s.toArray⟩
 
 def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (file1 file2 : List UInt8) : Option (List UInt8) := do
@@ -23,14 +30,17 @@ def mapStart (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeL
 def mapStep (st : MapState) (block1 block2 : ByteArray) : Option (MapState × ByteArray) := sorry
 def mapEnd (st : MapState) : Option ByteArray := sorry
 
-def runStream (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) :
-    List (ByteArray × ByteArray) → Option (List UInt8)
-  | blocks =>
-    let (st, out) := mapStart settings index chrs
-    let rec go (st : MapState) (out : List UInt8) : List (ByteArray × ByteArray) → Option (List UInt8)
-      | [] => (mapEnd st).map fun last => out ++ last.data.toList
-      | (b1, b2) :: rest => (mapStep st b1 b2).bind fun (st', piece) => go st' (out ++ piece.data.toList) rest
-    go st out.data.toList blocks
+def runFrom : MapState → List (ByteArray × ByteArray) → Option (List UInt8)
+  | st, [] => (mapEnd st).map (·.data.toList)
+  | st, (b1, b2) :: rest =>
+    match mapStep st b1 b2 with
+    | some (st', piece) => (runFrom st' rest).map (piece.data.toList ++ ·)
+    | none => none
+
+def runStream (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (blocks : List (ByteArray × ByteArray)) : Option (List UInt8) :=
+  let (st, header) := mapStart settings index chrs
+  (runFrom st blocks).map (header.data.toList ++ ·)
 
 theorem stream_eq (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (blocks : List (ByteArray × ByteArray)) :
