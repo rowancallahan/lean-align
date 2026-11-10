@@ -7,14 +7,15 @@ mb, idx, out = sys.argv[1:4]
 os.sched_setaffinity(0, {0, 1, 2, 3}); os.makedirs(out, exist_ok=True)
 G = 'https://giab.s3.amazonaws.com/data/AshkenazimTrio/HG002_NA24385_son/NIST_Illumina_2x250bps/reads'
 a, b = f'{out}/a', f'{out}/b'
+RC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rangecat.py')
 for f in (a, b):
     if os.path.exists(f): os.remove(f)
     os.mkfifo(f)
 def feeder(r, fifo):   # pipefail: any failed curl / gunzip makes the stage exit non-zero
     urls = ' '.join(f'{G}/D1_S1_L001_R{r}_{i:03d}.fastq.gz' for i in range(1, 2))
-    return ['bash', '-c', f'set -o pipefail; for u in {urls}; do curl -sSf "$u" | gunzip -c || exit 1; done | tee >(wc -l > {out}/lines{r}) > {fifo}']
+    return ['bash', '-c', f'set -o pipefail; for u in {urls}; do python3 -I {RC} "$u" | gunzip -c || exit 1; done | tee >(wc -l > {out}/lines{r}) > {fifo}']
 P = {}
-P['feed1'] = subprocess.Popen(feeder(1, a)); P['feed2'] = subprocess.Popen(feeder(2, b))
+P['feed1'] = subprocess.Popen(feeder(1, a), stderr=open(f'{out}/dl1.log', 'w')); P['feed2'] = subprocess.Popen(feeder(2, b), stderr=open(f'{out}/dl2.log', 'w'))
 sink = subprocess.Popen(['bash', '-c', f'md5sum > {out}/sam.md5'], stdin=subprocess.PIPE)
 t0 = time.time()
 m = subprocess.Popen([mb, 'map', '-t', '4', idx, a, b], stdout=sink.stdin, stderr=open(f'{out}/mb.log', 'w'))
