@@ -11,11 +11,12 @@ step() { printf '\n== %s\n' "$1"; }
 bad()  { echo "FAIL: $1"; fail=1; }
 
 # the theorems that must be in the build, with standard axioms only
-HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end Spec.alignPairsP_eq
-  Spec.trimBytes_window Spec.trimBytes_acgt Spec.trimBytes_size Spec.cutAt_spec
-  Spec.trimRead_quality_bytes Spec.trimRead_correct Spec.parse_trim_quality Spec.trimChunk_eq
-  Spec.trimRead_best Spec.trimRead_best_none Spec.trimRead_contract Spec.trimRead_valid Spec.parse_trim_valid
-  Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq"
+HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end
+  Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq
+  Spec.Trim.trim_correct Spec.Trim.cut_eq Spec.Trim.cut_eq_cutF Spec.Trim.trimB_eq
+  Spec.Total.process_correct Spec.MapCopy.job_eq
+  Spec.SamFast.samHeaderB_eq Spec.SamFast.samChunkS_eq Spec.SamFast.samFileS_eq
+  Spec.SamFused.samChunkF_eq Spec.SamFused.samChunkS_eq_F"
 
 step "frozen files (checksums)"
 (cd Aligner/trimmer && shasum -a 256 -c FROZEN_CONTRACT.sha256) || fail=1
@@ -45,24 +46,32 @@ grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |
   Aligner/PairwiseMain.lean Aligner/LeanAlign/*.lean && bad "forbidden token in the executables"
 grep -nE "IO\." Aligner/LeanAlign/*.lean && bad "IO in the pure library LeanAlign/"
 grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" \
-  Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
-  Aligner/io/FastqIO.lean \
+  Main.lean Spec/Fasta.lean Proofs/Fasta.lean Proofs/Fastq.lean Aligner/io/FastqIO.lean \
+  Proofs/Trim.lean Proofs/TrimCore.lean Proofs/TrimFast.lean Proofs/Sam.lean Proofs/SamFast.lean Proofs/SamBytes.lean \
+  Proofs/MapFast.lean Proofs/MapFiles.lean \
   && bad "forbidden token in the shim files"
 [ $fail -eq $before ] && echo "none"
 
 step "copies mirror Spec/"
 python3 -I Testing/scripts/fastq_mirror.py Spec/Fastq.lean Proofs/Fastq.lean \
   && echo "Proofs/Fastq.lean mirrors Spec/Fastq.lean (up to the holes)" || bad "Proofs/Fastq.lean differs from Spec/Fastq.lean"
-for f in Fasta Sam; do
-  sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean \
-    && echo "Proofs/$f.lean mirrors Spec/$f.lean" || bad "Proofs/$f.lean differs from Spec/$f.lean"
-done
+python3 -I Testing/scripts/draft_mirror.py Spec/Trim.lean Proofs/Trim.lean trim trim_correct \
+  && echo "Proofs/Trim.lean mirrors Spec/Trim.lean (up to the holes)" || bad "Proofs/Trim.lean differs from Spec/Trim.lean"
+sed -e "s/^import Proofs.Answer$/import Spec.Aligner/" -e "s/^import Proofs.Fasta$/import Spec.Fasta/" \
+  -e "s/^import Proofs.Fastq$/import Spec.Fastq/" Proofs/Sam.lean | cmp -s - Spec/Sam.lean \
+  && echo "Proofs/Sam.lean mirrors Spec/Sam.lean" || bad "Proofs/Sam.lean differs from Spec/Sam.lean"
+python3 -I Testing/scripts/holes_mirror.py Spec/MapFiles.lean Proofs/MapFiles.lean \
+  && echo "Proofs/MapFiles.lean mirrors Spec/MapFiles.lean (up to the holes)" || bad "Proofs/MapFiles.lean differs from Spec/MapFiles.lean"
+sed "s/^import Proofs\./import Spec./" Proofs/Fasta.lean | cmp -s - Spec/Fasta.lean \
+  && echo "Proofs/Fasta.lean mirrors Spec/Fasta.lean" || bad "Proofs/Fasta.lean differs from Spec/Fasta.lean"
 n=$(grep -n '^/-! ## The index and the aligner' Spec/Aligner.lean | cut -d: -f1)
 head -n $((n - 1)) Spec/Aligner.lean > "$tmp/spec_answer.lean"
 [ -n "$n" ] && sed "1d; \$d; s/^import Proofs.Mapping$/import Spec.Mapping/" Proofs/Answer.lean | cmp -s - "$tmp/spec_answer.lean" \
   && echo "Proofs/Answer.lean mirrors Spec/Aligner.lean (up to the holes)" || bad "Proofs/Answer.lean differs from Spec/Aligner.lean"
-sed "1d; s/^import Proofs.Sam$/import Spec.Sam/" Main.lean | cmp -s - Spec/Shim.lean \
-  && echo "Main.lean mirrors Spec/Shim.lean" || bad "Main.lean differs from Spec/Shim.lean"
+# Main.lean is the spec of the executable itself (in Spec/FROZEN.sha256); it imports the filled-in Proofs/MapFiles
+bash Testing/notes/byte_specs/check_copies.sh | grep -q "identical" \
+  && echo "Proofs/MapDefs.lean copies Proofs/MapFiles.lean's definitions" || bad "Proofs/MapDefs.lean differs from Proofs/MapFiles.lean"
+grep -q "^import Proofs.MapFiles$" Main.lean && echo "Main.lean imports Proofs.MapFiles" || bad "Main.lean does not import Proofs.MapFiles"
 
 if [ "${FUZZ:-0}" = 1 ]; then
   step "output fuzz (tiny generated genome)"
