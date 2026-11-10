@@ -15,4 +15,4 @@ slowNN_R1/R2.fq = one pair each (original reads); all_R1/R2.fq = the 10 together
 | slow09 | 1612 | 34/32 | GGTTCAAGTGATTCTCCTGCCTCAGCCTCCCAAG | CGGGAGGCTGAGGCAGGAGAATCACTTGAACC |
 | slow10 | 1304 | 29/29 | GGGATTACAGGCGTGAGCCACCGCGCCCG | CGGGCGCGGTGGCTCACGCCTGTAATCCC |
 
-All ten map to chr1 with AS 0, XU unknown, MAPQ 0, short trimmed mates (25-42 letters) in tandem-repeat sequence; all stall in the `look` stage.
+All ten map to chr1 with AS 0, XU unknown, MAPQ 0, short trimmed mates (25-42 letters) (sequence is exactly periodic only for #1 period 2 and #7 period 4; the rest are not exactly periodic); all stall in the `look` stage.
