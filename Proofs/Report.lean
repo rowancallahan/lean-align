@@ -596,27 +596,43 @@ def bestPair (l : List PairReport) : Option PairReport :=
     | none => some p
     | some q => if q.mate1.score + q.mate2.score < p.mate1.score + p.mate2.score then some p else b) none
 
-theorem bestPair_mem {l : List PairReport} {p : PairReport} (h : bestPair l = some p) : p ∈ l := by
-  unfold bestPair at h
-  suffices H : ∀ (l : List PairReport) (b : Option PairReport) (q : PairReport),
-      l.foldl (fun b p => match b with
-        | none => some p
-        | some q => if q.mate1.score + q.mate2.score < p.mate1.score + p.mate2.score then some p else b) b = some q →
-      q ∈ l ∨ b = some q from (H l none p h).resolve_right (by simp)
-  intro l
-  induction l with
-  | nil => intro b q h; exact Or.inr h
-  | cons x xs ih =>
-    intro b q h
-    rcases ih _ q h with h1 | h1
-    · exact Or.inl (List.mem_cons_of_mem _ h1)
-    · cases b with
-      | none => simp at h1; subst h1; exact Or.inl (by simp)
-      | some r =>
-        simp only at h1
-        split at h1
-        · simp at h1; subst h1; exact Or.inl (by simp)
-        · exact Or.inr h1
+-- stop the walk once a pair scores at least this (it cannot be beaten by much)
+def walkStop : Int := -4
+
+-- the best pair over the candidates, tried in order; stops at the first pair scoring at least `thr`
+def bestLazy (thr : Int) : List (Unit → Option PairReport) → Option PairReport → Option PairReport
+  | [], b => b
+  | f :: fs, b =>
+    match b with
+    | some q => if thr ≤ q.mate1.score + q.mate2.score then b else
+        bestLazy thr fs (match f () with
+          | some p => if q.mate1.score + q.mate2.score < p.mate1.score + p.mate2.score then some p else b
+          | none => b)
+    | none => bestLazy thr fs (f ())
+
+theorem bestLazy_mem (thr : Int) : ∀ (fs : List (Unit → Option PairReport)) (b : Option PairReport) (p : PairReport),
+    bestLazy thr fs b = some p → b = some p ∨ ∃ f ∈ fs, f () = some p
+  | [], b, p, h => Or.inl h
+  | f :: fs, b, p, h => by
+    unfold bestLazy at h
+    cases b with
+    | none =>
+      rcases bestLazy_mem thr fs _ p h with h1 | h1
+      · exact Or.inr ⟨f, by simp, h1⟩
+      · obtain ⟨g, hg, e⟩ := h1; exact Or.inr ⟨g, by simp [hg], e⟩
+    | some q =>
+      simp only at h
+      split at h
+      · exact Or.inl h
+      · rcases bestLazy_mem thr fs _ p h with h1 | h1
+        · cases hf : f () with
+          | none => simp [hf] at h1; exact Or.inl (by simp [h1])
+          | some r =>
+            simp only [hf] at h1
+            split at h1
+            · simp at h1; subst h1; exact Or.inr ⟨f, by simp, hf⟩
+            · exact Or.inl h1
+        · obtain ⟨g, hg, e⟩ := h1; exact Or.inr ⟨g, by simp [hg], e⟩
 
 -- the fallback (a walk): mate 1 at its router placement or its anchors, then mate 2 likewise; the first proper
 -- pair that `keep` accepts (e.g. one at or above the report floor: the walk goes on past worse pairs)
@@ -627,16 +643,16 @@ def fallbackOfK (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep :
   let s2 : PrepM MzP := prepMate pk R2
   let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
   let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
-  bestPair ((c1.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false)) ++
-            (c2.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)))
+  bestLazy walkStop (c1.map (fun x _ => walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false x) ++
+                     c2.map (fun x _ => walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true x)) none
 
 /-- `fallbackOfK` with each mate's preparation given (the router's, `answerOfPairP`): `fallbackOfKP_eq`. -/
 def fallbackOfKP (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (slack lo hi : Nat)
     (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (s1 s2 : PrepM MzP) (t : TierOut) : Option PairReport :=
   let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
   let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
-  bestPair ((c1.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false)) ++
-            (c2.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)))
+  bestLazy walkStop (c1.map (fun x _ => walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false x) ++
+                     c2.map (fun x _ => walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true x)) none
 
 theorem fallbackOfKP_eq (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
     (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) :
@@ -860,11 +876,13 @@ theorem fallbackOfK_sound
       pair.report = p ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
   unfold fallbackOfK at h
   simp only at h
-  rcases List.mem_append.1 (bestPair_mem h) with hm | hm
-  · obtain ⟨x, -, hx⟩ := List.mem_filterMap.1 hm
-    exact walkAt_sound hslice hchr pre limOf keep pk insertSettings R1 R2 t.m1 _ false x _ hx
-  · obtain ⟨x, -, hx⟩ := List.mem_filterMap.1 hm
-    exact walkAt_sound hslice hchr pre limOf keep pk insertSettings R1 R2 t.m2 _ true x _ hx
+  rcases bestLazy_mem _ _ _ _ h with h0 | ⟨f, hf, e⟩
+  · cases h0
+  · rcases List.mem_append.1 hf with hf | hf
+    · obtain ⟨x, -, rfl⟩ := List.mem_map.1 hf
+      exact walkAt_sound hslice hchr pre limOf keep pk insertSettings R1 R2 t.m1 _ false x _ e
+    · obtain ⟨x, -, rfl⟩ := List.mem_map.1 hf
+      exact walkAt_sound hslice hchr pre limOf keep pk insertSettings R1 R2 t.m2 _ true x _ e
 
 theorem fallbackOf_sound
     (hslice : ∀ (c : Nat) (chr : Chromosome), genome[c]? = some chr →
