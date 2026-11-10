@@ -140,13 +140,14 @@ for i in range(min(len(R[1]), len(recs) // 2)):
     for d in (a, b):
         t = d['tags']
         if d['mapped']:
-            if d['tagorder'] != ['AS', 'XB', 'XU', 'XT']: bad('mapped record tags != AS XB XU XT', qn, str(d['tagorder']))
+            # Spec/Sam.lean (`SamSpec.tags`): AS, XB, XU; the tier (XT) is left out
+            if d['tagorder'] != ['AS', 'XB', 'XU']: bad('mapped record tags != AS XB XU', qn, str(d['tagorder']))
             elif not re.fullmatch(r'-?\d+', t['AS']) or int(t['AS']) > 0: bad('AS not a non-positive integer', qn, t['AS'])
         else:
             if t.get('XT', '').startswith('trimmedAway'):
                 if d['tagorder'] != ['XT']: bad('trimmedAway record has other tags', qn, str(d['tagorder']))
                 if d['flag'] not in (77, 141): bad('trimmedAway record flag != 77/141', qn, str(d['flag']))
-            elif d['tagorder'] != ['XB', 'XU', 'XT']: bad('unmapped record tags != XB XU XT (or XT trimmedAway)', qn, str(d['tagorder']))
+            elif d['tagorder'] != ['XB', 'XU']: bad('unmapped record tags != XB XU (or XT trimmedAway)', qn, str(d['tagorder']))
             elif d['flag'] not in (77, 141): bad('unmapped record flag != 77/141', qn, str(d['flag']))
         if 'XB' in t and not (re.fullmatch(r'-?\d+', t['XB']) and int(t['XB']) <= 0): bad('XB not a non-positive integer', qn, t['XB'])
         if 'XU' in t and t['XU'] not in ('unique', 'multimapper', 'unknown', 'repetitiveUnknown'): bad('XU value', qn, t['XU'])
