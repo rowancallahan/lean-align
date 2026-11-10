@@ -117,3 +117,11 @@ Mapped counts unchanged; SAM changes only on pairs that were mapped-unknown. Nex
 - New vs minibwa at 4 threads: NovaSeq 3.1× faster wall, 3.2× Gbp per core-hour; HiSeq 5.0× wall, 5.8× per core-hour.
 - SAM md5 = festive with tier tags removed (NovaSeq bcd41c6e…, HiSeq 89fb1ec8…). Reps within ~3%.
 - To look at: HiSeq core use at 4 threads is 0.85 (old 0.89); index load 1.8 s vs 1.5 s.
+
+## Accuracy and uniqueness vs minibwa (S-P and S-A, 2026-11-10)
+Real reads, 200k pairs, % of pairs: proper pair ours 93.8 (NovaSeq) / 93.6 (HiSeq), minibwa 97.6 / 98.1. Ours proved unique 82.4 / 84.6; minibwa MAPQ 60 on both mates 84.9 / 87.4 (MAPQ ≥ 30: 90.9 / 92.3). Ours mapped-unknown 11.4 / 9.1; ours not proper 6.2 / 6.4.
+Of our unique pairs, minibwa gives MAPQ < 30 to only 0.5% (789 / 532 pairs). Both unique: same position within 10 bp 99.25% (NovaSeq), 75.6% (HiSeq; unexplained, probably trimming / soft clipping on 2×250).
+Simulated, pairs correct (both mates within 10 bp of truth), ours vs minibwa: mason 93.9 vs 98.0; low 96.6 vs 98.3; high 80.9 vs 98.0.
+By our class (n; ours correct %; minibwa correct %): unique: mason 86,604; 100.00; 99.99 · low 94,164; 99.99; 99.99 · high 59,278; 99.94; 99.97. unknown: 10,017; 72.9; 84.7 · 5,348; 45.6; 69.7 · 23,814; 90.8; 95.2. Not mapped/proper: 3,379; 0; 87.5 · 488; 0; 76.4 · 16,908; 0; 95.0.
+=> Our "unique" is as correct as minibwa's MAPQ 60. The accuracy gap is (1) pairs we leave unmapped (the biggest part; 16.9% on `high`), (2) mapped-unknown pairs.
+S-A (exp/unknown-walkbest, proved, Spec untouched): walk keeps the best candidate with early stop at −4: unknown pairs at truth mason 14,898 → 15,791 (minibwa 17,357), low 4,854 → 5,961 (minibwa 7,286); time +3–5% on 1M NovaSeq (noisy).
