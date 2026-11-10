@@ -238,7 +238,7 @@ def lookSpec (insertSettings : InsertSettings) (chroms : List (List Nat)) (read1
         (decodeRead read1) (decodeRead read2)))
 
 -- (stage 2) the walk: up to `walkK` anchors per strand, keeping the first pair at `junkScore` or better
-def walkK : Nat := 3
+def walkK : Nat := 6
 
 def keepOf (insertSettings : InsertSettings) (p : PairReport) : Bool :=
   decide (insertSettings.junkScore ≤ LastResort.repScore p)
