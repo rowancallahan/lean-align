@@ -67,3 +67,14 @@ spec/mapfiles 64ae73f merged into festive (code identical to 64ae73f; only notes
 - Fuzz (S-F) on 64ae73f: 210 / 210 pass (chunk sizes 1/7/4096/8 MB, 41 validity cases, random pairs, uneven read lengths).
 - SAM = festive with tier tags removed (200k and 5M, NovaSeq and HiSeq).
 - Layout: all specs in Spec/ (Alignment, Mapping, Aligner, Fasta, Fastq, Trim, Sam, MapFiles) + Main.lean.
+
+## Mapped-unknown accuracy (S-A, experiment branch exp/unknown-walkbest; Spec untouched, proofs rebuilt, not merged)
+Cause: when the router's gate budget (60000) trips, the fallback walk reports the FIRST acceptable pair among a few anchors (rarest seed per strand, up to 3 entries).
+Idea A: the walk evaluates all its candidates and keeps the best AS1+AS2 (proved: bestPair_mem + walkAt_sound).
+| set | at true position | gap > 16 | gap 0 | wall (1 run) |
+|---|---|---|---|---|
+| mason 200k (sim) | 187,909 → 188,813 (+904) | 10,154 → 9,281 | 504 → 570 | |
+| low-error 200k (sim) | 193,308 → 194,489 (+1,181) | 3,103 → 1,807 | 1,852 → 2,412 | |
+| NovaSeq 1M | | 52,430 → 44,035 | 20,952 → 25,089 | 20.8 → 22.4 s |
+| HiSeq 1M | | 40,180 → 35,411 | 15,095 → 16,719 | 25.2 → 25.4 s |
+Mapped counts unchanged; SAM changes only on pairs that were mapped-unknown. Next: cut the NovaSeq time cost (stop early when the candidate is near the bound), steer anchors with the other mate's seeds.
