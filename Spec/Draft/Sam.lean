@@ -64,8 +64,11 @@ def pos (p : Option (MateReport × MateReport)) : Nat :=
 
 def mapq (result : PairResult) (p : Option (MateReport × MateReport)) : Nat :=
   match result, p with
-  | .aligned { uniqueness := .unique, .. }, some _ => 60
-  | _, _                                           => 0
+  | .aligned a, some _ =>
+    match a.uniqueness with
+    | .unique => 60
+    | _       => 0
+  | _, _ => 0
 
 def cigar (p : Option (MateReport × MateReport)) : List UInt8 :=
   let letter (step : Step) : String :=
@@ -150,13 +153,25 @@ def tags (result : PairResult) (p : Option (MateReport × MateReport)) : List (L
 
 def mateLine (chrs : ChromosomeList) (r : FQ.Read) (which : Mate) (result : PairResult) : List UInt8 :=
   let p := placed which result
-  line ([qname r.name, num (flag which p), rname chrs p, num (pos p), num (mapq result p), cigar p,
-         rnext chrs p, num (pnext p), num (tlen which p), seq r p, qual r p] ++ tags result p)
+  line ([qname r.name,           -- QNAME
+         num (flag which p),     -- FLAG
+         rname chrs p,           -- RNAME
+         num (pos p),            -- POS
+         num (mapq result p),    -- MAPQ
+         cigar p,                -- CIGAR
+         rnext chrs p,           -- RNEXT
+         num (pnext p),          -- PNEXT
+         num (tlen which p),     -- TLEN
+         seq r p,                -- SEQ
+         qual r p]               -- QUAL
+        ++ tags result p)
 
-def body (chrs : ChromosomeList) : List (FQ.Read × FQ.Read) → List PairResult → List UInt8
-  | (r1, r2) :: pairs, result :: results =>
-    mateLine chrs r1 .one result ++ mateLine chrs r2 .two result ++ body chrs pairs results
-  | _, _ => []
+-- the two lines of every pair, in order
+def body (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) :
+    List UInt8 :=
+  let pairLines := (pairs.zip results).map fun ((r1, r2), result) =>
+    mateLine chrs r1 .one result ++ mateLine chrs r2 .two result
+  pairLines.flatten
 
 def samFile (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) :
     List UInt8 :=
