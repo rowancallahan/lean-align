@@ -11,7 +11,7 @@ step() { printf '\n== %s\n' "$1"; }
 bad()  { echo "FAIL: $1"; fail=1; }
 
 # the theorems that must be in the build, with standard axioms only
-HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end Spec.alignPairsP_eq
+HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end
   Spec.trimBytes_window Spec.trimBytes_acgt Spec.trimBytes_size Spec.cutAt_spec
   Spec.trimRead_quality_bytes Spec.trimRead_correct Spec.parse_trim_quality Spec.trimChunk_eq
   Spec.trimRead_best Spec.trimRead_best_none Spec.trimRead_contract Spec.trimRead_valid Spec.parse_trim_valid

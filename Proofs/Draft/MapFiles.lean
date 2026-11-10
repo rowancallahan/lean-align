@@ -36,7 +36,7 @@ def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeL
 -- the fast, streaming version: holes, filled below the Spec
 def MapState : Type := MapFast.State
 def mapStart (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) : MapState × ByteArray :=
-  MapFast.start (MapFast.job settings (chunkSetup settings index) chrs) ⟨(SamSpec.header chrs).toArray⟩
+  MapFast.start (MapFast.job settings index chrs) ⟨(SamSpec.header chrs).toArray⟩
 def mapStep (state : MapState) (block1 block2 : ByteArray) : Option (MapState × ByteArray) := MapFast.step state block1 block2
 def mapEnd (state : MapState) : Option ByteArray := MapFast.finish state
 

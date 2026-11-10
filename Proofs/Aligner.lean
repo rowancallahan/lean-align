@@ -540,7 +540,7 @@ theorem alignPairs_eq_map (insertSettings : InsertSettings) (index : ByteArray)
         alignOne insertSettings ((readIndex index).1.getD []) (readIndex index).2 bytes1 bytes2 := by
   simp [alignPairs, ParMap.parMap_eq_map]
 
-/-! ## The setup made once, for any number of chunks (`AlignSetup`, `chunkSetup`, `alignPairsP` in Spec) -/
+/-! ## The setup made once, for any number of chunks (used by `MapFast`: `alignPairsP_eq`) -/
 
 def AlignSetup : Type := List (List Nat) × Option SetupP
 
@@ -856,4 +856,3 @@ end Spec
 
 #print axioms Spec.alignPairs_correct
 #print axioms Spec.alignPairs_end_to_end
-#print axioms Spec.alignPairsP_eq

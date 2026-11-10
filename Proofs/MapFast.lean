@@ -151,8 +151,11 @@ def bodyB (chrs : ChromosomeList) (pairs : Array (ReadB × ReadB)) (results : Li
     fun b ((r1, r2), result) => mateLineB (mateLineB b chrs r1 .one result) chrs r2 .two result
 
 -- one job: a slice of each file → the SAM lines of its pairs, or none if the slices are not valid, matching FASTQ
-def job (settings : InsertSettings) (setup : AlignSetup) (chrs : ChromosomeList) (s1 s2 : ByteArray) :
+-- (the aligner's setup is made inside the job, by the thread that runs it: shared across threads, every reference
+-- count on it would be atomic; once per job of `jobPairs` pairs it costs under 1%)
+def job (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) (s1 s2 : ByteArray) :
     Option ByteArray :=
+  let setup := chunkSetup settings index
   match parseFastqB s1, parseFastqB s2 with
   | .ok r1, .ok r2 =>
     (prepPairsB r1 r2).map fun pairs =>
