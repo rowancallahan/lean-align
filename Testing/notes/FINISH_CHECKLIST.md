@@ -40,7 +40,8 @@ Order matters: make it right, check it, then understand it.
 ## 7. Understand it (in your own words)
 - `SHIM_EXPLAINED.md`, `UTILIZATION.md`, `byte_specs/LEMMAS.md`, `Testing/fuzz/ROWAN_CHECKLIST.md`, `SESSION_SUMMARY.md`.
 
-## REMINDER (Rowan): redo the SAM spec (bytes over Read; QNAME rule; ~15 min-1 h). Lock it before the fused writer starts.
+## REMINDER (Rowan): double-check the locked SAM spec (Spec/Draft/Sam.lean) line by line, field by field against SAMv1 §1.4.
+## (done) redo the SAM spec (bytes over Read; QNAME rule; ~15 min-1 h). Lock it before the fused writer starts.
 
 ## FASTQ spec: important open points (Rowan)
 - New byte spec drafted: scratchpad FastqSpec.lean (Record/Read, Record.valid, toBytes, toRead, parse + parse_correct).

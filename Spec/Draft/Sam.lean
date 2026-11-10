@@ -1,3 +1,4 @@
+-- LOCKED (Rowan, 2026-11-10): the SAM output spec. Rowan still has to re-check it line by line.
 import Spec.Aligner
 import Spec.Fasta
 import Spec.Fastq
