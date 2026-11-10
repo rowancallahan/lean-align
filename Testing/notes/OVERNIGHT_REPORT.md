@@ -60,3 +60,10 @@ S4 (proof/mapfiles2 70e9215): process_correct now proved inside Proofs/MapFiles.
 ## Aligner rare paths (S-H, investigation)
 - Last resort (1.7% of pairs, 15.5% of instructions): its best pair is usually tied, and the reported pair follows pairsAt's tie order, so it can't be skipped without changing which tied pair is reported (an output change, not allowed). Best same-output saving ≤ 0.9%. Dropped.
 - Walk (14.5% of pairs, 15% of instructions): mostly the banded DP kernel bandCellsJ (~90 instructions per cell, boxed arrays). Same-result options: word copies in window extraction (~0.6%, doing now); a flat-array kernel (~2%, about a day of re-proving). Decision for Rowan.
+
+## Merged into festive
+spec/mapfiles 64ae73f merged into festive (code identical to 64ae73f; only notes differ).
+- FUZZ=1 CI on 64ae73f: ALL CHECKS PASSED. 470 theorems, standard axioms only; `Spec.Total.process_correct`, `Spec.MapCopy.job_eq`: [propext, Classical.choice, Quot.sound] (re-checked by a local build). No sorry outside Spec/. All 8 FROZEN hashes OK. Mirrors and the MapDefs copy check OK.
+- Fuzz (S-F) on 64ae73f: 210 / 210 pass (chunk sizes 1/7/4096/8 MB, 41 validity cases, random pairs, uneven read lengths).
+- SAM = festive with tier tags removed (200k and 5M, NovaSeq and HiSeq).
+- Layout: all specs in Spec/ (Alignment, Mapping, Aligner, Fasta, Fastq, Trim, Sam, MapFiles) + Main.lean.
