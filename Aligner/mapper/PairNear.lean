@@ -681,6 +681,301 @@ theorem properPairU_near (sl lo hi : Nat) (a b : Placement) (h : properPairU sl 
   rcases b with ⟨⟨cb, sb, lb⟩, tb⟩
   cases ta <;> cases tb <;> simp [properPairU, properPair, fwdRev] at h ⊢ <;> omega
 
+/-! ### `properPairsF` on a window of each group (`properPairsF_eqW`)
+A first-mate hit `a` pairs only with second-mate hits starting in `[a.start - (hi + sl), a.start + hi + sl]`
+(`properPairU_near`). Each group keeps its order; with the running maximum of its starts from the left and the running
+minimum from the right (both monotone), two bisections give the slice outside which no hit starts in the window, and
+only the slice is filtered: the same list. -/
+
+def pmGo : List Nat → Nat → List Nat
+  | [], _ => []
+  | x :: xs, m => max m x :: pmGo xs (max m x)
+
+def smGo : List Nat → List Nat
+  | [] => []
+  | x :: xs =>
+    let r := smGo xs
+    (match r with
+     | [] => x
+     | y :: _ => min x y) :: r
+
+-- a group: its hits in order, the running max of their starts, the running min of their starts from the right
+structure GrpW where
+  arr : Array (Placement × Int)
+  pm : Array Nat
+  sm : Array Nat
+
+def grpW (l : List (Placement × Int)) : GrpW :=
+  let st := l.map fun x => x.1.1.start
+  ⟨l.toArray, (pmGo st 0).toArray, (smGo st).toArray⟩
+
+-- the first `i` in `[lo, hi)` with `f i` (for `f` monotone), else `hi`
+def firstGo (f : Nat → Bool) : (fuel lo hi : Nat) → Nat
+  | 0, lo, _ => lo
+  | fuel + 1, lo, hi =>
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      if f mid then firstGo f fuel lo mid else firstGo f fuel (mid + 1) hi
+    else lo
+
+-- the hits of the group that may start in `[L, U]`, in order
+def candWin (g : GrpW) (L U : Nat) : List (Placement × Int) :=
+  let n := g.arr.size
+  let p := firstGo (fun i => decide (L ≤ g.pm[i]!)) (n + 1) 0 n
+  let q := firstGo (fun i => decide (U < g.sm[i]!)) (n + 1) 0 n
+  (g.arr.extract p q).toList
+
+def getGW (k : Nat) : List (Nat × GrpW) → GrpW
+  | [] => grpW []
+  | (k', g) :: r => if k' = k then g else getGW k r
+
+def properPairsW (sl lo hi : Nat) (h1 h2 : List (Placement × Int)) : List PairHit :=
+  let G := (grpB h2).map fun (k, l) => (k, grpW l)
+  h1.flatMap fun a =>
+    ((candWin (getGW (keyA a.1) G) (a.1.1.start - (hi + sl)) (a.1.1.start + hi + sl)).filter
+      fun b => properPairU sl lo hi a.1 b.1).map fun b => (a, b)
+
+theorem pmGo_length : ∀ (xs : List Nat) (m : Nat), (pmGo xs m).length = xs.length
+  | [], _ => rfl
+  | _ :: xs, _ => by simp [pmGo, pmGo_length xs]
+
+theorem smGo_length : ∀ (xs : List Nat), (smGo xs).length = xs.length
+  | [] => rfl
+  | _ :: xs => by simp [smGo, smGo_length xs]
+
+theorem pmGo_m : ∀ (xs : List Nat) (m i : Nat) (hi : i < xs.length),
+    m ≤ (pmGo xs m)[i]'(by rw [pmGo_length]; exact hi)
+  | [], _, _, hi => absurd hi (by simp)
+  | x :: xs, m, i, hi => by
+    cases i with
+    | zero => simp only [pmGo, List.getElem_cons_zero]; exact Nat.le_max_left m x
+    | succ i =>
+      simp only [pmGo, List.getElem_cons_succ]
+      exact Nat.le_trans (Nat.le_max_left m x) (pmGo_m xs _ i (by simpa using hi))
+
+-- the running max: at least every earlier element
+theorem pmGo_ge : ∀ (xs : List Nat) (m i j : Nat) (hji : j ≤ i) (hi : i < xs.length),
+    xs[j]'(by omega) ≤ (pmGo xs m)[i]'(by rw [pmGo_length]; exact hi)
+  | [], _, _, _, _, hi => absurd hi (by simp)
+  | x :: xs, m, i, j, hji, hi => by
+    cases i with
+    | zero =>
+      have : j = 0 := by omega
+      subst this; simp only [pmGo, List.getElem_cons_zero]; exact Nat.le_max_right m x
+    | succ i =>
+      simp only [pmGo, List.getElem_cons_succ]
+      cases j with
+      | zero =>
+        simp only [List.getElem_cons_zero]
+        exact Nat.le_trans (Nat.le_max_right m x) (pmGo_m xs _ i (by simpa using hi))
+      | succ j => simp only [List.getElem_cons_succ]; exact pmGo_ge xs _ i j (by omega) (by simpa using hi)
+
+-- the running min from the right: at most every later element
+theorem smGo_le : ∀ (xs : List Nat) (i j : Nat) (hij : i ≤ j) (hj : j < xs.length),
+    (smGo xs)[i]'(by rw [smGo_length]; omega) ≤ xs[j]
+  | [], _, _, _, hj => absurd hj (by simp)
+  | x :: xs, i, j, hij, hj => by
+    have head_le : ∀ (ys : List Nat) (j : Nat) (hj : j < ys.length) (h0 : 0 < (smGo ys).length),
+        (smGo ys)[0] ≤ ys[j] := by
+      intro ys
+      induction ys with
+      | nil => intro j hj; exact absurd hj (by simp)
+      | cons y ys ih =>
+        intro j hj _
+        simp only [smGo, List.getElem_cons_zero]
+        cases j with
+        | zero =>
+          simp only [List.getElem_cons_zero]
+          split <;> omega
+        | succ j =>
+          simp only [List.getElem_cons_succ]
+          have hl : 0 < (smGo ys).length := by rw [smGo_length]; simp at hj; omega
+          have := ih j (by simpa using hj) hl
+          split
+          · rename_i h; rw [h] at hl; simp at hl
+          · rename_i z r h
+            have : (smGo ys)[0] = z := by simp [h]
+            omega
+    cases i with
+    | zero =>
+      have := head_le (x :: xs) j hj (by rw [smGo_length]; simp)
+      exact this
+    | succ i =>
+      simp only [smGo, List.getElem_cons_succ]
+      cases j with
+      | zero => omega
+      | succ j => simp only [List.getElem_cons_succ]; exact smGo_le xs i j (by omega) (by simpa using hj)
+
+theorem pmGo_mono : ∀ (xs : List Nat) (m i j : Nat) (hij : i ≤ j) (hj : j < xs.length),
+    (pmGo xs m)[i]'(by rw [pmGo_length]; omega) ≤ (pmGo xs m)[j]'(by rw [pmGo_length]; exact hj)
+  | [], _, _, _, _, hj => absurd hj (by simp)
+  | x :: xs, m, i, j, hij, hj => by
+    cases j with
+    | zero =>
+      have : i = 0 := by omega
+      subst this; exact Nat.le_refl _
+    | succ j =>
+      cases i with
+      | zero =>
+        simp only [pmGo, List.getElem_cons_zero, List.getElem_cons_succ]
+        exact pmGo_m xs _ j (by simpa using hj)
+      | succ i =>
+        simp only [pmGo, List.getElem_cons_succ]
+        exact pmGo_mono xs _ i j (by omega) (by simpa using hj)
+
+theorem smHead_le (x : Nat) : ∀ r : List Nat, (match r with
+    | [] => x
+    | y :: _ => min x y) ≤ r.headD x
+  | [] => Nat.le_refl _
+  | y :: _ => Nat.min_le_right x y
+
+theorem smGo_mono : ∀ (xs : List Nat) (i j : Nat) (hij : i ≤ j) (hj : j < xs.length),
+    (smGo xs)[i]'(by rw [smGo_length]; omega) ≤ (smGo xs)[j]'(by rw [smGo_length]; exact hj)
+  | [], _, _, _, hj => absurd hj (by simp)
+  | x :: xs, i, j, hij, hj => by
+    cases j with
+    | zero =>
+      have : i = 0 := by omega
+      subst this; exact Nat.le_refl _
+    | succ j =>
+      have hl : 0 < (smGo xs).length := by rw [smGo_length]; simp at hj; omega
+      cases i with
+      | zero =>
+        simp only [smGo, List.getElem_cons_zero, List.getElem_cons_succ]
+        have h0 := smGo_mono xs 0 j (by omega) (by simpa using hj)
+        have e : (smGo xs).headD x = (smGo xs)[0] := by
+          rw [List.headD_eq_head?_getD, List.head?_eq_getElem?, List.getElem?_eq_getElem hl]; rfl
+        exact Nat.le_trans (smHead_le x (smGo xs)) (e ▸ h0)
+      | succ i =>
+        simp only [smGo, List.getElem_cons_succ]
+        exact smGo_mono xs i j (by omega) (by simpa using hj)
+
+theorem firstGo_spec (f : Nat → Bool) (n : Nat) (hm : ∀ i j, i ≤ j → j < n → f i = true → f j = true) :
+    ∀ fuel lo hi, lo ≤ hi → hi ≤ n → hi - lo < fuel → (∀ i, i < lo → f i = false) →
+      (∀ i, hi ≤ i → i < n → f i = true) →
+      (∀ i, i < firstGo f fuel lo hi → f i = false) ∧ (∀ i, firstGo f fuel lo hi ≤ i → i < n → f i = true)
+  | 0, lo, hi, _, _, hf, _, _ => by omega
+  | fuel + 1, lo, hi, hlh, hn, hf, hl, hh => by
+    unfold firstGo
+    by_cases hlt : lo < hi
+    · simp only [hlt, ite_true]
+      split
+      · rename_i hmid
+        exact firstGo_spec f n hm fuel lo ((lo + hi) / 2) (by omega) (by omega) (by omega) hl
+          (fun i h1 h2 => hm _ i h1 h2 hmid)
+      · rename_i hmid
+        have hmid' : f ((lo + hi) / 2) = false := by simpa using hmid
+        refine firstGo_spec f n hm fuel ((lo + hi) / 2 + 1) hi (by omega) hn (by omega) ?_ hh
+        intro i hi'
+        by_cases h : i < lo
+        · exact hl i h
+        · cases hfi : f i
+          · rfl
+          · have := hm i ((lo + hi) / 2) (by omega) (by omega) hfi
+            rw [hmid'] at this; exact absurd this (by simp)
+    · simp only [hlt, ite_false]
+      exact ⟨hl, fun i h1 h2 => hh i (by omega) h2⟩
+
+theorem filter_slice {α : Type} (P : α → Bool) (l : List α) (p q : Nat)
+    (h1 : ∀ i (h : i < l.length), i < p → P l[i] = false)
+    (h2 : ∀ i (h : i < l.length), q ≤ i → P l[i] = false) :
+    l.filter P = ((l.drop p).take (q - p)).filter P := by
+  conv => lhs; rw [← List.take_append_drop p l]
+  rw [List.filter_append]
+  have e1 : (l.take p).filter P = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro x hx
+    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
+    rw [List.getElem_take]
+    simp only [List.length_take] at hi
+    simpa using h1 i (by omega) (by omega)
+  rw [e1, List.nil_append]
+  conv => lhs; rw [← List.take_append_drop (q - p) (l.drop p)]
+  rw [List.filter_append]
+  have e2 : ((l.drop p).drop (q - p)).filter P = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro x hx
+    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
+    rw [List.getElem_drop, List.getElem_drop]
+    simp only [List.length_drop] at hi
+    simpa using h2 (p + (q - p + i)) (by omega) (by omega)
+  rw [e2, List.append_nil]
+
+theorem candWin_filter (l : List (Placement × Int)) (L U : Nat) (P : Placement × Int → Bool)
+    (hP : ∀ b ∈ l, P b = true → L ≤ b.1.1.start ∧ b.1.1.start ≤ U) :
+    (candWin (grpW l) L U).filter P = l.filter P := by
+  unfold candWin grpW
+  simp only [List.size_toArray]
+  generalize hst : l.map (fun x => x.1.1.start) = st
+  have hlen : st.length = l.length := by rw [← hst, List.length_map]
+  have hpl : (pmGo st 0).length = l.length := by rw [pmGo_length, hlen]
+  have hsl : (smGo st).length = l.length := by rw [smGo_length, hlen]
+  have hpm : ∀ i (h : i < l.length), (pmGo st 0).toArray[i]! = (pmGo st 0)[i]'(by omega) := by
+    intro i h; simp [show i < (pmGo st 0).length by omega]
+  have hsm : ∀ i (h : i < l.length), (smGo st).toArray[i]! = (smGo st)[i]'(by omega) := by
+    intro i h; simp [show i < (smGo st).length by omega]
+  have hstI : ∀ i (h : i < l.length), st[i]'(by omega) = l[i].1.1.start := by
+    intro i h; subst hst; simp
+  have m1 : ∀ i j, i ≤ j → j < l.length → decide (L ≤ (pmGo st 0).toArray[i]!) = true →
+      decide (L ≤ (pmGo st 0).toArray[j]!) = true := by
+    intro i j hij hj h
+    simp only [decide_eq_true_eq] at h ⊢
+    rw [hpm i (by omega)] at h; rw [hpm j hj]
+    exact Nat.le_trans h (pmGo_mono st 0 i j hij (by omega))
+  have m2 : ∀ i j, i ≤ j → j < l.length → decide (U < (smGo st).toArray[i]!) = true →
+      decide (U < (smGo st).toArray[j]!) = true := by
+    intro i j hij hj h
+    simp only [decide_eq_true_eq] at h ⊢
+    rw [hsm i (by omega)] at h; rw [hsm j hj]
+    exact Nat.lt_of_lt_of_le h (smGo_mono st i j hij (by omega))
+  obtain ⟨p1, -⟩ := firstGo_spec _ l.length m1 (l.length + 1) 0 l.length (Nat.zero_le _) (Nat.le_refl _) (by omega)
+    (fun i h => absurd h (Nat.not_lt_zero _)) (fun i h1 h2 => by omega)
+  obtain ⟨-, q2⟩ := firstGo_spec _ l.length m2 (l.length + 1) 0 l.length (Nat.zero_le _) (Nat.le_refl _) (by omega)
+    (fun i h => absurd h (Nat.not_lt_zero _)) (fun i h1 h2 => by omega)
+  rw [Array.toList_extract]
+  simp only [List.extract]
+  symm
+  apply filter_slice
+  · intro i h hp
+    have := p1 i hp
+    simp only [decide_eq_false_iff_not, Nat.not_le] at this
+    rw [hpm i h] at this
+    have hge := pmGo_ge st 0 i i (Nat.le_refl _) (by omega)
+    rw [hstI i h] at hge
+    cases hb : P l[i]
+    · rfl
+    · have := hP l[i] (List.getElem_mem h) hb; omega
+  · intro i h hq
+    have := q2 i hq h
+    simp only [decide_eq_true_eq] at this
+    rw [hsm i h] at this
+    have hle := smGo_le st i i (Nat.le_refl _) (by omega)
+    rw [hstI i h] at hle
+    cases hb : P l[i]
+    · rfl
+    · have := hP l[i] (List.getElem_mem h) hb; omega
+
+theorem getGW_map (k : Nat) : ∀ G : List (Nat × List (Placement × Int)),
+    getGW k (G.map fun (k, l) => (k, grpW l)) = grpW (getG k G)
+  | [] => rfl
+  | (k', l) :: r => by
+    simp only [List.map_cons, getGW, getG]
+    split
+    · rfl
+    · exact getGW_map k r
+
+@[csimp] theorem properPairsF_eqW : @properPairsF = @properPairsW := by
+  funext sl lo hi h1 h2
+  unfold properPairsF properPairsW
+  simp only [getGW_map]
+  congr 1
+  funext a
+  congr 1
+  rw [candWin_filter]
+  intro b _ hb
+  obtain ⟨-, -, e3, -, e5⟩ := properPairU_near sl lo hi a.1 b.1 hb
+  constructor <;> omega
+
 theorem shapesAt_fst (lim : Nat) (sh : Int × Int) (h : sh ∈ shapesAt lim) :
     sh.1.natAbs ≤ gapBound sc0 (-(lim : Int)) := by
   unfold shapesAt at h
@@ -907,3 +1202,4 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.hitsKPFN_eqG
 #print axioms MapSpec.Fast.pairUKHN_mz_eq
 #print axioms MapSpec.Fast.pairUKHN_tie
+#print axioms MapSpec.Fast.properPairsF_eqW
