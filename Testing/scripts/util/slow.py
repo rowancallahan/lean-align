@@ -1,4 +1,5 @@
 # slow.py TRACE [threshold_s]: jobs longer than threshold (index in start order), ana.py-style summary of running<4
+import os; PJ=int(os.environ.get("PJ","16000"))
 import sys
 J=[]
 for l in open(sys.argv[1]):
@@ -9,7 +10,7 @@ J.sort()  # spawn order == job index
 print(f"jobs {len(J)}")
 for i,(t,b,e,tid,sz) in enumerate(J):
     d=(e-b)/1e9
-    if d>th: print(f"  job {i} pairs {i*16000}-{(i+1)*16000} dur {d:.1f}s started +{(b-J[0][1])/1e9:.0f}s slice {sz/1e6:.1f}MB")
+    if d>th: print(f"  job {i} pairs {i*PJ}-{(i+1)*PJ} dur {d:.1f}s started +{(b-J[0][1])/1e9:.0f}s slice {sz/1e6:.1f}MB")
 ev=[]
 for t,b,e,_,_ in J: ev+=[(b,1),(e,-1)]
 ev.sort(); r=0; last=ev[0][0]; tr={}

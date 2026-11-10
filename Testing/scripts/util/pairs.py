@@ -1,4 +1,5 @@
 # pairs.py TRACE [min_ms=1000]: slow pairs from P lines, with job idx, pair idx, class metrics; JSON to TRACE.pairs.json
+import os; PJ=int(os.environ.get("PJ","16000"))
 import sys,json,collections,statistics as st,re
 tr=sys.argv[1]; MIN=float(sys.argv[2]) if len(sys.argv)>2 else 1000
 pend=collections.defaultdict(list); J=[]; P=[]
@@ -26,12 +27,12 @@ rows=[]
 for idx,(ts,b,e,tid,ps) in enumerate(J):
     for ms,i,s1,s2 in ps:
         if ms>=MIN:
-            r=dict(job=idx,inJob=i,pair=idx*16000+i,ms=ms,len1=len(s1),len2=len(s2),run1=run(s1),run2=run(s2),k1=kmers(s1),k2=kmers(s2),per1=period(s1),per2=period(s2),seq1=s1,seq2=s2)
+            r=dict(job=idx,inJob=i,pair=idx*PJ+i,ms=ms,len1=len(s1),len2=len(s2),run1=run(s1),run2=run(s2),k1=kmers(s1),k2=kmers(s2),per1=period(s1),per2=period(s2),seq1=s1,seq2=s2)
             rows.append(r)
 rows.sort(key=lambda r:-r['ms'])
 allp=[(ms) for j in J for (ms,_,_,_) in j[4]]
 dur=sorted((e-b)/1e9 for _,b,e,_,_ in J[:-1]); med=st.median(dur)
-exc=sum(d-med for d in dur if d>5)
+exc=max(sum(d-med for d in dur if d>5),1e-9)
 print(f"{tr}: jobs {len(J)} median {med:.2f}s; pairs>20ms {len(allp)} (sum {sum(allp)/1e3:.0f}s); pairs>={MIN:.0f}ms {len(rows)} sum {sum(r['ms'] for r in rows)/1e3:.0f}s; excess of >5s jobs over median {exc:.0f}s -> {sum(r['ms'] for r in rows)/1e3/exc:.0%} explained by >={MIN:.0f}ms pairs; all >20ms pairs {sum(allp)/1e3/exc:.0%}")
 json.dump(rows,open(tr+'.pairs.json','w'))
 def cls(r):
