@@ -4,12 +4,24 @@
 - TEST THIS: festive `claude/festive-fermi-mf9mo6` at 10629b1 or later (code = spec/mapfiles 64ae73f). Run: `FUZZ=1 sh Testing/scripts/CI_check.sh` (expect ALL CHECKS PASSED), then `MINIBWA=… bash Testing/verify.sh OUT`.
 - Proofs: end to end, no sorry outside Spec/. `Spec.Total.process_correct` and `job_eq` proved, standard axioms only; 470 theorems. All 8 locked files (Spec/{Alignment,Mapping,Aligner,Fastq,Trim,Sam,MapFiles} + Main.lean) match FROZEN.sha256. Trusted: index = buildIndex genome; read/write/rename do what they say; Main's IO = `process` with nextChunks/out.write.
 - Fuzz: 210/210 pass (chunk sizes 1/7/4096/8 MB, 41 invalid-input cases, random pairs, uneven read lengths). SAM = festive with the tier tag removed (200k, 1M, 5M; NovaSeq and HiSeq).
-- Speed: ~10% fewer instructions than last night's build (fused SAM writer, parser, Nat-literal fix). 1M at 4 threads, new vs minibwa: ~3.1× (NovaSeq) / 5.0× (HiSeq) faster; Gbp per core-hour ~19.7 vs 6.2 and ~31.5 vs 5.4. CPU −9% vs old festive. Clean re-timing with a FIFO sink is still running (see the bug below).
+- Speed (corrected, see below): CPU −4 to −8% vs the old build; Gbp per core-hour ~3× minibwa (NovaSeq) and ~5× (HiSeq). BUT on piped .gz input (5M) the new build is slower in wall time (+12% / +27%) because Main reads the two files on one thread; fix is in the locked Main (your call), being confirmed now.
 - BUG found: `lean-align map … /dev/null` destroys /dev/null (Main renames OUT.tmp onto OUT). verify.sh fixed; Main fix is your call (locked).
 - Decisions for you: Main /dev/null fix; trim tie rule + best window ≥ 25 (your list); bandCellsJ kernel (~2%, a day of proofs); mapped-unknown experiment (exp/unknown-walkbest: +0.5% pairs at the true position, small NovaSeq time cost); spec review items (Testing/notes/SPEC_REVIEW.md).
 
 
 > **WARNING (found overnight): do not run `lean-align map … /dev/null`.** Main writes OUT.tmp and renames it onto OUT, so with OUT = /dev/null (as root) it creates /dev/null.tmp and renames it over /dev/null, turning /dev/null into a regular file. `Testing/verify.sh` step 5 is fixed to use a drained FIFO instead. Fixing Main itself (e.g. refuse an OUT that exists and is not a regular file, fail fast) is a change to the locked Main.lean: Rowan's decision.
+
+## CORRECTED speed (S-T, branch bench/timing-2026-11-10 d9cf10e): both builds with a FIFO sink (festive e96862d = fsk, new 64ae73f = mfk)
+1M plain, map-only s | Gbp per core-hour | core use:
+| set | T | old | new |
+|---|---|---|---|
+| NovaSeq | 1 | 71.9 / 15.5 / .97 | 68.7 / 16.3 / .97 |
+| | 4 | 17.7 / 16.0 / .96 | 17.2 / 16.8 / .94 |
+| HiSeq | 1 | 77.8 / 23.6 / .97 | 71.2 / 25.7 / .98 |
+| | 4 | 19.1 / 25.9 / .90 | 18.8 / 28.1 / .84 |
+(The FIFO sink adds ~1.5–2 s on 1M; minibwa wrote to /dev/null: NovaSeq 44.3 s, HiSeq 84.4 s at 4 threads.)
+5M through zcat pipes, 4 threads, map s / CPU s / core use: NovaSeq old 98.3 / 370.8 / .94, new 109.9 / 344.2 / .78, minibwa 255.6 / 993.8 / .97; HiSeq old 109.1 / 387.7 / .89, new 138.3 / 357.8 / .65, minibwa 474.0 / 1842.7 / .97.
+=> The new build uses 4–8% less CPU, but on piped (zcat) input it is SLOWER in wall time (+12% NovaSeq, +27% HiSeq): cores idle. Likely cause: Main's nextChunks reads the two pipes one after the other on one thread, so the two decompressors no longer run in parallel (the old shim had one reader thread per file). Being tested (plain-file subset; big pipe buffers). If confirmed, the fix is in Main's nextChunks (read both files concurrently / read ahead) — locked Main, your decision. Still far ahead of minibwa on CPU (Gbp per core-hour ~16–28 vs ~5–6).
 
 ## Correctness: new streaming build (spec/mapfiles 53c1ab2) vs festive, 4 threads (S-T)
 SAM md5 identical after removing XT:Z:<tier> (trimmedAway kept): n1m bcd41c6e…, h1m 89fb1ec8….
