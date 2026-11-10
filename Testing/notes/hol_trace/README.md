@@ -15,3 +15,7 @@ run works: `lean-align map IDX A B OUT 100 1000 2> trace.log`.
 
 Also logs every pair slower than 20 ms: `P tid ms index-in-job seq1 seq2` (the trimmed mates; `alignPairsP` runs
 through `implemented_by`, `alignPairsP_eq` stubbed). `grep '^P' trace.log | sort -k3 -n -r | head` lists the slowest.
+
+And every pipeline stage over 5 ms of a pair: `S tid stage ms`, stage one of router / walk / join / short / gaveup /
+look (`Proofs/Aligner.lean` `timeIt`). Stage lines of a pair come before its `P` line, on the same tid.
+`grep '^S' trace.log | awk '{n[$3]++; t[$3]+=$4} END{for(k in n) print k, n[k], t[k]" ms"}'` sums them.

@@ -323,18 +323,31 @@ theorem orElse_ok {P : PairAnswer → Prop} (req : Int) (o : Option PairAnswer) 
     · exact hn
     · rename_i hl; exact (ho a rfl).resolve_right hl
 
+-- LOCAL TRACE (exp/hol-trace, never merge): a stage over 5 ms is logged as `S tid tag ms`
+unsafe def timeItImpl {α : Type} (tag : String) (f : Unit → α) : α := unsafeBaseIO do
+  let t0 ← IO.monoNanosNow
+  let r ← match ← (IO.lazyPure f).toBaseIO with
+    | .ok r => pure r
+    | .error _ => pure (f ())
+  let t1 ← IO.monoNanosNow
+  if t1 - t0 > 5000000 then
+    let tid ← IO.getTID
+    (IO.eprintln s!"S {tid} {tag} {(t1 - t0) / 1000000}").catchExceptions (fun _ => pure ())
+  pure r
+@[implemented_by timeItImpl, reducible] def timeIt {α : Type} (_tag : String) (f : Unit → α) : α := f ()
+
 -- stages (3)-(6) of the pipeline, after the router and the walk
 def afterRouter (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
     (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (hv : ByteArray × ByteArray) (req : Int) (read1 read2 : ByteArray)
     (a1 : PairAnswer) (_ : Unit) :
     PairAnswer :=
   let c := lookCap req
-  orElse req ((joinAt cfg pk pgs c read1 read2).map (answerWith insertSettings req none pk pgs offs ns read1 read2))
+  orElse req (timeIt "join" fun _ => (joinAt cfg pk pgs c read1 read2).map (answerWith insertSettings req none pk pgs offs ns read1 read2))
     fun _ =>
-  orElse req (if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
+  orElse req (timeIt "short" fun _ => if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
     fun _ =>
   -- the gave-up answer is taken as it is (it has no pair and no bound below `requiredMapBound`: a leftover)
-  (gaveUp req hv read1 read2 a1).getD (lookAt insertSettings req pk offs ns read1 read2)
+  (timeIt "gaveup" fun _ => gaveUp req hv read1 read2 a1).getD (timeIt "look" fun _ => lookAt insertSettings req pk offs ns read1 read2)
 
 -- the pipeline: (1) the router with the per-pair settings, its pair re-checked; (2) the walk; (3) the
 -- rarest-seed join; (4) short mates: the second look; (5) the gave-up hook; (6) the second look (`lookAt`).
@@ -355,8 +368,8 @@ def answerOfReads (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg)
     PairAnswer :=
   if witnessHit hv read1 read2 then witnessAnswer else
   let req := reqOf insertSettings read1 read2
-  let t := MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
-  let a1 := answerWith insertSettings req (fallbackFrom req) pk pgs offs ns read1 read2 t
+  let t := timeIt "router" fun _ => MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
+  let a1 := timeIt "walk" fun _ => answerWith insertSettings req (fallbackFrom req) pk pgs offs ns read1 read2 t
   orElse req (some a1) (afterRouter insertSettings cfg pk pgs offs ns hv req read1 read2 a1)
 
 def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
