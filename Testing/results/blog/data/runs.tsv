@@ -14,7 +14,7 @@ stream	novaseq_2x151	20000000	lean-align-before	f973b77	717.7	NA	1987.2	5.74	30.
 stream	novaseq_2x151	10000000	lean-align	f465a57	196.1	NA	676.1	5.73	55.4	16.08	1	streaming box, curl|gunzip, md5 sink
 stream	novaseq_2x151	20000000	lean-align	f465a57	389.0	NA	1350.0	5.74	55.9	16.11	1	streaming box, curl|gunzip, md5 sink
 stream	novaseq_2x151	40000000	lean-align	f465a57	778.5	NA	2709.3	5.74	55.9	16.05	1	streaming box, curl|gunzip, md5 sink
-stream	novaseq_2x151	10000000	minibwa	c07de5c	742.8	583.9	NA	NA	14.6	4.87	1	streaming box, plain curl, /dev/null; wall includes a 158.9 s cold index load
+stream	novaseq_2x151	10000000	minibwa	c07de5c	742.8	583.9	2233.3	8.79	14.6	4.87	1	streaming box, plain curl, /dev/null; wall includes a 158.9 s cold index load
 stream	novaseq_2x151	20000000	minibwa	c07de5c	1086.7	NA	4135.9	8.81	20.0	5.26	1	streaming box, resuming downloader, /dev/null
 stream	novaseq_2x151	40000000	minibwa	c07de5c	2192.6	NA	8364.7	8.81	19.8	5.20	1	streaming box, resuming downloader, /dev/null
 lane	hiseq_2x250	33916091	lean-align-before	64ae73f	1320.5	1317.5	3110.2	5.72	46.0	19.5	1	trace box, curl|gunzip|head, cat sink, traced; trace build = 64ae73f + trace commits
