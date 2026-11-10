@@ -17,3 +17,4 @@ Consequence for the stricter rule (mapped unknown only if XB < bound): ~11% of p
 - 41 validity cases × 5 builds, one per rule of Record.valid / prepPairs: every reject exits 1 with no OUT and no OUT.tmp; every accept exits 0.
 - Random valid pairs (seeds 2–9, ~800 pairs each; adapters, N, low quality, trimmed away, long reads): equal to festive.
 - Next: random seeds at chunk 7 / 4096, and files with very different read lengths.
+- Chunk stress (fuzz/harness 156ae6e, Testing/fuzz/fuzz_chunks.py): 20 pass / 0 fail. Random sets at chunk 1/7/4096 byte-identical to the default build; uneven mate lengths (250×50, 50×250, 101×101, 1000×25) identical across chunk sizes and equal to festive (with 80–564 mapped records each).
