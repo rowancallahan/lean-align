@@ -353,20 +353,24 @@ theorem hitsAtKPN_mem {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lim : Nat) (ix 
 hits' windows (chromosome, start, end) by chromosome then start and replaces each end by the running maximum of the
 ends within its chromosome; `keepQ` then answers `keepN` with one binary search. -/
 
+abbrev Win := Nat × Nat × Nat
+
 -- a hit's window: chromosome, start, end
 def winOf (y : Placement × Int) : Nat × Nat × Nat := (y.1.1.chr, y.1.1.start, y.1.1.start + y.1.1.len)
 
 -- (chromosome, start) order
 def winLe (a b : Nat × Nat × Nat) : Bool := a.1 < b.1 || (a.1 == b.1 && a.2.1 ≤ b.2.1)
 
--- each end replaced by the maximum end so far within its chromosome (`prev`: the previous chromosome and maximum)
+-- the running maximum so far for `x` (`prev`: the previous chromosome and maximum)
+def nextMax (prev : Option (Nat × Nat)) (x : Nat × Nat × Nat) : Nat :=
+  match prev with
+  | some (c, m) => if c == x.1 then max m x.2.2 else x.2.2
+  | none => x.2.2
+
+-- each end replaced by the maximum end so far within its chromosome
 def runMax : List (Nat × Nat × Nat) → Option (Nat × Nat) → List (Nat × Nat × Nat)
   | [], _ => []
-  | x :: xs, prev =>
-    let m := match prev with
-      | some (c, m) => if c == x.1 then max m x.2.2 else x.2.2
-      | none => x.2.2
-    (x.1, x.2.1, m) :: runMax xs (some (x.1, m))
+  | x :: xs, prev => (x.1, x.2.1, nextMax prev x) :: runMax xs (some (x.1, nextMax prev x))
 
 def keepTab (ys : List (Placement × Int)) : Array (Nat × Nat × Nat) :=
   (runMax ((ys.map winOf).mergeSort winLe) none).toArray
@@ -398,6 +402,236 @@ def keepN (sl hi n gb : Nat) (ys : List (Placement × Int)) (vc nR D : Nat) : Bo
   ys.any fun y => y.1.1.chr == (if vc < n then vc else vc - n) &&
     decide (D ≤ y.1.1.start + y.1.1.len + hi + sl + nR + gb) && decide (y.1.1.start + nR ≤ D + hi + sl + gb)
 
+theorem runMax_length : ∀ (xs : List Win) p, (runMax xs p).length = xs.length
+  | [], _ => rfl
+  | x :: xs, p => by simp [runMax, runMax_length xs]
+
+theorem runMax_spec : ∀ (xs : List Win) (prev : Option (Nat × Nat)),
+    xs.Pairwise (fun a b => a.1 ≤ b.1) → (∀ pc pm, prev = some (pc, pm) → ∀ x ∈ xs, pc ≤ x.1) →
+    ∀ i, i < xs.length → ((runMax xs prev)[i]!).1 = xs[i]!.1 ∧ ((runMax xs prev)[i]!).2.1 = xs[i]!.2.1 ∧
+      ∀ B, (B ≤ ((runMax xs prev)[i]!).2.2 ↔
+        (∃ pm, prev = some (xs[i]!.1, pm) ∧ B ≤ pm) ∨ ∃ j, j ≤ i ∧ xs[j]!.1 = xs[i]!.1 ∧ B ≤ xs[j]!.2.2)
+  | [], _, _, _, i, hi => by simp at hi
+  | x :: xs, prev, hs, hp, i, hi => by
+    rw [List.pairwise_cons] at hs
+    have hm : ∀ B, B ≤ nextMax prev x ↔
+        (∃ pm, prev = some (x.1, pm) ∧ B ≤ pm) ∨ B ≤ x.2.2 := by
+      intro B
+      rcases prev with _ | ⟨c, pm⟩
+      · simp [nextMax]
+      · by_cases h : c = x.1
+        · subst h; simp [nextMax]; omega
+        · have : (c == x.1) = false := by simpa using h
+          simp [nextMax, this, h]
+    cases i with
+    | zero =>
+      refine ⟨by simp [runMax], by simp [runMax], fun B => ?_⟩
+      simp only [runMax]
+      simp only [List.getElem!_cons_zero]
+      rw [hm B]
+      constructor
+      · rintro (h | h)
+        · exact Or.inl h
+        · exact Or.inr ⟨0, Nat.le_refl _, rfl, by simpa using h⟩
+      · rintro (h | ⟨j, hj, -, h⟩)
+        · exact Or.inl h
+        · have : j = 0 := by omega
+          subst this
+          exact Or.inr (by simpa using h)
+    | succ i =>
+      have hi' : i < xs.length := by simpa using hi
+      have hmem : xs[i]! ∈ xs := by
+        rw [getElem!_pos xs i hi']; exact List.getElem_mem hi'
+      have hxi : x.1 ≤ xs[i]!.1 := hs.1 _ hmem
+      obtain ⟨e1, e2, e3⟩ := runMax_spec xs (some (x.1, nextMax prev x)) hs.2 (by
+        intro pc pm h y hy
+        simp at h
+        obtain ⟨rfl, -⟩ := h
+        exact hs.1 y hy) i hi'
+      simp only [runMax, List.getElem!_cons_succ]
+      refine ⟨e1, e2, fun B => ?_⟩
+      rw [e3 B]
+      have hz : (x :: xs)[0]! = x := rfl
+      constructor
+      · rintro (⟨pm, h, hB⟩ | ⟨j, hj, h1, h2⟩)
+        · simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨h1, rfl⟩ := h
+          rcases (hm B).1 hB with ⟨pm', hp', hB'⟩ | h
+          · exact Or.inl ⟨pm', by rw [← h1]; exact hp', hB'⟩
+          · exact Or.inr ⟨0, by omega, by rw [hz]; exact h1, by rw [hz]; exact h⟩
+        · exact Or.inr ⟨j + 1, by omega, by simpa using h1, by simpa using h2⟩
+      · rintro (⟨pm, hp0, hB⟩ | ⟨j, hj, h1, h2⟩)
+        · have := hp _ _ hp0 x (by simp)
+          have hx : x.1 = xs[i]!.1 := by omega
+          exact Or.inl ⟨nextMax prev x, by rw [hx], (hm B).2 (Or.inl ⟨pm, by rw [hx]; exact hp0, hB⟩)⟩
+        · cases j with
+          | zero =>
+            rw [hz] at h1 h2
+            exact Or.inl ⟨nextMax prev x, by rw [h1], (hm B).2 (Or.inr h2)⟩
+          | succ j => exact Or.inr ⟨j, by omega, by simpa using h1, by simpa using h2⟩
+
+theorem winLe_trans {a b d : Win} (h1 : winLe a b = true) (h2 : winLe b d = true) : winLe a d = true := by
+  simp [winLe] at *; omega
+
+theorem winLe_fst {a b : Win} (h : winLe a b = true) : a.1 ≤ b.1 := by
+  simp [winLe] at h; omega
+
+theorem keepCountGo_spec (t : Array Win) (c a : Nat)
+    (hm : ∀ i j, i ≤ j → j < t.size → winLe t[j]! (c, a, 0) = true → winLe t[i]! (c, a, 0) = true) :
+    ∀ fuel lo hi, lo ≤ hi → hi ≤ t.size → hi - lo < fuel →
+      (∀ i, i < lo → winLe t[i]! (c, a, 0) = true) → (∀ i, hi ≤ i → i < t.size → winLe t[i]! (c, a, 0) = false) →
+      lo ≤ keepCountGo t c a fuel lo hi ∧ keepCountGo t c a fuel lo hi ≤ hi ∧
+      (∀ i, i < keepCountGo t c a fuel lo hi → winLe t[i]! (c, a, 0) = true) ∧
+      (∀ i, keepCountGo t c a fuel lo hi ≤ i → i < t.size → winLe t[i]! (c, a, 0) = false)
+  | 0, lo, hi, h1, h2, h3, _, _ => by omega
+  | fuel + 1, lo, hi, h1, h2, h3, hl, hh => by
+    unfold keepCountGo
+    by_cases hlt : lo < hi
+    · simp only [hlt, ite_true]
+      cases hp : winLe t[(lo + hi) / 2]! (c, a, 0)
+      · simp only [Bool.false_eq_true, ite_false]
+        obtain ⟨r1, r2, r3, r4⟩ := keepCountGo_spec t c a hm fuel lo ((lo + hi) / 2) (by omega) (by omega) (by omega) hl
+          (fun i hi' hi2 => by
+            by_cases hh' : hi ≤ i
+            · exact hh i hh' hi2
+            · cases hq : winLe t[i]! (c, a, 0)
+              · rfl
+              · have := hm ((lo + hi) / 2) i (by omega) hi2 hq
+                rw [hp] at this; exact absurd this (by simp))
+        exact ⟨r1, by omega, r3, r4⟩
+      · simp only [ite_true]
+        obtain ⟨r1, r2, r3, r4⟩ := keepCountGo_spec t c a hm fuel ((lo + hi) / 2 + 1) hi (by omega) h2 (by omega)
+          (fun i hi' => by
+            by_cases hh' : i < lo
+            · exact hl i hh'
+            · exact hm i ((lo + hi) / 2) (by omega) (by omega) hp) hh
+        exact ⟨by omega, r2, r3, r4⟩
+    · simp only [hlt, ite_false]
+      refine ⟨Nat.le_refl _, by omega, hl, fun i hi' hi2 => hh i (by omega) hi2⟩
+
+theorem keepCount_spec (t : Array Win) (c a : Nat)
+    (hm : ∀ i j, i ≤ j → j < t.size → winLe t[j]! (c, a, 0) = true → winLe t[i]! (c, a, 0) = true) :
+    keepCount t c a ≤ t.size ∧ (∀ i, i < keepCount t c a → winLe t[i]! (c, a, 0) = true) ∧
+      (∀ i, keepCount t c a ≤ i → i < t.size → winLe t[i]! (c, a, 0) = false) := by
+  obtain ⟨-, r2, r3, r4⟩ := keepCountGo_spec t c a hm (t.size + 1) 0 t.size (by omega) (Nat.le_refl _) (by omega)
+    (fun i h => by omega) (fun i h h' => by omega)
+  exact ⟨r2, r3, r4⟩
+
+theorem winLe_q (w : Win) (c a : Nat) : winLe w (c, a, 0) = true ↔ w.1 < c ∨ (w.1 = c ∧ w.2.1 ≤ a) := by
+  simp [winLe]
+
+theorem keepTab_query (S : List Win) (hS : S.Pairwise (fun a b => winLe a b = true)) (c a B : Nat) :
+    let t := (runMax S none).toArray
+    (keepCount t c a ≠ 0 ∧ t[keepCount t c a - 1]!.1 = c ∧ B ≤ t[keepCount t c a - 1]!.2.2) ↔
+      ∃ w ∈ S, w.1 = c ∧ w.2.1 ≤ a ∧ B ≤ w.2.2 := by
+  intro t
+  have hn : (runMax S none).length = S.length := runMax_length S none
+  have htz : t.size = S.length := by simp [t, hn]
+  have hf : S.Pairwise (fun a b => a.1 ≤ b.1) := hS.imp winLe_fst
+  have hsp := runMax_spec S none hf (by simp)
+  have hT : ∀ i, i < S.length → t[i]! = (runMax S none)[i]! := fun i hi => by
+    simp [t]
+  have key : ∀ i, i < S.length → winLe t[i]! (c, a, 0) = winLe S[i]! (c, a, 0) := fun i hi => by
+    obtain ⟨e1, e2, -⟩ := hsp i hi
+    rw [hT i hi]; simp only [winLe, e1, e2]
+  have hmono : ∀ i j, i ≤ j → j < S.length → winLe S[j]! (c, a, 0) = true → winLe S[i]! (c, a, 0) = true := by
+    intro i j hij hj h
+    rcases Nat.lt_or_ge i j with hlt | hge
+    · have := List.pairwise_iff_getElem.1 hS i j (by omega) hj hlt
+      rw [getElem!_pos S i (by omega)]
+      rw [getElem!_pos S j hj] at h
+      exact winLe_trans this h
+    · have : i = j := by omega
+      subst this; exact h
+  have hm : ∀ i j, i ≤ j → j < t.size → winLe t[j]! (c, a, 0) = true → winLe t[i]! (c, a, 0) = true := by
+    intro i j hij hj h
+    rw [htz] at hj
+    rw [key j hj] at h; rw [key i (by omega)]; exact hmono i j hij hj h
+  obtain ⟨hk1, hk2, hk3⟩ := keepCount_spec t c a hm
+  rw [htz] at hk1 hk3
+  generalize keepCount t c a = k at *
+  have hpair : ∀ i j, i ≤ j → j < S.length → S[i]!.1 ≤ S[j]!.1 := by
+    intro i j hij hj
+    rcases Nat.lt_or_ge i j with hlt | hge
+    · have := List.pairwise_iff_getElem.1 hf i j (by omega) hj hlt
+      rwa [getElem!_pos S i (by omega), getElem!_pos S j hj]
+    · have : i = j := by omega
+      subst this; exact Nat.le_refl _
+  constructor
+  · rintro ⟨hk0, he1, he2⟩
+    have hk' : k - 1 < S.length := by omega
+    obtain ⟨e1, -, e3⟩ := hsp (k - 1) hk'
+    rw [hT _ hk'] at he1 he2
+    rw [e1] at he1
+    rcases (e3 B).1 he2 with ⟨pm, hpm, -⟩ | ⟨j, hj, h1, h2⟩
+    · cases hpm
+    have hjn : j < S.length := by omega
+    refine ⟨S[j]!, by rw [getElem!_pos S j hjn]; exact List.getElem_mem hjn, by rw [h1, he1], ?_, h2⟩
+    have := hk2 j (by omega)
+    rw [key j hjn, winLe_q] at this
+    have h1' := h1.trans he1
+    omega
+  · rintro ⟨w, hw, hw1, hw2, hw3⟩
+    obtain ⟨j, hjn, rfl⟩ := List.mem_iff_getElem.1 hw
+    have hw' : S[j]! = S[j] := getElem!_pos S j hjn
+    rw [← hw'] at hw1 hw2 hw3
+    have hpj : winLe S[j]! (c, a, 0) = true := (winLe_q _ _ _).2 (Or.inr ⟨hw1, hw2⟩)
+    have hjk : j < k := by
+      rcases Nat.lt_or_ge j k with h | h
+      · exact h
+      · have := hk3 j h hjn
+        rw [key j hjn, hpj] at this; exact absurd this (by simp)
+    have hk' : k - 1 < S.length := by omega
+    have hpk' := hk2 (k - 1) (by omega)
+    have hpk := hpk'
+    rw [key _ hk'] at hpk
+    have hle := winLe_fst hpk
+    have hge := hpair j (k - 1) (by omega) hk'
+    have hc : S[k - 1]!.1 = c := by
+      rw [key _ hk', winLe_q] at hpk'
+      omega
+    obtain ⟨e1, -, e3⟩ := hsp (k - 1) hk'
+    refine ⟨by omega, by rw [hT _ hk', e1, hc], ?_⟩
+    rw [hT _ hk']
+    exact (e3 B).2 (Or.inr ⟨j, by omega, by rw [hc]; exact hw1, hw3⟩)
+
+theorem keepQ_eq (sl hi n gb : Nat) (ys : List (Placement × Int)) (vc nR D : Nat) :
+    keepQ (hi + sl + gb) n (keepTab ys) vc nR D = keepN sl hi n gb ys vc nR D := by
+  unfold keepQ keepN
+  rw [Bool.eq_iff_iff]
+  generalize (if vc < n then vc else vc - n) = c
+  by_cases hD : D + (hi + sl + gb) < nR
+  · simp only [hD, ite_true, Bool.false_eq_true, false_iff]
+    simp only [Bool.and_eq_true, decide_eq_true_eq, List.any_eq_true, not_exists, not_and]
+    intro y _ h1 h2; omega
+  · simp only [hD, ite_false]
+    have hS : ((ys.map winOf).mergeSort winLe).Pairwise (fun a b => winLe a b = true) :=
+      List.pairwise_mergeSort (le := winLe) (fun a b c => winLe_trans) (fun a b => by simp [winLe]; omega) _
+    have hq := keepTab_query _ hS c (D + (hi + sl + gb) - nR) (D - (hi + sl + gb) - nR)
+    unfold keepTab
+    dsimp only at hq
+    have h2 : (ys.any fun y => y.1.1.chr == c && decide (D ≤ y.1.1.start + y.1.1.len + hi + sl + nR + gb) &&
+        decide (y.1.1.start + nR ≤ D + hi + sl + gb)) = true ↔ ∃ w ∈ (ys.map winOf).mergeSort winLe, w.1 = c ∧
+          w.2.1 ≤ D + (hi + sl + gb) - nR ∧ D - (hi + sl + gb) - nR ≤ w.2.2 := by
+      rw [List.any_eq_true]
+      constructor
+      · rintro ⟨y, hy, h⟩
+        simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
+        exact ⟨winOf y, List.mem_mergeSort.2 (List.mem_map.2 ⟨y, hy, rfl⟩), h.1.1, by simp only [winOf]; omega,
+          by simp only [winOf]; omega⟩
+      · rintro ⟨w, hw, h1, h2, h3⟩
+        rw [List.mem_mergeSort, List.mem_map] at hw
+        obtain ⟨y, hy, rfl⟩ := hw
+        simp only [winOf] at h1 h2 h3
+        exact ⟨y, hy, by simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]; omega⟩
+    rw [h2, ← hq]
+    generalize keepCount (runMax ((List.map winOf ys).mergeSort winLe) none).toArray c (D + (hi + sl + gb) - nR) = k
+    by_cases hk : k = 0
+    · simp [hk]
+    · simp only [beq_iff_eq, hk, ite_false, Bool.and_eq_true, decide_eq_true_eq, ne_eq, not_false_eq_true, true_and]
+      constructor <;> intro h <;> omega
+
+
 theorem properPairU_near (sl lo hi : Nat) (a b : Placement) (h : properPairU sl lo hi a b = true) :
     a.1.chr = b.1.chr ∧ b.1.start ≤ a.1.start + a.1.len + hi + sl ∧ a.1.start ≤ b.1.start + hi + sl ∧
       a.1.start ≤ b.1.start + b.1.len + hi + sl ∧ b.1.start ≤ a.1.start + hi + sl := by
@@ -412,16 +646,8 @@ theorem shapesAt_fst (lim : Nat) (sh : Int × Int) (h : sh ∈ shapesAt lim) :
   have := (shapes_ok _ _ sh h).1
   omega
 
--- `hitsKPFN` with the table of `ys` built once, then queried per diagonal (`hitsKPFN_eqI`)
-def hitsKPFNI {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
-    (pgs : Array PGen) (R : ByteArray) (c : Nat) (ys : List (Placement × Int)) : List (Placement × Int) :=
-  let t := keepTab ys
-  match hitsAtKPN c ix G offs pgs R (keepQ (hi + sl + gapBound sc0 (-(c : Int))) pgs.size t) with
-  | some l => l
-  | none => hitsKPF ix G offs pgs R c
-
 /-- The near list of a read at cap `c` given the first mate's hits `ys`. -/
-@[implemented_by hitsKPFNI] def hitsKPFN {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
+def hitsKPFN {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
     (pgs : Array PGen) (R : ByteArray) (c : Nat) (ys : List (Placement × Int)) : List (Placement × Int) :=
   match hitsAtKPN c ix G offs pgs R (keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys) with
   | some l => l
@@ -541,10 +767,11 @@ def hitsAtKPNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lim : Nat) (ix : L) (G
       hitsSKNG ix G offs pgs2 n n lim (revCompK R) keep gate).map fun x => (decB n x.1, -(x.2 : Int)))
   else none
 
-/-- Compiled `hitsKPFN`: a chromosome is searched only when the other mate has a hit on it. -/
+/-- Compiled `hitsKPFN`: a chromosome is searched only when the other mate has a hit on it, and the
+diagonal filter is a binary search on a table built once (`keepQ_eq`). -/
 def hitsKPFNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
     (pgs : Array PGen) (R : ByteArray) (c : Nat) (ys : List (Placement × Int)) : List (Placement × Int) :=
-  match hitsAtKPNG c ix G offs pgs R (keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys)
+  match hitsAtKPNG c ix G offs pgs R (keepQ (hi + sl + gapBound sc0 (-(c : Int))) pgs.size (keepTab ys))
       (fun k => ys.any fun y => y.1.1.chr == k) with
   | some l => l
   | none => hitsKPF ix G offs pgs R c
@@ -570,7 +797,11 @@ theorem keepN_gate (sl hi n gb : Nat) (ys : List (Placement × Int)) (t c nR D :
   have e1 := hitsSKNG_eq ix G offs (pgs ++ pgs) pgs.size pgs.size c (revCompK R)
     (keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys) (fun k => ys.any fun y => y.1.1.chr == k)
     (fun c' D hc hg => keepN_gate sl hi _ _ ys _ c' _ D (Or.inr rfl) hc hg)
+  have hq : keepQ (hi + sl + gapBound sc0 (-(c : Int))) pgs.size (keepTab ys) =
+      keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys :=
+    funext fun vc => funext fun nR => funext fun D => keepQ_eq sl hi _ _ ys vc nR D
   unfold hitsKPFN hitsKPFNG hitsAtKPNG hitsAtKPN
+  rw [hq]
   simp only [e0, e1]
 
 section topN
@@ -626,6 +857,7 @@ end MapSpec.Fast
 
 #print axioms MapSpec.Fast.ladderUB_eq
 #print axioms MapSpec.Fast.hitsKPFN_near
+#print axioms MapSpec.Fast.keepQ_eq
 #print axioms MapSpec.Fast.hitsKPFN_eqG
 #print axioms MapSpec.Fast.pairUKHN_mz_eq
 #print axioms MapSpec.Fast.pairUKHN_tie
