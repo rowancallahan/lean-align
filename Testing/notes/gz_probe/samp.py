@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # samp.py NAME OUT : wait for a process whose comm starts with NAME; until it exits, sample per thread its CPU (user, sys),
-# run-queue wait (schedstat) and context switches, the same for every zcat/cat/md5sum process, and the box's idle CPU.
+# run-queue wait (schedstat), context switches, where threads sleep (wchan; the loop thread is +3), the same for every zcat/cat/md5sum process, and the box's idle CPU.
 import os, sys, time
 name, out = sys.argv[1], sys.argv[2]; tck = os.sysconf("SC_CLK_TCK")
 def comm(p):
@@ -11,7 +11,7 @@ def idle():
 pid = None
 while pid is None:
     pid = next((int(p) for p in os.listdir('/proc') if p.isdigit() and comm(p).startswith(name)), None); time.sleep(0.01)
-t0 = time.monotonic(); i0 = idle(); thr = {}; helpers = {}
+t0 = time.monotonic(); i0 = idle(); thr = {}; helpers = {}; wch = {}  # (thread offset, wchan) -> samples
 def sample(p, tid):
     st = open(f'/proc/{p}/task/{tid}/stat').read().rsplit(')', 1)[1].split()
     ss = open(f'/proc/{p}/task/{tid}/schedstat').read().split()
@@ -19,7 +19,11 @@ def sample(p, tid):
     return (int(st[11]) / tck, int(st[12]) / tck, int(ss[1]) / 1e9, int(sw[0]), int(sw[1]))
 while os.path.exists(f'/proc/{pid}/task'):
     try:
-        for tid in os.listdir(f'/proc/{pid}/task'): thr[int(tid)] = sample(pid, tid)
+        for tid in os.listdir(f'/proc/{pid}/task'):
+            thr[int(tid)] = sample(pid, tid)
+            st = open(f'/proc/{pid}/task/{tid}/stat').read().rsplit(')', 1)[1].split()[0]
+            wc = open(f'/proc/{pid}/task/{tid}/wchan').read().strip() if st != 'R' else 'RUNNING'
+            k = ('loop' if int(tid) - pid == 3 else 'other', wc or '0'); wch[k] = wch.get(k, 0) + 1
     except OSError: pass
     for p in os.listdir('/proc'):
         if p.isdigit() and comm(p) in ('zcat', 'gzip', 'cat', 'md5sum'):
@@ -31,4 +35,4 @@ idle_frac = (i1[0] - i0[0]) / max(1, i1[1] - i0[1])
 f = lambda k, v: f"{k}:{v[0]+v[1]:.1f}cpu/{v[1]:.1f}sys/{v[2]:.1f}rq/{v[3]}v/{v[4]}nv"
 top = sorted(thr.items(), key=lambda x: -(x[1][0] + x[1][1]))[:6]
 open(out, 'w').write(f"wall {w:.1f} box-idle {idle_frac:.2f}\n  threads " + " ".join(f(f'+{t-pid}', v) for t, v in top) +
-                     "\n  helpers " + " ".join(f(c, v) for (c, p), v in sorted(helpers.items())) + "\n")
+                     "\n  wchan " + " ".join(f"{a}/{b}:{n}" for (a, b), n in sorted(wch.items(), key=lambda x: -x[1])[:12]) + "\n  helpers " + " ".join(f(c, v) for (c, p), v in sorted(helpers.items())) + "\n")
