@@ -16,7 +16,8 @@ HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end Spec.alignPairsP_eq
   Spec.trimRead_quality_bytes Spec.trimRead_correct Spec.parse_trim_quality Spec.trimChunk_eq
   Spec.trimRead_best Spec.trimRead_best_none Spec.trimRead_contract Spec.trimRead_valid Spec.parse_trim_valid
   Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq
-  Spec.Trim.trim_correct Spec.Trim.cut_eq Spec.Trim.cut_eq_cutF Spec.Trim.trim_cut_eq Spec.Trim.trimReadB_cut_trim"
+  Spec.Trim.trim_correct Spec.Trim.cut_eq Spec.Trim.cut_eq_cutF Spec.Trim.trim_cut_eq Spec.Trim.trimReadB_cut_trim
+  Spec.SamFast.samHeaderB_eq Spec.SamFast.samChunkS_eq Spec.SamFast.samFileS_eq"
 
 step "frozen files (checksums)"
 (cd Aligner/trimmer && shasum -a 256 -c FROZEN_CONTRACT.sha256) || fail=1
@@ -56,6 +57,9 @@ python3 -I Testing/scripts/fastq_mirror.py Spec/Fastq.lean Proofs/Fastq.lean \
   && echo "Proofs/Fastq.lean mirrors Spec/Fastq.lean (up to the holes)" || bad "Proofs/Fastq.lean differs from Spec/Fastq.lean"
 python3 -I Testing/scripts/draft_mirror.py Spec/Draft/Trim.lean Proofs/Draft/Trim.lean trim trim_correct \
   && echo "Proofs/Draft/Trim.lean mirrors Spec/Draft/Trim.lean (up to the holes)" || bad "Proofs/Draft/Trim.lean differs from Spec/Draft/Trim.lean"
+sed -e "s/^import Proofs.Answer$/import Spec.Aligner/" -e "s/^import Proofs.Fasta$/import Spec.Fasta/" \
+  -e "s/^import Proofs.Fastq$/import Spec.Fastq/" Proofs/Draft/Sam.lean | cmp -s - Spec/Draft/Sam.lean \
+  && echo "Proofs/Draft/Sam.lean mirrors Spec/Draft/Sam.lean" || bad "Proofs/Draft/Sam.lean differs from Spec/Draft/Sam.lean"
 for f in Fasta Sam; do
   sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean \
     && echo "Proofs/$f.lean mirrors Spec/$f.lean" || bad "Proofs/$f.lean differs from Spec/$f.lean"
