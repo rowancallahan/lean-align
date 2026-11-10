@@ -1,0 +1,23 @@
+# All timing runs used in the figures. 4 threads (taskset -c 0-3), hg38, output discarded. One row per run or median.
+# wall_s includes index load unless map_s is given (map_s = wall minus in-run index load). cpu_s = aligner user+sys.
+# source = the box and method; see ../README.md. NA = not measured.
+experiment	data	pairs	tool	commit	wall_s	map_s	cpu_s	peak_GB	Gbp_hr	Gbp_core_hr	reps	source
+gz5m	hiseq_2x250	5000000	lean-align	f465a57	83.4	81.1	286.2	NA	110.2	31.23	3	timing box, gz FIFOs
+gz5m	novaseq_2x151	5000000	lean-align	f465a57	78.7	76.7	284.4	NA	70.9	19.12	3	timing box, gz FIFOs
+gz5m	hiseq_2x250	5000000	lean-align-before	e96862d	110.3	105.8	382.5	NA	84.5	23.36	3	timing box, gz FIFOs
+gz5m	novaseq_2x151	5000000	lean-align-before	e96862d	94.0	91.8	345.0	NA	59.2	15.76	3	timing box, gz FIFOs
+gz5m	hiseq_2x250	5000000	minibwa	c07de5c	474.0	NA	NA	NA	NA	NA	3	timing box, earlier session; TO RE-MEASURE
+gz5m	novaseq_2x151	5000000	minibwa	c07de5c	255.6	NA	NA	NA	NA	NA	3	timing box, earlier session; TO RE-MEASURE
+stream	novaseq_2x151	10000000	lean-align-before	f973b77	303.5	NA	832.8	5.74	35.8	13.06	1	streaming box, curl|gunzip, cat sink
+stream	novaseq_2x151	20000000	lean-align-before	f973b77	717.7	NA	1987.2	5.74	30.3	10.94	1	streaming box, curl|gunzip, cat sink
+stream	novaseq_2x151	10000000	lean-align	f465a57	196.1	NA	676.1	5.73	55.4	16.08	1	streaming box, curl|gunzip, md5 sink
+stream	novaseq_2x151	20000000	lean-align	f465a57	389.0	NA	1350.0	5.74	55.9	16.11	1	streaming box, curl|gunzip, md5 sink
+stream	novaseq_2x151	40000000	lean-align	f465a57	778.5	NA	2709.3	5.74	55.9	16.05	1	streaming box, curl|gunzip, md5 sink
+stream	novaseq_2x151	20000000	minibwa	c07de5c	1086.7	NA	4135.9	8.81	20.0	5.26	1	streaming box, resuming downloader, /dev/null
+stream	novaseq_2x151	40000000	minibwa	c07de5c	NA	NA	NA	NA	NA	NA	1	PENDING
+lane	hiseq_2x250	33900000	lean-align-before	64ae73f	1317	NA	3110	5.72	NA	NA	1	trace box, curl|gunzip|head, cat sink, traced
+lane	hiseq_2x250	33900000	lean-align	f465a57	683	NA	2300	5.88	NA	NA	1	trace box, same, traced
+lane	hiseq_2x250	33900000	minibwa	c07de5c	NA	NA	NA	NA	NA	NA	1	PENDING
+lane	novaseq_2x151	40000000	lean-align-before	64ae73f	1327	NA	3648	5.63	NA	NA	1	trace box, traced
+lane	novaseq_2x151	40000000	lean-align	f465a57	757	NA	2738	5.65	NA	NA	1	trace box, traced
+lane	novaseq_2x151	40000000	lean-align	f465a57	771.7	NA	2798	5.65	NA	NA	1	trace box, untraced
