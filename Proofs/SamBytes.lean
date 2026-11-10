@@ -67,6 +67,46 @@ def spaceAt (b : ByteArray) : (fuel i : Nat) → Nat
   | 0, i => i
   | f + 1, i => if i < b.size && b[i]! != 32 then spaceAt b f (i + 1) else i
 
+-- `spaceAt b (b.size - i) i` by `uget` (`spaceAt_eqF`, `@[csimp]`)
+def spaceAtU (b : @& ByteArray) (hs : b.size < 4294967296) (j : USize) (_hj : j.toNat ≤ b.size) : USize :=
+  if h : j < b.usize then
+    have hl : j.toNat < b.size := Nat.lt_of_lt_of_le h (usize_le b)
+    if b.uget j hl != 32 then spaceAtU b hs (j + 1) (by rw [toNat_add1 j (by omega)]; omega) else j
+  else j
+termination_by b.size - j.toNat
+decreasing_by
+  rw [toNat_add1 j (by omega)]; omega
+
+theorem spaceAtU_eq (b : ByteArray) (hs : b.size < 4294967296) : ∀ k (j : USize) hj,
+    b.size - j.toNat = k → (spaceAtU b hs j hj).toNat = spaceAt b k j.toNat
+  | 0, j, hj, hk => by
+    rw [spaceAtU, dif_neg (fun h => by have : j.toNat < b.usize.toNat := h; rw [usize_eq b hs] at this; omega)]
+    rw [spaceAt]
+  | k + 1, j, hj, hk => by
+    have hl : j.toNat < b.size := by omega
+    rw [spaceAtU, dif_pos (show j < b.usize from show j.toNat < b.usize.toNat by rw [usize_eq b hs]; exact hl),
+      spaceAt, getElem!_pos b j.toNat hl]
+    dsimp only
+    have hg : ∀ hl', b.uget j hl' = b[j.toNat] := fun _ => rfl
+    simp only [hg]
+    by_cases hb : (b[j.toNat] != 32) = true
+    · rw [if_pos hb, if_pos (by simp [hl, hb]), spaceAtU_eq b hs k (j + 1) _ (by rw [toNat_add1 j (by omega)]; omega),
+        toNat_add1 j (by omega)]
+    · rw [if_neg hb, if_neg (by simp [hb])]
+
+@[inline] def spaceAtF (b : ByteArray) (fuel i : Nat) : Nat :=
+  if h : i ≤ b.size ∧ b.size < 4294967296 ∧ fuel = b.size - i then
+    (spaceAtU b h.2.1 i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
+  else spaceAt b fuel i
+
+@[csimp] theorem spaceAt_eqF : @spaceAt = @spaceAtF := by
+  funext b fuel i
+  unfold spaceAtF
+  split
+  · rename_i h
+    rw [spaceAtU_eq b h.2.1 fuel _ _ (by rw [toNat_toUSize i (by omega)]; omega), toNat_toUSize i (by omega)]
+  · rfl
+
 -- `qnameOf` on bytes (`qnameB_eq`)
 def qnameB (name : ByteArray) : ByteArray :=
   let e := spaceAt name name.size 0
