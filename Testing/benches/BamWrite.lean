@@ -1,4 +1,5 @@
-import Proofs.Sam
+import Proofs.SamFast
+import Proofs.MapFast
 import MapperK250
 
 /-! # BAM writer prototype (benchmark only, unproved IO; NOT part of Spec/).
@@ -17,11 +18,9 @@ is exercised and sized as it will be at M2; the real results (M1) have every pai
 
 open Spec
 
--- a chunk of read pairs, as `alignPairs` takes them (as Main.lean)
-def chunkPairs (chunk : Array (FastqRecord × FastqRecord)) : List (Option ByteArray × Option ByteArray) :=
-  chunk.toList.map fun (record1, record2) =>
-    (if record1.letters.isEmpty then none else some record1.letters,
-     if record2.letters.isEmpty then none else some record2.letters)
+-- a chunk of trimmed read pairs, as `alignPairsP` takes them (as `MapFast.job`)
+def chunkPairs (chunk : Array (ReadB × ReadB)) : List (Option ByteArray × Option ByteArray) :=
+  chunk.toList.map MapFast.mateLettersB
 
 namespace Bam
 
@@ -232,8 +231,7 @@ def putStrTag (out : ByteArray) (tag value : String) : ByteArray :=
 -- the custom tags of `answerTags`
 def putAnswerTags (out : ByteArray) (answer : PairAnswer) : ByteArray :=
   let out := putIntTag out "XB" answer.bestPossibleScore
-  let out := putStrTag out "XU" (uniquenessText answer.uniqueness)
-  putStrTag out "XT" (tierText answer.tier)
+  putStrTag out "XU" (uniquenessText answer.uniqueness)
 
 def cigarOp : Step → Nat
   | .diag => 0   -- M
@@ -241,21 +239,21 @@ def cigarOp : Step → Nat
   | .gapX => 2   -- D
 
 -- one BAM record, appended to `out`: block_size is filled in at the end
-def putRecord (out : ByteArray) (qname : String) (flag : Nat) (refId pos : Int) (mapq bin : Nat)
-    (cigar : Array (Step × Nat)) (record : FastqRecord) (rev : Bool) (nextRef nextPos tlen : Int)
+def putRecord (out : ByteArray) (qname : ByteArray) (flag : Nat) (refId pos : Int) (mapq bin : Nat)
+    (cigar : Array (Step × Nat)) (record : ReadB) (rev : Bool) (nextRef nextPos tlen : Int)
     (tags : ByteArray → ByteArray) : ByteArray :=
   let start := out.size
   let out := putI32 out 0
   let out := putI32 out refId
   let out := putI32 out pos
-  let out := put16 (put8 (put8 out (qname.utf8ByteSize + 1)) mapq) bin
+  let out := put16 (put8 (put8 out (qname.size + 1)) mapq) bin
   let out := put16 (put16 out cigar.size) flag
-  let out := putI32 out record.letters.size
+  let out := putI32 out record.seq.size
   let out := putI32 (putI32 (putI32 out nextRef) nextPos) tlen
-  let out := (out.append qname.toUTF8).push 0
+  let out := (out.append qname).push 0
   let out := cigar.foldl (init := out) fun out (step, count) => put32 out ((count <<< 4 ||| cigarOp step).toUInt32)
-  let out := putSeq out record.letters rev
-  let out := putQual out record.quality.toUTF8 rev
+  let out := putSeq out record.seq rev
+  let out := putQual out record.qual rev
   let out := tags out
   let size := out.size - start - 4
   let b := (size.toUInt32 : UInt32)
@@ -263,7 +261,7 @@ def putRecord (out : ByteArray) (qname : String) (flag : Nat) (refId pos : Int) 
     (start + 3) (b >>> 24).toUInt8
 
 -- a mate of a found pair (`mappedLine`)
-def bamMapped (out : ByteArray) (record : FastqRecord) (which : Mate) (mate other : MateReport)
+def bamMapped (out : ByteArray) (record : ReadB) (which : Mate) (mate other : MateReport)
     (answer : PairAnswer) : ByteArray :=
   let flag := flagPaired + flagProperPair + mateFlag which +
     reverseFlag mate.placement.strand flagReverse + reverseFlag other.placement.strand flagMateReverse
@@ -273,18 +271,18 @@ def bamMapped (out : ByteArray) (record : FastqRecord) (which : Mate) (mate othe
     (mate.placement.start = other.placement.start && which = .one)
   let tlen : Int := if leftmost then right - left else -((right - left : Nat) : Int)
   let refLength := mate.cigar.foldl (init := 0) fun n (step, count) => if step == .gapY then n else n + count
-  putRecord out (samName record.name) flag mate.placement.chromosome mate.placement.start (mapq answer)
+  putRecord out (qnameB record.name) flag mate.placement.chromosome mate.placement.start (mapq answer)
     (reg2bin mate.placement.start (mate.placement.start + refLength)) mate.cigar record
     (mate.placement.strand == .reverse) other.placement.chromosome other.placement.start tlen
     fun out => putAnswerTags (putIntTag out "AS" mate.score) answer
 
 -- a mate with no alignment reported
-def bamUnmapped (out : ByteArray) (record : FastqRecord) (which : Mate) (tags : ByteArray → ByteArray) : ByteArray :=
-  putRecord out (samName record.name) (flagPaired + flagUnmapped + flagMateUnmapped + mateFlag which) (-1) (-1) 0 4680
+def bamUnmapped (out : ByteArray) (record : ReadB) (which : Mate) (tags : ByteArray → ByteArray) : ByteArray :=
+  putRecord out (qnameB record.name) (flagPaired + flagUnmapped + flagMateUnmapped + mateFlag which) (-1) (-1) 0 4680
     #[] record false (-1) (-1) 0 tags
 
 -- the two BAM records for one pair (`samLines`)
-def bamPair (out : ByteArray) (record1 record2 : FastqRecord) (result : PairResult) : ByteArray :=
+def bamPair (out : ByteArray) (record1 record2 : ReadB) (result : PairResult) : ByteArray :=
   match result with
   | .trimmedAway mate =>
       let tags := fun out => putStrTag out "XT" s!"trimmedAway{if mate = .one then 1 else 2}"
@@ -298,14 +296,14 @@ def bamPair (out : ByteArray) (record1 record2 : FastqRecord) (result : PairResu
           bamUnmapped (bamUnmapped out record1 .one tags) record2 .two tags
 
 -- one chunk's uncompressed BAM records, formatted in `parts` tasks (as `samChunk`)
-def bamChunk (chunk : Array (FastqRecord × FastqRecord)) (results : List PairResult) (parts : Nat) : ByteArray :=
+def bamChunk (chunk : Array (ReadB × ReadB)) (results : List PairResult) (parts : Nat) : ByteArray :=
   let pairs := chunk.zip results.toArray
   let size := (pairs.size + parts - 1) / parts
   let tasks := (List.range parts).map fun part => Task.spawn fun _ =>
     let mine := pairs.extract (part * size) ((part + 1) * size)
     -- room for the part's records (bases + qualities + names + ~120 bytes of fixed fields and tags per mate)
     let room := mine.foldl (init := 0) fun n ((r1, r2), _) =>
-      n + r1.letters.size * 2 + r2.letters.size * 2 + r1.name.utf8ByteSize + r2.name.utf8ByteSize + 300
+      n + r1.seq.size * 2 + r2.seq.size * 2 + r1.name.size + r2.name.size + 300
     mine.foldl (init := ByteArray.emptyWithCapacity room)
       fun out ((record1, record2), result) => bamPair out record1 record2 result
   tasks.foldl (fun bytes task => bytes ++ task.get) ByteArray.empty
@@ -340,22 +338,24 @@ def main (args : List String) : IO UInt32 := do
   let insertSettings : InsertSettings := { range := (100, 1000) }
   let index ← if synthetic then pure ByteArray.empty else IO.FS.readBinFile indexPath
   let chromosomes ← readChromosomeList (indexPath ++ ".chromosomes")
-  let reads1 ← FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
-  let reads2 ← FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
+  -- the whole files, parsed (`parseFastqB` = `FQ.parse`), the mates paired, cut and trimmed as `MapFast.job` does
+  let .ok all1 := parseFastqB (← IO.FS.readBinFile reads1Path) | throw (IO.userError "FASTQ 1 does not parse")
+  let .ok all2 := parseFastqB (← IO.FS.readBinFile reads2Path) | throw (IO.userError "FASTQ 2 does not parse")
+  let some allPairs := MapFast.prepPairsB all1 all2 | throw (IO.userError "FASTQ files out of step or bad QNAME")
   -- read and map all chunks once; keep chunks and results
   let t0 ← IO.monoNanosNow
-  let mut chunks : Array (Array (FastqRecord × FastqRecord) × List PairResult) := #[]
+  let mut chunks : Array (Array (ReadB × ReadB) × List PairResult) := #[]
   let mut total := 0
   let mut mapSecs := 0.0
   repeat
-    let chunk ← readChunk reads1 reads2 (min 100000 (limit - total))
+    let chunk := allPairs.extract total (total + min 100000 (limit - total))
     if chunk.isEmpty then break
     let a ← IO.monoNanosNow
     let results ← if mode == "m1" then   -- the shape of today's results: no pair found
         pure (chunk.toList.map fun _ => PairResult.aligned { found := none, bestPossibleScore := -16, uniqueness := .unknown, tier := .eachMateUnique })
       else if synthetic then
-        pure (chunk.toList.zipIdx.map fun ((r1, r2), i) => syntheticResult chromosomes (total + i) r1.letters.size r2.letters.size)
-      else pure (alignPairs insertSettings index (chunkPairs chunk))
+        pure (chunk.toList.zipIdx.map fun ((r1, r2), i) => syntheticResult chromosomes (total + i) r1.seq.size r2.seq.size)
+      else pure (alignPairsP insertSettings (chunkSetup insertSettings index) (chunkPairs chunk))
     assert! results.length == chunk.size   -- forces the mapping here
     mapSecs := mapSecs + secs a (← IO.monoNanosNow)
     total := total + chunk.size
@@ -374,13 +374,13 @@ def main (args : List String) : IO UInt32 := do
       let mut writeNs := 0
       let mut bytes := 0
       let mut recordNs := 0   -- BAM only: the uncompressed records, then the BGZF framing (CRC32 + copy)
-      let header ← pure (if format == "sam" then (String.join ((samHeader chromosomes).map (· ++ "\n"))).toUTF8
+      let header ← pure (if format == "sam" then samHeaderB chromosomes
                          else Bam.bgzf (Bam.bamHeader chromosomes))
       out.write header
       bytes := bytes + header.size
       for (chunk, results) in chunks do
         let a ← IO.monoNanosNow
-        let (text, mid) ← if format == "sam" then pure (samChunk chromosomes chunk results 16, a)
+        let (text, mid) ← if format == "sam" then pure (samChunkS chromosomes chunk results, a)
           else do
             let records := Bam.bamChunk chunk results 16
             let _ := records.size

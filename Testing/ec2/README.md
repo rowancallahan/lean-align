@@ -48,3 +48,19 @@ Knobs: `PAIRS=100000000 bash ... setup.sh` for more reads (the whole 30x file is
 - Different CPU, and pinned to 32 cores instead of 32 threads on a 64-thread machine.
 - 40M pairs by default, not the whole file, so index load is a larger share of the wall time.
 - strobealign is not run by these scripts.
+
+## Verify
+
+`Testing/verify.sh` (proofs, index freshness, hg38 fuzz vs minibwa, unique genome == minibwa, speed) on the
+machine after `setup.sh full WORKDIR`:
+
+    W=~/bench
+    sudo apt-get install -y samtools                       # step 4 only
+    mkdir -p $W/sets && for r in 1 2; do gzip -dc $W/cmp_R$r.fq.gz | head -n 800000 > $W/sets/nova200k_R$r.fq; done
+    P=$W/sets SETS=nova200k INDEX=$W/ours.idx MBINDEX=$W/mb MINIBWA=$W/minibwa/minibwa SAMTOOLS=samtools \
+      GENOME=$W/genome.fa THREADS=32 bash Testing/verify.sh $W/verify
+
+- step 2 maps the first 2,000 pairs of the first set in SETS; step 5 times every set in SETS.
+- step 3 writes a one-line copy of GENOME (about 3.2 GB) into $W/verify/fuzz.
+- step 4 builds `kmer_check` and `bam_write`, its own 4 Mb genome and both indexes, and leaves out the simulated
+  pairs our adapter cut trims (about 170 of 199,880 and 370 of 470,298; minibwa does not cut).
