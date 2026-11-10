@@ -13,6 +13,20 @@ def fail (tmpPath why : String) : IO UInt32 := do
 
 def fuel : Nat := 2 ^ 64
 
+-- up to `chunkSize` bytes: a pipe returns at most ~64 KB per read, so reads are repeated until the
+-- chunk is full or the file has ended (empty only at the end of the file)
+def readFull (fastq : IO.FS.Handle) : IO ByteArray := do
+  let mut chunk ← fastq.read chunkSize
+  repeat
+    match decide (chunkSize.toNat ≤ chunk.size), chunk.isEmpty with
+    | true, _ | _, true => break
+    | false, false =>
+      let more ← fastq.read (chunkSize - chunk.size.toUSize)
+      match more.isEmpty with
+      | true  => break
+      | false => chunk := chunk ++ more
+  return chunk
+
 -- each FASTQ file is read on its own thread, a few chunks ahead, so both files (and the
 -- decompressors feeding them through pipes) keep going while the chunks are mapped.
 -- A read error stops the program at once (exit 1).
@@ -21,7 +35,7 @@ def readAhead (fastq : IO.FS.Handle) : IO (Std.CloseableChannel.Sync ByteArray) 
   let _ ← IO.asTask (prio := .dedicated) do
     try
       repeat
-        let chunk ← fastq.read chunkSize
+        let chunk ← readFull fastq
         match chunk.isEmpty with
         | true  => break
         | false => chunks.send chunk
