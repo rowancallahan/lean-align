@@ -248,4 +248,29 @@ theorem collect_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (
     · have : pd.size = (vals pd).length := by simp [vals]
       rw [this, hpd]; simp; omega
 
+-- if some result that `collect` would take is none, the files (whatever follows) are not valid
+theorem failing_job (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (job : ByteArray → ByteArray → Option ByteArray) (st : State) (W F1 F2 : List UInt8) (keep : Nat)
+    (hI : InvG (mapReads settings index chrs) job st W F1 F2) (h : collect keep st.pending ByteArray.empty = none)
+    (T1 T2 : List UInt8) : mapReads settings index chrs (F1 ++ T1) (F2 ++ T2) = none := by
+  have hv := collect_vals keep st.pending ByteArray.empty
+  rw [h] at hv
+  simp only [Option.map_none] at hv
+  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
+  unfold collectL at hv
+  cases hm : (List.take ((vals st.pending).length - keep) (vals st.pending)).mapM id with
+  | some ps => rw [hm] at hv; simp at hv
+  | none =>
+    rw [hF1, hF2]
+    simp only [List.append_assoc]
+    rw [chain settings index chrs SP hSP]
+    have hmap : SP.map (fun p => mapReads settings index chrs p.1 p.2) = pieces.map some ++ vals st.pending := by
+      rw [← List.take_append_drop K SP, List.map_append, hpieces, ← hvals]
+    have : (SP.map fun p => mapReads settings index chrs p.1 p.2).mapM id = none := by
+      rw [hmap, mapM_id_append, (mapM_id_some _ _).2 rfl]
+      simp only [Option.bind_some]
+      rw [← List.take_append_drop ((vals st.pending).length - keep) (vals st.pending), mapM_id_append, hm]
+      simp
+    rw [this]; rfl
+
 end Spec.FQ.MapStream
