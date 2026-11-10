@@ -4,46 +4,56 @@ import Spec.Draft.Sam
 namespace Spec.Total
 open Spec
 
--- the SAM file for two FASTQ files, or none if either file is not valid FASTQ
+-- the mates of every pair have the same QNAME (and it is a valid SAM QNAME);
+-- then every read is cut at the adapter and trimmed
+def prepPairs (reads1 reads2 : List FQ.Read) : Option (List (FQ.Read × FQ.Read)) :=
+  let names1 := reads1.map (SamSpec.qname ∘ FQ.Read.name)
+  let names2 := reads2.map (SamSpec.qname ∘ FQ.Read.name)
+  match decide (names1 = names2 ∧ names1.all SamSpec.qnameOk) with
+  | true  => some (List.zip (reads1.map (Trim.trim ∘ Trim.cut)) (reads2.map (Trim.trim ∘ Trim.cut)))
+  | false => none
+
+-- what `alignPairs` takes for a pair: the letters of each mate, or none if trimmed away
+def mateLetters (pair : FQ.Read × FQ.Read) : Option ByteArray × Option ByteArray :=
+  let letters (r : FQ.Read) : Option ByteArray :=
+    match r.sequence with
+    | [] => none
+    | s  => some ⟨s.toArray⟩
+  (letters pair.1, letters pair.2)
+
+-- the SAM file for two FASTQ files, or none if they are not valid, matching FASTQ
 def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (file1 file2 : List UInt8) : Option (List UInt8) :=
   match FQ.parse file1, FQ.parse file2 with
   | some reads1, some reads2 =>
-    let pairs := List.zip (reads1.map (Trim.trim ∘ Trim.cut)) (reads2.map (Trim.trim ∘ Trim.cut))
-    some (SamSpec.samFile chrs pairs (alignPairs settings index (pairs.map mateLetters)))
+    (prepPairs reads1 reads2).map fun pairs =>
+      SamSpec.samFile chrs pairs (alignPairs settings index (pairs.map mateLetters))
   | _, _ =>
     none
-where
-  -- what `alignPairs` takes for a pair: the letters of each mate, or none if trimmed away
-  mateLetters (pair : FQ.Read × FQ.Read) : Option ByteArray × Option ByteArray :=
-    let letters (r : FQ.Read) : Option ByteArray :=
-      match r.sequence with
-      | [] => none
-      | s  => some ⟨s.toArray⟩
-    (letters pair.1, letters pair.2)
 
--- streaming (holes, filled below the Spec): `stream_eq` says it gives exactly `mapFiles`
-
+-- the fast, streaming version: holes, filled below the Spec
 def MapState : Type := sorry
 def mapStart (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) : MapState × ByteArray := sorry
-def mapStep (st : MapState) (block1 block2 : ByteArray) : Option (MapState × ByteArray) := sorry
-def mapEnd (st : MapState) : Option ByteArray := sorry
+def mapStep (state : MapState) (block1 block2 : ByteArray) : Option (MapState × ByteArray) := sorry
+def mapEnd (state : MapState) : Option ByteArray := sorry
 
-def runFrom : MapState → List (ByteArray × ByteArray) → Option (List UInt8)
-  | st, [] => (mapEnd st).map (·.data.toList)
-  | st, (b1, b2) :: rest =>
-    match mapStep st b1 b2 with
-    | some (st', piece) => (runFrom st' rest).map (piece.data.toList ++ ·)
-    | none => none
-
-def runStream (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+-- run it over the two files' blocks, in order
+def mapFilesFast (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (blocks : List (ByteArray × ByteArray)) : Option (List UInt8) :=
-  let (st, header) := mapStart settings index chrs
-  (runFrom st blocks).map (header.data.toList ++ ·)
+  let (state, header) := mapStart settings index chrs
+  (go state blocks).map (header.data.toList ++ ·)
+where
+  go (state : MapState) : List (ByteArray × ByteArray) → Option (List UInt8)
+    | [] => (mapEnd state).map (·.data.toList)
+    | (block1, block2) :: rest =>
+      match mapStep state block1 block2 with
+      | some (next, piece) => (go next rest).map (piece.data.toList ++ ·)
+      | none               => none
 
-theorem stream_eq (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+-- however the two files are cut into blocks, the fast version gives exactly `mapFiles`
+theorem mapFilesFast_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (blocks : List (ByteArray × ByteArray)) :
-    runStream settings index chrs blocks =
+    mapFilesFast settings index chrs blocks =
       mapFiles settings index chrs (blocks.flatMap (·.1.data.toList)) (blocks.flatMap (·.2.data.toList)) := by
   sorry
 
