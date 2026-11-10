@@ -26,8 +26,9 @@ Throughput stays flat from 10M to 40M pairs after the fix, and drops with run si
 | novaseq_2x151 | 10000000 | lean-align | f465a57 | 196.1 | n/m | 676.1 | 5.73 | 55.4 | 16.08 | 1 |
 | novaseq_2x151 | 20000000 | lean-align | f465a57 | 389.0 | n/m | 1350.0 | 5.74 | 55.9 | 16.11 | 1 |
 | novaseq_2x151 | 40000000 | lean-align | f465a57 | 778.5 | n/m | 2709.3 | 5.74 | 55.9 | 16.05 | 1 |
+| novaseq_2x151 | 10000000 | minibwa | c07de5c | 742.8 | 583.9 | n/m | n/m | 14.6 | 4.87 | 1 |
 | novaseq_2x151 | 20000000 | minibwa | c07de5c | 1086.7 | n/m | 4135.9 | 8.81 | 20.0 | 5.26 | 1 |
-| novaseq_2x151 | 40000000 | minibwa | c07de5c | n/m | n/m | n/m | n/m | n/m | n/m | 1 |
+| novaseq_2x151 | 40000000 | minibwa | c07de5c | 2192.6 | n/m | 8364.7 | 8.81 | 19.8 | 5.20 | 1 |
 
 ## Whole lanes (HiSeq 33.9M pairs, NovaSeq 40M pairs)
 
