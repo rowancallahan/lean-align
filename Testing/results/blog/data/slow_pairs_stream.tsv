@@ -1,0 +1,40 @@
+# Slow pairs inside the HiSeq lane run (GIAB D1_S1_L001, trace box, 4 cores, shared with curl|gunzip). Same pair index in both builds.
+# before = 64ae73f (trace f973b77/d94d683, 16000-pair jobs), after = f465a57 (4000-pair jobs). ms = time of align+SAM-prep of the pair as logged by the trace; the trace logs only pairs > 20 ms, so after_ms = 20 with lt20 = 1 means 'at most 20'.
+# class: from the trimmed mates: poly-run = a one-letter run >= 20 in a mate, short-period repeat = <= 24 distinct 4-mers or period <= 8 matching >= 90%, other = none of these.
+pair	before_ms	after_ms	lt20	len1	len2	class
+2538239	58295	654	0	25	29	poly-run
+12568314	56115	413	0	34	25	poly-run
+6870452	50184	704	0	25	27	poly-run
+33069018	47874	487	0	29	37	poly-run
+28438901	46515	665	0	25	25	short-period repeat
+29912370	44550	475	0	25	38	poly-run
+13255497	44454	597	0	27	29	poly-run
+20701472	39555	535	0	29	33	poly-run
+9147610	39360	521	0	27	45	poly-run
+8149234	37322	423	0	31	28	poly-run
+9640538	29276	498	0	27	26	poly-run
+27886551	28861	280	0	32	32	poly-run
+29875222	25735	434	0	38	47	poly-run
+30233068	21750	406	0	39	43	short-period repeat
+32991627	21734	479	0	38	38	short-period repeat
+13655682	20868	271	0	35	49	poly-run
+10261446	18241	480	0	25	31	poly-run
+21371723	10393	357	0	27	30	poly-run
+24438814	9213	357	0	29	36	poly-run
+2468894	7949	355	0	30	26	poly-run
+5572476	7429	349	0	28	40	poly-run
+6002688	5581	228	0	30	32	poly-run
+929449	4343	219	0	30	38	poly-run
+14989802	4133	510	0	45	31	poly-run
+22408953	3877	132	0	35	35	other
+21323893	3776	517	0	46	46	poly-run
+28531901	3279	275	0	26	37	poly-run
+25513494	3267	161	0	42	34	poly-run
+9005894	2615	242	0	30	27	poly-run
+24312344	2595	96	0	43	38	other
+28282229	2344	215	0	31	33	poly-run
+22407319	2278	68	0	34	27	poly-run
+22120133	1987	149	0	27	28	poly-run
+10298698	1754	95	0	40	40	other
+20590249	1707	231	0	32	25	poly-run
+9779541	1466	429	0	28	31	poly-run
