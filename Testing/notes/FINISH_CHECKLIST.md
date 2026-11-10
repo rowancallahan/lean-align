@@ -41,6 +41,13 @@ Order matters: make it right, check it, then understand it.
 - `SHIM_EXPLAINED.md`, `UTILIZATION.md`, `byte_specs/LEMMAS.md`, `Testing/fuzz/ROWAN_CHECKLIST.md`, `SESSION_SUMMARY.md`.
 
 ## REMINDER (Rowan): double-check the locked SAM spec (Spec/Draft/Sam.lean) line by line, field by field against SAMv1 §1.4.
+## DECIDED (Rowan, from the spec review; Rowan edits the Spec, not Claude)
+- Trim: pick the best window among windows at least `minLength` (25) long; tie rule: longest, then leftmost. (The one real error the review found.) Changes output vs festive once done; the fast trimmer must be redone and re-proved then.
+- Chromosome names: at build, name = header up to the first whitespace, valid SAM RNAME, unique, length ≥ 1; fail the build otherwise.
+- Index quality of life (later): detect a corrupt/stale index, tie .chromosomes to the index, genome version/hash in the index header; fail fast.
+- `toNat!` in Main/Fasta: fail fast on bad numbers (toNat? + exit 1).
+- Not changing: names ≥ 10 bytes (short names can't be unique over millions of reads); no streaming/memory promise in the Spec.
+- No single end theorem over parse + trim + align for now: trimming is an arbitrary choice. Idea: if a local-alignment score can be defined universally (soft clipping scored), trimming can go, and the end theorem can say the alignments are of exactly the reads in the file.
 ## REMINDER (Rowan): read process / process_correct / Main line by line (StateM, `.run`, `modifyGet`, `modify`), and compare Main with the theorem.
 ## LATER (Rowan, option): cut Spec reading: move parts unused by the end theorem (Alignment: allPaths/alignSpec(_optimal), the kernel slot AlignmentResult/AlignmentKernel*, decodeCigar/cigar_decodes; Mapping: IsUniqueBest/exists_best) into Proofs/.
 ## LATER (Rowan): spec change: `mapStep`/`mapEnd` return an error message (Except String) instead of `none`, so a failed run says why; which message can be a theorem later.
