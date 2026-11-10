@@ -166,15 +166,17 @@ def mateLine (chrs : ChromosomeList) (r : FQ.Read) (which : Mate) (result : Pair
          qual r p]               -- QUAL
         ++ tags result p)
 
--- the two lines of every pair, in order
+-- the two lines of one pair
+def pairLines (chrs : ChromosomeList) (r1 r2 : FQ.Read) (result : PairResult) : List UInt8 :=
+  mateLine chrs r1 .one result ++ mateLine chrs r2 .two result
+
+-- the lines of every pair, in order
 def body (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) :
     List UInt8 :=
-  let pairLines := (pairs.zip results).map fun ((r1, r2), result) =>
-    mateLine chrs r1 .one result ++ mateLine chrs r2 .two result
-  pairLines.flatten
+  (List.map (fun ((r1, r2), result) => pairLines chrs r1 r2 result) (List.zip pairs results)).flatten
 
 def samFile (chrs : ChromosomeList) (pairs : List (FQ.Read × FQ.Read)) (results : List PairResult) :
     List UInt8 :=
-  header chrs ++ body chrs pairs results
+  (header chrs) ++ (body chrs pairs results)
 
 end Spec.SamSpec
