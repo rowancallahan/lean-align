@@ -1,3 +1,4 @@
+-- LOCKED (Rowan, 2026-11-10): the trimming spec.
 import Spec.Fastq
 
 namespace Spec.Trim
