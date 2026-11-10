@@ -1,3 +1,4 @@
+import Proofs.MapProcess
 import Proofs.MapPending
 import Proofs.MapJobs
 /-! # The stream (`MapFast.step`) against `mapReads`: invariant, a successful step, a failing step, the end. -/
@@ -501,5 +502,38 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
         cases hX : mapReads settings index chrs (bl rest1) (bl rest2) with
         | none => simp
         | some x => rw [hX] at hCOL; simp at hCOL
+
+/-! ## The whole run -/
+
+theorem fold_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b)) :
+    ∀ (chunks : List (ByteArray × ByteArray)) (st : State) (W F1 F2 : List UInt8),
+    FInv (mapReads settings index chrs) job st W F1 F2 →
+    Spec.Total.MapProcess.fold MapFast.step st W chunks =
+      mapReads settings index chrs (F1 ++ chunks.flatMap fun c => bl c.1) (F2 ++ chunks.flatMap fun c => bl c.2)
+  | [], st, W, F1, F2, hI => by
+    obtain ⟨hs, hn⟩ := end_correct settings index chrs job hjob st W F1 F2 hI
+    simp only [Spec.Total.MapProcess.fold, List.foldlM_nil, List.flatMap_nil, List.append_nil]
+    cases hst : MapFast.step st none with
+    | none => rw [hn hst]; simp [hst]
+    | some r => obtain ⟨st', out⟩ := r; rw [hs st' out hst]; simp [hst, bl]
+  | (a, b) :: rest, st, W, F1, F2, hI => by
+    simp only [Spec.Total.MapProcess.fold, List.foldlM_cons, List.flatMap_cons]
+    cases hst : MapFast.step st (some (a, b)) with
+    | none =>
+      simp only [Option.map_none, Option.bind_none]
+      have := step_some_fail settings index chrs job hjob st W F1 F2 a b hI hst
+        (rest.flatMap fun c => bl c.1) (rest.flatMap fun c => bl c.2)
+      simp only [List.append_assoc] at this
+      exact this.symm
+    | some r =>
+      obtain ⟨st', piece⟩ := r
+      simp only [Option.map_some, Option.bind_some]
+      have ih := fold_correct settings index chrs job hjob rest st' (W ++ bl piece) (F1 ++ bl a) (F2 ++ bl b)
+        (step_some_inv settings index chrs job hjob st st' W F1 F2 a b piece hI hst)
+      simp only [Spec.Total.MapProcess.fold] at ih
+      simp only [List.append_assoc] at ih
+      exact ih
 
 end Spec.FQ.MapStream
