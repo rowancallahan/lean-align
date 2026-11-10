@@ -1,4 +1,4 @@
-# Accuracy and uniqueness vs minibwa. Source: Testing/notes/UNIQUE_VS_MINIBWA.md (festive c25e1e1; lean-align 027ef1e, minibwa c07de5c, measured before the slow-pair fixes)
+# Accuracy and uniqueness vs minibwa. Source: Testing/notes/UNIQUE_VS_MINIBWA.md (festive c25e1e1; lean-align 027ef1e, minibwa c07de5c, measured before the slow-pair fixes) ; RE-MEASURED on f465a57 (sim block, 100k pairs, seed 1): every sim value identical; the real-read block was not re-run.
 # real: first 200k pairs of the bench release's novaseq_200k and hg002_200k (HiSeq 2x250); values are % of all pairs. 'unique' = our XU:Z:unique vs minibwa MAPQ 60 on both mates; pct_q30 = minibwa MAPQ >= 30 on both.
 # agree: of pairs both tools call unique. sim: Testing/benches/sim_pairs.py seed 1, 100k pairs; a pair is correct if both mates start within 10 bp of the truth; class = OUR class (n pairs).
 block	dataset	class	metric	tool	value	n_pairs
