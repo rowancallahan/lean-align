@@ -367,4 +367,26 @@ theorem pair_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job
     show Option.map bl (st.job st.queue1[k]! st.queue2[k]!) = spec (bl st.queue1[k]!) (bl st.queue2[k]!)
     rw [hj]; exact hjob _ _
 
+theorem collectL_zero (res : List (Option (List UInt8))) (out : List UInt8) :
+    (collectL 0 res out).map (·.2) = (res.mapM id).map fun ps => out ++ ps.flatten := by
+  unfold collectL
+  simp only [Nat.sub_zero, List.take_length]
+  cases res.mapM id <;> simp
+
+theorem foldl_append_bl : ∀ (L : List ByteArray) (acc : ByteArray), bl (L.foldl (· ++ ·) acc) = bl acc ++ (L.map bl).flatten
+  | [], acc => by simp
+  | x :: xs, acc => by
+    rw [List.foldl_cons, foldl_append_bl xs]
+    have : bl (acc ++ x) = bl acc ++ bl x := data_toList_append' acc x
+    rw [this]
+    simp [List.append_assoc]
+
+theorem mapReads_nil (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) :
+    mapReads settings index chrs [] [] = some [] := by
+  rw [mapReads_eq, parse_nil]
+  simp only []
+  unfold R
+  rw [prep_eq]
+  simp [alignPairs_eq_map, SamSpec.body]
+
 end Spec.FQ.MapStream
