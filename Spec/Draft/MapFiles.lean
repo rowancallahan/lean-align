@@ -10,12 +10,12 @@ def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeL
   match FQ.parse file1, FQ.parse file2 with
   | some reads1, some reads2 =>
     let pairs := List.zip (reads1.map (Trim.trim ∘ Trim.cut)) (reads2.map (Trim.trim ∘ Trim.cut))
-    some (SamSpec.samFile chrs pairs (alignPairs settings index (pairs.map alignerInput)))
+    some (SamSpec.samFile chrs pairs (alignPairs settings index (pairs.map mateLetters)))
   | _, _ =>
     none
 where
-  -- the aligner takes the letters of each mate; a mate trimmed to nothing is `none`
-  alignerInput (pair : FQ.Read × FQ.Read) : Option ByteArray × Option ByteArray :=
+  -- what `alignPairs` takes for a pair: the letters of each mate, or none if trimmed away
+  mateLetters (pair : FQ.Read × FQ.Read) : Option ByteArray × Option ByteArray :=
     let letters (r : FQ.Read) : Option ByteArray :=
       match r.sequence with
       | [] => none
