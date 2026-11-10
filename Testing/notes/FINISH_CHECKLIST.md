@@ -66,6 +66,7 @@ Order matters: make it right, check it, then understand it.
 - General rule: data-format warnings fail fast by default; the user opts out explicitly.
 
 ## Later (not before the blog)
+- WebAssembly in the browser: `process` already takes any monad, so JS can feed File.slice chunks. Blockers: the 5.3 GB index (wasm32 caps at 4 GB; memory64, a smaller genome, or a compact index), threads (Web Workers + SharedArrayBuffer, cross-origin isolation), Lean runtime under Emscripten (check). First target: small genome, single thread, as a blog demo.
 - Quality-aware soft clipping (the ~3.8% proper-pair gap to minibwa is clipping).
 - Proved inflate for .fastq.gz (kim-em/lean-zip; check multi-member gzip, speed).
 - Faster trimmer (S-H in progress, exact csimp, theorems unchanged); parseRecord byte checks as a USize loop.
