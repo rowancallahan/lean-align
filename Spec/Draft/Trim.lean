@@ -22,24 +22,26 @@ def baseScore (b q : UInt8) : Int :=
   | 0x41 | 0x43 | 0x47 | 0x54 => (min (q.toNat - 33) 93 : Nat) - 25
   | _ => -1000000
 
--- every window [lo, hi) with lo < hi ≤ n, and its score
-def windows (n : Nat) : List (Nat × Nat) :=
-  (List.range n).flatMap fun lo => (List.range (n - lo)).map fun k => (lo, lo + k + 1)
+def windowScore (scores : List Int) (lo hi : Nat) : Int := ((scores.drop lo).take (hi - lo)).sum
 
-def windowScore (scores : List Int) (w : Nat × Nat) : Int := ((scores.drop w.1).take (w.2 - w.1)).sum
+-- [lo, hi) is a window of `scores` and no window scores higher
+def best (scores : List Int) (lo hi : Nat) : Prop :=
+  lo < hi ∧ hi ≤ scores.length ∧
+  ∀ a b, a < b → b ≤ scores.length → windowScore scores a b ≤ windowScore scores lo hi
 
-def bestWindow (scores : List Int) : Option (Nat × Nat) := (windows scores.length).maxOn? (windowScore scores)
+def trim (r : FQ.Read) : FQ.Read := sorry
 
--- cut at the adapter, keep the best-scoring window, and drop it if it is shorter than `minLength`
-def trim (r : FQ.Read) : FQ.Read :=
-  let c := cut r.sequence
-  let scores := List.zipWith baseScore (r.sequence.take c) (r.quality.take c)
-  match (bestWindow scores).filter fun (lo, hi) => minLength ≤ hi - lo with
-  | some (lo, hi) => ⟨r.name, (r.sequence.drop lo).take (hi - lo), (r.quality.drop lo).take (hi - lo)⟩
-  | none          => ⟨r.name, [], []⟩
-
-theorem best_window (scores : List Int) (best : Nat × Nat) (h : bestWindow scores = some best) :
-    ∀ w ∈ windows scores.length, windowScore scores w ≤ windowScore scores best := by
+-- the name is kept; the sequence and quality are a best window of the read cut at the adapter, at least
+-- `minLength` long, or nothing (when the read was cut to nothing, or a best window is shorter than `minLength`)
+theorem trim_correct (r : FQ.Read) :
+    let c := cut r.sequence
+    let scores := List.zipWith baseScore (r.sequence.take c) (r.quality.take c)
+    (trim r).name = r.name ∧
+    ((∃ lo hi, best scores lo hi ∧ minLength ≤ hi - lo ∧
+        (trim r).sequence = (r.sequence.drop lo).take (hi - lo) ∧
+        (trim r).quality = (r.quality.drop lo).take (hi - lo)) ∨
+     ((trim r).sequence = [] ∧ (trim r).quality = [] ∧
+        (scores = [] ∨ ∃ lo hi, best scores lo hi ∧ hi - lo < minLength))) := by
   sorry
 
 end Spec.Trim
