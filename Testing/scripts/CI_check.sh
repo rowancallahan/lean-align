@@ -15,7 +15,9 @@ HEADLINE="Spec.alignPairs_correct Spec.alignPairs_end_to_end
   Spec.trimBytes_window Spec.trimBytes_acgt Spec.trimBytes_size Spec.cutAt_spec
   Spec.trimRead_quality_bytes Spec.trimRead_correct Spec.parse_trim_quality Spec.trimChunk_eq
   Spec.trimRead_best Spec.trimRead_best_none Spec.trimRead_contract Spec.trimRead_valid Spec.parse_trim_valid
-  Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq"
+  Spec.trimReadB_toRead Spec.FQ.parse_correct Spec.FQ.parseFastqB_eq Spec.qnameB_eq Spec.qnameOkB_eq
+  Spec.Trim.trim_correct Spec.Trim.cut_eq Spec.Trim.cut_eq_cutF Spec.Trim.trimB_eq
+  Spec.SamFast.samHeaderB_eq Spec.SamFast.samChunkS_eq Spec.SamFast.samFileS_eq"
 
 step "frozen files (checksums)"
 (cd Aligner/trimmer && shasum -a 256 -c FROZEN_CONTRACT.sha256) || fail=1
@@ -46,13 +48,18 @@ grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |
 grep -nE "IO\." Aligner/LeanAlign/*.lean && bad "IO in the pure library LeanAlign/"
 grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" \
   Main.lean Spec/Draft/Main.lean Proofs/MapFast.lean Spec/Fasta.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
-  Aligner/io/FastqIO.lean \
+  Aligner/io/FastqIO.lean Proofs/Draft/*.lean \
   && bad "forbidden token in the shim files"
 [ $fail -eq $before ] && echo "none"
 
 step "copies mirror Spec/"
 python3 -I Testing/scripts/fastq_mirror.py Spec/Fastq.lean Proofs/Fastq.lean \
   && echo "Proofs/Fastq.lean mirrors Spec/Fastq.lean (up to the holes)" || bad "Proofs/Fastq.lean differs from Spec/Fastq.lean"
+python3 -I Testing/scripts/draft_mirror.py Spec/Draft/Trim.lean Proofs/Draft/Trim.lean trim trim_correct \
+  && echo "Proofs/Draft/Trim.lean mirrors Spec/Draft/Trim.lean (up to the holes)" || bad "Proofs/Draft/Trim.lean differs from Spec/Draft/Trim.lean"
+sed -e "s/^import Proofs.Answer$/import Spec.Aligner/" -e "s/^import Proofs.Fasta$/import Spec.Fasta/" \
+  -e "s/^import Proofs.Fastq$/import Spec.Fastq/" Proofs/Draft/Sam.lean | cmp -s - Spec/Draft/Sam.lean \
+  && echo "Proofs/Draft/Sam.lean mirrors Spec/Draft/Sam.lean" || bad "Proofs/Draft/Sam.lean differs from Spec/Draft/Sam.lean"
 for f in Fasta Sam; do
   sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean \
     && echo "Proofs/$f.lean mirrors Spec/$f.lean" || bad "Proofs/$f.lean differs from Spec/$f.lean"
@@ -61,7 +68,7 @@ n=$(grep -n '^/-! ## The index and the aligner' Spec/Aligner.lean | cut -d: -f1)
 head -n $((n - 1)) Spec/Aligner.lean > "$tmp/spec_answer.lean"
 [ -n "$n" ] && sed "1d; \$d; s/^import Proofs.Mapping$/import Spec.Mapping/" Proofs/Answer.lean | cmp -s - "$tmp/spec_answer.lean" \
   && echo "Proofs/Answer.lean mirrors Spec/Aligner.lean (up to the holes)" || bad "Proofs/Answer.lean differs from Spec/Aligner.lean"
-for f in Trim Sam MapFiles; do
+for f in MapFiles; do
   python3 -I Testing/scripts/holes_mirror.py Spec/Draft/$f.lean Proofs/Draft/$f.lean \
     && echo "Proofs/Draft/$f.lean mirrors Spec/Draft/$f.lean (up to the holes)" || bad "Proofs/Draft/$f.lean differs from Spec/Draft/$f.lean"
 done
