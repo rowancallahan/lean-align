@@ -389,4 +389,51 @@ theorem mapReads_nil (settings : InsertSettings) (index : ByteArray) (chrs : Chr
   rw [prep_eq]
   simp [alignPairs_eq_map, SamSpec.body]
 
+theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
+    (st : State) (W F1 F2 : List UInt8) (hI : FInv (mapReads settings index chrs) job st W F1 F2) :
+    (∀ st' out, MapFast.step st none = some (st', out) → mapReads settings index chrs F1 F2 = some (W ++ bl out)) ∧
+    (MapFast.step st none = none → mapReads settings index chrs F1 F2 = none) := by
+  have hP := pair_inv (mapReads settings index chrs) job hjob st W F1 F2 hI.1
+  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hP
+  obtain ⟨jb, f1, f2, q1, q2, pend⟩ := st
+  simp only [] at hj hF1 hF2 hvals
+  subst hj
+  -- the last job's input
+  have hr1 : bl ((q1.extract (min q1.size q2.size) q1.size).foldl (· ++ ·) ByteArray.empty ++ f1.carry) =
+      ((q1.extract (min q1.size q2.size) q1.size).toList.map bl).flatten ++ bl f1.carry := by
+    rw [show ∀ a b : ByteArray, bl (a ++ b) = bl a ++ bl b from fun a b => data_toList_append' a b,
+      ← Array.foldl_toList, foldl_append_bl]; simp
+  have hr2 : bl ((q2.extract (min q1.size q2.size) q2.size).foldl (· ++ ·) ByteArray.empty ++ f2.carry) =
+      ((q2.extract (min q1.size q2.size) q2.size).toList.map bl).flatten ++ bl f2.carry := by
+    rw [show ∀ a b : ByteArray, bl (a ++ b) = bl a ++ bl b from fun a b => data_toList_append' a b,
+      ← Array.foldl_toList, foldl_append_bl]; simp
+  generalize hrest1 : (q1.extract (min q1.size q2.size) q1.size).foldl (· ++ ·) ByteArray.empty ++ f1.carry = rest1 at hr1
+  generalize hrest2 : (q2.extract (min q1.size q2.size) q2.size).foldl (· ++ ·) ByteArray.empty ++ f2.carry = rest2 at hr2
+  generalize hpaired : spawnPaired jb q1 q2 pend = paired at hvals
+  have hF1' : F1 = (SP.map (·.1)).flatten ++ bl rest1 := by rw [hF1, hr1]; simp only [List.append_assoc]
+  have hF2' : F2 = (SP.map (·.2)).flatten ++ bl rest2 := by rw [hF2, hr2]; simp only [List.append_assoc]
+  have hCH := chain settings index chrs SP hSP (bl rest1) (bl rest2)
+  rw [← hF1', ← hF2'] at hCH
+  have hmap : SP.map (fun p => mapReads settings index chrs p.1 p.2) = pieces.map some ++ vals paired := by
+    rw [← List.take_append_drop K SP, List.map_append, hpieces, ← hvals]
+  have hMres : (SP.map fun p => mapReads settings index chrs p.1 p.2).mapM id =
+      ((vals paired).mapM id).map (pieces ++ ·) := by
+    rw [hmap, mapM_id_append, (mapM_id_some _ _).2 rfl]
+    simp only [Option.bind_some]
+  have hCH' : mapReads settings index chrs F1 F2 = ((vals paired).mapM id).bind fun ps =>
+      (mapReads settings index chrs (bl rest1) (bl rest2)).map ((pieces ++ ps).flatten ++ ·) := by
+    rw [hCH, hMres]
+    cases (vals paired).mapM id <;> simp
+  have hCOL : ((collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
+        else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty).map fun r => bl r.2) =
+      ((vals paired).mapM id).bind fun ps => (mapReads settings index chrs (bl rest1) (bl rest2)).map (ps.flatten ++ ·) := by
+    sorry
+  constructor
+  · intro st' out h
+    sorry
+  · intro h
+    sorry
+
 end Spec.FQ.MapStream
