@@ -88,6 +88,28 @@ structure State where
   queue2  : Array ByteArray
   pending : Array (Task (Option ByteArray))
 
+-- LOCAL INSTRUMENTATION (not for commit)
+@[noinline] unsafe def stampImpl (k : Nat) : Nat := unsafeBaseIO (do if k == 999999999999 then pure 0 else IO.monoNanosNow)
+@[implemented_by stampImpl] def stamp (k : Nat) : Nat := k
+unsafe def runLoggedImpl (job : ByteArray → ByteArray → Option ByteArray) (a b : ByteArray) (ts : Nat) : Option ByteArray :=
+  unsafeBaseIO do
+    let t0 ← IO.monoNanosNow
+    let tid ← IO.getTID
+    let r ← (IO.lazyPure fun _ => job a b).catchExceptions (fun _ => pure none)
+    let t1 ← IO.monoNanosNow
+    (IO.eprintln s!"J {ts} {t0} {t1} {tid} {a.size}").catchExceptions (fun _ => pure ())
+    pure r
+@[implemented_by runLoggedImpl] def runLogged (job : ByteArray → ByteArray → Option ByteArray) (a b : ByteArray) (_ts : Nat) :
+    Option ByteArray := job a b
+unsafe def getLoggedImpl (t : Task (Option ByteArray)) (_i : Nat) : Option ByteArray := unsafeBaseIO do
+  let f ← IO.hasFinished t
+  let t0 ← IO.monoNanosNow
+  let v ← IO.wait t
+  let t1 ← IO.monoNanosNow
+  (IO.eprintln s!"C {t0} {t1} {f}").catchExceptions (fun _ => pure ())
+  pure v
+@[implemented_by getLoggedImpl] def getLogged (t : Task (Option ByteArray)) (_i : Nat) : Option ByteArray := t.get
+
 -- the lines of the oldest pending jobs while more than `keep` are pending, appended to `out`
 def collect (keep : Nat) (pending : Array (Task (Option ByteArray))) (out : ByteArray) :
     Option (Array (Task (Option ByteArray)) × ByteArray) :=
@@ -96,7 +118,7 @@ def collect (keep : Nat) (pending : Array (Task (Option ByteArray))) (out : Byte
     | 0 => some (i, out)
     | fuel + 1 =>
       if keep < pending.size - i then
-        match (pending[i]!).get with
+        match getLogged (pending[i]!) i with
         | some piece => go fuel (i + 1) (out ++ piece)
         | none => none
       else some (i, out)
@@ -108,7 +130,8 @@ def spawnPaired (job : ByteArray → ByteArray → Option ByteArray) (queue1 que
   (List.range (min queue1.size queue2.size)).foldl (fun pending k =>
     let a := queue1[k]!
     let b := queue2[k]!
-    pending.push (Task.spawn fun _ => job a b)) pending
+    let ts := stamp k
+    pending.push (Task.spawn fun _ => runLogged job a b ts)) pending
 
 def init (job : ByteArray → ByteArray → Option ByteArray) : State :=
   ⟨job, ⟨ByteArray.empty, 0, 0⟩, ⟨ByteArray.empty, 0, 0⟩, #[], #[], #[]⟩
@@ -132,7 +155,7 @@ def step (st : State) : Option (ByteArray × ByteArray) → Option (State × Byt
     -- what is left over: the unpaired slices and the carries, as one last job
     let rest1 := (queue1.extract n queue1.size).foldl (· ++ ·) ByteArray.empty ++ file1.carry
     let rest2 := (queue2.extract n queue2.size).foldl (· ++ ·) ByteArray.empty ++ file2.carry
-    let all := if rest1.isEmpty && rest2.isEmpty then paired else paired.push (Task.spawn fun _ => job rest1 rest2)
+    let all := if rest1.isEmpty && rest2.isEmpty then paired else paired.push (Task.spawn fun _ => runLogged job rest1 rest2 (stamp rest1.size))
     (collect 0 all ByteArray.empty).map fun (_, out) => (init job, out)
 
 end Spec.MapFast
