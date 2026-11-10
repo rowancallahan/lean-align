@@ -1,0 +1,18 @@
+slow1 festive map_s: 55.25
+  [festive] D00360:95:H2YWMBCXX:1:1106:2504:20124	99	chr1	25214717	0	25M	=	25215227	539	AS:i:0	XB:i:0	XU:Z:unknown	XT:Z:bestUnchecked
+  [festive] D00360:95:H2YWMBCXX:1:1106:2504:20124	147	chr1	25215227	0	29M	=	25214717	-539	AS:i:0	XB:i:0	XU:Z:unknown	XT:Z:bestUnchecked
+slow1 mapfiles_64ae73f map_s: 59.04
+  [mapfiles_64ae73f] D00360:95:H2YWMBCXX:1:1106:2504:20124	99	chr1	25214717	0	25M	=	25215227	539	AS:i:0	XB:i:0	XU:Z:unknown
+  [mapfiles_64ae73f] D00360:95:H2YWMBCXX:1:1106:2504:20124	147	chr1	25215227	0	29M	=	25214717	-539	AS:i:0	XB:i:0	XU:Z:unknown
+slow2 festive map_s: 5.53
+  [festive] D00360:95:H2YWMBCXX:1:1106:20773:6363	99	chr1	84052254	0	30M	=	84052361	133	AS:i:0	XB:i:0	XU:Z:unknown	XT:Z:bestUnchecked
+  [festive] D00360:95:H2YWMBCXX:1:1106:20773:6363	147	chr1	84052361	0	26M	=	84052254	-133	AS:i:0	XB:i:0	XU:Z:unknown	XT:Z:bestUnchecked
+slow2 mapfiles_64ae73f map_s: 5.67
+  [mapfiles_64ae73f] D00360:95:H2YWMBCXX:1:1106:20773:6363	99	chr1	84052254	0	30M	=	84052361	133	AS:i:0	XB:i:0	XU:Z:unknown
+  [mapfiles_64ae73f] D00360:95:H2YWMBCXX:1:1106:20773:6363	147	chr1	84052361	0	26M	=	84052254	-133	AS:i:0	XB:i:0	XU:Z:unknown
+slow3 festive map_s: 3.09
+  [festive] D00360:95:H2YWMBCXX:1:1102:1544:95957	77	*	0	0	*	*	0	0	XB:i:-1	XU:Z:unknown	XT:Z:boundsOnly
+  [festive] D00360:95:H2YWMBCXX:1:1102:1544:95957	141	*	0	0	*	*	0	0	XB:i:-1	XU:Z:unknown	XT:Z:boundsOnly
+slow3 mapfiles_64ae73f map_s: 3.11
+  [mapfiles_64ae73f] D00360:95:H2YWMBCXX:1:1102:1544:95957	77	*	0	0	*	*	0	0	XB:i:-1	XU:Z:unknown
+  [mapfiles_64ae73f] D00360:95:H2YWMBCXX:1:1102:1544:95957	141	*	0	0	*	*	0	0	XB:i:-1	XU:Z:unknown
