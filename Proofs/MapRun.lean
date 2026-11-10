@@ -273,4 +273,37 @@ theorem failing_job (settings : InsertSettings) (index : ByteArray) (chrs : Chro
       simp
     rw [this]; rfl
 
+/-! ## `step` -/
+
+theorem step_some_inv (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
+    (st st' : State) (W F1 F2 : List UInt8) (a b out : ByteArray)
+    (hI : FInv (mapReads settings index chrs) job st W F1 F2) (h : MapFast.step st (some (a, b)) = some (st', out)) :
+    FInv (mapReads settings index chrs) job st' (W ++ bl out) (F1 ++ bl a) (F2 ++ bl b) := by
+  have hmid := spawn_inv (mapReads settings index chrs) job hjob st W F1 F2 a b hI.1
+  obtain ⟨jb, f1, f2, q1, q2, pend⟩ := st
+  simp only [MapFast.step] at h
+  cases hc : collect inFlight (spawnPaired jb (q1 ++ (cutSlices f1 a).2) (q2 ++ (cutSlices f2 b).2) pend) ByteArray.empty with
+  | none => rw [hc] at h; simp at h
+  | some r =>
+    obtain ⟨pd, o⟩ := r
+    rw [hc] at h
+    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact collect_inv (mapReads settings index chrs) job _ _ _ _ inFlight pd o hmid hc
+
+theorem step_some_fail (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
+    (st : State) (W F1 F2 : List UInt8) (a b : ByteArray)
+    (hI : FInv (mapReads settings index chrs) job st W F1 F2) (h : MapFast.step st (some (a, b)) = none) (T1 T2 : List UInt8) :
+    mapReads settings index chrs (F1 ++ bl a ++ T1) (F2 ++ bl b ++ T2) = none := by
+  have hmid := spawn_inv (mapReads settings index chrs) job hjob st W F1 F2 a b hI.1
+  obtain ⟨jb, f1, f2, q1, q2, pend⟩ := st
+  simp only [MapFast.step] at h
+  cases hc : collect inFlight (spawnPaired jb (q1 ++ (cutSlices f1 a).2) (q2 ++ (cutSlices f2 b).2) pend) ByteArray.empty with
+  | none => exact failing_job settings index chrs job _ _ _ _ inFlight hmid hc T1 T2
+  | some r => rw [hc] at h; simp at h
+
 end Spec.FQ.MapStream
