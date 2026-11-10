@@ -389,6 +389,15 @@ theorem mapReads_nil (settings : InsertSettings) (index : ByteArray) (chrs : Chr
   rw [prep_eq]
   simp [alignPairs_eq_map, SamSpec.body]
 
+theorem collect_zero_out (pend : Array (Task (Option ByteArray))) (out : ByteArray) :
+    (collect 0 pend out).map (fun r => bl r.2) = ((vals pend).mapM id).map fun ps => bl out ++ ps.flatten := by
+  have hv := collect_vals 0 pend out
+  have := congrArg (Option.map (·.2)) hv
+  rw [Option.map_map] at this
+  rw [collectL_zero] at this
+  rw [← this]
+  rfl
+
 theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (job : ByteArray → ByteArray → Option ByteArray)
     (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
@@ -429,11 +438,68 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
   have hCOL : ((collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
         else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty).map fun r => bl r.2) =
       ((vals paired).mapM id).bind fun ps => (mapReads settings index chrs (bl rest1) (bl rest2)).map (ps.flatten ++ ·) := by
-    sorry
+    by_cases hE : (rest1.isEmpty && rest2.isEmpty) = true
+    · rw [if_pos hE, collect_zero_out]
+      have h1 : bl rest1 = [] := by
+        have := (Bool.and_eq_true _ _ ▸ hE : _ ∧ _).1
+        have hs : rest1.size = 0 := by simpa [ByteArray.isEmpty] using this
+        exact List.length_eq_zero_iff.1 (by rw [← size_eq_length']; exact hs)
+      have h2 : bl rest2 = [] := by
+        have := (Bool.and_eq_true _ _ ▸ hE : _ ∧ _).2
+        have hs : rest2.size = 0 := by simpa [ByteArray.isEmpty] using this
+        exact List.length_eq_zero_iff.1 (by rw [← size_eq_length']; exact hs)
+      rw [h1, h2, mapReads_nil]
+      cases (vals paired).mapM id <;> simp [bl]
+    · rw [if_neg hE, collect_zero_out]
+      have hv : vals (paired.push (Task.spawn fun _ => jb rest1 rest2)) =
+          vals paired ++ [mapReads settings index chrs (bl rest1) (bl rest2)] := by
+        simp only [vals, Array.toList_push, List.map_append, List.map_cons, List.map_nil, spawn_get]
+        rw [hjob]
+      rw [hv, mapM_id_append]
+      cases (vals paired).mapM id with
+      | none => simp
+      | some ps => cases hx : mapReads settings index chrs (bl rest1) (bl rest2) <;> simp [bl]
   constructor
   · intro st' out h
-    sorry
+    simp only [MapFast.step] at h
+    simp only [hrest1, hrest2, hpaired] at h
+    cases hc : collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
+        else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty with
+    | none => rw [hc] at h; simp at h
+    | some r =>
+      obtain ⟨pd, o⟩ := r
+      rw [hc] at h
+      simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      rw [hc] at hCOL
+      simp only [Option.map_some] at hCOL
+      rw [hCH', hW]
+      cases hM : (vals paired).mapM id with
+      | none => rw [hM] at hCOL; simp at hCOL
+      | some ps =>
+        rw [hM] at hCOL
+        cases hX : mapReads settings index chrs (bl rest1) (bl rest2) with
+        | none => rw [hX] at hCOL; simp at hCOL
+        | some x =>
+          rw [hX] at hCOL
+          simp only [Option.bind_some, Option.map_some, Option.some.injEq] at hCOL
+          simp only [Option.bind_some, Option.map_some, hCOL, List.flatten_append, List.append_assoc]
   · intro h
-    sorry
+    simp only [MapFast.step] at h
+    simp only [hrest1, hrest2, hpaired] at h
+    cases hc : collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
+        else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty with
+    | some r => rw [hc] at h; simp at h
+    | none =>
+      rw [hc] at hCOL
+      simp only [Option.map_none] at hCOL
+      rw [hCH']
+      cases hM : (vals paired).mapM id with
+      | none => simp
+      | some ps =>
+        rw [hM] at hCOL
+        cases hX : mapReads settings index chrs (bl rest1) (bl rest2) with
+        | none => simp
+        | some x => rw [hX] at hCOL; simp at hCOL
 
 end Spec.FQ.MapStream
