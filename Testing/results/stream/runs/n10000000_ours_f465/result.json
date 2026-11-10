@@ -1,0 +1,14 @@
+{
+ "tool": "ours",
+ "exit": 0,
+ "wall_s": 196.14615559577942,
+ "aligner_user_s": 657.932267,
+ "aligner_sys_s": 18.154011,
+ "peak_rss_GB": 5.728572,
+ "all_children_user_s": 725.653812,
+ "all_children_sys_s": 39.2681,
+ "pairs_R1": 10000000.0,
+ "bases_R1": 1510000000.0,
+ "pairs_R2": 10000000.0,
+ "bases_R2": 1510000000.0
+}
