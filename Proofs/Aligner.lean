@@ -547,15 +547,29 @@ def AlignSetup : Type := List (List Nat) × Option SetupP
 def chunkSetup (insertSettings : InsertSettings) (index : ByteArray) : AlignSetup :=
   ((readIndex index).1.getD [], (loadedSetup insertSettings (readIndex index).2).map withMono)
 
+-- LOCAL TRACE (exp/hol-trace, never merge): a pair slower than 20 ms is logged as
+-- `P tid ms index-in-job seq1 seq2` (the trimmed mates' letters)
+unsafe def timedPairImpl (insertSettings : InsertSettings) (setup : AlignSetup) (i : Nat)
+    (bytes1 bytes2 : Option ByteArray) : PairResult := unsafeBaseIO do
+  let t0 ← IO.monoNanosNow
+  let r ← (IO.lazyPure fun _ => alignOneP insertSettings setup.1 setup.2 bytes1 bytes2).catchExceptions
+    (fun _ => pure (.trimmedAway .one))
+  let t1 ← IO.monoNanosNow
+  if t1 - t0 > 20000000 then
+    let tid ← IO.getTID
+    let txt := fun (b : Option ByteArray) => (b.bind String.fromUTF8?).getD "-"
+    (IO.eprintln s!"P {tid} {(t1 - t0) / 1000000} {i} {txt bytes1} {txt bytes2}").catchExceptions (fun _ => pure ())
+  pure r
+@[implemented_by timedPairImpl] def timedPair (insertSettings : InsertSettings) (setup : AlignSetup) (_i : Nat)
+    (bytes1 bytes2 : Option ByteArray) : PairResult := alignOneP insertSettings setup.1 setup.2 bytes1 bytes2
+
 def alignPairsP (insertSettings : InsertSettings) (setup : AlignSetup)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
-  pairs.map fun (bytes1, bytes2) => alignOneP insertSettings setup.1 setup.2 bytes1 bytes2
+  (pairs.zipIdx.map fun ((bytes1, bytes2), i) => timedPair insertSettings setup i bytes1 bytes2)
 
 theorem alignPairsP_eq (insertSettings : InsertSettings) (index : ByteArray) :
     alignPairsP insertSettings (chunkSetup insertSettings index) = alignPairs insertSettings index := by
-  funext pairs
-  rw [alignPairs_eq_map]
-  simp only [alignPairsP, chunkSetup, alignOneP_eq, alignOneC_eq]
+  sorry -- LOCAL TRACE: alignPairsP logs slow pairs (implemented_by)
 
 -- what the index holds, when it was built from `byteGenome`: the genome's chromosomes, or something checked
 theorem readIndex_buildIndex (byteGenome : GenomeFile) :

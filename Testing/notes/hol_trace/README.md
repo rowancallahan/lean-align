@@ -12,3 +12,6 @@ Run (S-T's method, stderr to a file), then summarize:
 
 (gz_probe is on exp/gz-probe: `git checkout origin/exp/gz-probe -- Testing/notes/gz_probe`.) Without the probe, any
 run works: `lean-align map IDX A B OUT 100 1000 2> trace.log`.
+
+Also logs every pair slower than 20 ms: `P tid ms index-in-job seq1 seq2` (the trimmed mates; `alignPairsP` runs
+through `implemented_by`, `alignPairsP_eq` stubbed). `grep '^P' trace.log | sort -k3 -n -r | head` lists the slowest.
