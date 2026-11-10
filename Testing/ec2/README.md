@@ -1,6 +1,6 @@
 # 16- and 32-core test against minibwa
 
-Four files to read, 180 lines in total:
+Five files to read, about 200 lines in total:
 
 | file | what it does |
 |---|---|
