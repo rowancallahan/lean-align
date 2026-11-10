@@ -8,7 +8,7 @@ abbrev Val := Option ByteArray
 def vals (p : Array (Task (Option ByteArray))) : List (Option (List UInt8)) :=
   p.toList.map fun t => t.get.map (·.data.toList)
 
-theorem spawn_get {α : Type} (f : Unit → α) : (Task.spawn f).get = f () := rfl
+theorem spawn_get {α : Type} (f : Unit → α) (prio : Task.Priority := .default) : (Task.spawn f prio).get = f () := rfl
 
 -- the jobs `spawnPaired` starts, by value
 theorem spawnPaired_vals (job : ByteArray → ByteArray → Option ByteArray) (q1 q2 : Array ByteArray)

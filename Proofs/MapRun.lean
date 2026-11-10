@@ -437,7 +437,7 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
     rw [hCH, hMres]
     cases (vals paired).mapM id <;> simp
   have hCOL : ((collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
-        else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty).map fun r => bl r.2) =
+        else paired.push (Task.spawn (prio := .dedicated) fun _ => jb rest1 rest2)) ByteArray.empty).map fun r => bl r.2) =
       ((vals paired).mapM id).bind fun ps => (mapReads settings index chrs (bl rest1) (bl rest2)).map (ps.flatten ++ ·) := by
     by_cases hE : (rest1.isEmpty && rest2.isEmpty) = true
     · rw [if_pos hE, collect_zero_out]
@@ -452,7 +452,7 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
       rw [h1, h2, mapReads_nil]
       cases (vals paired).mapM id <;> simp [bl]
     · rw [if_neg hE, collect_zero_out]
-      have hv : vals (paired.push (Task.spawn fun _ => jb rest1 rest2)) =
+      have hv : vals (paired.push (Task.spawn (prio := .dedicated) fun _ => jb rest1 rest2)) =
           vals paired ++ [mapReads settings index chrs (bl rest1) (bl rest2)] := by
         simp only [vals, Array.toList_push, List.map_append, List.map_cons, List.map_nil, spawn_get]
         rw [hjob]
@@ -465,7 +465,7 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
     simp only [MapFast.step] at h
     simp only [hrest1, hrest2, hpaired] at h
     cases hc : collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
-        else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty with
+        else paired.push (Task.spawn (prio := .dedicated) fun _ => jb rest1 rest2)) ByteArray.empty with
     | none => rw [hc] at h; simp at h
     | some r =>
       obtain ⟨pd, o⟩ := r
@@ -489,7 +489,7 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
     simp only [MapFast.step] at h
     simp only [hrest1, hrest2, hpaired] at h
     cases hc : collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
-        else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty with
+        else paired.push (Task.spawn (prio := .dedicated) fun _ => jb rest1 rest2)) ByteArray.empty with
     | some r => rw [hc] at h; simp at h
     | none =>
       rw [hc] at hCOL

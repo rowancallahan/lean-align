@@ -7,7 +7,7 @@ import FastqIO
 The two files arrive in chunks. Each file's bytes are kept in a carry and cut after every `4 · jobPairs`-th newline,
 without parsing (a record of a valid file is exactly four newline-terminated lines, `FQ.toBytes`). Slice k of file 1
 and slice k of file 2 make job k. A job is mapped by `job` (parse both slices, pair the mates by QNAME, cut and trim
-them, align, write the SAM lines) in its own pure `Task.spawn`. The state keeps the jobs' tasks in order; a step hands
+them, align, write the SAM lines) in its own pure `Task.spawn` on a dedicated thread. The state keeps the jobs' tasks in order; a step hands
 back the lines of the oldest jobs while more than `inFlight` are pending, so the cores keep working while the next
 chunks are read. The end (`none`) maps what is left over (the carries, as one last job) and hands back every job's
 lines. Any job that fails makes the run fail.
@@ -47,10 +47,11 @@ def job (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) 
 
 /-! ## The stream -/
 
--- the pairs per job, and the jobs kept running at once (16 = 4 per worker on 4 cores: the loop then rarely waits on
--- the oldest job; 5M HiSeq gz on 4 cores: 117.8 s at 8, 110.7 s at 16, 113.4 s at 32)
+-- the pairs per job, and the jobs kept running at once. Each job runs on a thread of its own (`.dedicated`), like the
+-- old shim's workers: in Lean's shared pool the loop thread's wait on the oldest job left the workers feed-limited on
+-- some boxes, so `inFlight` is now the number of mapping threads
 def jobPairs : Nat := 16000
-def inFlight : Nat := 16
+def inFlight : Nat := 4
 
 -- one past the first `n` newlines at or after `i`, and how many were found (fewer than `n`: up to the end)
 def advance (b : ByteArray) : (n i : Nat) → Nat × Nat
@@ -109,7 +110,7 @@ def spawnPaired (job : ByteArray → ByteArray → Option ByteArray) (queue1 que
   (List.range (min queue1.size queue2.size)).foldl (fun pending k =>
     let a := queue1[k]!
     let b := queue2[k]!
-    pending.push (Task.spawn fun _ => job a b)) pending
+    pending.push (Task.spawn (prio := .dedicated) fun _ => job a b)) pending
 
 def init (job : ByteArray → ByteArray → Option ByteArray) : State :=
   ⟨job, ⟨ByteArray.empty, 0, 0⟩, ⟨ByteArray.empty, 0, 0⟩, #[], #[], #[]⟩
@@ -133,7 +134,7 @@ def step (st : State) : Option (ByteArray × ByteArray) → Option (State × Byt
     -- what is left over: the unpaired slices and the carries, as one last job
     let rest1 := (queue1.extract n queue1.size).foldl (· ++ ·) ByteArray.empty ++ file1.carry
     let rest2 := (queue2.extract n queue2.size).foldl (· ++ ·) ByteArray.empty ++ file2.carry
-    let all := if rest1.isEmpty && rest2.isEmpty then paired else paired.push (Task.spawn fun _ => job rest1 rest2)
+    let all := if rest1.isEmpty && rest2.isEmpty then paired else paired.push (Task.spawn (prio := .dedicated) fun _ => job rest1 rest2)
     (collect 0 all ByteArray.empty).map fun (_, out) => (init job, out)
 
 end Spec.MapFast
