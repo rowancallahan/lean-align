@@ -4,26 +4,27 @@ import Spec.Draft.Sam
 namespace Spec.Total
 open Spec
 
-def pairUp : List FQ.Read → List FQ.Read → Option (List (FQ.Read × FQ.Read))
-  | [], [] => some []
-  | a :: as, b :: bs =>
-    let q := SamSpec.qname a.name
-    match q == SamSpec.qname b.name && SamSpec.qnameOk q with
-    | true  => (pairUp as bs).map ((a, b) :: ·)
-    | false => none
-  | _, _ => none
-
-def toAligner (r : FQ.Read) : Option ByteArray :=
-  match r.sequence with
-  | [] => none
-  | s  => some ⟨s.toArray⟩
-
+-- the SAM file for two FASTQ files, or none if either file is not valid FASTQ
 def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (file1 file2 : List UInt8) : Option (List UInt8) := do
-  let pairs ← pairUp (← FQ.parse file1) (← FQ.parse file2)
-  let trimmed := pairs.map fun (a, b) => (Trim.trim (Trim.cut a), Trim.trim (Trim.cut b))
-  let results := alignPairs settings index (trimmed.map fun (a, b) => (toAligner a, toAligner b))
-  pure (SamSpec.samFile chrs trimmed results)
+    (file1 file2 : List UInt8) : Option (List UInt8) :=
+  match FQ.parse file1, FQ.parse file2 with
+  | some reads1, some reads2 =>
+    let pairs := List.zip (reads1.map trimRead) (reads2.map trimRead)
+    some (SamSpec.samFile chrs pairs (alignPairs settings index (pairs.map alignerInput)))
+  | _, _ =>
+    none
+where
+  trimRead (r : FQ.Read) : FQ.Read :=
+    Trim.trim (Trim.cut r)
+  -- the aligner takes the letters of each mate; a mate trimmed to nothing is `none`
+  alignerInput (pair : FQ.Read × FQ.Read) : Option ByteArray × Option ByteArray :=
+    let letters (r : FQ.Read) : Option ByteArray :=
+      match r.sequence with
+      | [] => none
+      | s  => some ⟨s.toArray⟩
+    (letters pair.1, letters pair.2)
+
+-- streaming (holes, filled below the Spec): `stream_eq` says it gives exactly `mapFiles`
 
 def MapState : Type := sorry
 def mapStart (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) : MapState × ByteArray := sorry
