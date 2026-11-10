@@ -632,6 +632,48 @@ theorem keepQ_eq (sl hi n gb : Nat) (ys : List (Placement × Int)) (vc nR D : Na
       constructor <;> intro h <;> omega
 
 
+/-! ### The chromosome gate on the table: does some hit of `ys` lie on chromosome `k` (`keepHas_eq`) -/
+
+-- a start no hit of `ys` exceeds
+def maxStart (ys : List (Placement × Int)) : Nat := ys.foldl (fun m y => max m y.1.1.start) 0
+
+theorem le_maxStart_go : ∀ (ys : List (Placement × Int)) (m : Nat),
+    m ≤ ys.foldl (fun m y => max m y.1.1.start) m ∧ ∀ y ∈ ys, y.1.1.start ≤ ys.foldl (fun m y => max m y.1.1.start) m
+  | [], m => by simp
+  | y :: ys, m => by
+    obtain ⟨h1, h2⟩ := le_maxStart_go ys (max m y.1.1.start)
+    simp only [List.foldl_cons, List.mem_cons, forall_eq_or_imp]
+    exact ⟨by omega, by omega, h2⟩
+
+def keepHas (t : Array (Nat × Nat × Nat)) (M k : Nat) : Bool :=
+  let i := keepCount t k M
+  i != 0 && t[i - 1]!.1 == k
+
+theorem keepHas_eq (ys : List (Placement × Int)) (k : Nat) :
+    keepHas (keepTab ys) (maxStart ys) k = ys.any fun y => y.1.1.chr == k := by
+  have hS : ((ys.map winOf).mergeSort winLe).Pairwise (fun a b => winLe a b = true) :=
+    List.pairwise_mergeSort (le := winLe) (fun a b c => winLe_trans) (fun a b => by simp [winLe]; omega) _
+  have hq := keepTab_query _ hS k (maxStart ys) 0
+  have hM := (le_maxStart_go ys 0).2
+  unfold keepHas keepTab
+  dsimp only at hq
+  rw [Bool.eq_iff_iff]
+  have h2 : (ys.any fun y => y.1.1.chr == k) = true ↔ ∃ w ∈ (ys.map winOf).mergeSort winLe, w.1 = k ∧
+      w.2.1 ≤ maxStart ys ∧ 0 ≤ w.2.2 := by
+    rw [List.any_eq_true]
+    constructor
+    · rintro ⟨y, hy, h⟩
+      simp only [beq_iff_eq] at h
+      exact ⟨winOf y, List.mem_mergeSort.2 (List.mem_map.2 ⟨y, hy, rfl⟩), h, by simp only [winOf]; exact hM y hy,
+        Nat.zero_le _⟩
+    · rintro ⟨w, hw, h1, -, -⟩
+      rw [List.mem_mergeSort, List.mem_map] at hw
+      obtain ⟨y, hy, rfl⟩ := hw
+      exact ⟨y, hy, by simp only [winOf] at h1; simp [h1]⟩
+  rw [h2, ← hq]
+  generalize keepCount (runMax ((List.map winOf ys).mergeSort winLe) none).toArray k (maxStart ys) = i
+  simp only [bne_iff_ne, ne_eq, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, Nat.zero_le, and_true]
+
 theorem properPairU_near (sl lo hi : Nat) (a b : Placement) (h : properPairU sl lo hi a b = true) :
     a.1.chr = b.1.chr ∧ b.1.start ≤ a.1.start + a.1.len + hi + sl ∧ a.1.start ≤ b.1.start + hi + sl ∧
       a.1.start ≤ b.1.start + b.1.len + hi + sl ∧ b.1.start ≤ a.1.start + hi + sl := by
@@ -771,8 +813,9 @@ def hitsAtKPNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (lim : Nat) (ix : L) (G
 diagonal filter is a binary search on a table built once (`keepQ_eq`). -/
 def hitsKPFNG {L Pp : Type} [LookG L Pp] [Inhabited Pp] (sl hi : Nat) (ix : L) (G : ByteArray) (offs : Array Nat)
     (pgs : Array PGen) (R : ByteArray) (c : Nat) (ys : List (Placement × Int)) : List (Placement × Int) :=
-  match hitsAtKPNG c ix G offs pgs R (keepQ (hi + sl + gapBound sc0 (-(c : Int))) pgs.size (keepTab ys))
-      (fun k => ys.any fun y => y.1.1.chr == k) with
+  let t := keepTab ys
+  let M := maxStart ys
+  match hitsAtKPNG c ix G offs pgs R (keepQ (hi + sl + gapBound sc0 (-(c : Int))) pgs.size t) (keepHas t M) with
   | some l => l
   | none => hitsKPF ix G offs pgs R c
 
@@ -800,7 +843,10 @@ theorem keepN_gate (sl hi n gb : Nat) (ys : List (Placement × Int)) (t c nR D :
   have hq : keepQ (hi + sl + gapBound sc0 (-(c : Int))) pgs.size (keepTab ys) =
       keepN sl hi pgs.size (gapBound sc0 (-(c : Int))) ys :=
     funext fun vc => funext fun nR => funext fun D => keepQ_eq sl hi _ _ ys vc nR D
+  have hg : keepHas (keepTab ys) (maxStart ys) = fun k => ys.any fun y => y.1.1.chr == k :=
+    funext fun k => keepHas_eq ys k
   unfold hitsKPFN hitsKPFNG hitsAtKPNG hitsAtKPN
+  simp only [hg]
   rw [hq]
   simp only [e0, e1]
 
