@@ -47,9 +47,11 @@ def job (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) 
 
 /-! ## The stream -/
 
--- the pairs per job, and the jobs kept running at once
-def jobPairs : Nat := 16000
-def inFlight : Nat := 8
+-- the pairs per job, and the jobs kept pending at once. Small jobs and a deep window: the loop blocks on the oldest job
+-- only while more than `inFlight` are pending, so the oldest may run ~(inFlight - cores) median job times before the
+-- workers run dry (head-of-line); 32 jobs of 4000 pairs hold about as much as 8 of 16000
+def jobPairs : Nat := 4000
+def inFlight : Nat := 32
 
 -- one past the first `n` newlines at or after `i`, and how many were found (fewer than `n`: up to the end)
 def advance (b : ByteArray) : (n i : Nat) → Nat × Nat
