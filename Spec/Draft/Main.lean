@@ -1,3 +1,4 @@
+-- LOCKED (Rowan, 2026-11-10): the streaming main; read it against `mapFilesFast_correct`.
 import Spec.Draft.MapFiles
 
 open Spec
@@ -9,8 +10,8 @@ def fail (tmpPath why : String) : IO UInt32 := do
   IO.eprintln s!"lean-align: {why}"
   return 1
 
--- `mapFilesFast_correct`, run on the files: start, one step per pair of blocks, end
-def mapFilesIO (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+-- the IO run of `mapFilesFast_correct` (Spec/Draft/MapFiles.lean): start, one step per pair of blocks, end
+def mapFilesFast (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (file1 file2 out : IO.FS.Handle) : IO (Option Unit) := do
   -- start
   let (start, header) := Total.mapStart settings index chrs
@@ -49,7 +50,7 @@ def main (args : List String) : IO UInt32 := do
     -- written to OUT.tmp, renamed to OUT only when everything succeeded
     let tmpPath := outPath ++ ".tmp"
     let out ← IO.FS.Handle.mk tmpPath .write
-    match ← mapFilesIO settings index chrs file1 file2 out with
+    match ← mapFilesFast settings index chrs file1 file2 out with
     | some () =>
       out.flush
       IO.FS.rename tmpPath outPath
