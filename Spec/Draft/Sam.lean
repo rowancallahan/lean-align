@@ -99,9 +99,13 @@ def mateLine (chrs : ChromosomeList) (r : FQ.Read) (which : Mate) (result : Pair
     | some (me, other) =>
       let p := me.placement
       let o := other.placement
-      let flag := 1 + 2 + mateBit +
-        (match p.strand with | .forward => 0 | .reverse => 16) +
-        (match o.strand with | .forward => 0 | .reverse => 32)
+      let reverseBits :=
+        match p.strand, o.strand with
+        | .forward, .forward => 0
+        | .reverse, .forward => 16
+        | .forward, .reverse => 32
+        | .reverse, .reverse => 48
+      let flag := 1 + 2 + mateBit + reverseBits
       let rnext :=
         match decide (p.chromosome = o.chromosome) with
         | true  => text "="
