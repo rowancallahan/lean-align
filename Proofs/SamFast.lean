@@ -1,9 +1,9 @@
 import Proofs.Sam
-import Proofs.TrimRecord
+import Proofs.SamBytes
 
 /-! # The byte SAM writer is `SamSpec.samFile`
 
-`samLinesS` / `samChunkS` / `samHeaderB`: the shim's byte writer (`Spec.samLines`, Spec/Sam.lean) without the XT tier
+`samLinesS` / `samChunkS` / `samHeaderB`: the old shim byte writer (`samLines`, removed) without the XT tier
 tag, and with the spec's TLEN (`max stop − min start` as a `Nat`). Proved equal to the spec's bytes:
 * `samHeaderB_eq`: the header bytes are `SamSpec.header`;
 * `samChunkS_eq`: a chunk's bytes are `SamSpec.body` of its pairs (as `FQ.Read`s, `ReadB.toRead`) and results;
