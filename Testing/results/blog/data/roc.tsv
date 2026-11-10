@@ -1,5 +1,5 @@
-# Copy of Testing/notes/figures_draft/roc.tsv (festive c25e1e1): sim_pairs.py mason/low/high, seed 1, 100k pairs, per READ, correct = same chromosome and interval overlap >= 10%.
-# minibwa c07de5c: one row per MAPQ threshold; lean-align 027ef1e: MAPQ 60 (= XU unique) and MAPQ >= 0. Measured before the slow-pair fixes (output is byte-identical).
+# Re-measured on f465a57 (merged build) with minibwa c07de5c: sim_pairs.py mason/low/high, seed 1, 100k pairs, per READ, correct = same chromosome and interval overlap >= 10%.
+# All 69 rows are identical to the 027ef1e measurement (the earlier header said: lean-align 027ef1e, measured before the slow-pair fixes). Made with scripts/roc_from_sams.py.
 set	tool	mapq_min	reads	mapped	correct	mapped_frac	correct_frac_of_mapped
 mason	minibwa	60	200000	183520	183520	0.9176	1.0
 mason	minibwa	59	200000	183971	183971	0.91985	1.0
