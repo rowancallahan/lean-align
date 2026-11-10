@@ -47,9 +47,10 @@ def job (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) 
 
 /-! ## The stream -/
 
--- the pairs per job, and the jobs kept running at once
+-- the pairs per job, and the jobs kept running at once (16 = 4 per worker on 4 cores: the loop then rarely waits on
+-- the oldest job; 5M HiSeq gz on 4 cores: 117.8 s at 8, 110.7 s at 16, 113.4 s at 32)
 def jobPairs : Nat := 16000
-def inFlight : Nat := 8
+def inFlight : Nat := 16
 
 -- one past the first `n` newlines at or after `i`, and how many were found (fewer than `n`: up to the end)
 def advance (b : ByteArray) : (n i : Nat) → Nat × Nat
