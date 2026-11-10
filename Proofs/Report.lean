@@ -590,6 +590,34 @@ def walkAt (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : Pair
        else pairOf slack lo hi (some a) (nearAt pk pgs offs ns hi (limOf a) R' s' x)).filter keep
     else none
 
+-- the best-scoring pair of a list (the first on ties)
+def bestPair (l : List PairReport) : Option PairReport :=
+  l.foldl (fun b p => match b with
+    | none => some p
+    | some q => if q.mate1.score + q.mate2.score < p.mate1.score + p.mate2.score then some p else b) none
+
+theorem bestPair_mem {l : List PairReport} {p : PairReport} (h : bestPair l = some p) : p ∈ l := by
+  unfold bestPair at h
+  suffices H : ∀ (l : List PairReport) (b : Option PairReport) (q : PairReport),
+      l.foldl (fun b p => match b with
+        | none => some p
+        | some q => if q.mate1.score + q.mate2.score < p.mate1.score + p.mate2.score then some p else b) b = some q →
+      q ∈ l ∨ b = some q from (H l none p h).resolve_right (by simp)
+  intro l
+  induction l with
+  | nil => intro b q h; exact Or.inr h
+  | cons x xs ih =>
+    intro b q h
+    rcases ih _ q h with h1 | h1
+    · exact Or.inl (List.mem_cons_of_mem _ h1)
+    · cases b with
+      | none => simp at h1; subst h1; exact Or.inl (by simp)
+      | some r =>
+        simp only at h1
+        split at h1
+        · simp at h1; subst h1; exact Or.inl (by simp)
+        · exact Or.inr h1
+
 -- the fallback (a walk): mate 1 at its router placement or its anchors, then mate 2 likewise; the first proper
 -- pair that `keep` accepts (e.g. one at or above the report floor: the walk goes on past worse pairs)
 -- `pre`: a walk step goes on to the other mate only when it accepts the anchored mate's line (`walkAt`)
@@ -598,21 +626,17 @@ def fallbackOfK (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep :
   let s1 : PrepM MzP := prepMate pk R1
   let s2 : PrepM MzP := prepMate pk R2
   let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
-  match c1.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false) with
-  | some p => some p
-  | none =>
-    let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
-    c2.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)
+  let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
+  bestPair ((c1.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false)) ++
+            (c2.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)))
 
 /-- `fallbackOfK` with each mate's preparation given (the router's, `answerOfPairP`): `fallbackOfKP_eq`. -/
 def fallbackOfKP (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (slack lo hi : Nat)
     (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (s1 s2 : PrepM MzP) (t : TierOut) : Option PairReport :=
   let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
-  match c1.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false) with
-  | some p => some p
-  | none =>
-    let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
-    c2.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)
+  let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
+  bestPair ((c1.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false)) ++
+            (c2.filterMap (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)))
 
 theorem fallbackOfKP_eq (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
     (slack lo hi : Nat) (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (t : TierOut) :
@@ -836,12 +860,10 @@ theorem fallbackOfK_sound
       pair.report = p ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack := by
   unfold fallbackOfK at h
   simp only at h
-  split at h
-  · rename_i q hq
-    cases h
-    obtain ⟨x, -, hx⟩ := List.exists_of_findSome?_eq_some hq
+  rcases List.mem_append.1 (bestPair_mem h) with hm | hm
+  · obtain ⟨x, -, hx⟩ := List.mem_filterMap.1 hm
     exact walkAt_sound hslice hchr pre limOf keep pk insertSettings R1 R2 t.m1 _ false x _ hx
-  · obtain ⟨x, -, hx⟩ := List.exists_of_findSome?_eq_some h
+  · obtain ⟨x, -, hx⟩ := List.mem_filterMap.1 hm
     exact walkAt_sound hslice hchr pre limOf keep pk insertSettings R1 R2 t.m2 _ true x _ hx
 
 theorem fallbackOf_sound
