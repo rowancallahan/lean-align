@@ -1,0 +1,30 @@
+1,853,713,232 (89.16%) Pipe_worker
+1,504,837,871 (72.38%) Spec_alignPairsP
+1,504,837,866 (72.38%) List_mapTR_loop___at___00Spec_alignPairsP_spec__0
+1,504,242,201 (72.35%) Spec_alignOneP
+815,475,891 (39.22%) MapSpec_Fast_tierPairBP_tierPairBQ
+727,872,701 (35.01%) MapSpec_Fast_routeGS
+721,930,705 (34.72%) MapSpec_Fast_passGSF
+622,713,434 (29.95%) MapSpec_Fast_mateKPPO___at___00MapSpec_Fast_tierPairBS_spec__1
+617,357,445 (29.69%) MapSpec_Fast_mapChromsGBFGPOT___at___00MapSpec_Fast_mateKPPO___at___00MapSpec_Fast_tierPa
+322,120,347 (15.49%) MapSpec_Fast_ilGFGNT___at___00MapSpec_Fast_mapChromsGBFGT___at___00MapSpec_Fast_mateKP___
+306,156,014 (14.73%) MapSpec_Fast_chromKBFGK___at___00MapSpec_Fast_mapChromsGBFGK___at___00MapSpec_Fast_mapChr
+269,441,314 (12.96%) Spec_Report_answerOfPairP
+204,190,207 ( 9.82%) MapSpec_Fast_stageKSPN___at___00MapSpec_Fast_chromKBFG___at___00MapSpec_Fast_mapChromsGBF
+201,265,754 ( 9.68%) Spec_samChunk
+197,135,710 ( 9.48%) Spec_samLines
+194,419,614 ( 9.35%) Spec_mappedLine
+192,730,671 ( 9.27%) MapSpec_Fast_ker16KWG___at___00MapSpec_Fast_hitsCK_spec__0
+192,304,631 ( 9.25%) __private_Init_Data_Array_Basic_0__Array_foldlMUnsafe_fold___at___00MapSpec_Fast_ilGFGNT_
+184,766,567 ( 8.89%) lean_dec_ref_cold
+176,498,942 ( 8.49%) MapSpec_Fast_foldUpN___at___00MapSpec_Fast_mapChromsGBFGP___at___00MapSpec_Fast_regionPen
+168,223,528 ( 8.09%) __private_Init_Data_Array_Basic_0__Array_foldlMUnsafe_fold___at___00__private_Init_Data_A
+160,217,263 ( 7.71%) MapSpec_Fast_stageKSPN___at___00MapSpec_Fast_stageKSPN___at___00MapSpec_Fast_chromKBFG___
+158,341,724 ( 7.62%) __private_Init_Data_Array_Basic_0__Array_mapMUnsafe_map___at___00Spec_trimChunk_spec__0
+157,875,334 ( 7.59%) Spec_trimReadB
+156,056,728 ( 7.51%) Spec_trimBytes
+155,619,935 ( 7.49%) Spec_Report_fallbackOfKP
+147,191,664 ( 7.08%) MapSpec_Fast_mzLookSP
+140,703,799 ( 6.77%) TierHeur_bandDPg
+139,607,208 ( 6.72%) Spec_orElse
+138,624,614 ( 6.67%) Spec_Report_walkAt

@@ -1,0 +1,30 @@
+1,697,595,244 (91.17%) Pipe_worker
+1,414,055,373 (75.95%) Spec_alignPairsP
+1,414,055,368 (75.95%) List_mapTR_loop___at___00Spec_alignPairsP_spec__0
+1,413,459,593 (75.91%) Spec_alignOneP
+552,514,931 (29.67%) MapSpec_Fast_tierPairBP_tierPairBQ
+482,704,055 (25.92%) MapSpec_Fast_routeGS
+476,739,985 (25.60%) MapSpec_Fast_passGSF
+398,207,543 (21.39%) MapSpec_Fast_mateKPPO___at___00MapSpec_Fast_tierPairBS_spec__1
+393,040,045 (21.11%) MapSpec_Fast_mapChromsGBFGPOT___at___00MapSpec_Fast_mateKPPO___at___00MapSpec_Fast_tierPa
+347,423,979 (18.66%) Spec_orElse
+346,414,030 (18.60%) Spec_afterRouter
+310,879,423 (16.70%) Spec_Report_answerOfPairP
+257,335,801 (13.82%) Spec_lookAt
+249,091,343 (13.38%) Spec_Report_fallbackOfKP
+224,630,860 (12.06%) Spec_Report_walkAt
+210,830,467 (11.32%) Spec_Report_nearAt
+206,444,220 (11.09%) MapSpec_Fast_chromKBFGK___at___00MapSpec_Fast_mapChromsGBFGK___at___00MapSpec_Fast_mapChr
+205,229,863 (11.02%) Spec_LastResort_pairsAtS
+191,018,120 (10.26%) MapSpec_Fast_ilGFGNT___at___00MapSpec_Fast_mapChromsGBFGT___at___00MapSpec_Fast_mateKP___
+189,015,715 (10.15%) Spec_Report_nearOf
+180,239,302 ( 9.68%) lean_dec_ref_cold
+175,295,030 ( 9.41%) MapSpec_Fast_mzLookSP
+174,969,421 ( 9.40%) TierHeur_nearY
+163,592,300 ( 8.79%) MapSpec_Fast_scanAWK3
+154,211,202 ( 8.28%) List_findSome_x3f___at___00Spec_Report_fallbackOfK_spec__0
+153,478,066 ( 8.24%) Spec_samChunk
+151,619,724 ( 8.14%) MapSpec_Fast_scanAWF
+149,363,023 ( 8.02%) Spec_samLines
+146,567,699 ( 7.87%) Spec_mappedLine
+145,667,219 ( 7.82%) MapSpec_Fast_stageKSPN___at___00MapSpec_Fast_chromKBFG___at___00MapSpec_Fast_mapChromsGBF
