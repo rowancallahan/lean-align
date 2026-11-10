@@ -1,0 +1,14 @@
+{
+ "tool": "minibwa",
+ "exit": 0,
+ "wall_s": 2192.5990953445435,
+ "aligner_user_s": 8267.615824,
+ "aligner_sys_s": 97.039584,
+ "peak_rss_GB": 8.814076,
+ "all_children_user_s": 8482.419267,
+ "all_children_sys_s": 161.810983,
+ "pairs_R1": 40000000.0,
+ "bases_R1": 6040000000.0,
+ "pairs_R2": 40000000.0,
+ "bases_R2": 6040000000.0
+}
