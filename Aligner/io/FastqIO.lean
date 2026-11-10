@@ -68,9 +68,106 @@ theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀
         toNat_add1 j (by omega)]
     · rw [if_neg hb, if_neg (by simp [hb])]
 
+theorem Go_skip (bytes : ByteArray) (k i : Nat) (hi : i < bytes.size) (hb : bytes[i]! ≠ 10) :
+    findNewlineGo bytes (k + 1) i = findNewlineGo bytes k (i + 1) := by
+  rw [findNewlineGo, if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne]; exact ⟨hi, hb⟩)]
+
+theorem Go_hit (bytes : ByteArray) (k i : Nat) (hi : i < bytes.size) (hb : bytes[i]! = 10) :
+    findNewlineGo bytes (k + 1) i = i := by
+  rw [findNewlineGo, if_neg (by simp [hb])]
+
+-- `findNewlineU` eight bytes per step: one bounds test per eight bytes (`findNewline8_eq`)
+def findNewline8 (bytes : @& ByteArray) (hs : bytes.size < 4294967296) (j : USize) (hj : j.toNat ≤ bytes.size) : USize :=
+  if h : 8 ≤ bytes.usize ∧ j ≤ bytes.usize - 8 then
+    have hu : bytes.usize.toNat = bytes.size := usize_eq bytes hs
+    have h8 : j.toNat + 8 ≤ bytes.size := by
+      have a := h.1; have b := h.2
+      rw [USize.le_iff_toNat_le, USize.toNat_sub_of_le _ _ a] at b
+      have : (8 : USize).toNat = 8 := toNat_toUSize 8 (by decide)
+      rw [USize.le_iff_toNat_le] at a
+      omega
+    have e1 : (j + 1).toNat = j.toNat + 1 := toNat_add1 j (by omega)
+    have e2 : (j + 1 + 1).toNat = j.toNat + 2 := by rw [toNat_add1 _ (by omega), e1]
+    have e3 : (j + 1 + 1 + 1).toNat = j.toNat + 3 := by rw [toNat_add1 _ (by omega), e2]
+    have e4 : (j + 1 + 1 + 1 + 1).toNat = j.toNat + 4 := by rw [toNat_add1 _ (by omega), e3]
+    have e5 : (j + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 5 := by rw [toNat_add1 _ (by omega), e4]
+    have e6 : (j + 1 + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 6 := by rw [toNat_add1 _ (by omega), e5]
+    have e7 : (j + 1 + 1 + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 7 := by rw [toNat_add1 _ (by omega), e6]
+    have e8 : (j + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 8 := by rw [toNat_add1 _ (by omega), e7]
+    if bytes.uget j (by omega) == 10 then j
+    else if bytes.uget (j + 1) (by omega) == 10 then j + 1
+    else if bytes.uget (j + 1 + 1) (by omega) == 10 then j + 1 + 1
+    else if bytes.uget (j + 1 + 1 + 1) (by omega) == 10 then j + 1 + 1 + 1
+    else if bytes.uget (j + 1 + 1 + 1 + 1) (by omega) == 10 then j + 1 + 1 + 1 + 1
+    else if bytes.uget (j + 1 + 1 + 1 + 1 + 1) (by omega) == 10 then j + 1 + 1 + 1 + 1 + 1
+    else if bytes.uget (j + 1 + 1 + 1 + 1 + 1 + 1) (by omega) == 10 then j + 1 + 1 + 1 + 1 + 1 + 1
+    else if bytes.uget (j + 1 + 1 + 1 + 1 + 1 + 1 + 1) (by omega) == 10 then j + 1 + 1 + 1 + 1 + 1 + 1 + 1
+    else findNewline8 bytes hs (j + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) (by omega)
+  else findNewlineU bytes hs j hj
+termination_by bytes.size - j.toNat
+decreasing_by omega
+
+theorem findNewline8_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀ n (j : USize) hj,
+    bytes.size - j.toNat = n → (findNewline8 bytes hs j hj).toNat = findNewlineGo bytes n j.toNat := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+  intro j hj hn
+  rw [findNewline8]
+  split
+  · rename_i h
+    have hu : bytes.usize.toNat = bytes.size := usize_eq bytes hs
+    have h8 : j.toNat + 8 ≤ bytes.size := by
+      have a := h.1; have b := h.2
+      rw [USize.le_iff_toNat_le, USize.toNat_sub_of_le _ _ a] at b
+      have : (8 : USize).toNat = 8 := toNat_toUSize 8 (by decide)
+      rw [USize.le_iff_toNat_le] at a
+      omega
+    have e1 : (j + 1).toNat = j.toNat + 1 := toNat_add1 j (by omega)
+    have e2 : (j + 1 + 1).toNat = j.toNat + 2 := by rw [toNat_add1 _ (by omega), e1]
+    have e3 : (j + 1 + 1 + 1).toNat = j.toNat + 3 := by rw [toNat_add1 _ (by omega), e2]
+    have e4 : (j + 1 + 1 + 1 + 1).toNat = j.toNat + 4 := by rw [toNat_add1 _ (by omega), e3]
+    have e5 : (j + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 5 := by rw [toNat_add1 _ (by omega), e4]
+    have e6 : (j + 1 + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 6 := by rw [toNat_add1 _ (by omega), e5]
+    have e7 : (j + 1 + 1 + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 7 := by rw [toNat_add1 _ (by omega), e6]
+    have e8 : (j + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1).toNat = j.toNat + 8 := by rw [toNat_add1 _ (by omega), e7]
+    have hg : ∀ (x : USize) hx, bytes.uget x hx = bytes[x.toNat]! := fun x hx => by
+      rw [getElem!_pos bytes x.toNat hx]; rfl
+    obtain ⟨m, rfl⟩ : ∃ m, n = m + 8 := ⟨n - 8, by omega⟩
+    dsimp only
+    simp only [hg, e1, e2, e3, e4, e5, e6, e7, beq_iff_eq]
+    have s := fun k i hi hb => Go_skip bytes k i hi hb
+    have t := fun k i hi hb => Go_hit bytes k i hi hb
+    split
+    · rename_i b0; rw [t _ _ (by omega) b0]
+    rename_i b0; rw [s _ _ (by omega) b0]
+    split
+    · rename_i b1; rw [t _ _ (by omega) b1, e1]
+    rename_i b1; rw [s _ _ (by omega) b1]
+    split
+    · rename_i b2; rw [t _ _ (by omega) (by simpa [Nat.add_assoc] using b2), e2]
+    rename_i b2; rw [s _ _ (by omega) (by simpa [Nat.add_assoc] using b2)]
+    split
+    · rename_i b3; rw [t _ _ (by omega) (by simpa [Nat.add_assoc] using b3), e3]
+    rename_i b3; rw [s _ _ (by omega) (by simpa [Nat.add_assoc] using b3)]
+    split
+    · rename_i b4; rw [t _ _ (by omega) (by simpa [Nat.add_assoc] using b4), e4]
+    rename_i b4; rw [s _ _ (by omega) (by simpa [Nat.add_assoc] using b4)]
+    split
+    · rename_i b5; rw [t _ _ (by omega) (by simpa [Nat.add_assoc] using b5), e5]
+    rename_i b5; rw [s _ _ (by omega) (by simpa [Nat.add_assoc] using b5)]
+    split
+    · rename_i b6; rw [t _ _ (by omega) (by simpa [Nat.add_assoc] using b6), e6]
+    rename_i b6; rw [s _ _ (by omega) (by simpa [Nat.add_assoc] using b6)]
+    split
+    · rename_i b7; rw [t _ _ (by omega) (by simpa [Nat.add_assoc] using b7), e7]
+    rename_i b7; rw [s _ _ (by omega) (by simpa [Nat.add_assoc] using b7)]
+    rw [ih m (by omega) _ _ (by omega), e8]
+  · exact findNewlineU_eq bytes hs n j hj hn
+
 @[inline] def findNewlineF (bytes : ByteArray) (i : Nat) : Nat :=
   if h : i ≤ bytes.size ∧ bytes.size ≤ 4294967295 then
-    (findNewlineU bytes (Nat.lt_succ_of_le h.2) i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
+    (findNewline8 bytes (Nat.lt_succ_of_le h.2) i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
   else findNewlineGo bytes (bytes.size - i) i
 
 @[csimp] theorem findNewline_eq : @findNewline = @findNewlineF := by
@@ -78,7 +175,7 @@ theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀
   unfold findNewline findNewlineF
   split
   · rename_i h
-    rw [findNewlineU_eq bytes (Nat.lt_succ_of_le h.2) (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
+    rw [findNewline8_eq bytes (Nat.lt_succ_of_le h.2) (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
   · rfl
 
 -- every byte satisfies `p`
