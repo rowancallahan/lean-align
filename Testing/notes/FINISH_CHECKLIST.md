@@ -81,6 +81,16 @@ Order matters: make it right, check it, then understand it.
 - Add an option to override it (name to decide, e.g. `--reject-warnings` / `--ignore-warnings`) so a user can run anyway.
 - General rule: data-format warnings fail fast by default; the user opts out explicitly.
 
+## Memory when the two read files get out of step (found 2026-11-10; needs Main/Spec, so Rowan)
+- Main reads one equal-size chunk from each file per step. Records of the file that is ahead wait in memory until
+  their mates arrive.
+- Truncated or mismatched mates: once one file ends, the whole rest of the other is buffered before the run fails.
+  Seen on a dropped download: 13.9 GB and killed by the kernel, instead of a fast "not valid FASTQ".
+- Valid input with unequal mate sizes (for example already-trimmed reads): the buffer grows with the size
+  difference of the two files. Not measured.
+- Fix needs backpressure (read less from the file that is ahead) or an early stop. Both touch `nextChunks` in
+  Main.lean, and maybe `process` in Spec/MapFiles.lean.
+
 ## Later (not before the blog)
 - WebAssembly in the browser: `process` already takes any monad, so JS can feed File.slice chunks. Blockers: the 5.3 GB index (wasm32 caps at 4 GB; memory64, a smaller genome, or a compact index), threads (Web Workers + SharedArrayBuffer, cross-origin isolation), Lean runtime under Emscripten (check). First target: small genome, single thread, as a blog demo.
 - Quality-aware soft clipping (the ~3.8% proper-pair gap to minibwa is clipping).
