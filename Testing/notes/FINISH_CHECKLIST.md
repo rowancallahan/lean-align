@@ -48,6 +48,7 @@ Order matters: make it right, check it, then understand it.
 - `toNat!` in Main/Fasta: fail fast on bad numbers (toNat? + exit 1).
 - Genome letters: at build, assert every letter is A/C/G/T/N (fail fast). A soft-masked FASTA (UCSC hg38.fa, lowercase repeats) otherwise mismatches silently; benchmarks use hg38.upper.fa.
 - `unknown` with a found pair: today the Spec only bounds every proper pair by XB (bestPossibleScore). No version of the Spec ever required more. Candidate fix (Rowan, later): found score = XB, or ≥ requiredMapBound, except for stoppedEarly. Measure first how often AS1+AS2 < XB.
+- EXPERIMENT (morning, Claude): mapped `unknown` pairs. (1) Count them, and how many have XB ≥ requiredMapBound (S-T). (2) Prototype a stricter rule, mapped unknown allowed only when bestPossibleScore < requiredMapBound (else the best pair or uniqueness must be resolved), using the repetitive exit where it applies. Report the speed cost and how many answers change. Next step if cheap (Rowan): an upper bound for unknown in the Spec. Uniqueness checks stay as they are.
 - QoL (later): a QNAME ends at a space or a tab; assert min ≤ max fragment; assert the output path differs from both inputs (and OUT.tmp too); a log of input checks; error messages naming file and record.
 - Accepted as is: repetitiveUnknown bound; the sensitivity limit of "not found" (document it).
 - Not changing: names ≥ 10 bytes (short names can't be unique over millions of reads); no streaming/memory promise in the Spec.
