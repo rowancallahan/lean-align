@@ -69,6 +69,8 @@ head -n $((n - 1)) Spec/Aligner.lean > "$tmp/spec_answer.lean"
 [ -n "$n" ] && sed "1d; \$d; s/^import Proofs.Mapping$/import Spec.Mapping/" Proofs/Answer.lean | cmp -s - "$tmp/spec_answer.lean" \
   && echo "Proofs/Answer.lean mirrors Spec/Aligner.lean (up to the holes)" || bad "Proofs/Answer.lean differs from Spec/Aligner.lean"
 # Main.lean is the spec of the executable itself (in Spec/FROZEN.sha256); it imports the filled-in Proofs/MapFiles
+bash Testing/notes/byte_specs/check_copies.sh | grep -q "identical" \
+  && echo "Proofs/MapDefs.lean copies Proofs/MapFiles.lean's definitions" || bad "Proofs/MapDefs.lean differs from Proofs/MapFiles.lean"
 grep -q "^import Proofs.MapFiles$" Main.lean && echo "Main.lean imports Proofs.MapFiles" || bad "Main.lean does not import Proofs.MapFiles"
 
 if [ "${FUZZ:-0}" = 1 ]; then
