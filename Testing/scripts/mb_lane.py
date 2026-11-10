@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""python3 -I mb_lane.py MINIBWA INDEX_PREFIX OUTDIR   Stream the whole GIAB HG002 HiSeq 2x250 lane D1_S1_L001 (17 files per mate) through
+"""python3 -I mb_lane.py MINIBWA INDEX_PREFIX OUTDIR   Stream GIAB HG002 HiSeq 2x250 lane D1_S1_L001 file 001 (file 001 only per mate, 33.9M pairs) through
 curl | gunzip into two FIFOs, run `minibwa map -t 4` on them, SAM to `md5sum` on a pipe (nothing on disk). All processes pinned to cores 0-3.
 Counts the lines each mate stream delivers (wc -l on a tee), per-process rusage via wait4, wall, peak RSS. Prints one summary."""
 import os, subprocess, sys, threading, time
@@ -11,7 +11,7 @@ for f in (a, b):
     if os.path.exists(f): os.remove(f)
     os.mkfifo(f)
 def feeder(r, fifo):   # pipefail: any failed curl / gunzip makes the stage exit non-zero
-    urls = ' '.join(f'{G}/D1_S1_L001_R{r}_{i:03d}.fastq.gz' for i in range(1, 18))
+    urls = ' '.join(f'{G}/D1_S1_L001_R{r}_{i:03d}.fastq.gz' for i in range(1, 2))
     return ['bash', '-c', f'set -o pipefail; for u in {urls}; do curl -sSf "$u" | gunzip -c || exit 1; done | tee >(wc -l > {out}/lines{r}) > {fifo}']
 P = {}
 P['feed1'] = subprocess.Popen(feeder(1, a)); P['feed2'] = subprocess.Popen(feeder(2, b))
