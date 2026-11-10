@@ -69,8 +69,8 @@ theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀
     · rw [if_neg hb, if_neg (by simp [hb])]
 
 @[inline] def findNewlineF (bytes : ByteArray) (i : Nat) : Nat :=
-  if h : i ≤ bytes.size ∧ bytes.size < 4294967296 then
-    (findNewlineU bytes h.2 i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
+  if h : i ≤ bytes.size ∧ bytes.size ≤ 4294967295 then
+    (findNewlineU bytes (Nat.lt_succ_of_le h.2) i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
   else findNewlineGo bytes (bytes.size - i) i
 
 @[csimp] theorem findNewline_eq : @findNewline = @findNewlineF := by
@@ -78,7 +78,7 @@ theorem findNewlineU_eq (bytes : ByteArray) (hs : bytes.size < 4294967296) : ∀
   unfold findNewline findNewlineF
   split
   · rename_i h
-    rw [findNewlineU_eq bytes h.2 (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
+    rw [findNewlineU_eq bytes (Nat.lt_succ_of_le h.2) (bytes.size - i) _ _ (by rw [toNat_toUSize i (by omega)]), toNat_toUSize i (by omega)]
   · rfl
 
 -- every byte satisfies `p`
@@ -122,14 +122,14 @@ theorem allBytesU_eq (p : UInt8 → Bool) (bytes : ByteArray) : ∀ n (i : USize
     simp only [ej]
 
 @[inline] def allBytesF (p : UInt8 → Bool) (bytes : ByteArray) : Bool :=
-  if bytes.size < 4294967296 then allBytesU p bytes bytes.usize (usize_le bytes) else allBytesGo p bytes bytes.size
+  if bytes.size ≤ 4294967295 then allBytesU p bytes bytes.usize (usize_le bytes) else allBytesGo p bytes bytes.size
 
 @[csimp] theorem allBytes_eq : @allBytes = @allBytesF := by
   funext p bytes
   unfold allBytesF
   split
   · rename_i h
-    rw [allBytesU_eq p bytes _ bytes.usize _ (usize_eq bytes h)]
+    rw [allBytesU_eq p bytes _ bytes.usize _ (usize_eq bytes (Nat.lt_succ_of_le h))]
     exact (allBytesGo_eq p bytes bytes.size).symm
   · exact (allBytesGo_eq p bytes bytes.size).symm
 
@@ -226,5 +226,219 @@ decreasing_by
 
 -- the reads of a FASTQ file (or of a slice of one cut after a record), or why it is not valid FASTQ
 def parseFastqB (b : ByteArray) : Except String (Array ReadB) := parseFrom b 0 #[]
+
+/-! ## One scan per line: the parser with its checks fused into the line scans -/
+
+-- the first index `≥ i` (within `fuel` steps) whose byte fails `p`, or where the bytes end
+@[specialize] def scanGo (p : UInt8 → Bool) (b : ByteArray) : (fuel i : Nat) → Nat
+  | 0, i => i
+  | f + 1, i => if i < b.size && p b[i]! then scanGo p b f (i + 1) else i
+
+theorem scanGo_spec (p : UInt8 → Bool) (b : ByteArray) : ∀ f i, b.size - i ≤ f →
+    i ≤ scanGo p b f i ∧ (i ≤ b.size → scanGo p b f i ≤ b.size) ∧
+    (∀ j, i ≤ j → j < scanGo p b f i → p b[j]! = true) ∧
+    (scanGo p b f i < b.size → p b[scanGo p b f i]! = false)
+  | 0, i, hf => by
+    simp only [scanGo]
+    refine ⟨Nat.le_refl _, fun h => h, fun j h1 h2 => by omega, fun h => by omega⟩
+  | f + 1, i, hf => by
+    rw [scanGo]
+    by_cases hc : (i < b.size && p b[i]!) = true
+    · rw [if_pos hc]
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+      have ih := scanGo_spec p b f (i + 1) (by omega)
+      refine ⟨by omega, fun _ => ih.2.1 (by omega), fun j h1 h2 => ?_, ih.2.2.2⟩
+      by_cases e : j = i
+      · subst e; exact hc.2
+      · exact ih.2.2.1 j (by omega) h2
+    · rw [if_neg hc]
+      refine ⟨Nat.le_refl _, fun h => h, fun j h1 h2 => by omega, fun h => ?_⟩
+      simp only [Bool.and_eq_true, decide_eq_true_eq, not_and] at hc
+      cases e : p b[i]!
+      · rfl
+      · exact absurd e (hc h)
+
+-- the first newline at or after `i`, when the bytes before it all pass a test that a newline fails
+theorem findNewlineGo_at (b : ByteArray) : ∀ f i k, b.size - i ≤ f → i ≤ k → k < b.size → b[k]! = 10 →
+    (∀ j, i ≤ j → j < k → b[j]! ≠ 10) → findNewlineGo b f i = k
+  | 0, i, k, hf, h1, h2, h3, h4 => by omega
+  | f + 1, i, k, hf, h1, h2, h3, h4 => by
+    rw [findNewlineGo]
+    by_cases e : i = k
+    · subst e; rw [if_neg (by simp [h3])]
+    · rw [if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne]; exact ⟨by omega, h4 i (Nat.le_refl _) (by omega)⟩)]
+      exact findNewlineGo_at b f (i + 1) k (by omega) (by omega) h2 h3 (fun j a c => h4 j (by omega) c)
+
+theorem findNewline_at (b : ByteArray) (i k : Nat) (h1 : i ≤ k) (h2 : k < b.size) (h3 : b[k]! = 10)
+    (h4 : ∀ j, i ≤ j → j < k → b[j]! ≠ 10) : findNewline b i = k :=
+  findNewlineGo_at b _ i k (Nat.le_refl _) h1 h2 h3 h4
+
+theorem allBytes_extract (p : UInt8 → Bool) (b : ByteArray) (i k : Nat) (hk : k ≤ b.size)
+    (h : ∀ j, i ≤ j → j < k → p b[j]! = true) : allBytes p (b.extract i k) = true := by
+  have hsz : (b.extract i k).size = k - i := by rw [ByteArray.size_extract]; omega
+  have hget : ∀ t, t < k - i → (b.extract i k)[t]! = b[i + t]! := by
+    intro t ht
+    rw [getElem!_pos (b.extract i k) t (by omega), getElem!_pos b (i + t) (by omega), ByteArray.getElem_extract]
+  have hall : ∀ n, n ≤ (b.extract i k).size → allBytesGo p (b.extract i k) n = true := by
+    intro n
+    induction n with
+    | zero => intro _; rfl
+    | succ n ih =>
+      intro hn
+      rw [allBytesGo, ih (by omega), Bool.and_true, hget n (by omega)]
+      exact h (i + n) (by omega) (by omega)
+  unfold allBytes
+  rw [← allBytesGo_eq]
+  exact hall _ (Nat.le_refl _)
+
+-- `scanGo` over the rest of the bytes
+def scan (p : UInt8 → Bool) (b : ByteArray) (i : Nat) : Nat := scanGo p b (b.size - i) i
+
+-- `scanGo` by `uget`
+@[specialize] def scanU (p : UInt8 → Bool) (b : @& ByteArray) (hs : b.size < 4294967296) (j : USize)
+    (_hj : j.toNat ≤ b.size) : USize :=
+  if h : j < b.usize then
+    have hl : j.toNat < b.size := Nat.lt_of_lt_of_le h (usize_le b)
+    if p (b.uget j hl) then scanU p b hs (j + 1) (by rw [toNat_add1 j (by omega)]; omega) else j
+  else j
+termination_by b.size - j.toNat
+decreasing_by
+  rw [toNat_add1 j (by omega)]; omega
+
+theorem scanU_eq (p : UInt8 → Bool) (b : ByteArray) (hs : b.size < 4294967296) : ∀ k (j : USize) hj,
+    b.size - j.toNat = k → (scanU p b hs j hj).toNat = scanGo p b k j.toNat
+  | 0, j, hj, hk => by
+    rw [scanU, dif_neg (fun h => by have : j.toNat < b.usize.toNat := h; rw [usize_eq b hs] at this; omega)]
+    rfl
+  | k + 1, j, hj, hk => by
+    have hl : j.toNat < b.size := by omega
+    rw [scanU, dif_pos (show j < b.usize from show j.toNat < b.usize.toNat by rw [usize_eq b hs]; exact hl),
+      scanGo, getElem!_pos b j.toNat hl]
+    dsimp only
+    have hg : ∀ hl', b.uget j hl' = b[j.toNat] := fun _ => rfl
+    simp only [hg]
+    by_cases hb : p b[j.toNat] = true
+    · rw [if_pos hb, if_pos (by simp [hl, hb]), scanU_eq p b hs k (j + 1) _ (by rw [toNat_add1 j (by omega)]; omega),
+        toNat_add1 j (by omega)]
+    · rw [if_neg hb, if_neg (by simp [hb])]
+
+@[inline] def scanF (p : UInt8 → Bool) (b : ByteArray) (i : Nat) : Nat :=
+  if h : i ≤ b.size ∧ b.size ≤ 4294967295 then
+    (scanU p b (Nat.lt_succ_of_le h.2) i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
+  else scanGo p b (b.size - i) i
+
+@[csimp] theorem scan_eqF : @scan = @scanF := by
+  funext p b i
+  unfold scan scanF
+  split
+  · rename_i h
+    rw [scanU_eq p b (Nat.lt_succ_of_le h.2) (b.size - i) _ _ (by rw [toNat_toUSize i (by omega)]),
+      toNat_toUSize i (by omega)]
+  · rfl
+
+@[inline] def nameP (c : UInt8) : Bool := c < 128 && c != 10 && c != 13
+@[inline] def qualP (c : UInt8) : Bool := 33 ≤ c && c ≤ 126
+
+theorem scan_nl (p : UInt8 → Bool) (hp : p 10 = false) (b : ByteArray) (i : Nat)
+    (h1 : scan p b i < b.size) (h2 : b[scan p b i]! = 10) :
+    findNewline b i = scan p b i ∧ ∀ j, i ≤ j → j < scan p b i → p b[j]! = true := by
+  have hs := scanGo_spec p b (b.size - i) i (Nat.le_refl _)
+  refine ⟨findNewline_at b i _ hs.1 h1 h2 (fun j a c e => ?_), hs.2.2.1⟩
+  have := hs.2.2.1 j a c; rw [e, hp] at this; cases this
+
+-- `parseFrom` with each line scanned once: the name, letter and quality tests run in the line scans. Anything
+-- unusual (an invalid byte, a '+' line with a name, a short slice) goes to `parseFrom` itself (`parseFromF_eq`).
+def parseFromF (b : ByteArray) (i : Nat) (acc : Array ReadB) : Except String (Array ReadB) :=
+  if h : b.size ≤ i then .ok acc else
+  let j1 := scan nameP b i
+  let j2 := scan isBase b (j1 + 1)
+  let j3 := findNewline b (j2 + 1)
+  let j4 := scan qualP b (j3 + 1)
+  if hc : j1 < b.size ∧ b[j1]! = 10 ∧ j2 < b.size ∧ b[j2]! = 10 ∧ j3 = j2 + 2 ∧ j4 < b.size ∧ b[j4]! = 10 ∧
+      b[i]! = 64 ∧ 10 ≤ j1 - i ∧ j1 - i ≤ 501 ∧ j2 - (j1 + 1) ≤ 1000 ∧ b[j2 + 1]! = 43 ∧
+      j4 - (j3 + 1) = j2 - (j1 + 1) then
+    parseFromF b (j4 + 1) (acc.push ⟨b.extract (i + 1) j1, b.extract (j1 + 1) j2, b.extract (j3 + 1) j4⟩)
+  else parseFrom b i acc
+termination_by b.size - i
+decreasing_by
+  have a1 := (scanGo_spec nameP b (b.size - i) i (Nat.le_refl _)).1
+  have a2 := (scanGo_spec isBase b (b.size - (scan nameP b i + 1)) (scan nameP b i + 1) (Nat.le_refl _)).1
+  have a3 := findNewline_ge b (scan isBase b (scan nameP b i + 1) + 1)
+  have a4 := (scanGo_spec qualP b (b.size - (findNewline b (scan isBase b (scan nameP b i + 1) + 1) + 1))
+    (findNewline b (scan isBase b (scan nameP b i + 1) + 1) + 1) (Nat.le_refl _)).1
+  have h4 : scan qualP b (findNewline b (scan isBase b (scan nameP b i + 1) + 1) + 1) < b.size := hc.2.2.2.2.2.1
+  unfold scan at *
+  omega
+
+theorem parseFromF_eq (b : ByteArray) : ∀ n i (acc : Array ReadB), b.size - i = n →
+    parseFromF b i acc = parseFrom b i acc := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+  intro i acc hn
+  rw [parseFromF]
+  by_cases h : b.size ≤ i
+  · rw [dif_pos h, parseFrom, dif_pos h]
+  rw [dif_neg h]
+  dsimp only
+  split
+  · rename_i hc
+    obtain ⟨c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13⟩ := hc
+    have s1 := scan_nl nameP rfl b i c1 c2
+    have s2 := scan_nl isBase rfl b _ c3 c4
+    have s4 := scan_nl qualP rfl b _ c6 c7
+    have a1 : i ≤ scan nameP b i := (scanGo_spec nameP b (b.size - i) i (Nat.le_refl _)).1
+    have a2 : scan nameP b i + 1 ≤ scan isBase b (scan nameP b i + 1) :=
+      (scanGo_spec isBase b _ (scan nameP b i + 1) (Nat.le_refl _)).1
+    have a4 : findNewline b (scan isBase b (scan nameP b i + 1) + 1) + 1 ≤
+        scan qualP b (findNewline b (scan isBase b (scan nameP b i + 1) + 1) + 1) :=
+      (scanGo_spec qualP b _ (findNewline b (scan isBase b (scan nameP b i + 1) + 1) + 1) (Nat.le_refl _)).1
+    rw [ih _ (by omega) _ _ rfl]
+    conv => rhs; rw [parseFrom]
+    rw [dif_neg h]
+    dsimp only
+    rw [s1.1, s2.1, s4.1]
+    generalize scan nameP b i = j1 at *
+    generalize scan isBase b (j1 + 1) = j2 at *
+    rw [c5] at *
+    generalize scan qualP b (j2 + 2 + 1) = j4 at *
+    rw [if_neg (by omega), if_neg (by omega), if_neg (by omega), if_neg (by omega)]
+    have g0 : ∀ x y : Nat, x ≤ y → y ≤ b.size → (b.extract x y).size = y - x := fun x y h1 h2 => by
+      rw [ByteArray.size_extract]; omega
+    have gn : allBytes (fun c => c < 128 && c != 10 && c != 13) (b.extract i j1) = true :=
+      allBytes_extract _ b i j1 (by omega) s1.2
+    have gs : allBytes isBase (b.extract (j1 + 1) j2) = true := allBytes_extract _ b _ _ (by omega) s2.2
+    have gq : allBytes (fun c => 33 ≤ c && c ≤ 126) (b.extract (j2 + 2 + 1) j4) = true :=
+      allBytes_extract _ b _ _ (by omega) s4.2
+    have n0 : (b.extract i j1)[0]! = 64 := by
+      rw [getElem!_pos _ 0 (by rw [g0 i j1 a1 (by omega)]; omega), ByteArray.getElem_extract]
+      rw [getElem!_pos b i (by omega)] at c8; simpa using c8
+    have p0 : (b.extract (j2 + 1) (j2 + 2))[0]! = 43 := by
+      rw [getElem!_pos _ 0 (by rw [g0 _ _ (by omega) (by omega)]; omega), ByteArray.getElem_extract]
+      rw [getElem!_pos b _ (by omega)] at c12; simpa using c12
+    have hr : recordError (b.extract i j1) (b.extract (j1 + 1) j2) (b.extract (j2 + 1) (j2 + 2))
+        (b.extract (j2 + 2 + 1) j4) = none := by
+      have e4 : findNewline b (j2 + 2 + 1) = j4 := s4.1
+      unfold recordError
+      simp only [g0 i j1 a1 (by omega), g0 _ _ a2 (by omega), g0 (j2 + 1) (j2 + 2) (by omega) (by omega),
+        g0 _ _ a4 (by omega), n0, p0, gn, gs, gq]
+      have q1 : 0 < j1 - i := by omega
+      have q3 : j2 + 2 - (j2 + 1) = 1 := by omega
+      simp [q1, c9, c10, c11, q3, c13]
+    rw [hr]
+    dsimp only
+    have hx : (b.extract i j1).extract 1 (b.extract i j1).size = b.extract (i + 1) j1 := by
+      rw [g0 i j1 a1 (by omega)]
+      apply ByteArray.ext; simp only [ByteArray.data_extract, Array.extract_extract]
+      congr 1 <;> omega
+    rw [hx]
+  · rfl
+
+-- `parseFastqB` with the fused scans
+@[inline] def parseFastqBF (b : ByteArray) : Except String (Array ReadB) := parseFromF b 0 #[]
+
+@[csimp] theorem parseFastqB_eqF : @parseFastqB = @parseFastqBF := by
+  funext b
+  exact (parseFromF_eq b _ 0 #[] rfl).symm
 
 end Spec

@@ -1,4 +1,4 @@
-import Proofs.SamFast
+import Proofs.SamFused
 import Proofs.TrimCore
 import FastqIO
 

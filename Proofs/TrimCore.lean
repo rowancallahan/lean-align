@@ -120,6 +120,24 @@ def trimB (seq qual : ByteArray) : ByteArray × ByteArray :=
   let c := AdapterTrim.cutTruSeq seq qual
   trimW 25 c.1 c.2
 
+/-- `trimB` without copying the read when the adapter cut keeps all of it. -/
+@[inline] def trimBF (seq qual : ByteArray) : ByteArray × ByteArray :=
+  let p := AdapterTrim.cutPosTS seq
+  if p = seq.size ∧ qual.size = seq.size then trimW 25 seq qual
+  else trimW 25 (seq.extract 0 p) (qual.extract 0 p)
+
+@[csimp] theorem trimB_eqF : @trimB = @trimBF := by
+  funext seq qual
+  unfold trimB trimBF
+  show trimW 25 (seq.extract 0 _) (qual.extract 0 _) = _
+  dsimp only
+  rw [AdapterTrim.cutPosTS_eq]
+  by_cases h : AdapterTrim.cutPos AdapterTrim.truSeq 6 1 seq = seq.size ∧ qual.size = seq.size
+  · rw [if_pos h, h.1, ByteArray.extract_zero_size]
+    have : qual.extract 0 seq.size = qual := by rw [← h.2, ByteArray.extract_zero_size]
+    rw [this]
+  · rw [if_neg h]
+
 end Spec.TrimCore
 
 #print axioms Spec.TrimCore.winTrim_contract

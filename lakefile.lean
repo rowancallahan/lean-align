@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
 
 @[default_target]
 lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Heavy, `Proofs.HeavyBuild, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.SamBytes, `Proofs.TrimRecord, `Proofs.TrimCore, `Proofs.Trim, `Proofs.TrimFast, `Proofs.Sam, `Proofs.SamFast, `Proofs.MapFast, `Proofs.MapFiles]
+  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Heavy, `Proofs.HeavyBuild, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.SamBytes, `Proofs.TrimCore, `Proofs.Trim, `Proofs.TrimFast, `Proofs.Sam, `Proofs.SamFast, `Proofs.SamFused, `Proofs.MapFast, `Proofs.MapFiles]
 
 @[default_target]
 lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean

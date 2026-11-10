@@ -1,17 +1,15 @@
 import Proofs.Fasta
 import Proofs.Fastq
 import FastqIO
-import ReadTrim
-import AdapterTrim
 
 /-! # From reads to SAM
 
 * `ReadB.toRead`: the shim's reads (`ReadB`, bytes; FastqIO) are the spec's `FQ.Read`s.
 * The QNAME rule (`qnameOf`): a read's name up to the first space, without a trailing "/1" or "/2". Mates are paired
   by it (the shim); a QNAME must be 1..254 bytes in '!'..'?' or 'A'..'~' (`qnameOk`).
-* Trimming (`trimRead`): the adapter cut, the quality window, the minimum length (proved pieces; Proofs/TrimRecord.lean).
-* SAM output: two lines per pair, with the pair answer in custom tags (XB best possible pair score, XU uniqueness,
-  XT tier), written as bytes. Unproved (trusted) formatting for the shim. -/
+* SAM output pieces (`samLine`, `unmappedLine`, `samSequence`, `pushNat`, ...) used by the proved writer
+  (Proofs/SamFast.lean: `samChunkS_eq`).
+* `qnameB_eq`, `qnameOkB_eq`: the byte QNAME rule is the list one. -/
 
 namespace Spec
 
@@ -69,7 +67,47 @@ def spaceAt (b : ByteArray) : (fuel i : Nat) → Nat
   | 0, i => i
   | f + 1, i => if i < b.size && b[i]! != 32 then spaceAt b f (i + 1) else i
 
--- `qnameOf` on bytes (`qnameB_eq`, Proofs/TrimRecord.lean)
+-- `spaceAt b (b.size - i) i` by `uget` (`spaceAt_eqF`, `@[csimp]`)
+def spaceAtU (b : @& ByteArray) (hs : b.size < 4294967296) (j : USize) (_hj : j.toNat ≤ b.size) : USize :=
+  if h : j < b.usize then
+    have hl : j.toNat < b.size := Nat.lt_of_lt_of_le h (usize_le b)
+    if b.uget j hl != 32 then spaceAtU b hs (j + 1) (by rw [toNat_add1 j (by omega)]; omega) else j
+  else j
+termination_by b.size - j.toNat
+decreasing_by
+  rw [toNat_add1 j (by omega)]; omega
+
+theorem spaceAtU_eq (b : ByteArray) (hs : b.size < 4294967296) : ∀ k (j : USize) hj,
+    b.size - j.toNat = k → (spaceAtU b hs j hj).toNat = spaceAt b k j.toNat
+  | 0, j, hj, hk => by
+    rw [spaceAtU, dif_neg (fun h => by have : j.toNat < b.usize.toNat := h; rw [usize_eq b hs] at this; omega)]
+    rw [spaceAt]
+  | k + 1, j, hj, hk => by
+    have hl : j.toNat < b.size := by omega
+    rw [spaceAtU, dif_pos (show j < b.usize from show j.toNat < b.usize.toNat by rw [usize_eq b hs]; exact hl),
+      spaceAt, getElem!_pos b j.toNat hl]
+    dsimp only
+    have hg : ∀ hl', b.uget j hl' = b[j.toNat] := fun _ => rfl
+    simp only [hg]
+    by_cases hb : (b[j.toNat] != 32) = true
+    · rw [if_pos hb, if_pos (by simp [hl, hb]), spaceAtU_eq b hs k (j + 1) _ (by rw [toNat_add1 j (by omega)]; omega),
+        toNat_add1 j (by omega)]
+    · rw [if_neg hb, if_neg (by simp [hb])]
+
+@[inline] def spaceAtF (b : ByteArray) (fuel i : Nat) : Nat :=
+  if h : i ≤ b.size ∧ b.size ≤ 4294967295 ∧ fuel = b.size - i then
+    (spaceAtU b (Nat.lt_succ_of_le h.2.1) i.toUSize (by rw [toNat_toUSize i (by omega)]; exact h.1)).toNat
+  else spaceAt b fuel i
+
+@[csimp] theorem spaceAt_eqF : @spaceAt = @spaceAtF := by
+  funext b fuel i
+  unfold spaceAtF
+  split
+  · rename_i h
+    rw [spaceAtU_eq b (Nat.lt_succ_of_le h.2.1) fuel _ _ (by rw [toNat_toUSize i (by omega)]; omega), toNat_toUSize i (by omega)]
+  · rfl
+
+-- `qnameOf` on bytes (`qnameB_eq`)
 def qnameB (name : ByteArray) : ByteArray :=
   let e := spaceAt name name.size 0
   if 2 ≤ e && name[e - 2]! == 47 && (name[e - 1]! == 49 || name[e - 1]! == 50) then name.extract 0 (e - 2)
@@ -78,43 +116,6 @@ def qnameB (name : ByteArray) : ByteArray :=
 -- `qnameOk` on bytes (`qnameOkB_eq`)
 def qnameOkB (q : ByteArray) : Bool :=
   0 < q.size && q.size ≤ 254 && allBytes (fun c => (33 ≤ c && c ≤ 63) || (65 ≤ c && c ≤ 126)) q
-
--- shortest mate kept after trimming; shorter mates become empty (trimmed away)
-def minLength : Nat := 25
-
--- adapter cut, then quality trimming, then the minimum length, all with proved functions: cut letters
--- and qualities at the first TruSeq adapter, keep the best window, and drop a mate shorter than
--- `minLength`; a mate with nothing worth keeping comes back with no letters (trimmed away)
-def trimBytes (letters qual : ByteArray) : ByteArray × ByteArray :=
-  let (letters, qual) := AdapterTrim.cutTruSeq letters qual
-  let (letters, qual) := match ReadTrim.trimRead letters qual with
-    | some (s, e) => (letters.extract s e, qual.extract s e)
-    | none => (ByteArray.empty, ByteArray.empty)
-  AdapterTrim.dropShort minLength letters qual
-
--- a read, trimmed (the name is kept)
-def trimRead (read : FQ.Read) : FQ.Read :=
-  let trimmed := trimBytes ⟨read.sequence.toArray⟩ ⟨read.quality.toArray⟩
-  ⟨read.name, trimmed.1.data.toList, trimmed.2.data.toList⟩
-
--- `trimRead` on the shim's reads (`trimReadB_toRead`)
-def trimReadB (read : ReadB) : ReadB :=
-  let trimmed := trimBytes read.seq read.qual
-  { read with seq := trimmed.1, qual := trimmed.2 }
-
--- trim every pair of a chunk with `trimReadB`, in `parts` tasks running at once; the result is the
--- pairs in their original order, each trimmed (`trimChunk_eq`, Proofs/TrimRecord.lean)
-def trimChunk (chunk : Array (ReadB × ReadB)) (parts : Nat) : Array (ReadB × ReadB) :=
-  let size := (chunk.size + parts - 1) / parts
-  let tasks := (List.range parts).map fun part => Task.spawn fun _ =>
-    (chunk.extract (part * size) ((part + 1) * size)).map fun (read1, read2) => (trimReadB read1, trimReadB read2)
-  tasks.foldl (fun out task => out ++ task.get) #[]
-
--- a chunk of read pairs, as `alignPairs` takes them: a mate trimmed away (no letters left) is `none`
-def chunkPairs (chunk : Array (ReadB × ReadB)) : List (Option ByteArray × Option ByteArray) :=
-  chunk.toList.map fun (read1, read2) =>
-    (if read1.seq.isEmpty then none else some read1.seq,
-     if read2.seq.isEmpty then none else some read2.seq)
 
 /-! ## SAM text -/
 
@@ -160,7 +161,7 @@ theorem revMapU_eq (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ m (i : USize)
     simp only [ej]
 
 @[inline] def reverseMapBytesF (f : UInt8 → UInt8) (bytes : ByteArray) : ByteArray :=
-  if bytes.size < 4294967296 then revMapU f bytes (ByteArray.emptyWithCapacity bytes.size) bytes.usize (usize_le bytes)
+  if bytes.size ≤ 4294967295 then revMapU f bytes (ByteArray.emptyWithCapacity bytes.size) bytes.usize (usize_le bytes)
   else reverseMapBytes f bytes
 
 @[csimp] theorem reverseMapBytes_eq : @reverseMapBytes = @reverseMapBytesF := by
@@ -168,7 +169,7 @@ theorem revMapU_eq (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ m (i : USize)
   unfold reverseMapBytesF
   split
   · rename_i h
-    rw [revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes h) (Nat.le_refl _), Nat.sub_self]
+    rw [revMapU_eq f bytes bytes.size _ _ _ (usize_eq bytes (Nat.lt_succ_of_le h)) (Nat.le_refl _), Nat.sub_self]
     unfold reverseMapBytes
     simp
   · rfl
@@ -179,26 +180,11 @@ def uniquenessText : Uniqueness → String
   | .unknown     => "unknown"
   | .repetitiveUnknown => "repetitiveUnknown"
 
-def tierText : Tier → String
-  | .eachMateUnique    => "eachMateUnique"
-  | .quickSearchUnique => "quickSearchUnique"
-  | .deepSearchUnique  => "deepSearchUnique"
-  | .quickSearchTie    => "quickSearchTie"
-  | .deepSearchTie     => "deepSearchTie"
-  | .bestUnchecked     => "bestUnchecked"
-  | .stoppedEarly      => "stoppedEarly"
-  | .boundsOnly        => "boundsOnly"
-
 -- MAPQ (stand-in): 60 when proved unique, else 0
 def mapq (answer : PairAnswer) : Nat :=
   match answer.uniqueness with
   | .unique => 60
   | _       => 0
-
--- custom tags: XB best possible pair score, XU uniqueness, XT tier
-def answerTags (answer : PairAnswer) : List String :=
-  [s!"XB:i:{answer.bestPossibleScore}", s!"XU:Z:{uniquenessText answer.uniqueness}",
-   s!"XT:Z:{tierText answer.tier}"]
 
 -- the decimal digits of `n`, appended to `b` (= `b ++ (toString n).toUTF8`)
 def pushNat (b : ByteArray) (n : Nat) : ByteArray :=
@@ -232,49 +218,103 @@ def samLine (b : ByteArray) (qname : ByteArray) (flag : Nat) (rname : String) (p
   let b := ((b.push 9) ++ seq).push 9 ++ qual
   tags.foldl (fun b tag => (b.push 9) ++ tag.toUTF8) b
 
--- a mate of a found pair: SAM positions are 1-based, so POS is start + 1
-def mappedLine (b : ByteArray) (chromosomes : ChromosomeList) (read : ReadB) (which : Mate)
-    (mate other : MateReport) (answer : PairAnswer) : ByteArray :=
-  let flag := flagPaired + flagProperPair + mateFlag which +
-    reverseFlag mate.placement.strand flagReverse + reverseFlag other.placement.strand flagMateReverse
-  let rname := (chromosomes[mate.placement.chromosome]?.map (·.1)).getD "*"
-  let rnext := if mate.placement.chromosome = other.placement.chromosome then "=" else
-    (chromosomes[other.placement.chromosome]?.map (·.1)).getD "*"
-  -- TLEN: leftmost start to rightmost stop; positive on the leftmost mate
-  let left := min mate.placement.start other.placement.start
-  let right := max mate.placement.stop other.placement.stop
-  let leftmost := mate.placement.start < other.placement.start ||
-    (mate.placement.start = other.placement.start && which = .one)
-  let tlen : Int := if leftmost then right - left else -((right - left : Nat) : Int)
-  let (seq, qual) := samSequence read mate.placement.strand
-  samLine b (qnameB read.name) flag rname (mate.placement.start + 1) (mapq answer)
-    (cigarText mate.cigar) rnext (other.placement.start + 1) tlen seq qual
-    (s!"AS:i:{mate.score}" :: answerTags answer)
-
 -- a mate with no alignment reported
 def unmappedLine (b : ByteArray) (read : ReadB) (which : Mate) (tags : List String) : ByteArray :=
   let flag := flagPaired + flagUnmapped + flagMateUnmapped + mateFlag which
   let (seq, qual) := samSequence read .forward
   samLine b (qnameB read.name) flag "*" 0 0 "*" "*" 0 0 seq qual tags
 
--- the two SAM lines of one pair, each with its newline, appended to `b`
-def samLines (b : ByteArray) (chromosomes : ChromosomeList) (read1 read2 : ReadB) (result : PairResult) :
-    ByteArray :=
-  match result with
-  | .trimmedAway mate =>
-      let tags := [s!"XT:Z:trimmedAway{if mate = .one then 1 else 2}"]
-      (unmappedLine ((unmappedLine b read1 .one tags).push 10) read2 .two tags).push 10
-  | .aligned answer =>
-      match answer.found with
-      | some pair =>
-          (mappedLine ((mappedLine b chromosomes read1 .one pair.mate1 pair.mate2 answer).push 10)
-            chromosomes read2 .two pair.mate2 pair.mate1 answer).push 10
-      | none =>
-          (unmappedLine ((unmappedLine b read1 .one (answerTags answer)).push 10) read2 .two (answerTags answer)).push 10
+/-! ## The QNAME rule on bytes -/
 
--- one chunk's SAM text, in pair order (after the proved call)
-def samChunk (chromosomes : ChromosomeList) (chunk : Array (ReadB × ReadB)) (results : List PairResult) : ByteArray :=
-  (chunk.zip results.toArray).foldl (init := ByteArray.empty)
-    fun bytes ((read1, read2), result) => samLines bytes chromosomes read1 read2 result
+theorem spaceAt_eq (n : ByteArray) : ∀ k i, i ≤ n.size → n.size - i ≤ k →
+    spaceAt n k i = i + ((FQ.L n i).takeWhile (· != 32)).length
+  | 0, i, h1, h2 => by
+    have : i = n.size := by omega
+    subst this; rw [spaceAt, FQ.L_size n _ (Nat.le_refl _)]; simp
+  | k + 1, i, h1, h2 => by
+    rw [spaceAt]
+    by_cases hi : i < n.size
+    · rw [FQ.L_cons n i hi, List.takeWhile_cons]
+      by_cases hb : (n[i]! != 32) = true
+      · rw [if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact ⟨hi, hb⟩), if_pos hb,
+          spaceAt_eq n k (i + 1) (by omega) (by omega)]; simp; omega
+      · rw [if_neg (by simp [hb]), if_neg hb]; simp
+    · rw [if_neg (by simp [hi]), FQ.L_size n i (by omega)]; simp
+
+-- the last two bytes of a list of length at least 2
+theorem drop_two (l : List UInt8) (h : 2 ≤ l.length) :
+    l.drop (l.length - 2) = [l[l.length - 2]'(by omega), l[l.length - 1]'(by omega)] := by
+  rw [List.drop_eq_getElem_cons (by omega), List.drop_eq_getElem_cons (by omega),
+    show l.length - 2 + 1 + 1 = l.length by omega, List.drop_length]
+  simp only [show l.length - 2 + 1 = l.length - 1 by omega]
+
+theorem suffix_two (a b : UInt8) (l : List UInt8) :
+    [a, b].isSuffixOf l = true ↔ ∃ h : 2 ≤ l.length, l[l.length - 2]'(by omega) = a ∧ l[l.length - 1]'(by omega) = b := by
+  rw [List.isSuffixOf_iff_suffix, List.suffix_iff_eq_drop]
+  simp only [List.length_cons, List.length_nil]
+  constructor
+  · intro h
+    have hl : 2 ≤ l.length := by
+      have := congrArg List.length h; simp at this; omega
+    refine ⟨hl, ?_⟩
+    rw [drop_two l hl] at h
+    simp only [List.cons.injEq] at h
+    exact ⟨h.1.symm, h.2.1.symm⟩
+  · rintro ⟨hl, h1, h2⟩
+    rw [drop_two l hl, h1, h2]
+
+theorem qnameB_eq (name : ByteArray) : (qnameB name).data.toList = qnameOf name.data.toList := by
+  have hl : FQ.L name 0 = name.data.toList := by simp [FQ.L]
+  have hs := spaceAt_eq name name.size 0 (Nat.zero_le _) (by omega)
+  rw [hl, Nat.zero_add] at hs
+  unfold qnameB qnameOf
+  simp only []
+  rw [hs]
+  have e := @List.takeWhile_append_dropWhile _ (· != 32) name.data.toList
+  have hlen : name.data.toList.length = name.size := by simp
+  generalize name.data.toList.takeWhile (· != 32) = base at e ⊢
+  generalize name.data.toList.dropWhile (· != 32) = rest at e
+  have hpre : name.data.toList.take base.length = base := by rw [← e]; exact List.take_left' rfl
+  have hle : base.length ≤ name.size := by rw [← hlen, ← e, List.length_append]; omega
+  have hget : ∀ j (hj : j < base.length), name[j]! = base[j] := by
+    intro j hj
+    have hj' : j < name.data.toList.length := by omega
+    rw [getElem!_pos name j (by omega), ByteArray.getElem_eq_getElem_data, ← Array.getElem_toList hj',
+      List.getElem_of_eq hpre.symm hj, List.getElem_take]
+  have hx : ∀ e, e ≤ base.length → (name.extract 0 e).data.toList = base.take e := by
+    intro e he
+    rw [FQ.extract_list, hl, Nat.sub_zero, ← hpre, List.take_take, Nat.min_eq_left he]
+  by_cases h2 : 2 ≤ base.length
+  · have e2 := hget (base.length - 2) (by omega)
+    have e1 := hget (base.length - 1) (by omega)
+    have hdl : base.dropLast.dropLast = base.take (base.length - 2) := by
+      rw [List.dropLast_eq_take, List.dropLast_eq_take, List.take_take, List.length_take]; congr 1; omega
+    by_cases c : (base[base.length - 2]'(by omega) = 47) ∧
+        (base[base.length - 1]'(by omega) = 49 ∨ base[base.length - 1]'(by omega) = 50)
+    · rw [if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, beq_iff_eq, e2, e1]; exact ⟨⟨h2, c.1⟩, c.2⟩),
+        if_pos (by rw [Bool.or_eq_true, suffix_two, suffix_two]; rcases c.2 with c2 | c2
+                   · exact Or.inl ⟨h2, c.1, c2⟩
+                   · exact Or.inr ⟨h2, c.1, c2⟩), hdl, hx _ (by omega)]
+    · rw [if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, beq_iff_eq, e2, e1]
+                     exact fun ⟨⟨_, a⟩, b⟩ => c ⟨a, b⟩),
+        if_neg (by rw [Bool.or_eq_true, suffix_two, suffix_two]
+                   rintro (⟨_, a, b⟩ | ⟨_, a, b⟩)
+                   · exact c ⟨a, Or.inl b⟩
+                   · exact c ⟨a, Or.inr b⟩),
+        hx _ (Nat.le_refl _), List.take_length]
+  · rw [if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq]; omega),
+      if_neg (by rw [Bool.or_eq_true, suffix_two, suffix_two]; rintro (⟨h, -⟩ | ⟨h, -⟩) <;> omega),
+      hx _ (Nat.le_refl _), List.take_length]
+
+theorem qnameOkB_eq (q : ByteArray) : qnameOkB q = qnameOk q.data.toList := by
+  unfold qnameOkB qnameOk
+  have ha := FQ.allBytes_iff (fun c => (33 ≤ c && c ≤ 63) || (65 ≤ c && c ≤ 126)) q
+  simp only [Array.length_toList, ByteArray.size_data]
+  congr 1
+  apply Bool.eq_iff_iff.mpr
+  rw [ha, List.all_eq_true]
 
 end Spec
+
+#print axioms Spec.qnameB_eq
+#print axioms Spec.qnameOkB_eq
