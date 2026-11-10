@@ -1,5 +1,7 @@
 # Overnight report (in progress)
 
+> **WARNING (found overnight): do not run `lean-align map … /dev/null`.** Main writes OUT.tmp and renames it onto OUT, so with OUT = /dev/null (as root) it creates /dev/null.tmp and renames it over /dev/null, turning /dev/null into a regular file. `Testing/verify.sh` step 5 is fixed to use a drained FIFO instead. Fixing Main itself (e.g. refuse an OUT that exists and is not a regular file, fail fast) is a change to the locked Main.lean: Rowan's decision.
+
 ## Correctness: new streaming build (spec/mapfiles 53c1ab2) vs festive, 4 threads (S-T)
 SAM md5 identical after removing XT:Z:<tier> (trimmedAway kept): n1m bcd41c6e…, h1m 89fb1ec8….
 
@@ -79,7 +81,8 @@ Idea A: the walk evaluates all its candidates and keeps the best AS1+AS2 (proved
 | HiSeq 1M | | 40,180 → 35,411 | 15,095 → 16,719 | 25.2 → 25.4 s |
 Mapped counts unchanged; SAM changes only on pairs that were mapped-unknown. Next: cut the NovaSeq time cost (stop early when the candidate is near the bound), steer anchors with the other mate's seeds.
 
-## Speed: final build (festive = spec/mapfiles 64ae73f) vs old festive (e96862d) vs minibwa (S-T)
+## Speed: final build (NOTE: the 'new' column below wrote its SAM into a RAM file because of the /dev/null bug; corrected FIFO-sink numbers follow)
+## (was) Speed: final build (festive = spec/mapfiles 64ae73f) vs old festive (e96862d) vs minibwa (S-T)
 1M plain, SAM to /dev/null, taskset 0..T-1, median of 3, index load measured in the run and subtracted. Map-only seconds | Gbp per core-hour (map CPU) | core use.
 | set | threads | old festive | new | minibwa |
 |---|---|---|---|---|
