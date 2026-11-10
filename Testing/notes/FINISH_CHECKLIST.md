@@ -41,11 +41,18 @@ Order matters: make it right, check it, then understand it.
 - `SHIM_EXPLAINED.md`, `UTILIZATION.md`, `byte_specs/LEMMAS.md`, `Testing/fuzz/ROWAN_CHECKLIST.md`, `SESSION_SUMMARY.md`.
 
 ## REMINDER (Rowan): double-check the locked SAM spec (Spec/Draft/Sam.lean) line by line, field by field against SAMv1 §1.4.
+## BUG (Rowan fixes in Main): `lean-align map … /dev/null` destroys /dev/null. Main writes OUT.tmp and renames it onto OUT, so OUT=/dev/null (root) renames a 3 GB regular file over /dev/null. Fix: refuse an OUT that exists and is not a regular file (fail fast); also assert OUT differs from both inputs. verify.sh step 5 already avoids it (drained FIFO).
+## PROPOSED (needs Rowan): Main reads the two FASTQ files on one thread, one after the other, so on zcat pipes the decompressors stall (5M: +12% / +27% wall, core use 0.78 / 0.65). Fix on branch fix/parallel-read (0d537bf): one read-ahead thread per file (bounded, 4 chunks). Being timed.
 ## DECIDED (Rowan, from the spec review; Rowan edits the Spec, not Claude)
 - Trim: pick the best window among windows at least `minLength` (25) long; tie rule: longest, then leftmost. (The one real error the review found.) Changes output vs festive once done; the fast trimmer must be redone and re-proved then.
 - Chromosome names: at build, name = header up to the first whitespace, valid SAM RNAME, unique, length ≥ 1; fail the build otherwise.
 - Index quality of life (later): detect a corrupt/stale index, tie .chromosomes to the index, genome version/hash in the index header; fail fast.
 - `toNat!` in Main/Fasta: fail fast on bad numbers (toNat? + exit 1).
+- Genome letters: at build, assert every letter is A/C/G/T/N (fail fast). A soft-masked FASTA (UCSC hg38.fa, lowercase repeats) otherwise mismatches silently; benchmarks use hg38.upper.fa.
+- `unknown` with a found pair: today the Spec only bounds every proper pair by XB (bestPossibleScore). No version of the Spec ever required more. Candidate fix (Rowan, later): found score = XB, or ≥ requiredMapBound, except for stoppedEarly. Measure first how often AS1+AS2 < XB.
+- EXPERIMENT (morning, Claude): mapped `unknown` pairs. (1) Count them, and how many have XB ≥ requiredMapBound (S-T). (2) Prototype a stricter rule, mapped unknown allowed only when bestPossibleScore < requiredMapBound (else the best pair or uniqueness must be resolved), using the repetitive exit where it applies. Report the speed cost and how many answers change. Next step if cheap (Rowan): an upper bound for unknown in the Spec. Uniqueness checks stay as they are.
+- QoL (later): a QNAME ends at a space or a tab; assert min ≤ max fragment; assert the output path differs from both inputs (and OUT.tmp too); a log of input checks; error messages naming file and record.
+- Accepted as is: repetitiveUnknown bound; the sensitivity limit of "not found" (document it).
 - Not changing: names ≥ 10 bytes (short names can't be unique over millions of reads); no streaming/memory promise in the Spec.
 - No single end theorem over parse + trim + align for now: trimming is an arbitrary choice. Idea: if a local-alignment score can be defined universally (soft clipping scored), trimming can go, and the end theorem can say the alignments are of exactly the reads in the file.
 ## REMINDER (Rowan): read process / process_correct / Main line by line (StateM, `.run`, `modifyGet`, `modify`), and compare Main with the theorem.

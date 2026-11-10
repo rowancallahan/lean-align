@@ -66,7 +66,7 @@ if want 4; then
 fi
 
 if want 5; then
-  step 5 "speed: $T threads, SAM to /dev/null, index load separate, median of $R"
+  step 5 "speed: $T threads, SAM to a drained FIFO, index load separate, median of $R"
   : > "$O/empty.fq"; : > "$O/speed.txt"
   med() { sort -g | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'; }
   # prints "wall user sys" of a command (bash's time, children included)
@@ -82,7 +82,10 @@ if want 5; then
           cat "$IDX" > /dev/null
           # the load measured inside the run (until the index's bytes are read: timed_load.py); a separate empty run
           # loads at a different page-cache state and can exceed the real run's load (negative map time)
-          line=$(taskset -c 0-$((T-1)) python3 Testing/scripts/timed_load.py ours $LA map "$IDX" "$r1" "$r2" /dev/null 100 1000)
+          # never pass /dev/null as OUT: Main writes OUT.tmp and renames it onto OUT. OUT.tmp is a FIFO drained to /dev/null.
+          rm -f "$O/sink.sam" "$O/sink.sam.tmp"; mkfifo "$O/sink.sam.tmp"; cat "$O/sink.sam.tmp" > /dev/null &
+          line=$(taskset -c 0-$((T-1)) python3 Testing/scripts/timed_load.py ours $LA map "$IDX" "$r1" "$r2" "$O/sink.sam" 100 1000)
+          wait; rm -f "$O/sink.sam" "$O/sink.sam.tmp"
           get() { echo "$line" | sed "s/.* $1 \([0-9.]*\) s.*/\1/"; }
           w=$(get wall); u=$(get user); y=$(get sys); load=$(get load); lcpu=$(get loadcpu)
         else

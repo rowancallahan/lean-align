@@ -130,18 +130,20 @@ theorem range_getElem (A : Array ByteArray) : ∀ n, n ≤ A.size → (List.rang
       rw [this]; rfl
     rw [this]; rfl
 
-theorem spawn_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
-    (hjob : ∀ a b, (job a b).map bl = spec (bl a) (bl b)) (st : State) (W F1 F2 : List UInt8) (a b : ByteArray)
-    (hI : InvG spec job st W F1 F2) :
-    let q1 := st.queue1 ++ (cutSlices st.file1 a).2
-    let q2 := st.queue2 ++ (cutSlices st.file2 b).2
+theorem spawn_inv_gen (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = spec (bl a) (bl b)) (st : State) (W F1 F2 X1 X2 : List UInt8) (f1' f2' : Carry) (s1 s2 : Array ByteArray) (ss1 ss2 : List (List UInt8))
+    (hI : InvG spec job st W F1 F2)
+    (h1 : (∀ s ∈ ss1, IsSlice need s) ∧ s1.toList.map bl = ss1 ∧ bl st.file1.carry ++ X1 = ss1.flatten ++ bl f1'.carry ∧ ScanOk f1')
+    (h2 : (∀ s ∈ ss2, IsSlice need s) ∧ s2.toList.map bl = ss2 ∧ bl st.file2.carry ++ X2 = ss2.flatten ++ bl f2'.carry ∧ ScanOk f2') :
+    let q1 := st.queue1 ++ s1
+    let q2 := st.queue2 ++ s2
     let n := min q1.size q2.size
-    InvG spec job ⟨st.job, (cutSlices st.file1 a).1, (cutSlices st.file2 b).1, q1.extract n q1.size, q2.extract n q2.size,
-      spawnPaired st.job q1 q2 st.pending⟩ W (F1 ++ bl a) (F2 ++ bl b) := by
+    InvG spec job ⟨st.job, f1', f2', q1.extract n q1.size, q2.extract n q2.size,
+      spawnPaired st.job q1 q2 st.pending⟩ W (F1 ++ X1) (F2 ++ X2) := by
   intro q1 q2 n
   obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
-  obtain ⟨ss1, hss1, hcs1, hcar1, hcnt1, hok1'⟩ := cutSlices_spec st.file1 a ok1
-  obtain ⟨ss2, hss2, hcs2, hcar2, hcnt2, hok2'⟩ := cutSlices_spec st.file2 b ok2
+  obtain ⟨hss1, hcs1, hcar1, hok1'⟩ := h1
+  obtain ⟨hss2, hcs2, hcar2, hok2'⟩ := h2
   have hQ1 : q1.toList.map bl = st.queue1.toList.map bl ++ ss1 := by simp [q1, Array.toList_append, hcs1.symm]
   have hQ2 : q2.toList.map bl = st.queue2.toList.map bl ++ ss2 := by simp [q2, Array.toList_append, hcs2.symm]
   have hn1 : n ≤ q1.size := Nat.min_le_left _ _
@@ -185,7 +187,7 @@ theorem spawn_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (jo
     rw [hex1]
     have e : (List.map (fun k => bl q1[k]!) (List.range n)).flatten = ((q1.toList.map bl).take n).flatten := by rw [hmap1]
     rw [e]
-    have hc : bl st.file1.carry ++ bl a = ss1.flatten ++ bl (cutSlices st.file1 a).1.carry := hcar1
+    have hc : bl st.file1.carry ++ X1 = ss1.flatten ++ bl f1'.carry := hcar1
     have hQf : (q1.toList.map bl).flatten = (st.queue1.toList.map bl).flatten ++ ss1.flatten := by rw [hQ1, List.flatten_append]
     have hsplit : (q1.toList.map bl).flatten = ((q1.toList.map bl).take n).flatten ++ ((q1.toList.map bl).drop n).flatten := by
       rw [← List.flatten_append, List.take_append_drop]
@@ -197,12 +199,12 @@ theorem spawn_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (jo
     rw [hex2]
     have e : (List.map (fun k => bl q2[k]!) (List.range n)).flatten = ((q2.toList.map bl).take n).flatten := by rw [hmap2]
     rw [e]
-    have hc : bl st.file2.carry ++ bl b = ss2.flatten ++ bl (cutSlices st.file2 b).1.carry := hcar2
+    have hc : bl st.file2.carry ++ X2 = ss2.flatten ++ bl f2'.carry := hcar2
     have hQf : (q2.toList.map bl).flatten = (st.queue2.toList.map bl).flatten ++ ss2.flatten := by rw [hQ2, List.flatten_append]
     have hsplit : (q2.toList.map bl).flatten = ((q2.toList.map bl).take n).flatten ++ ((q2.toList.map bl).drop n).flatten := by
       rw [← List.flatten_append, List.take_append_drop]
     rw [hF2]
-    generalize bl (cutSlices st.file2 b).1.carry = c' at hc ⊢
+    generalize bl f2'.carry = c' at hc ⊢
     simp only [List.append_assoc]
     refine congrArg ((List.map (fun x => x.snd) SP).flatten ++ ·) ?_
     rw [hc, ← List.append_assoc, ← hQf, hsplit, List.append_assoc]
@@ -216,6 +218,21 @@ theorem spawn_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (jo
     intro k hk
     show Option.map bl (st.job q1[k]! q2[k]!) = spec (bl q1[k]!) (bl q2[k]!)
     rw [hj]; exact hjob _ _
+
+
+theorem spawn_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = spec (bl a) (bl b)) (st : State) (W F1 F2 : List UInt8) (a b : ByteArray)
+    (hI : InvG spec job st W F1 F2) :
+    let q1 := st.queue1 ++ (cutSlices st.file1 a).2
+    let q2 := st.queue2 ++ (cutSlices st.file2 b).2
+    let n := min q1.size q2.size
+    InvG spec job ⟨st.job, (cutSlices st.file1 a).1, (cutSlices st.file2 b).1, q1.extract n q1.size, q2.extract n q2.size,
+      spawnPaired st.job q1 q2 st.pending⟩ W (F1 ++ bl a) (F2 ++ bl b) := by
+  have hI' := hI
+  obtain ⟨-, -, -, -, ok1, ok2, -⟩ := hI'
+  obtain ⟨ss1, hss1, hcs1, hcar1, hcnt1, hok1'⟩ := cutSlices_spec st.file1 a ok1
+  obtain ⟨ss2, hss2, hcs2, hcar2, hcnt2, hok2'⟩ := cutSlices_spec st.file2 b ok2
+  exact spawn_inv_gen spec job hjob st W F1 F2 (bl a) (bl b) _ _ _ _ ss1 ss2 hI ⟨hss1, hcs1, hcar1, hok1'⟩ ⟨hss2, hcs2, hcar2, hok2'⟩
 
 /-! ## `collect` -/
 
