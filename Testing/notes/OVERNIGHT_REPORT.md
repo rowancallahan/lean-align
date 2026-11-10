@@ -125,3 +125,15 @@ Simulated, pairs correct (both mates within 10 bp of truth), ours vs minibwa: ma
 By our class (n; ours correct %; minibwa correct %): unique: mason 86,604; 100.00; 99.99 · low 94,164; 99.99; 99.99 · high 59,278; 99.94; 99.97. unknown: 10,017; 72.9; 84.7 · 5,348; 45.6; 69.7 · 23,814; 90.8; 95.2. Not mapped/proper: 3,379; 0; 87.5 · 488; 0; 76.4 · 16,908; 0; 95.0.
 => Our "unique" is as correct as minibwa's MAPQ 60. The accuracy gap is (1) pairs we leave unmapped (the biggest part; 16.9% on `high`), (2) mapped-unknown pairs.
 S-A (exp/unknown-walkbest, proved, Spec untouched): walk keeps the best candidate with early stop at −4: unknown pairs at truth mason 14,898 → 15,791 (minibwa 17,357), low 4,854 → 5,961 (minibwa 7,286); time +3–5% on 1M NovaSeq (noisy).
+
+## Streamed 10M NovaSeq pairs, 4 threads, ours vs minibwa (S-P, 2026-11-10; curl | gunzip into FIFOs; 3.02 Gbp)
+| | ours (64ae73f + trace) | minibwa |
+|---|---|---|
+| wall | 303.5 s | 742.8 s (incl. 158.9 s cold index load; ~584 s map) |
+| aligner CPU | 832.8 s | 2233.3 s |
+| cores busy (aligner CPU / wall) | 2.74 | 3.01 |
+| peak RSS | 5.74 GB | 8.79 GB |
+| Gbp/hr (wall) | 35.8 | 14.6 (18.6 without its load) |
+| Gbp per core-hour (aligner CPU) | 13.06 | 4.87 |
+Raw download+gunzip alone: 350k pairs/s (≈ 10× our mapping rate), so the stream is not the limit.
+SLOW JOBS in ours: 6 of 625 jobs over 5 s (#185 25.5 s, #445 29.8 s, #525 10.3 s, #564 17.4 s, #566 10.1 s, #606 26.5 s; median 1.25 s). For 97.9 s of the 296.7 s span fewer than 4 jobs ran (82.8 s with only 1). So the slow-job problem is also in NovaSeq, about 1 job in 100, and costs roughly a third of the wall time. Must fix (see FINISH_CHECKLIST).
