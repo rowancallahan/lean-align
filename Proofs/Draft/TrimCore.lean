@@ -102,6 +102,24 @@ theorem winTrim_contract (minLen : Nat) (hm : 1 < minLen) (L Q : ByteArray) (h :
       have := contractWin_noACGT L Q hno s e hw
       simp only [keepB, if_pos (show e - s < minLen by omega)]
 
+/-- The quality trimmer for any length: the fast `winTrim` up to 10 000 letters, else the contract directly (never
+reached from valid FASTQ, which has at most 1000 letters). -/
+def trimW (minLen : Nat) (letters qual : ByteArray) : ByteArray × ByteArray :=
+  if letters.size ≤ 10000 then winTrim minLen letters qual
+  else keepB minLen letters qual (contractWin letters qual)
+
+theorem trimW_eq (minLen : Nat) (hm : 1 < minLen) (L Q : ByteArray) :
+    trimW minLen L Q = keepB minLen L Q (contractWin L Q) := by
+  unfold trimW; split
+  · exact winTrim_contract minLen hm L Q (by assumption)
+  · rfl
+
+/-- **The fast trimmer on bytes**: the TruSeq adapter cut (`AdapterTrim.cutTruSeq`, machine-word scan), then the best
+quality window and the minimum length 25 (`trimW`). `Spec.Trim.trimB_eq`: it is `Spec.Trim.trim (Spec.Trim.cut r)`. -/
+def trimB (seq qual : ByteArray) : ByteArray × ByteArray :=
+  let c := AdapterTrim.cutTruSeq seq qual
+  trimW 25 c.1 c.2
+
 end Spec.TrimCore
 
 #print axioms Spec.TrimCore.winTrim_contract

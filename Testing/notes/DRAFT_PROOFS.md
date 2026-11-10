@@ -8,13 +8,15 @@ the theorems below in the headline list.
 - `Proofs/Draft/TrimCore.lean`: `winTrim minLen letters qual` = `ReadTrim.trimRead` (fast `@[csimp]` loops) then
   `dropShort`. `winTrim_contract`: for ≤ 10 000 letters it is `keepB` of the frozen `get_best_window`
   (no A/C/G/T: the contract's best window is one base, by `get_best_window_returns_a_maximum_score`).
-- `Proofs/Draft/Trim.lean` (mirror): `trim` = `winTrim minLength` on the read's bytes (reads > 10 000 letters: the
-  contract directly; never reached from valid FASTQ, ≤ 1000). `trim_correct` proved: `window_score` of the contract's
-  scores is the spec's `windowScore` (`window_score_eq`, needs equal lengths), so the contract's window is a best one.
+- `Proofs/Draft/Trim.lean` (mirror): `trim` = `TrimCore.trimW minLength` on the read's bytes (`winTrim` up to 10 000
+  letters, else the contract directly; never reached from valid FASTQ, ≤ 1000). `trim_correct` proved: `window_score`
+  of the contract's scores is the spec's `windowScore` (`window_score_eq`, needs equal lengths), so the contract's
+  window is a best one.
 - `Proofs/Draft/TrimFast.lean`: `cut_eq` (`Spec.Trim.cut` = `AdapterTrim.cutTruSeq`: the spec's `adapterAt` is
-  `matchesAt truSeq 6 1` at every position, and `find?` over the positions is `cutPos`), `@[csimp] cut_eq_cutF`,
-  `trim_cut_eq` (`trim (cut r) = Spec.trimRead r`, ≤ 10 000 letters), `trimReadB_cut_trim`
-  (`(trimReadB rb).toRead = trim (cut rb.toRead)`): the shim keeps running `trimReadB` / `trimChunk` on `ReadB`.
+  `matchesAt truSeq 6 1` at every position, and `find?` over the positions is `cutPos`), `@[csimp] cut_eq_cutF`, and
+  `trimB_eq`: `TrimCore.trimB seq qual` (cut, best window, minimum length 25, all on `ByteArray`s; no use of Spec/Sam's
+  `trimBytes` / `minLength`) gives the sequence and quality of `trim (cut r)` on `r.sequence.toArray` /
+  `r.quality.toArray`. This is what `mapStep` should run.
 
 ## SAM
 - `Proofs/Draft/Sam.lean`: `Spec/Draft/Sam.lean` with the imports renamed to the Proofs copies.

@@ -34,11 +34,7 @@ def windowScore (r : FQ.Read) (start stop : Nat) : Int :=
 def minLength : Nat := 25
 
 def trim (r : FQ.Read) : FQ.Read :=
-  let t := if r.sequence.length ≤ 10000 then
-      TrimCore.winTrim minLength ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩
-    else
-      TrimCore.keepB minLength ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩
-        (TrimCore.contractWin ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩)
+  let t := TrimCore.trimW minLength ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩
   ⟨r.name, t.1.data.toList, t.2.data.toList⟩
 
 /-! ## Proof of `trim_correct` -/
@@ -51,10 +47,7 @@ theorem trim_eq (r : FQ.Read) :
       (TrimCore.keepB minLength ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩
         (TrimCore.contractWin ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩)).2.data.toList⟩ := by
   unfold trim
-  split
-  · rename_i h
-    rw [TrimCore.winTrim_contract minLength (by decide) _ _ (by simpa [ByteArray.size] using h)]
-  · rfl
+  rw [TrimCore.trimW_eq minLength (by decide)]
 
 /-- The per-base score of `windowScore`. -/
 def baseScoreS (b q : UInt8) : Int :=

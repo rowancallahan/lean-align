@@ -1,15 +1,12 @@
 import Proofs.Draft.Trim
-import Proofs.TrimRecord
 
 /-! # The spec's cut and trim are the fast byte code
 
 * `cut_eq`: `Spec.Trim.cut` is `AdapterTrim.cutTruSeq` (whose compiled code is the machine-word adapter scan):
   the spec's first position where the adapter (≤ 1 mismatch) or a prefix of it (≥ 6 letters, exact) starts is
   `AdapterTrim.cutPos truSeq 6 1`.
-* `trim_cut_eq`: `trim (cut r)` is the existing byte pipeline's `Spec.trimRead r` (cut, best window, minimum length on
-  `ByteArray`s), for reads of at most 10 000 letters.
-* `trimReadB_cut_trim`: the shim's `trimReadB` on `ReadB` is `trim ∘ cut` on the spec's read, so the spec's `List`
-  code never has to run. -/
+* `trimB_eq`: `TrimCore.trimB` (cut, best window, minimum length, all on `ByteArray`s) gives the letters and qualities
+  of `trim (cut r)`, so the spec's `List` code never has to run. -/
 
 namespace Spec.Trim
 open Spec.FQ
@@ -158,9 +155,9 @@ theorem cut_eq (r : FQ.Read) :
     cut r = ⟨r.name, (AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).1.data.toList,
       (AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).2.data.toList⟩ := by
   rw [cut_eq_find, cut_pos]
-  show _ = (⟨r.name, ((⟨r.sequence.toArray⟩ : ByteArray).extract 0 (cutAt ⟨r.sequence.toArray⟩)).data.toList,
-    ((⟨r.quality.toArray⟩ : ByteArray).extract 0 (cutAt ⟨r.sequence.toArray⟩)).data.toList⟩ : FQ.Read)
-  rw [ba_extract_list, ba_extract_list]; rfl
+  show _ = (⟨r.name, ((⟨r.sequence.toArray⟩ : ByteArray).extract 0 (AdapterTrim.cutPos AdapterTrim.truSeq 6 1 ⟨r.sequence.toArray⟩)).data.toList,
+    ((⟨r.quality.toArray⟩ : ByteArray).extract 0 (AdapterTrim.cutPos AdapterTrim.truSeq 6 1 ⟨r.sequence.toArray⟩)).data.toList⟩ : FQ.Read)
+  rw [ba_extract_list, ba_extract_list]
 
 /-- `cut` as the compiled code runs it: the machine-word adapter scan on the read's bytes (`cut_eq`). -/
 def cutF (r : FQ.Read) : FQ.Read :=
@@ -170,35 +167,21 @@ def cutF (r : FQ.Read) : FQ.Read :=
 @[csimp] theorem cut_eq_cutF : @cut = @cutF := by
   funext r; exact cut_eq r
 
-/-- **`trim ∘ cut` is the byte pipeline's trimmer** (`Spec.trimRead`: cut, best window, minimum length on bytes). -/
-theorem trim_cut_eq (r : FQ.Read) (h : r.sequence.length ≤ 10000) : trim (cut r) = Spec.trimRead r := by
-  have hc : (AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).1.data.toList.length ≤ 10000 := by
-    have := cutPos_le r.sequence
-    show ((⟨r.sequence.toArray⟩ : ByteArray).extract 0 (cutAt ⟨r.sequence.toArray⟩)).data.toList.length ≤ 10000
-    rw [ba_extract_list]; simp [List.extract]; unfold cutAt; omega
-  rw [cut_eq]
-  unfold trim
-  rw [if_pos hc]
-  simp only [toArray_ba]
-  show (⟨r.name, _, _⟩ : FQ.Read) = ⟨r.name, (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).1.data.toList,
-    (trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).2.data.toList⟩
-  have hb : TrimCore.winTrim minLength (AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).1
-      (AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩).2 =
-      trimBytes ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩ := by
-    unfold TrimCore.winTrim trimBytes
-    rcases AdapterTrim.cutTruSeq ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩ with ⟨l, q⟩
-    dsimp only
-    generalize ReadTrim.trimRead l q = o
-    rcases o with _ | ⟨s, e⟩ <;> rfl
-  rw [hb]
+theorem toArray_ba (b : ByteArray) : (⟨b.data.toList.toArray⟩ : ByteArray) = b := by
+  apply ByteArray.ext; simp
 
-/-- **The shim's `trimReadB` (on `ReadB`) is the spec's `trim ∘ cut`** on the read it stands for. -/
-theorem trimReadB_cut_trim (rb : ReadB) (h : rb.seq.size ≤ 10000) : (trimReadB rb).toRead = trim (cut rb.toRead) := by
-  rw [trimReadB_toRead, trim_cut_eq _ (by show rb.seq.data.toList.length ≤ 10000; rw [Array.length_toList]; exact h)]
+/-- **`trimB` is the spec's `trim ∘ cut`**: on a read's bytes it gives the letters and qualities of
+`trim (cut r)`. -/
+theorem trimB_eq (r : FQ.Read) :
+    let t := TrimCore.trimB ⟨r.sequence.toArray⟩ ⟨r.quality.toArray⟩
+    (t.1.data.toList, t.2.data.toList) = ((trim (cut r)).sequence, (trim (cut r)).quality) := by
+  rw [cut_eq]
+  unfold trim TrimCore.trimB
+  simp only [toArray_ba]
+  rfl
 
 end Spec.Trim
 
 #print axioms Spec.Trim.cut_eq
 #print axioms Spec.Trim.cut_eq_cutF
-#print axioms Spec.Trim.trim_cut_eq
-#print axioms Spec.Trim.trimReadB_cut_trim
+#print axioms Spec.Trim.trimB_eq
