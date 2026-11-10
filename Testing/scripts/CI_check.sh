@@ -45,7 +45,7 @@ grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |
   Aligner/PairwiseMain.lean Aligner/LeanAlign/*.lean && bad "forbidden token in the executables"
 grep -nE "IO\." Aligner/LeanAlign/*.lean && bad "IO in the pure library LeanAlign/"
 grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" \
-  Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
+  Main.lean Spec/Draft/Main.lean Proofs/MapFast.lean Spec/Fasta.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean \
   Aligner/io/FastqIO.lean \
   && bad "forbidden token in the shim files"
 [ $fail -eq $before ] && echo "none"
@@ -61,8 +61,12 @@ n=$(grep -n '^/-! ## The index and the aligner' Spec/Aligner.lean | cut -d: -f1)
 head -n $((n - 1)) Spec/Aligner.lean > "$tmp/spec_answer.lean"
 [ -n "$n" ] && sed "1d; \$d; s/^import Proofs.Mapping$/import Spec.Mapping/" Proofs/Answer.lean | cmp -s - "$tmp/spec_answer.lean" \
   && echo "Proofs/Answer.lean mirrors Spec/Aligner.lean (up to the holes)" || bad "Proofs/Answer.lean differs from Spec/Aligner.lean"
-sed "1d; s/^import Proofs.Sam$/import Spec.Sam/" Main.lean | cmp -s - Spec/Shim.lean \
-  && echo "Main.lean mirrors Spec/Shim.lean" || bad "Main.lean differs from Spec/Shim.lean"
+for f in Trim Sam MapFiles; do
+  python3 -I Testing/scripts/holes_mirror.py Spec/Draft/$f.lean Proofs/Draft/$f.lean \
+    && echo "Proofs/Draft/$f.lean mirrors Spec/Draft/$f.lean (up to the holes)" || bad "Proofs/Draft/$f.lean differs from Spec/Draft/$f.lean"
+done
+sed "s/^import Proofs.Draft.MapFiles$/import Spec.Draft.MapFiles/" Main.lean | cmp -s - Spec/Draft/Main.lean \
+  && echo "Main.lean mirrors Spec/Draft/Main.lean" || bad "Main.lean differs from Spec/Draft/Main.lean"
 
 if [ "${FUZZ:-0}" = 1 ]; then
   step "output fuzz (tiny generated genome)"
