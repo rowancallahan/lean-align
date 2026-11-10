@@ -6,7 +6,7 @@ cd "$(dirname "$0")/../.."
 out=$1; mkdir -p "$out"
 cp Main.lean "$out/Main.lean.orig"
 grep -q '^def chunkSize : USize := 8 \* 1024 \* 1024$' Main.lean
-for n in 1 7 4096 default; do
+for n in ${SIZES:-1 7 4096 default}; do
   cp "$out/Main.lean.orig" Main.lean
   [ $n = default ] || sed -i "s/^def chunkSize : USize := .*/def chunkSize : USize := $n/" Main.lean
   lake build lean-align

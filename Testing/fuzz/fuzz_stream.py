@@ -12,7 +12,7 @@ for x in it:
 work, ref, new, chunk_bins = os.path.abspath(a[0]), os.path.abspath(a[1]), os.path.abspath(a[2]), [os.path.abspath(x) for x in a[3:]]
 os.makedirs(work, exist_ok=True)
 run = lambda *c: subprocess.run(c, capture_output=True)
-strip = lambda b: re.sub(rb'\tXT:Z:\S+', b'', b)
+strip = (lambda b: b) if os.environ.get("STRICT") else (lambda b: re.sub(rb"\tXT:Z:\S+", b"", b))   # STRICT=1: no tag removal (reference is the new streaming build)
 npass = nfail = 0
 def check(ok, what, info=''):
     global npass, nfail
