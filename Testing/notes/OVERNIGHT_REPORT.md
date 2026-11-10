@@ -56,3 +56,7 @@ SAM vs festive (tier tags stripped) identical on 200k and 5M, NovaSeq and HiSeq.
 | 5M HiSeq FIFO, whole run | 130.3 / 500.9 s | 128.0 / 490.7 s |
 No slower anywhere. (The ~10% instruction savings on fused/writer are not in these numbers yet.)
 S4 (proof/mapfiles2 70e9215): process_correct now proved inside Proofs/MapFiles.lean with the Spec text unchanged (via copies in Proofs/MapDefs.lean, checked by check_copies.sh); only job_eq left.
+
+## Aligner rare paths (S-H, investigation)
+- Last resort (1.7% of pairs, 15.5% of instructions): its best pair is usually tied, and the reported pair follows pairsAt's tie order, so it can't be skipped without changing which tied pair is reported (an output change, not allowed). Best same-output saving ≤ 0.9%. Dropped.
+- Walk (14.5% of pairs, 15% of instructions): mostly the banded DP kernel bandCellsJ (~90 instructions per cell, boxed arrays). Same-result options: word copies in window extraction (~0.6%, doing now); a flat-array kernel (~2%, about a day of re-proving). Decision for Rowan.
