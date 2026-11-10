@@ -40,3 +40,6 @@ After S-H's fused writer and trimB csimp (fused/writer): NovaSeq 1,831.0M → 1,
 
 ## process_correct (S4, proof/mapfiles2 506ebe8)
 Proved, no sorry, standard axioms, as `process_correct'`: the Spec's exact statement, assuming one lemma `job_eq` (a fast job = mapReads of its two slices), which S-G is proving. Covers carries, slices of 4·16000 lines, up to 8 jobs in flight, any chunk sizes, a step failing exactly when mapReads of the whole files fails, and the last job when one file has more slices. Remaining: job_eq, and closing the sorry in Proofs/MapFiles without changing the Spec text (generic proof applied there, or exact copies).
+- 031ba75 (S-H): FASTQ record checks fused into the line scans, errors byte-identical (`@[csimp] parseFastqB_eqF`); parse 48.7M → 32.4M. NovaSeq −1.0%, HiSeq −1.2%. FASTQ edge cases 20/20.
+- Cumulative on fused/writer vs 53c1ab2: NovaSeq 1,831.0M → 1,652.4M (−9.8%), HiSeq 2,049.0M → 1,833.7M (−10.5%), SAM identical.
+- Next: closures and reference counting in the aligner; investigate the fallback tiers redoing work (report only).
