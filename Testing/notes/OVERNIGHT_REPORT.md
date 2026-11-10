@@ -18,3 +18,8 @@ Consequence for the stricter rule (mapped unknown only if XB < bound): ~11% of p
 - Random valid pairs (seeds 2–9, ~800 pairs each; adapters, N, low quality, trimmed away, long reads): equal to festive.
 - Next: random seeds at chunk 7 / 4096, and files with very different read lengths.
 - Chunk stress (fuzz/harness 156ae6e, Testing/fuzz/fuzz_chunks.py): 20 pass / 0 fail. Random sets at chunk 1/7/4096 byte-identical to the default build; uneven mate lengths (250×50, 50×250, 101×101, 1000×25) identical across chunk sizes and equal to festive (with 80–564 mapped records each).
+
+## Fused SAM writer (S-H, fused/writer 61e998c)
+`samChunkF` writes each job's SAM in one pass into one pre-sized buffer; `samChunkF_eq : samChunkF = samChunkS` with `@[csimp]`, standard axioms. SAM identical.
+callgrind, 4000 pairs: NovaSeq 1,831.0M → 1,747.3M instructions (−4.6%); HiSeq 2,049.0M → 1,934.1M (−5.6%). The writer itself: 149M → 70M.
+Next: fused cut+trim (trimming is ~6% of NovaSeq instructions; ~1–2% to gain).
