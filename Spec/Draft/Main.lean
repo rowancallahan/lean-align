@@ -3,7 +3,7 @@ import Spec.Draft.MapFiles
 
 open Spec
 
-def blockSize : USize := 8 * 1024 * 1024
+def chunkSize : USize := 8 * 1024 * 1024
 
 def fail (tmpPath why : String) : IO UInt32 := do
   IO.FS.removeFile tmpPath
@@ -12,13 +12,13 @@ def fail (tmpPath why : String) : IO UInt32 := do
 
 def fuel : Nat := 2 ^ 64
 
--- the next pair of blocks, one from each file; none when both files have ended
-def nextBlocks (file1 file2 : IO.FS.Handle) : IO (Option (ByteArray × ByteArray)) := do
-  let block1 ← file1.read blockSize
-  let block2 ← file2.read blockSize
-  match block1.isEmpty && block2.isEmpty with
+-- the next chunk of each FASTQ file; none when both files have ended
+def nextChunks (fastq1 fastq2 : IO.FS.Handle) : IO (Option (ByteArray × ByteArray)) := do
+  let chunk1 ← fastq1.read chunkSize
+  let chunk2 ← fastq2.read chunkSize
+  match chunk1.isEmpty && chunk2.isEmpty with
   | true  => return none
-  | false => return some (block1, block2)
+  | false => return some (chunk1, chunk2)
 
 def main (args : List String) : IO UInt32 := do
   match args with
@@ -27,13 +27,14 @@ def main (args : List String) : IO UInt32 := do
     -- TRUSTED: the index file is `buildIndex` of the genome, and INDEX.chromosomes lists its chromosomes
     let index ← IO.FS.readBinFile indexPath
     let chrs ← readChromosomeList (indexPath ++ ".chromosomes")
-    let file1 ← IO.FS.Handle.mk reads1Path .read
-    let file2 ← IO.FS.Handle.mk reads2Path .read
+    let fastq1 ← IO.FS.Handle.mk reads1Path .read
+    let fastq2 ← IO.FS.Handle.mk reads2Path .read
     -- written to OUT.tmp, renamed to OUT only when everything succeeded
     let tmpPath := outPath ++ ".tmp"
     let out ← IO.FS.Handle.mk tmpPath .write
-    -- `process` of `process_correct`, with the files as `next` and the output file as `emit`
-    match ← Total.process (nextBlocks file1 file2) out.write fuel (Total.mapInit settings index chrs) with
+    -- the header, then `process` of `process_correct`: the FASTQ files are `next`, the output file `emit`
+    out.write ⟨(SamSpec.header chrs).toArray⟩
+    match ← Total.process (nextChunks fastq1 fastq2) out.write fuel (Total.mapInit settings index chrs) with
     | some () =>
       out.flush
       IO.FS.rename tmpPath outPath

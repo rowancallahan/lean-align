@@ -22,52 +22,61 @@ def mateLetters (pair : FQ.Read × FQ.Read) : Option ByteArray × Option ByteArr
     | s  => some ⟨s.toArray⟩
   (letters pair.1, letters pair.2)
 
--- the SAM file for two FASTQ files, or none if they are not valid, matching FASTQ
-def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (file1 file2 : List UInt8) : Option (List UInt8) :=
-  match FQ.parse file1, FQ.parse file2 with
+-- the SAM lines for two FASTQ files (no header), or none if they are not valid, matching FASTQ
+def mapReads (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (fastq1 fastq2 : List UInt8) : Option (List UInt8) :=
+  match FQ.parse fastq1, FQ.parse fastq2 with
   | some reads1, some reads2 =>
     (prepPairs reads1 reads2).map fun pairs =>
-      SamSpec.samFile chrs pairs (alignPairs settings index (pairs.map mateLetters))
+      SamSpec.body chrs pairs (alignPairs settings index (pairs.map mateLetters))
   | _, _ =>
     none
+
+-- the SAM file: the header, then the lines
+def mapFiles (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (fastq1 fastq2 : List UInt8) : Option (List UInt8) :=
+  (mapReads settings index chrs fastq1 fastq2).map (SamSpec.header chrs ++ ·)
 
 -- the fast, streaming version: holes, filled below the Spec
 def MapState : Type := sorry
 def mapInit (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) : MapState := sorry
--- given the next pair of blocks (none: both files have ended), the next state and the bytes to write
-def mapStep (state : MapState) (blocks : Option (ByteArray × ByteArray)) : Option (MapState × ByteArray) := sorry
+-- given the next chunk of each FASTQ file (none: both files have ended), the next state and SAM lines
+def mapStep (state : MapState) (chunks : Option (ByteArray × ByteArray)) : Option (MapState × ByteArray) := sorry
 
--- one loop for the proof and for Main: `next` gives the next pair of blocks, `emit` writes a piece
+-- one loop for the proof and for Main: `next` gives the next chunks, `emit` writes SAM lines
 def process [Monad m] (next : m (Option (ByteArray × ByteArray))) (emit : ByteArray → m Unit) :
     (fuel : Nat) → MapState → m (Option Unit)
   | 0, _ => pure none
   | fuel + 1, state => do
-    let blocks ← next
-    match mapStep state blocks, blocks with
+    let chunks ← next
+    match mapStep state chunks, chunks with
     | none, _ =>
       pure none
-    | some (state', piece), none =>
-      emit piece
+    | some (state', lines), none =>
+      emit lines
       pure (some ())
-    | some (state', piece), some _ =>
-      emit piece
+    | some (state', lines), some _ =>
+      emit lines
       process next emit fuel state'
 
--- run on a list of blocks (next takes the first, emit appends), `process` writes exactly `mapFiles`
+def bytes (b : ByteArray) : List UInt8 := b.data.toList
+
+-- `process` on the two FASTQ files given as a list of chunk pairs: `next` takes the next pair,
+-- `emit` appends to the output; what it writes is exactly `mapReads`
 theorem process_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (blocks : List (ByteArray × ByteArray)) (fuel : Nat) (enough : blocks.length < fuel) :
-    let file1 := blocks.flatMap fun (block1, _) => block1.data.toList
-    let file2 := blocks.flatMap fun (_, block2) => block2.data.toList
+    (chunks : List (ByteArray × ByteArray)) (fuel : Nat) (enough : chunks.length < fuel) :
+    let fastq1 := chunks.flatMap fun (chunk1, _) => bytes chunk1
+    let fastq2 := chunks.flatMap fun (_, chunk2) => bytes chunk2
+    -- the state: the chunks not read yet, and the output written so far
     let next : StateM (List (ByteArray × ByteArray) × List UInt8) (Option (ByteArray × ByteArray)) :=
       modifyGet fun (rest, out) =>
         match rest with
         | []         => (none, ([], out))
-        | b :: later => (some b, (later, out))
-    let emit (piece : ByteArray) : StateM (List (ByteArray × ByteArray) × List UInt8) Unit :=
-      modify fun (rest, out) => (rest, out ++ piece.data.toList)
-    let (result, (_, written)) := (process next emit fuel (mapInit settings index chrs)).run (blocks, [])
-    result.map (fun () => written) = mapFiles settings index chrs file1 file2 := by
+        | c :: later => (some c, (later, out))
+    let emit (lines : ByteArray) : StateM (List (ByteArray × ByteArray) × List UInt8) Unit :=
+      modify fun (rest, out) => (rest, out ++ bytes lines)
+    let (result, (_, written)) := (process next emit fuel (mapInit settings index chrs)).run (chunks, [])
+    result.map (fun () => written) = mapReads settings index chrs fastq1 fastq2 := by
   sorry
 
 end Spec.Total
