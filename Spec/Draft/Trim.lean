@@ -27,22 +27,30 @@ def baseScore (b q : UInt8) : Int :=
   | _ =>
     -1000000
 
-def windowScore (scores : List Int) (lo hi : Nat) : Int :=
-  (scores.extract lo hi).sum
+def windowScore (scores : List Int) (start stop : Nat) : Int :=
+  (scores.extract start stop).sum
 
 def trim (r : FQ.Read) : FQ.Read := sorry
 
--- the kept part is a best window [lo, hi): no window scores higher;
+-- the kept part is a best window [start, stop): no proposed window scores higher;
 -- it is dropped if shorter than `minLength`
 theorem trim_correct (r : FQ.Read) :
     let scores := List.zipWith baseScore r.sequence r.quality
-    (scores = [] ∧ trim r = ⟨r.name, [], []⟩) ∨
-    ∃ lo hi, lo < hi ∧ hi ≤ scores.length ∧
-      (∀ a b, a < b → b ≤ scores.length → windowScore scores a b ≤ windowScore scores lo hi) ∧
+    (scores = [] ∧
+     trim r = ⟨r.name, [], []⟩)
+    ∨
+    ∃ start stop,
+      let windowLength := stop - start
+      start < stop ∧
+      stop ≤ scores.length ∧
+      (∀ proposedStart proposedStop,
+        proposedStart < proposedStop →
+        proposedStop ≤ scores.length →
+        windowScore scores proposedStart proposedStop ≤ windowScore scores start stop) ∧
       trim r =
-        match decide (minLength ≤ hi - lo) with
+        match decide (minLength ≤ windowLength) with
         | true =>
-          ⟨r.name, r.sequence.extract lo hi, r.quality.extract lo hi⟩
+          ⟨r.name, r.sequence.extract start stop, r.quality.extract start stop⟩
         | false =>
           ⟨r.name, [], []⟩ := by
   sorry
