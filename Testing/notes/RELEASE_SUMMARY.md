@@ -62,6 +62,11 @@ Not run by me: CI on GitHub for the head commit; anything on macOS; anything abo
 - If one read file ends early or the two files have very different record sizes, memory grows without limit
   (seen: 13.9 GB, killed). See open items.
 
+## Standing goal for speed work (Rowan, 2026-11-11)
+Speed work must keep paying off as cores go up (16, 32 and beyond). Every change is checked for scaling, not only
+for single-thread instructions: CPU per pair at 1, 2 and 4 threads, shared reference counts, cross-thread frees,
+the single reader loop, decompression. Nothing above 4 cores has been measured yet.
+
 ## 6. Open items (yours)
 1. `Main.lean`: refuse a non-regular OUT and OUT equal to an input; cap on how far one file may run past the other.
 2. EC2 run at 16 and 32 threads (`Testing/ec2/README.md`). Expect gunzip and the reader loop to cap near 400-450
