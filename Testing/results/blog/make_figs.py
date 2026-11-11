@@ -50,10 +50,11 @@ def rep_panel(ax, exp, col, top, fmt='{:.1f}'):
     ax.set_xticks(range(len(DSN))); ax.set_xticklabels([DS[d] for d in DSN]); ax.tick_params(axis='x', pad=14); ax.set_ylim(0, top * 1.14); ax.set_xlim(-.6, len(DSN) - .4)
 def sizes(ds): return sorted({int(r['pairs']) for r in RP if r['experiment'] == src('stream', ds) and r['data'] == ds})
 def nruns(ds): return [len(runs_of('stream', ds, t, 'wall_s')) for t in SC]
+def srs(d): return ' [container restart between runs: the spread is mostly the restart]' if any('container restarted' in r['source'] for r in RP if r['experiment'] == src('stream', d) and r['data'] == d) else ''
 def sdesc(d):
     n = nruns(d); per = (f"{n[0]} run{'s' if n[0] != 1 else ''} per tool") if n[0] == n[1] else f'{n[0]} and {n[1]} runs'
-    return f"{DS[d].split()[0]} " + (f"first {', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs, {per}" if src('stream', d) == 'stream' else f"{', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs (older single runs), {per}")
-foot = lambda: 'bar = median, whisker = min to max, dots = single runs, 4 threads, n = runs.  streamed: ' + '; '.join(sdesc(d) for d in DSN if sizes(d))
+    return f"{DS[d].split()[0]} " + (f"first {', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs, {per}" if src('stream', d) == 'stream' else f"{', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs (older single runs), {per}") + srs(d)
+foot = lambda: 'bar = median, whisker = min to max, dots = single runs, 4 threads, n = runs.\nstreamed: ' + '\nstreamed: '.join(sdesc(d) for d in DSN if sizes(d))
 def vs_fig(rows, name, h):
     fig, ax = plt.subplots(len(rows), 2, figsize=(9, h), sharey='row', squeeze=False)
     for r, (col, yl) in enumerate(rows):
@@ -61,8 +62,8 @@ def vs_fig(rows, name, h):
         for c, exp in enumerate(('gz5m', 'stream')): rep_panel(ax[r][c], exp, col, top)
         ax[r][0].set_ylabel(yl)
     ax[0][0].set_title('gzipped files, 5M pairs', fontsize=9); ax[0][1].set_title('streamed from the network', fontsize=9)
-    fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in SC], labels=['lean-align (f465a57)', 'minibwa (c07de5c)'], loc='lower center', ncol=2, frameon=False, fontsize=8.5, bbox_to_anchor=(.5, .035))
-    fig.text(.5, .008, foot(), ha='center', fontsize=7, color='#444'); fig.tight_layout(rect=(0, .08, 1, 1)); [fig.savefig(f'{O}/{name}.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
+    fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in SC], labels=['lean-align (f465a57)', 'minibwa (c07de5c)'], loc='lower center', ncol=2, frameon=False, fontsize=8.5, bbox_to_anchor=(.5, .075))
+    fig.text(.5, .008, foot(), ha='center', va='bottom', fontsize=7, color='#444'); fig.tight_layout(rect=(0, .14, 1, 1)); [fig.savefig(f'{O}/{name}.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 vs_fig([('Gbp_hr', 'speed (Gbp/hour)'), ('Gbp_core_hr', 'Gbp per core-hour')], 'vs_minibwa', 7.4)
 vs_fig([('peak_GB', 'peak memory (GB)')], 'vs_minibwa_memory', 4.2)
 # (a) speed at 4 threads, 5M pairs, gz. Two methods, two columns: A = before/after on the same method (gz5m: map time, index load excluded);

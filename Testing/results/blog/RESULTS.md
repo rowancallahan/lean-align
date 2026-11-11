@@ -20,6 +20,8 @@ The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to m
 | gz5m | hiseq_2x250 | minibwa | 3 | 19.4 (19.3 to 19.7) | 5.0 (5.0 to 5.0) | 8.5 (8.5 to 8.5) |
 | gz5m | novaseq_2x151 | lean-align | 3 | 65.0 (64.0 to 70.0) | 17.6 (17.4 to 18.0) | 5.7 (5.7 to 5.7) |
 | gz5m | novaseq_2x151 | minibwa | 3 | 20.5 (20.4 to 21.0) | 5.4 (5.4 to 5.4) | 8.8 (8.8 to 8.8) |
+| stream | hiseq_2x250 | lean-align | 3 | 92.2 (84.5 to 103.0) | 29.2 (26.6 to 33.2) | 5.9 (5.9 to 6.0) |
+| stream | hiseq_2x250 | minibwa | 3 | 16.5 (16.1 to 20.4) | 4.4 (4.3 to 5.3) | 8.6 (8.6 to 8.6) |
 | stream | novaseq_2x151 | lean-align | 3 | 62.6 (60.9 to 63.5) | 17.8 (17.5 to 18.1) | 5.8 (5.8 to 5.8) |
 | stream | novaseq_2x151 | minibwa | 3 | 22.0 (21.8 to 22.3) | 5.8 (5.7 to 5.9) | 8.8 (8.8 to 8.8) |
 | stream_single | hiseq_2x250 | lean-align | 1 | 88.7 | 26.3 | 5.9 |
@@ -58,6 +60,12 @@ One row per run, as in data/reps.tsv. The older minibwa NovaSeq 10M single run i
 | stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 487.7 | 1854.6 | 8.81 | 22.3 | 5.86 |
 | stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 494.2 | 1881.2 | 8.80 | 22.0 | 5.78 |
 | stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 498.9 | 1894.8 | 8.80 | 21.8 | 5.74 |
+| stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 1 | 193.9 | 611.3 | 5.91 | 92.2 | 29.23 |
+| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 1 | 876.8 | 3362.5 | 8.62 | 20.4 | 5.31 |
+| stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 2 | 173.4 | 538.2 | 5.93 | 103.0 | 33.20 |
+| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 2 | 1107.0 | 4188.6 | 8.62 | 16.1 | 4.27 |
+| stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 3 | 211.4 | 672.1 | 6.02 | 84.5 | 26.59 |
+| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 3 | 1083.6 | 4088.1 | 8.60 | 16.5 | 4.37 |
 
 # Streamed runs, whole lanes and accuracy
 
