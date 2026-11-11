@@ -66,6 +66,9 @@ Not run by me: CI on GitHub for the head commit; anything on macOS; anything abo
 Speed work must keep paying off as cores go up (16, 32 and beyond). Every change is checked for scaling, not only
 for single-thread instructions: CPU per pair at 1, 2 and 4 threads, shared reference counts, cross-thread frees,
 the single reader loop, decompression. Nothing above 4 cores has been measured yet.
+Cache behaviour is part of this (Rowan, 2026-11-11): target large server CPUs first, laptops second, phones last.
+Look for batched index lookups so misses overlap, data layout, huge pages for the index, and run-time parameters
+(for example a batch size from the cache size) only when every value is proved to give identical output.
 
 ## Index build memory (measured 2026-11-11, f465a57)
 `lean-align build` on hg38 (multi-line FASTA): 1,557 s wall on 4 cores, peak 13.84 GB. A one-line-per-chromosome
