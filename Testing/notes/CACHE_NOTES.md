@@ -88,3 +88,27 @@ Facts from the code and assembly:
 7. Huge pages: already on (section 1); nothing to do.
 
 Not covered: bare-metal servers or laptops, phones (no hardware here), more than 4 threads, the hg002 set in the simulations (only NovaSeq was simulated).
+
+## 5. Look-ahead prefetch of the genome block (side branches, never merged; measured)
+
+Two experimental branches, left as they are: `exp/prefetch` (base: festive c7a828e, code = f465a57, old `scanAWF` loop) and `exp/prefetch-instr` (base: `fix/instr` 10d42cb, S-G's single-loop `scanAWV`).
+Mechanism: in the slot scan, at slot `t` touch the genome block (flag byte + letters, two addresses) that slot `t + B` will read; the first `B` slots are touched before the loop.
+`@[extern c inline "(__builtin_prefetch(lean_sarray_cptr(#1) + #2, 0, 3), #2)"] def prefetchAt (a : @& ByteArray) (i : USize) : USize := i`; `touchAt` is the same with an ordinary `volatile` 1-byte read.
+`B` and the mode come from the environment (`LA_PF_B`, `LA_PF_MODE`, read once by inline C `getenv`), so one binary serves every row.
+Build needs: nothing. The inline C needs no `.c` file, no lakefile / `extern_lib` / link-argument change; `getenv` and `atoi` are declared inside the inline expression because `lean.h` does not include `<stdlib.h>`.
+The generated C keeps the call (`__builtin_prefetch(lean_sarray_cptr(w) + off, 0, 3)`; `prefetcht0` in the binary).
+Proofs: `exp/prefetch` has none changed (the externs are identities and `pfB` / `pfMode` are 0 in the logic, so `scanAWF_eq` goes through by defeq). `exp/prefetch-instr` has two `sorry`s: `scanAWVQ_eq` (a `partial def` copy of `scanAWV` with the look-ahead) and `mzPrepC_eq`.
+Diff size: `exp/prefetch` +43/-2 lines (one file); `exp/prefetch-instr` +97/-2 (`MzWord.lean`, one line in `TierRouter.lean`).
+SAM md5 identical in every run (NovaSeq `223ab24ed9237863fe0f78e18cd39a69`).
+
+User CPU in s, [min-max], 200k pairs, interleaved reps with the variant order reversed on every second rep. "Outside range" = the whole range of the prefetch cell lies below the base cell's whole range.
+- A. Old scan (`exp/prefetch`, festive base, 3 reps, NovaSeq): 1 thread: base 12.94 [12.69-13.26]; B4 12.16 [11.69-12.53], B8 11.52 [11.50-11.54], B16 12.00 [11.76-12.47], B32 11.99 [11.75-12.17]: all four outside the base range (-6 to -11 %).
+  4 threads: base 13.22 [12.34-13.79]; B4 11.94 [11.78-12.06] (-9.7 %, outside); B8 11.65 [10.60-12.67], B16 12.08 [11.77-12.68], B32 11.85 [11.26-12.53]: means -8.6 to -11.9 %, ranges overlap the base's. The 6-rep confirmation on this base was not run (festive now carries the new scan).
+- B. New scan (`exp/prefetch-instr`, `fix/instr` base, 6 reps, NovaSeq and hg002, base / look-ahead off / B4 / B8): NovaSeq 1 thread 13.20 [12.01-14.56] / 12.88 / 12.36 [11.75-13.03] / 12.44 [12.05-13.07]; 4 threads 12.84 [12.31-13.51] / 12.71 / 12.42 [11.69-13.41] / 13.03 [12.23-14.33];
+  hg002 1 thread 13.47 [12.71-14.44] / 13.82 / 13.64 [12.64-15.00] / 13.18 [12.75-13.76]; 4 threads 13.47 [12.48-14.24] / 13.14 / 13.17 [12.38-14.17] / 13.24 [12.83-13.73].
+  Every range overlaps the base's: no gain outside run-to-run noise. The earlier 3-rep matrix on this base (B8 -6.3 % at 1 thread, 10.77-11.25 vs base 11.54-12.04) was not reproduced by the 6-rep rerun. The base alone moves by about +-10 % within a run and between sessions, and the "look-ahead off" build of the same code differs from base by up to +13 % (layout/noise), which is as large as any effect seen.
+- C. Volatile touch read (`touch1`, all B, both bases, 3 reps): worse by +8 to +26 % in every cell, outside range (the load has to retire before later instructions, so it cannot overlap). A plain load is deleted by clang (section 3).
+- D. Bucket-offset prefetch at seed preparation (`mzPrepC`, `exp/prefetch-instr`): only 2 NovaSeq reps finished before the run was interrupted; offsets prefetch alone +2 to +12 % (the "off" build of the same binary is itself +2 to +13 %), B8 alone -1.8 % / -8.4 % (1 / 4 threads), B8 + offsets -5.0 % / -13.8 %. n = 2: not interpretable. hg002 not run.
+- E. Not ported to `fix/instr-all` (cc26db2): the condition was a gain clearly above noise, and the new scan, which that build carries, shows none.
+
+Verdict: no gain outside run-to-run noise on the new scan; -6 to -11 % user CPU only on the old `scanAWF` loop; the touch read is worse; the offsets prefetch is not interpretable at n = 2.
