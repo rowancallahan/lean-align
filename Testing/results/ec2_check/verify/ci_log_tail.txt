@@ -1,0 +1,43 @@
+VIOLATIONS: none
+ok   valid: exit 0 (want 0)
+ok   empty files: exit 0 (want 0)
+ok   CRLF line ends: exit 1 (want 1)
+ok   no final newline: exit 1 (want 1)
+ok   last record cut: exit 1 (want 1)
+ok   empty line between records: exit 1 (want 1)
+ok   name of 9 bytes: exit 1 (want 1)
+ok   name of 10 bytes: exit 0 (want 0)
+ok   '+' line with the same name: exit 0 (want 0)
+ok   '+' line with another name: exit 1 (want 1)
+ok   lowercase letter: exit 1 (want 1)
+ok   quality shorter than letters: exit 1 (want 1)
+ok   quality byte space: exit 1 (want 1)
+ok   non-ASCII name byte: exit 1 (want 1)
+ok   tab in the comment: exit 0 (want 0)
+ok   tab in the QNAME: exit 1 (want 1)
+ok   mates out of step: exit 1 (want 1)
+ok   R1 has one more read: exit 1 (want 1)
+ok   read of 1001 bases: exit 1 (want 1)
+ok   read of 1000 bases: exit 0 (want 0)
+FASTQ cases: 20/20 as the spec says
+
+== result
+ALL CHECKS PASSED
+== axioms in the build (Lake replays the messages of cached modules)
+ok   build.log: 472 theorems, standard axioms only
+ok   Aligner_kernels_band_Certificate.lean.log: 8 theorems, standard axioms only
+ok   Aligner_kernels_gotoh_Certificate.lean.log: 7 theorems, standard axioms only
+ok   Aligner_kernels_wfa_Certificate.lean.log: 16 theorems, standard axioms only
+ok   Aligner_kernels_wfa_fast_Certificate.lean.log: 26 theorems, standard axioms only
+ok   Aligner_kernels_wfa_offsets_Certificate.lean.log: 30 theorems, standard axioms only
+ok   Aligner_kernels_wfa_runs_Certificate.lean.log: 17 theorems, standard axioms only
+ok   Aligner_kernels_wfa_small_errors_Certificate.lean.log: 13 theorems, standard axioms only
+ok   Aligner_kernels_wfa_u32_Certificate.lean.log: 80 theorems, standard axioms only
+ok   Proofs_core_Certificate.lean.log: 6 theorems, standard axioms only
+ok   Aligner_trimmer_Certificate.lean.log: 6 theorems, standard axioms only
+ok   Proofs_core_Cli.lean.log: 4 theorems, standard axioms only
+ok   Proofs_core_Run.lean.log: 4 theorems, standard axioms only
+ok   Aligner_trimmer_ReadWindowProofAudit.lean.log: 6 theorems, standard axioms only
+'AlignmentSpec.wfaAlignC_score' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlignmentSpec.wfaAlignC_sound' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlignmentSpec.wfaAlignC_isSome' depends on axioms: [propext, Classical.choice, Quot.sound]

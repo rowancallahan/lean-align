@@ -1,0 +1,87 @@
+--- mason seed 1
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 9999
+  info H: our unique pairs: 8609
+--- mason seed 2
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 10000
+  info H:   of these, minibwa has both mates at the origin: 1
+  info H: our unique pairs: 8671
+  info H: our unique pairs with a mate not within 10 bp of the true origin: 1
+  info H e.g. ['x2_s4848:chr10:95329149-95329299+:95329313-95329463- ours chr10:95329150 150M AS -12+-8 XB -20; minibwa chr10:95329150 150M mapq 60']
+--- mason seed 3
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 9998
+  info H: our unique pairs: 8601
+--- low seed 1
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 10000
+  info H:   of these, minibwa has both mates at the origin: 1
+  info H: our unique pairs: 9417
+  info H: our unique pairs with a mate not within 10 bp of the true origin: 1
+  info H e.g. ['x1_s3891:chr1:104439380-104439530+:104439684-104439834- ours chr1:104439381 150M AS -4+0 XB -4; minibwa chr1:104439381 150M mapq 60']
+--- low seed 2
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 9998
+  info H:   of these, minibwa has both mates at the origin: 1
+  info H: our unique pairs: 9411
+  info H: our unique pairs with a mate not within 10 bp of the true origin: 1
+  info H e.g. ['x2_s4695:chr3:145044711-145044861-:145044391-145044541+ ours chr3:145044723 139M AS 0+0 XB 0; minibwa chr3:145044712 150M mapq 60']
+--- low seed 3
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 10000
+  info H:   of these, minibwa has both mates at the origin: 1
+  info H: our unique pairs: 9398
+  info H: our unique pairs with a mate not within 10 bp of the true origin: 1
+  info H e.g. ['x3_s843:chr12:112716361-112716511+:112716632-112716782- ours chr12:112716362 150M AS -8+0 XB -8; minibwa chr12:112716362 150M mapq 60']
+--- high seed 1
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 9999
+  info H:   of these, minibwa also not at the origin (both mates): 2
+  info H:   of these, minibwa has both mates at the origin: 4
+  info H: our unique pairs: 5824
+  info H: our unique pairs with a mate not within 10 bp of the true origin: 6
+  info H e.g. ['x1_s2628:chr5:92595885-92596035-:92595566-92595716+ ours chr5:92595901 135M AS -4+-12 XB -16; minibwa chr5:92595886 150M mapq 60', 'x1_s2928:chr8:33594925-33595075+:33595089-33595239- ours chr8:33594926 150M AS -4+-8 XB -12; minibwa chr8:33594926 150M mapq 60', 'x1_s5021:chr8:29540855-29541005-:29540655-29540805+ ours chr8:29540869 137M AS 0+-12 XB -12; minibwa chr8:29540856 150M mapq 60']
+--- high seed 2
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 9999
+  info H:   of these, minibwa also not at the origin (both mates): 2
+  info H:   of these, minibwa has both mates at the origin: 5
+  info H: our unique pairs: 5980
+  info H: our unique pairs with a mate not within 10 bp of the true origin: 7
+  info H e.g. ['x2_s414:chr8:6191366-6191516-:6191040-6191190+ ours chr8:6191391 126M AS -8+-8 XB -16; minibwa chr8:6191367 150M mapq 60', 'x2_s3504:chr4:34780032-34780182+:34780272-34780422- ours chr4:34780033 150M AS -16+-4 XB -20; minibwa chr4:34780033 150M mapq 60', 'x2_s5015:chr20:48972198-48972348+:48972499-48972647- ours chr20:48972199 150M AS -16+-8 XB -24; minibwa chr20:48972199 150M mapq 60']
+--- high seed 3
+  HARD A: AS != recomputed score: 0
+  HARD B: XB < AS1 + AS2: 0
+  HARD C: XB below a minibwa proper pair score: 0
+  HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+  info C: pairs where minibwa gives a proper pair we could score: 9998
+  info H:   of these, minibwa also not at the origin (both mates): 2
+  info H:   of these, minibwa has both mates at the origin: 2
+  info H: our unique pairs: 5943
+  info H: our unique pairs with a mate not within 10 bp of the true origin: 4
+  info H e.g. ['x3_s654:chr16:7497041-7497191+:7497294-7497444- ours chr16:7497042 150M AS -16+-12 XB -28; minibwa chr16:7497042 150M mapq 60', 'x3_s7960:chr12:12367861-12368011-:12367467-12367617+ ours chr12:12367927 85M AS -8+-12 XB -20; minibwa chr12:12367862 150M mapq 60']

@@ -1,0 +1,2 @@
+novaseq_200k   ours          1.6      3.4      12.7       63.2        17.18
+novaseq_200k   minibwa       2.4     10.6      40.0       20.5         5.43

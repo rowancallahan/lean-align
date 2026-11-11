@@ -1,0 +1,16 @@
+mates compared: 399420 (199710 pairs); minibwa extra records (secondary/supplementary): {}; ours: {}
+ours not XU:Z:unique: 0 []
+ours XT values: {None: 399420}
+ours vs minibwa, mates differing per field: {'chrom': 0, 'pos': 0, 'strand': 0, 'cigar': 0, 'proper': 0, 'tlen': 0}
+other fields differing: {'flag': 0, 'rnext': 0, 'pnext': 0, 'mapq': 0, 'seq': 0}
+vs truth (mates off): none
+ours FLAGs: {99: 99854, 147: 99854, 83: 99856, 163: 99856}  minibwa FLAGs: {99: 99854, 147: 99854, 83: 99856, 163: 99856}
+ours MAPQ: {60: 399420}  minibwa MAPQ: {60: 399420}
+minibwa NM: {'0': 133136, '1': 133138, '2': 133146}
+by substitution class (pairs, both mates identical in all 6 fields):
+  subs ('0', '0'): 33282/33282
+  subs ('0', '2'): 33285/33285
+  subs ('1', '0'): 33287/33287
+  subs ('1', '1'): 33282/33282
+  subs ('2', '1'): 33287/33287
+  subs ('2', '2'): 33287/33287
