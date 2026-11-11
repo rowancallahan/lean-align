@@ -141,6 +141,25 @@ def layoutOk (offs : Array Nat) (pgs2 : Array PGen) (n t : Nat) : Bool :=
   offs.size == n && incB offs &&
     (List.range (n - 1)).all fun c => decide (offs[c]! + GRead.size pgs2[t + c]! + 1 ≤ offs[c + 1]! + q)
 
+/-- `f i` for every `i` in `[i, i + r)`, without building the list (`allLt_eq`). -/
+@[specialize] def allLt (f : Nat → Bool) : (r i : Nat) → Bool
+  | 0, _ => true
+  | r + 1, i => f i && allLt f r (i + 1)
+
+theorem allLt_eq (f : Nat → Bool) : ∀ r i, allLt f r i = (List.range' i r).all f
+  | 0, _ => rfl
+  | r + 1, i => by simp only [allLt, List.range'_succ, List.all_cons, allLt_eq f r (i + 1)]
+
+/-- `layoutOk` without the index list (`layoutOk_eqF`). -/
+def layoutOkF (offs : Array Nat) (pgs2 : Array PGen) (n t : Nat) : Bool :=
+  offs.size == n && incB offs &&
+    allLt (fun c => decide (offs[c]! + GRead.size pgs2[t + c]! + 1 ≤ offs[c + 1]! + q)) (n - 1) 0
+
+@[csimp] theorem layoutOk_eqF : @layoutOk = @layoutOkF := by
+  funext offs pgs2 n t
+  unfold layoutOk layoutOkF
+  rw [allLt_eq, List.range_eq_range']
+
 -- the only chromosome whose slice (base `b`) can hold anchor `e`
 @[inline] def chromOfA (offs : Array Nat) (b e : Nat) : Nat := lbA offs (e / 16 - b + 1) 0 offs.size - 1
 

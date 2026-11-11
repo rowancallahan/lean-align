@@ -604,14 +604,37 @@ def fallbackOfK (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep :
     let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
     c2.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)
 
-/-- `fallbackOfK` with each mate's preparation given (the router's, `answerOfPairP`): `fallbackOfKP_eq`. -/
+/-- The list without later repeats (first occurrences kept, in order). -/
+def dedupGo {α : Type} [DecidableEq α] (seen : List α) : List α → List α
+  | [] => []
+  | x :: xs => if x ∈ seen then dedupGo seen xs else x :: dedupGo (x :: seen) xs
+
+theorem findSome_dedupGo {α β : Type} [DecidableEq α] (f : α → Option β) :
+    ∀ (l seen : List α), (∀ y ∈ seen, f y = none) → (dedupGo seen l).findSome? f = l.findSome? f
+  | [], _, _ => rfl
+  | x :: xs, seen, hs => by
+    unfold dedupGo
+    split
+    · rename_i hx
+      rw [findSome_dedupGo f xs seen hs, List.findSome?_cons, hs x hx]
+    · rw [List.findSome?_cons, List.findSome?_cons]
+      cases hfx : f x with
+      | some b => rfl
+      | none =>
+        exact findSome_dedupGo f xs (x :: seen) (fun y hy => by
+          rcases List.mem_cons.1 hy with rfl | hy
+          · exact hfx
+          · exact hs y hy)
+
+/-- `fallbackOfK` with each mate's preparation given (the router's, `answerOfPairP`): `fallbackOfKP_eq`. Repeated anchors are left out
+(`walkAt` is a function of the anchor: `findSome_dedupGo`). -/
 def fallbackOfKP (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz) (slack lo hi : Nat)
     (pgs : Array PGen) (offs ns : Array Nat) (R1 R2 : ByteArray) (s1 s2 : PrepM MzP) (t : TierOut) : Option PairReport :=
-  let c1 := t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k
+  let c1 := dedupGo [] (t.m1.pl.toList ++ anchorsOf pk pgs R1 s1 k)
   match c1.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R1 t.m1 R2 s2 false) with
   | some p => some p
   | none =>
-    let c2 := t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k
+    let c2 := dedupGo [] (t.m2.pl.toList ++ anchorsOf pk pgs R2 s2 k)
     c2.findSome? (walkAt pre limOf keep slack lo pk pgs offs ns hi R2 t.m2 R1 s1 true)
 
 theorem fallbackOfKP_eq (pre : MateReport → Bool) (limOf : MateReport → Nat) (keep : PairReport → Bool) (k : Nat) (pk : PkMz)
@@ -619,6 +642,7 @@ theorem fallbackOfKP_eq (pre : MateReport → Bool) (limOf : MateReport → Nat)
     fallbackOfKP pre limOf keep k pk slack lo hi pgs offs ns R1 R2 (prepMz pk R1) (prepMz pk R2) t =
       fallbackOfK pre limOf keep k pk slack lo hi pgs offs ns R1 R2 t := by
   unfold fallbackOfKP fallbackOfK
+  simp only [findSome_dedupGo _ _ [] (fun _ h => absurd h (List.not_mem_nil))]
   rw [prepMz_eq, prepMz_eq]
 
 -- the first proper pair (no filter)

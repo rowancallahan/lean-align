@@ -16,6 +16,26 @@ def winTrim (minLen : Nat) (letters qual : ByteArray) : ByteArray × ByteArray :
   | some (s, e) => AdapterTrim.dropShort minLen (letters.extract s e) (qual.extract s e)
   | none => AdapterTrim.dropShort minLen ByteArray.empty ByteArray.empty
 
+/-- `b.extract s e`, but `b` itself (no copy) when the range is all of `b`. -/
+@[inline] def exF (b : ByteArray) (s e : Nat) : ByteArray :=
+  if s = 0 ∧ e = b.size then b else b.extract s e
+
+theorem exF_eq (b : ByteArray) (s e : Nat) : exF b s e = b.extract s e := by
+  unfold exF; split
+  · rename_i h; obtain ⟨rfl, rfl⟩ := h; rw [ByteArray.extract_zero_size]
+  · rfl
+
+/-- `winTrim` for the compiled code: a letters / qualities array kept whole is not copied (`winTrim_eq_F`). -/
+def winTrimF (minLen : Nat) (letters qual : ByteArray) : ByteArray × ByteArray :=
+  match ReadTrim.trimRead letters qual with
+  | some (s, e) => AdapterTrim.dropShort minLen (exF letters s e) (exF qual s e)
+  | none => AdapterTrim.dropShort minLen ByteArray.empty ByteArray.empty
+
+@[csimp] theorem winTrim_eq_F : @winTrim = @winTrimF := by
+  funext minLen letters qual
+  unfold winTrim winTrimF
+  split <;> simp only [exF_eq]
+
 /-- The frozen contract's best window of the letters and qualities. -/
 def contractWin (letters qual : ByteArray) : Option (Nat × Nat) :=
   get_best_window [] (ReadTrim.scoresOf letters qual) (fun ws => ws.map (ReadTrim.perBase ReadTrim.defQ))

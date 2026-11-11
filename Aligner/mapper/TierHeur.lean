@@ -511,8 +511,8 @@ def bandCellsG (jump : Bool) (X W : @& ByteArray) (K c0s m lim n : UInt32) (fuel
   else bandCells X W K c0s m lim fuel 1 0 16777216 16777216 pa pb K 0 H F tb
 
 /-- `bandDPg`'s traceback as a tail-recursive loop (was a `while` loop that allocated its state each step), the
-runs built as the steps are prepended (same runs as `runsOf` of the step list). Not proved equal to the old loop
-(a `while` loop is opaque); `bandDPg` has no value theorem and its result is re-checked downstream. -/
+runs built as the steps are prepended (same runs as `runsOf` of the step list). This is the reference; the compiled
+code runs `tbRunF` (`tbRun_eqF`), which keeps the current run in the loop. -/
 def tbRun (tb : ByteArray) (K : Nat) : (fuel : Nat) → (i k st : Nat) → List (AlignmentSpec.Step × Nat) →
     Option (Nat × Nat × List (AlignmentSpec.Step × Nat))
   | 0, i, k, _, runs => some (i, k, runs)
@@ -531,6 +531,69 @@ def tbRun (tb : ByteArray) (K : Nat) : (fuel : Nat) → (i k st : Nat) → List 
       if k == 0 then none
       else tbRun tb K f i (k - 1) (if byte &&& 4 == 0 then 0 else 1) (push .gapX runs)
     else tbRun tb K f (i - 1) (k + 1) (if byte &&& 8 == 0 then 0 else 2) (push .gapY runs)
+
+/-- The runs list with the current run `(cs, cc)` (when `has`) in front. -/
+def tbFlush (has : Bool) (cs : AlignmentSpec.Step) (cc : Nat) (rs : List (AlignmentSpec.Step × Nat)) :
+    List (AlignmentSpec.Step × Nat) :=
+  if has then (cs, cc) :: rs else rs
+
+/-- `tbRun` with the current run `(cs, cc)` (when `has`) kept in the loop and consed onto `rs` only when the step
+changes: no tuple and no cons per step. `tbRunN_eq`: same result as `tbRun` on `tbFlush has cs cc rs`. -/
+def tbRunN (tb : ByteArray) (K : Nat) : (fuel : Nat) → (i k st : Nat) → Bool → AlignmentSpec.Step → Nat →
+    List (AlignmentSpec.Step × Nat) → Option (Nat × Nat × List (AlignmentSpec.Step × Nat))
+  | 0, i, k, _, has, cs, cc, rs => some (i, k, tbFlush has cs cc rs)
+  | f + 1, i, k, st, has, cs, cc, rs =>
+    if i == 0 then some (i, k, tbFlush has cs cc rs) else
+    let byte := tb.get! (i * K + k)
+    if st == 0 then
+      let src := byte &&& 3
+      if src == 0 then
+        if has && AlignmentSpec.Step.diag == cs then tbRunN tb K f (i - 1) k 0 true cs (cc + 1) rs
+        else tbRunN tb K f (i - 1) k 0 true .diag 1 (tbFlush has cs cc rs)
+      else if src == 1 then tbRunN tb K f i k 1 has cs cc rs
+      else tbRunN tb K f i k 2 has cs cc rs
+    else if st == 1 then
+      if k == 0 then none
+      else if has && AlignmentSpec.Step.gapX == cs then
+        tbRunN tb K f i (k - 1) (if byte &&& 4 == 0 then 0 else 1) true cs (cc + 1) rs
+      else tbRunN tb K f i (k - 1) (if byte &&& 4 == 0 then 0 else 1) true .gapX 1 (tbFlush has cs cc rs)
+    else if has && AlignmentSpec.Step.gapY == cs then
+      tbRunN tb K f (i - 1) (k + 1) (if byte &&& 8 == 0 then 0 else 2) true cs (cc + 1) rs
+    else tbRunN tb K f (i - 1) (k + 1) (if byte &&& 8 == 0 then 0 else 2) true .gapY 1 (tbFlush has cs cc rs)
+
+theorem tbRunN_eq (tb : ByteArray) (K : Nat) (f : Nat) :
+    ∀ (i k st : Nat) (has : Bool) (cs : AlignmentSpec.Step) (cc : Nat) (rs : List (AlignmentSpec.Step × Nat)),
+      (has = false → rs = []) →
+      tbRunN tb K f i k st has cs cc rs = tbRun tb K f i k st (tbFlush has cs cc rs) := by
+  induction f with
+  | zero => intro i k st has cs cc rs _; simp [tbRunN, tbRun]
+  | succ f ih =>
+    intro i k st has cs cc rs h
+    have key : ∀ (s : AlignmentSpec.Step),
+        (match tbFlush has cs cc rs with
+          | (t, c) :: rest => if s == t then (t, c + 1) :: rest else (s, 1) :: tbFlush has cs cc rs
+          | [] => [(s, 1)]) =
+        (if has && s == cs then tbFlush true cs (cc + 1) rs else tbFlush true s 1 (tbFlush has cs cc rs)) := by
+      intro s
+      cases has with
+      | true => simp only [tbFlush, ite_true, Bool.true_and]
+      | false => simp [tbFlush, h rfl]
+    simp only [tbRunN, tbRun, key]
+    repeat' split
+    all_goals first | rfl | (apply ih; first | exact h | (intro hh; cases hh))
+
+/-- `tbRun` on a runs list: split off its first run and run `tbRunN`. -/
+def tbRunF (tb : ByteArray) (K : Nat) (f i k st : Nat) (runs : List (AlignmentSpec.Step × Nat)) :
+    Option (Nat × Nat × List (AlignmentSpec.Step × Nat)) :=
+  match runs with
+  | [] => tbRunN tb K f i k st false .diag 0 []
+  | (t, c) :: rest => tbRunN tb K f i k st true t c rest
+
+@[csimp] theorem tbRun_eqF : @tbRun = @tbRunF := by
+  funext tb K f i k st runs
+  cases runs with
+  | nil => exact (tbRunN_eq tb K f i k st false .diag 0 [] (fun _ => rfl)).symm
+  | cons r rest => exact (tbRunN_eq tb K f i k st true r.1 r.2 rest (fun h => by cases h)).symm
 
 /-- Banded semi-global affine DP (sc0 penalties: mismatch 4, gap 6 + 2L) of the whole read `X` in the
 window letters `W` (free window ends), on the diagonals `s0 − w … s0 + w` (`s0` = read start in `W`):

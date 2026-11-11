@@ -359,7 +359,7 @@ abbrev Win := Nat × Nat × Nat
 def winOf (y : Placement × Int) : Nat × Nat × Nat := (y.1.1.chr, y.1.1.start, y.1.1.start + y.1.1.len)
 
 -- (chromosome, start) order
-def winLe (a b : Nat × Nat × Nat) : Bool := a.1 < b.1 || (a.1 == b.1 && a.2.1 ≤ b.2.1)
+@[inline] def winLe (a b : Nat × Nat × Nat) : Bool := a.1 < b.1 || (a.1 == b.1 && a.2.1 ≤ b.2.1)
 
 -- the running maximum so far for `x` (`prev`: the previous chromosome and maximum)
 def nextMax (prev : Option (Nat × Nat)) (x : Nat × Nat × Nat) : Nat :=
