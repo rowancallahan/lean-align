@@ -5,7 +5,19 @@ import Proofs.MapJobs
 namespace Spec.FQ.MapStream
 open Spec Spec.MapFast Spec.MapCopy Spec.MapCopy.Jobs
 
+abbrev bl (b : ByteArray) : List UInt8 := b.data.toList
+
 /-! ## List helpers -/
+
+theorem foldl_append_bl : ∀ (L : List ByteArray) (acc : ByteArray), bl (L.foldl (· ++ ·) acc) = bl acc ++ (L.map bl).flatten
+  | [], acc => by simp
+  | x :: xs, acc => by
+    rw [List.foldl_cons, foldl_append_bl xs]
+    have : bl (acc ++ x) = bl acc ++ bl x := data_toList_append' acc x
+    rw [this]
+    simp [List.append_assoc]
+
+
 
 theorem mapM_id_some {α : Type} : ∀ (xs : List (Option α)) (ps : List α), xs.mapM id = some ps ↔ xs = ps.map some
   | [], ps => by
@@ -90,30 +102,101 @@ theorem chain (settings : InsertSettings) (index : ByteArray) (chrs : Chromosome
 
 /-! ## The invariant -/
 
-abbrev bl (b : ByteArray) : List UInt8 := b.data.toList
+def sl (a : Array ByteArray) : List (List UInt8) := a.toList.map bl
 
--- what a state says about the bytes read so far (`F1`, `F2`) and the lines written (`W`); `spec` is `mapReads`
+-- the bytes of a file that are not in the queue yet: the last cut's slices, its carry, the chunks buffered since
+def rem (cut : Task (Carry × Array ByteArray)) (buf : Array ByteArray) : List UInt8 :=
+  (sl cut.get.2).flatten ++ bl cut.get.1.carry ++ (sl buf).flatten
+
+-- what a state says about the bytes read so far (`F1`, `F2`: the bytes of the queue are followed by `R1`, `R2`) and the
+-- lines written (`W`); `spec` is `mapReads`
 def InvG (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
-    (st : State) (W F1 F2 : List UInt8) : Prop :=
+    (st : State) (W F1 F2 R1 R2 : List UInt8) : Prop :=
   ∃ (SP : List (List UInt8 × List UInt8)) (K : Nat) (pieces : List (List UInt8)),
-    st.job = job ∧ ScanOk st.file1 ∧ ScanOk st.file2 ∧
+    st.job = job ∧
     (∀ p ∈ SP, IsSlice need p.1 ∧ IsSlice need p.2) ∧
-    (∀ s ∈ st.queue1.toList.map bl, IsSlice need s) ∧ (∀ s ∈ st.queue2.toList.map bl, IsSlice need s) ∧
-    F1 = (SP.map (·.1)).flatten ++ (st.queue1.toList.map bl).flatten ++ bl st.file1.carry ∧
-    F2 = (SP.map (·.2)).flatten ++ (st.queue2.toList.map bl).flatten ++ bl st.file2.carry ∧
-    (st.queue1.size = 0 ∨ st.queue2.size = 0) ∧
+    (∀ s ∈ sl st.queue1, IsSlice need s) ∧ (∀ s ∈ sl st.queue2, IsSlice need s) ∧
+    F1 = (SP.map (·.1)).flatten ++ (sl st.queue1).flatten ++ R1 ∧
+    F2 = (SP.map (·.2)).flatten ++ (sl st.queue2).flatten ++ R2 ∧
     K ≤ SP.length ∧ (SP.take K).map (fun p => spec p.1 p.2) = pieces.map some ∧ W = pieces.flatten ∧
     vals st.pending = (SP.drop K).map (fun p => spec p.1 p.2)
 
+-- the cuts: scan state of the carries, slices of the finished cuts
+def FileInv (st : State) : Prop :=
+  ScanOk st.cut1.get.1 ∧ ScanOk st.cut2.get.1 ∧
+  (∀ s ∈ sl st.cut1.get.2, IsSlice need s) ∧ (∀ s ∈ sl st.cut2.get.2, IsSlice need s)
+
 def FInv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
     (st : State) (W F1 F2 : List UInt8) : Prop :=
-  InvG spec job st W F1 F2 ∧ st.pending.size ≤ inFlight
+  InvG spec job st W F1 F2 (rem st.cut1 st.buf1) (rem st.cut2 st.buf2) ∧ FileInv st ∧ st.pending.size ≤ inFlight
 
 theorem finv_init (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray) :
     FInv spec job (init job) [] [] [] := by
-  refine ⟨⟨[], 0, [], rfl, ⟨by simp [init], by simp [init], by simp [init, need]; unfold jobPairs; omega⟩,
-    ⟨by simp [init], by simp [init], by simp [init, need]; unfold jobPairs; omega⟩, by simp, by simp [init], by simp [init],
-    by simp [init], by simp [init], Or.inl (by simp [init]), by simp, by simp, by simp, by simp [vals, init]⟩, by simp [init]⟩
+  have hn : 0 < need := by unfold need jobPairs; omega
+  refine ⟨⟨[], 0, [], rfl, by simp, by simp [sl, init], by simp [sl, init], by simp [sl, init, rem],
+    by simp [sl, init, rem], by simp, by simp, by simp, by simp [vals, init]⟩,
+    ⟨⟨by simp [init], by simp [init], hn⟩, ⟨by simp [init], by simp [init], hn⟩, by simp [sl, init], by simp [sl, init]⟩,
+    by simp [init]⟩
+
+/-! ## `feed`: one file's chunk is buffered, or flushed into the cut chain -/
+
+theorem join_bl (b : Array ByteArray) : bl (join b) = (sl b).flatten := by
+  unfold join sl
+  rw [← Array.foldl_toList, foldl_append_bl]
+  simp
+
+theorem feed_noflush (cut : Task (Carry × Array ByteArray)) (buf : Array ByteArray) (size : Nat) (queue : Array ByteArray)
+    (chunk : ByteArray) (h : ¬ flushBytes ≤ size + chunk.size) :
+    feed cut buf size queue chunk = (cut, buf.push chunk, size + chunk.size, queue) := by
+  unfold feed; exact if_neg h
+
+theorem feed_flush (cut : Task (Carry × Array ByteArray)) (buf : Array ByteArray) (size : Nat) (queue : Array ByteArray)
+    (chunk : ByteArray) (h : flushBytes ≤ size + chunk.size) :
+    feed cut buf size queue chunk =
+      (cut.map (prio := .dedicated) (fun (c, _) => cutSlices c (join (buf.push chunk))), #[], 0, queue ++ cut.get.2) := by
+  unfold feed; exact if_pos h
+
+theorem feed_spec (cut : Task (Carry × Array ByteArray)) (buf : Array ByteArray) (size : Nat) (queue : Array ByteArray)
+    (chunk : ByteArray) (hok : ScanOk cut.get.1) (hc : ∀ s ∈ sl cut.get.2, IsSlice need s)
+    (hq : ∀ s ∈ sl queue, IsSlice need s) :
+    ScanOk (feed cut buf size queue chunk).1.get.1 ∧ (∀ s ∈ sl (feed cut buf size queue chunk).1.get.2, IsSlice need s) ∧
+    (∀ s ∈ sl (feed cut buf size queue chunk).2.2.2, IsSlice need s) ∧
+    (sl queue).flatten ++ rem cut buf ++ bl chunk =
+      (sl (feed cut buf size queue chunk).2.2.2).flatten ++ rem (feed cut buf size queue chunk).1 (feed cut buf size queue chunk).2.1 := by
+  by_cases hfl : flushBytes ≤ size + chunk.size
+  · rw [feed_flush cut buf size queue chunk hfl]
+    have hget : (cut.map (prio := .dedicated) (fun (c, _) => cutSlices c (join (buf.push chunk)))).get =
+        cutSlices cut.get.1 (join (buf.push chunk)) := rfl
+    obtain ⟨ss, hss, hcs, hcar, -, hok'⟩ := cutSlices_spec cut.get.1 (join (buf.push chunk)) hok
+    simp only [hget]
+    refine ⟨hok', ?_, ?_, ?_⟩
+    · intro s hs
+      unfold sl at hs
+      rw [hcs] at hs
+      exact hss s hs
+    · intro s hs
+      unfold sl at hs
+      rw [Array.toList_append, List.map_append] at hs
+      rcases List.mem_append.1 hs with h | h
+      · exact hq s h
+      · exact hc s h
+    · have hb : bl (join (buf.push chunk)) = (sl buf).flatten ++ bl chunk := by
+        rw [join_bl]; simp [sl, Array.toList_push, List.map_append]
+      have hcar' : bl cut.get.1.carry ++ bl (join (buf.push chunk)) =
+          ss.flatten ++ bl (cutSlices cut.get.1 (join (buf.push chunk))).1.carry := hcar
+      rw [hb] at hcar'
+      have hs2 : (cutSlices cut.get.1 (join (buf.push chunk))).2.toList.map bl = ss := hcs
+      unfold rem
+      rw [hget]
+      simp only [hs2, sl, Array.toList_append, List.map_append, List.flatten_append, List.map_nil,
+        List.flatten_nil, List.append_nil, Array.toList_empty]
+      simp only [sl] at hcar'
+      rw [List.append_assoc, List.append_assoc, ← hcar']
+      simp [List.append_assoc]
+  · rw [feed_noflush cut buf size queue chunk hfl]
+    refine ⟨hok, hc, hq, ?_⟩
+    simp only [rem, sl, Array.toList_push, List.map_append, List.flatten_append, List.map_cons, List.map_nil,
+      List.flatten_cons, List.flatten_nil, List.append_nil, List.append_assoc]
 
 /-! ## One step: append, cut, spawn (before `collect`) -/
 
@@ -130,103 +213,16 @@ theorem range_getElem (A : Array ByteArray) : ∀ n, n ≤ A.size → (List.rang
       rw [this]; rfl
     rw [this]; rfl
 
-theorem spawn_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
-    (hjob : ∀ a b, (job a b).map bl = spec (bl a) (bl b)) (st : State) (W F1 F2 : List UInt8) (a b : ByteArray)
-    (hI : InvG spec job st W F1 F2) :
-    let q1 := st.queue1 ++ (cutSlices st.file1 a).2
-    let q2 := st.queue2 ++ (cutSlices st.file2 b).2
-    let n := min q1.size q2.size
-    InvG spec job ⟨st.job, (cutSlices st.file1 a).1, (cutSlices st.file2 b).1, q1.extract n q1.size, q2.extract n q2.size,
-      spawnPaired st.job q1 q2 st.pending⟩ W (F1 ++ bl a) (F2 ++ bl b) := by
-  intro q1 q2 n
-  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
-  obtain ⟨ss1, hss1, hcs1, hcar1, hcnt1, hok1'⟩ := cutSlices_spec st.file1 a ok1
-  obtain ⟨ss2, hss2, hcs2, hcar2, hcnt2, hok2'⟩ := cutSlices_spec st.file2 b ok2
-  have hQ1 : q1.toList.map bl = st.queue1.toList.map bl ++ ss1 := by simp [q1, Array.toList_append, hcs1.symm]
-  have hQ2 : q2.toList.map bl = st.queue2.toList.map bl ++ ss2 := by simp [q2, Array.toList_append, hcs2.symm]
-  have hn1 : n ≤ q1.size := Nat.min_le_left _ _
-  have hn2 : n ≤ q2.size := Nat.min_le_right _ _
-  have hmap1 := range_getElem q1 n hn1
-  have hmap2 := range_getElem q2 n hn2
-  have hall1 : ∀ s ∈ q1.toList.map bl, IsSlice need s := by
-    rw [hQ1]; intro s hs
-    rcases List.mem_append.1 hs with h | h
-    · exact hq1 s h
-    · exact hss1 s h
-  have hall2 : ∀ s ∈ q2.toList.map bl, IsSlice need s := by
-    rw [hQ2]; intro s hs
-    rcases List.mem_append.1 hs with h | h
-    · exact hq2 s h
-    · exact hss2 s h
-  have hex1 : (q1.extract n q1.size).toList.map bl = (q1.toList.map bl).drop n := by
-    rw [Array.toList_extract, List.extract_eq_drop_take, List.map_take, List.map_drop,
-      List.take_of_length_le (by simp)]
-  have hex2 : (q2.extract n q2.size).toList.map bl = (q2.toList.map bl).drop n := by
-    rw [Array.toList_extract, List.extract_eq_drop_take, List.map_take, List.map_drop,
-      List.take_of_length_le (by simp)]
-  refine ⟨SP ++ (List.range n).map (fun k => (bl q1[k]!, bl q2[k]!)), K, pieces, hj, hok1', hok2', ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hW, ?_⟩
-  -- 1: the jobs' slices
-  · intro p hp
-    rcases List.mem_append.1 hp with h | h
-    · exact hSP p h
-    · obtain ⟨k, hk, rfl⟩ := List.mem_map.1 h
-      have m1 : bl q1[k]! ∈ q1.toList.map bl := by
-        have := List.mem_map_of_mem (f := fun k => bl q1[k]!) hk
-        rw [hmap1] at this; exact List.mem_of_mem_take this
-      have m2 : bl q2[k]! ∈ q2.toList.map bl := by
-        have := List.mem_map_of_mem (f := fun k => bl q2[k]!) hk
-        rw [hmap2] at this; exact List.mem_of_mem_take this
-      exact ⟨hall1 _ m1, hall2 _ m2⟩
-  -- 2, 3: the queues
-  · intro s hs; simp only [] at hs; rw [hex1] at hs; exact hall1 s (List.mem_of_mem_drop hs)
-  · intro s hs; simp only [] at hs; rw [hex2] at hs; exact hall2 s (List.mem_of_mem_drop hs)
-  -- 4, 5: the bytes
-  · simp only [List.map_append, List.flatten_append, List.map_map, Function.comp_def]
-    rw [hex1]
-    have e : (List.map (fun k => bl q1[k]!) (List.range n)).flatten = ((q1.toList.map bl).take n).flatten := by rw [hmap1]
-    rw [e]
-    have hc : bl st.file1.carry ++ bl a = ss1.flatten ++ bl (cutSlices st.file1 a).1.carry := hcar1
-    have hQf : (q1.toList.map bl).flatten = (st.queue1.toList.map bl).flatten ++ ss1.flatten := by rw [hQ1, List.flatten_append]
-    have hsplit : (q1.toList.map bl).flatten = ((q1.toList.map bl).take n).flatten ++ ((q1.toList.map bl).drop n).flatten := by
-      rw [← List.flatten_append, List.take_append_drop]
-    rw [hF1]
-    simp only [List.append_assoc]
-    congr 1
-    rw [hc, ← List.append_assoc, ← hQf, hsplit, List.append_assoc]
-  · simp only [List.map_append, List.flatten_append, List.map_map, Function.comp_def]
-    rw [hex2]
-    have e : (List.map (fun k => bl q2[k]!) (List.range n)).flatten = ((q2.toList.map bl).take n).flatten := by rw [hmap2]
-    rw [e]
-    have hc : bl st.file2.carry ++ bl b = ss2.flatten ++ bl (cutSlices st.file2 b).1.carry := hcar2
-    have hQf : (q2.toList.map bl).flatten = (st.queue2.toList.map bl).flatten ++ ss2.flatten := by rw [hQ2, List.flatten_append]
-    have hsplit : (q2.toList.map bl).flatten = ((q2.toList.map bl).take n).flatten ++ ((q2.toList.map bl).drop n).flatten := by
-      rw [← List.flatten_append, List.take_append_drop]
-    rw [hF2]
-    generalize bl (cutSlices st.file2 b).1.carry = c' at hc ⊢
-    simp only [List.append_assoc]
-    refine congrArg ((List.map (fun x => x.snd) SP).flatten ++ ·) ?_
-    rw [hc, ← List.append_assoc, ← hQf, hsplit, List.append_assoc]
-  · simp only [Array.size_extract]
-    omega
-  · simp only [List.length_append]; omega
-  · rw [List.take_append_of_le_length hK]; exact hpieces
-  · rw [spawnPaired_vals, hvals, List.drop_append_of_le_length hK, List.map_append, List.map_map]
-    refine congrArg (_ ++ ·) ?_
-    apply List.map_congr_left
-    intro k hk
-    show Option.map bl (st.job q1[k]! q2[k]!) = spec (bl q1[k]!) (bl q2[k]!)
-    rw [hj]; exact hjob _ _
-
 /-! ## `collect` -/
 
 theorem collect_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
-    (st : State) (W F1 F2 : List UInt8) (keep : Nat) (pd : Array (Task (Option ByteArray))) (o : ByteArray)
-    (hI : InvG spec job st W F1 F2) (h : collect keep st.pending ByteArray.empty = some (pd, o)) :
-    InvG spec job { st with pending := pd } (W ++ bl o) F1 F2 ∧ pd.size ≤ keep := by
+    (st : State) (W F1 F2 R1 R2 : List UInt8) (keep : Nat) (pd : Array (Task (Option ByteArray))) (o : ByteArray)
+    (hI : InvG spec job st W F1 F2 R1 R2) (h : collect keep st.pending ByteArray.empty = some (pd, o)) :
+    InvG spec job { st with pending := pd } (W ++ bl o) F1 F2 R1 R2 ∧ pd.size ≤ keep := by
   have hv := collect_vals keep st.pending ByteArray.empty
   rw [h] at hv
   simp only [Option.map_some] at hv
-  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
+  obtain ⟨SP, K, pieces, hj, hSP, hq1, hq2, hF1, hF2, hK, hpieces, hW, hvals⟩ := hI
   unfold collectL at hv
   rw [hvals] at hv
   have hlen : ((SP.drop K).map fun p => spec p.1 p.2).length = SP.length - K := by simp
@@ -240,7 +236,7 @@ theorem collect_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (
     generalize ht : ((SP.drop K).map fun p => spec p.1 p.2).length - keep = t at hm hpd
     have hps := (mapM_id_some _ _).1 hm
     have htl : t ≤ SP.length - K := by omega
-    refine ⟨⟨SP, K + t, pieces ++ ps, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, by omega, ?_, ?_, ?_⟩, ?_⟩
+    refine ⟨⟨SP, K + t, pieces ++ ps, hj, hSP, hq1, hq2, hF1, hF2, by omega, ?_, ?_, ?_⟩, ?_⟩
     · rw [List.take_add, List.map_append, hpieces, List.map_take, hps, List.map_append]
     · have ho' : bl o = ps.flatten := by simpa [bl] using ho
       rw [hW, ho']; simp
@@ -251,13 +247,13 @@ theorem collect_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (
 
 -- if some result that `collect` would take is none, the files (whatever follows) are not valid
 theorem failing_job (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (job : ByteArray → ByteArray → Option ByteArray) (st : State) (W F1 F2 : List UInt8) (keep : Nat)
-    (hI : InvG (mapReads settings index chrs) job st W F1 F2) (h : collect keep st.pending ByteArray.empty = none)
+    (job : ByteArray → ByteArray → Option ByteArray) (st : State) (W F1 F2 R1 R2 : List UInt8) (keep : Nat)
+    (hI : InvG (mapReads settings index chrs) job st W F1 F2 R1 R2) (h : collect keep st.pending ByteArray.empty = none)
     (T1 T2 : List UInt8) : mapReads settings index chrs (F1 ++ T1) (F2 ++ T2) = none := by
   have hv := collect_vals keep st.pending ByteArray.empty
   rw [h] at hv
   simp only [Option.map_none] at hv
-  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
+  obtain ⟨SP, K, pieces, hj, hSP, hq1, hq2, hF1, hF2, hK, hpieces, hW, hvals⟩ := hI
   unfold collectL at hv
   cases hm : (List.take ((vals st.pending).length - keep) (vals st.pending)).mapM id with
   | some ps => rw [hm] at hv; simp at hv
@@ -276,66 +272,34 @@ theorem failing_job (settings : InsertSettings) (index : ByteArray) (chrs : Chro
 
 /-! ## `step` -/
 
-theorem step_some_inv (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (job : ByteArray → ByteArray → Option ByteArray)
-    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
-    (st st' : State) (W F1 F2 : List UInt8) (a b out : ByteArray)
-    (hI : FInv (mapReads settings index chrs) job st W F1 F2) (h : MapFast.step st (some (a, b)) = some (st', out)) :
-    FInv (mapReads settings index chrs) job st' (W ++ bl out) (F1 ++ bl a) (F2 ++ bl b) := by
-  have hmid := spawn_inv (mapReads settings index chrs) job hjob st W F1 F2 a b hI.1
-  obtain ⟨jb, f1, f2, q1, q2, pend⟩ := st
-  simp only [MapFast.step] at h
-  cases hc : collect inFlight (spawnPaired jb (q1 ++ (cutSlices f1 a).2) (q2 ++ (cutSlices f2 b).2) pend) ByteArray.empty with
-  | none => rw [hc] at h; simp at h
-  | some r =>
-    obtain ⟨pd, o⟩ := r
-    rw [hc] at h
-    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
-    obtain ⟨rfl, rfl⟩ := h
-    exact collect_inv (mapReads settings index chrs) job _ _ _ _ inFlight pd o hmid hc
-
-theorem step_some_fail (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
-    (job : ByteArray → ByteArray → Option ByteArray)
-    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
-    (st : State) (W F1 F2 : List UInt8) (a b : ByteArray)
-    (hI : FInv (mapReads settings index chrs) job st W F1 F2) (h : MapFast.step st (some (a, b)) = none) (T1 T2 : List UInt8) :
-    mapReads settings index chrs (F1 ++ bl a ++ T1) (F2 ++ bl b ++ T2) = none := by
-  have hmid := spawn_inv (mapReads settings index chrs) job hjob st W F1 F2 a b hI.1
-  obtain ⟨jb, f1, f2, q1, q2, pend⟩ := st
-  simp only [MapFast.step] at h
-  cases hc : collect inFlight (spawnPaired jb (q1 ++ (cutSlices f1 a).2) (q2 ++ (cutSlices f2 b).2) pend) ByteArray.empty with
-  | none => exact failing_job settings index chrs job _ _ _ _ inFlight hmid hc T1 T2
-  | some r => rw [hc] at h; simp at h
-
-/-! ## The end: pair what is left, then one last job -/
-
 theorem pair_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
-    (hjob : ∀ a b, (job a b).map bl = spec (bl a) (bl b)) (st : State) (W F1 F2 : List UInt8)
-    (hI : InvG spec job st W F1 F2) :
+    (hjob : ∀ a b, (job a b).map bl = spec (bl a) (bl b)) (st : State) (W F1 F2 R1 R2 : List UInt8)
+    (hI : InvG spec job st W F1 F2 R1 R2) :
     let n := min st.queue1.size st.queue2.size
-    InvG spec job ⟨st.job, st.file1, st.file2, st.queue1.extract n st.queue1.size, st.queue2.extract n st.queue2.size,
-      spawnPaired st.job st.queue1 st.queue2 st.pending⟩ W F1 F2 := by
+    InvG spec job { st with queue1 := (st.queue1.extract n st.queue1.size), queue2 := (st.queue2.extract n st.queue2.size), pending := (spawnPaired st.job st.queue1 st.queue2 st.pending) } W F1 F2 R1 R2 := by
   intro n
-  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hI
+  obtain ⟨SP, K, pieces, hj, hSP, hq1, hq2, hF1, hF2, hK, hpieces, hW, hvals⟩ := hI
   have hn1 : n ≤ st.queue1.size := Nat.min_le_left _ _
   have hn2 : n ≤ st.queue2.size := Nat.min_le_right _ _
   have hmap1 := range_getElem st.queue1 n hn1
   have hmap2 := range_getElem st.queue2 n hn2
-  have hex1 : (st.queue1.extract n st.queue1.size).toList.map bl = (st.queue1.toList.map bl).drop n := by
+  have hex1 : sl (st.queue1.extract n st.queue1.size) = (sl st.queue1).drop n := by
+    unfold sl
     rw [Array.toList_extract, List.extract_eq_drop_take, List.map_take, List.map_drop,
       List.take_of_length_le (by simp)]
-  have hex2 : (st.queue2.extract n st.queue2.size).toList.map bl = (st.queue2.toList.map bl).drop n := by
+  have hex2 : sl (st.queue2.extract n st.queue2.size) = (sl st.queue2).drop n := by
+    unfold sl
     rw [Array.toList_extract, List.extract_eq_drop_take, List.map_take, List.map_drop,
       List.take_of_length_le (by simp)]
-  refine ⟨SP ++ (List.range n).map (fun k => (bl st.queue1[k]!, bl st.queue2[k]!)), K, pieces, hj, ok1, ok2, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hW, ?_⟩
+  refine ⟨SP ++ (List.range n).map (fun k => (bl st.queue1[k]!, bl st.queue2[k]!)), K, pieces, hj, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hW, ?_⟩
   · intro p hp
     rcases List.mem_append.1 hp with h | h
     · exact hSP p h
     · obtain ⟨k, hk, rfl⟩ := List.mem_map.1 h
-      have m1 : bl st.queue1[k]! ∈ st.queue1.toList.map bl := by
+      have m1 : bl st.queue1[k]! ∈ sl st.queue1 := by
         have := List.mem_map_of_mem (f := fun k => bl st.queue1[k]!) hk
         rw [hmap1] at this; exact List.mem_of_mem_take this
-      have m2 : bl st.queue2[k]! ∈ st.queue2.toList.map bl := by
+      have m2 : bl st.queue2[k]! ∈ sl st.queue2 := by
         have := List.mem_map_of_mem (f := fun k => bl st.queue2[k]!) hk
         rw [hmap2] at this; exact List.mem_of_mem_take this
       exact ⟨hq1 _ m1, hq2 _ m2⟩
@@ -343,22 +307,20 @@ theorem pair_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job
   · intro s hs; simp only [] at hs; rw [hex2] at hs; exact hq2 s (List.mem_of_mem_drop hs)
   · simp only [List.map_append, List.flatten_append, List.map_map, Function.comp_def]
     rw [hex1]
-    have e : (List.map (fun k => bl st.queue1[k]!) (List.range n)).flatten = ((st.queue1.toList.map bl).take n).flatten := by rw [hmap1]
+    have e : (List.map (fun k => bl st.queue1[k]!) (List.range n)).flatten = ((sl st.queue1).take n).flatten := by rw [hmap1]; rfl
     rw [e, hF1]
-    have hsplit : (st.queue1.toList.map bl).flatten = ((st.queue1.toList.map bl).take n).flatten ++ ((st.queue1.toList.map bl).drop n).flatten := by
+    have hsplit : (sl st.queue1).flatten = ((sl st.queue1).take n).flatten ++ ((sl st.queue1).drop n).flatten := by
       rw [← List.flatten_append, List.take_append_drop]
     rw [hsplit]
     simp only [List.append_assoc]
   · simp only [List.map_append, List.flatten_append, List.map_map, Function.comp_def]
     rw [hex2]
-    have e : (List.map (fun k => bl st.queue2[k]!) (List.range n)).flatten = ((st.queue2.toList.map bl).take n).flatten := by rw [hmap2]
+    have e : (List.map (fun k => bl st.queue2[k]!) (List.range n)).flatten = ((sl st.queue2).take n).flatten := by rw [hmap2]; rfl
     rw [e, hF2]
-    have hsplit : (st.queue2.toList.map bl).flatten = ((st.queue2.toList.map bl).take n).flatten ++ ((st.queue2.toList.map bl).drop n).flatten := by
+    have hsplit : (sl st.queue2).flatten = ((sl st.queue2).take n).flatten ++ ((sl st.queue2).drop n).flatten := by
       rw [← List.flatten_append, List.take_append_drop]
     rw [hsplit]
     simp only [List.append_assoc]
-  · simp only [Array.size_extract]
-    omega
   · simp only [List.length_append]; omega
   · rw [List.take_append_of_le_length hK]; exact hpieces
   · rw [spawnPaired_vals, hvals, List.drop_append_of_le_length hK, List.map_append, List.map_map]
@@ -368,19 +330,67 @@ theorem pair_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job
     show Option.map bl (st.job st.queue1[k]! st.queue2[k]!) = spec (bl st.queue1[k]!) (bl st.queue2[k]!)
     rw [hj]; exact hjob _ _
 
+
+-- the state after `feed` on both files
+def fedState (st : State) (a b : ByteArray) : State :=
+  let r1 := feed st.cut1 st.buf1 st.size1 st.queue1 a
+  let r2 := feed st.cut2 st.buf2 st.size2 st.queue2 b
+  ⟨st.job, r1.1, r2.1, r1.2.1, r2.2.1, r1.2.2.1, r2.2.2.1, r1.2.2.2, r2.2.2.2, st.pending⟩
+
+theorem fed_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
+    (st : State) (W F1 F2 : List UInt8) (a b : ByteArray) (hI : FInv spec job st W F1 F2) :
+    InvG spec job (fedState st a b) W (F1 ++ bl a) (F2 ++ bl b)
+      (rem (fedState st a b).cut1 (fedState st a b).buf1) (rem (fedState st a b).cut2 (fedState st a b).buf2) ∧
+    FileInv (fedState st a b) := by
+  obtain ⟨hG, ⟨ok1, ok2, hc1, hc2⟩, -⟩ := hI
+  obtain ⟨SP, K, pieces, hj, hSP, hq1, hq2, hF1, hF2, hK, hpieces, hW, hvals⟩ := hG
+  obtain ⟨o1, c1', q1', e1⟩ := feed_spec st.cut1 st.buf1 st.size1 st.queue1 a ok1 hc1 hq1
+  obtain ⟨o2, c2', q2', e2⟩ := feed_spec st.cut2 st.buf2 st.size2 st.queue2 b ok2 hc2 hq2
+  refine ⟨⟨SP, K, pieces, hj, hSP, q1', q2', ?_, ?_, hK, hpieces, hW, hvals⟩, ⟨o1, o2, c1', c2'⟩⟩
+  · rw [hF1]; simp only [List.append_assoc] at e1 ⊢; exact congrArg _ e1
+  · rw [hF2]; simp only [List.append_assoc] at e2 ⊢; exact congrArg _ e2
+
+theorem step_some_inv (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
+    (st st' : State) (W F1 F2 : List UInt8) (a b out : ByteArray)
+    (hI : FInv (mapReads settings index chrs) job st W F1 F2) (h : MapFast.step st (some (a, b)) = some (st', out)) :
+    FInv (mapReads settings index chrs) job st' (W ++ bl out) (F1 ++ bl a) (F2 ++ bl b) := by
+  obtain ⟨hF, hFile⟩ := fed_inv (mapReads settings index chrs) job st W F1 F2 a b hI
+  have hpair := pair_inv (mapReads settings index chrs) job hjob _ _ _ _ _ _ hF
+  obtain ⟨jb, c1, c2, b1, b2, z1, z2, q1, q2, pend⟩ := st
+  simp only [MapFast.step] at h
+  cases hc : collect inFlight (spawnPaired jb (feed c1 b1 z1 q1 a).2.2.2 (feed c2 b2 z2 q2 b).2.2.2 pend) ByteArray.empty with
+  | none => rw [hc] at h; simp at h
+  | some r =>
+    obtain ⟨pd, o⟩ := r
+    rw [hc] at h
+    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    obtain ⟨hI', hpd⟩ := collect_inv (mapReads settings index chrs) job _ _ _ _ _ _ inFlight pd o hpair hc
+    exact ⟨hI', hFile, hpd⟩
+
+theorem step_some_fail (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
+    (job : ByteArray → ByteArray → Option ByteArray)
+    (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
+    (st : State) (W F1 F2 : List UInt8) (a b : ByteArray)
+    (hI : FInv (mapReads settings index chrs) job st W F1 F2) (h : MapFast.step st (some (a, b)) = none) (T1 T2 : List UInt8) :
+    mapReads settings index chrs (F1 ++ bl a ++ T1) (F2 ++ bl b ++ T2) = none := by
+  obtain ⟨hF, hFile⟩ := fed_inv (mapReads settings index chrs) job st W F1 F2 a b hI
+  have hpair := pair_inv (mapReads settings index chrs) job hjob _ _ _ _ _ _ hF
+  obtain ⟨jb, c1, c2, b1, b2, z1, z2, q1, q2, pend⟩ := st
+  simp only [MapFast.step] at h
+  cases hc : collect inFlight (spawnPaired jb (feed c1 b1 z1 q1 a).2.2.2 (feed c2 b2 z2 q2 b).2.2.2 pend) ByteArray.empty with
+  | none => exact failing_job settings index chrs job _ _ _ _ _ _ inFlight hpair hc T1 T2
+  | some r => rw [hc] at h; simp at h
+
+/-! ## The end: pair what is left, then one last job -/
+
 theorem collectL_zero (res : List (Option (List UInt8))) (out : List UInt8) :
     (collectL 0 res out).map (·.2) = (res.mapM id).map fun ps => out ++ ps.flatten := by
   unfold collectL
   simp only [Nat.sub_zero, List.take_length]
   cases res.mapM id <;> simp
-
-theorem foldl_append_bl : ∀ (L : List ByteArray) (acc : ByteArray), bl (L.foldl (· ++ ·) acc) = bl acc ++ (L.map bl).flatten
-  | [], acc => by simp
-  | x :: xs, acc => by
-    rw [List.foldl_cons, foldl_append_bl xs]
-    have : bl (acc ++ x) = bl acc ++ bl x := data_toList_append' acc x
-    rw [this]
-    simp [List.append_assoc]
 
 theorem mapReads_nil (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList) :
     mapReads settings index chrs [] [] = some [] := by
@@ -399,31 +409,87 @@ theorem collect_zero_out (pend : Array (Task (Option ByteArray))) (out : ByteArr
   rw [← this]
   rfl
 
+def endState (st : State) : State :=
+  let l1 := cutSlices st.cut1.get.1 (join st.buf1)
+  let l2 := cutSlices st.cut2.get.1 (join st.buf2)
+  ⟨st.job, Task.pure (l1.1, #[]), Task.pure (l2.1, #[]), #[], #[], 0, 0,
+    st.queue1 ++ st.cut1.get.2 ++ l1.2, st.queue2 ++ st.cut2.get.2 ++ l2.2, st.pending⟩
+
+theorem end_inv (spec : List UInt8 → List UInt8 → Option (List UInt8)) (job : ByteArray → ByteArray → Option ByteArray)
+    (st : State) (W F1 F2 : List UInt8) (hI : FInv spec job st W F1 F2) :
+    InvG spec job (endState st) W F1 F2 (bl (cutSlices st.cut1.get.1 (join st.buf1)).1.carry)
+      (bl (cutSlices st.cut2.get.1 (join st.buf2)).1.carry) := by
+  obtain ⟨hG, ⟨ok1, ok2, hc1, hc2⟩, -⟩ := hI
+  obtain ⟨SP, K, pieces, hj, hSP, hq1, hq2, hF1, hF2, hK, hpieces, hW, hvals⟩ := hG
+  obtain ⟨ss1, hss1, hcs1, hcar1, -, -⟩ := cutSlices_spec st.cut1.get.1 (join st.buf1) ok1
+  obtain ⟨ss2, hss2, hcs2, hcar2, -, -⟩ := cutSlices_spec st.cut2.get.1 (join st.buf2) ok2
+  have hcar1' : bl st.cut1.get.1.carry ++ (sl st.buf1).flatten = ss1.flatten ++ bl (cutSlices st.cut1.get.1 (join st.buf1)).1.carry := by
+    rw [← join_bl]; exact hcar1
+  have hcar2' : bl st.cut2.get.1.carry ++ (sl st.buf2).flatten = ss2.flatten ++ bl (cutSlices st.cut2.get.1 (join st.buf2)).1.carry := by
+    rw [← join_bl]; exact hcar2
+  have hs1 : sl (cutSlices st.cut1.get.1 (join st.buf1)).2 = ss1 := hcs1
+  have hs2 : sl (cutSlices st.cut2.get.1 (join st.buf2)).2 = ss2 := hcs2
+  refine ⟨SP, K, pieces, hj, hSP, ?_, ?_, ?_, ?_, hK, hpieces, hW, hvals⟩
+  · intro s hs
+    simp only [endState, sl, Array.toList_append, List.map_append] at hs
+    rcases List.mem_append.1 hs with h | h
+    · rcases List.mem_append.1 h with h | h
+      · exact hq1 s h
+      · exact hc1 s h
+    · have : s ∈ ss1 := by rw [← hs1]; exact h
+      exact hss1 s this
+  · intro s hs
+    simp only [endState, sl, Array.toList_append, List.map_append] at hs
+    rcases List.mem_append.1 hs with h | h
+    · rcases List.mem_append.1 h with h | h
+      · exact hq2 s h
+      · exact hc2 s h
+    · have : s ∈ ss2 := by rw [← hs2]; exact h
+      exact hss2 s this
+  · rw [hF1]
+    simp only [endState, sl, Array.toList_append, List.map_append, List.flatten_append] at hs1 ⊢
+    unfold rem sl at *
+    rw [hs1] at *
+    simp only [List.append_assoc]
+    rw [hcar1']
+  · rw [hF2]
+    simp only [endState, sl, Array.toList_append, List.map_append, List.flatten_append] at hs2 ⊢
+    unfold rem sl at *
+    rw [hs2] at *
+    simp only [List.append_assoc]
+    rw [hcar2']
+
 theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : ChromosomeList)
     (job : ByteArray → ByteArray → Option ByteArray)
     (hjob : ∀ a b, (job a b).map bl = mapReads settings index chrs (bl a) (bl b))
     (st : State) (W F1 F2 : List UInt8) (hI : FInv (mapReads settings index chrs) job st W F1 F2) :
     (∀ st' out, MapFast.step st none = some (st', out) → mapReads settings index chrs F1 F2 = some (W ++ bl out)) ∧
     (MapFast.step st none = none → mapReads settings index chrs F1 F2 = none) := by
-  have hP := pair_inv (mapReads settings index chrs) job hjob st W F1 F2 hI.1
-  obtain ⟨SP, K, pieces, hj, ok1, ok2, hSP, hq1, hq2, hF1, hF2, hqs, hK, hpieces, hW, hvals⟩ := hP
-  obtain ⟨jb, f1, f2, q1, q2, pend⟩ := st
-  simp only [] at hj hF1 hF2 hvals
+  have hE := end_inv _ job st W F1 F2 hI
+  have hP := pair_inv (mapReads settings index chrs) job hjob (endState st) W F1 F2 _ _ hE
+  obtain ⟨SP, K, pieces, hj, hSP, hq1, hq2, hF1, hF2, hK, hpieces, hW, hvals⟩ := hP
+  clear hE hI
+  obtain ⟨jb, c1, c2, b1, b2, z1, z2, qq1, qq2, pend⟩ := st
+  simp only [endState] at hj hF1 hF2 hvals
+  generalize hl1 : cutSlices c1.get.1 (join b1) = l1 at *
+  generalize hl2 : cutSlices c2.get.1 (join b2) = l2 at *
+  generalize hQ1 : qq1 ++ c1.get.2 ++ l1.2 = q1 at *
+  generalize hQ2 : qq2 ++ c2.get.2 ++ l2.2 = q2 at *
   subst hj
   -- the last job's input
-  have hr1 : bl ((q1.extract (min q1.size q2.size) q1.size).foldl (· ++ ·) ByteArray.empty ++ f1.carry) =
-      ((q1.extract (min q1.size q2.size) q1.size).toList.map bl).flatten ++ bl f1.carry := by
+  have hr1 : bl ((q1.extract (min q1.size q2.size) q1.size).foldl (· ++ ·) ByteArray.empty ++ l1.1.carry) =
+      ((q1.extract (min q1.size q2.size) q1.size).toList.map bl).flatten ++ bl l1.1.carry := by
     rw [show ∀ a b : ByteArray, bl (a ++ b) = bl a ++ bl b from fun a b => data_toList_append' a b,
       ← Array.foldl_toList, foldl_append_bl]; simp
-  have hr2 : bl ((q2.extract (min q1.size q2.size) q2.size).foldl (· ++ ·) ByteArray.empty ++ f2.carry) =
-      ((q2.extract (min q1.size q2.size) q2.size).toList.map bl).flatten ++ bl f2.carry := by
+  have hr2 : bl ((q2.extract (min q1.size q2.size) q2.size).foldl (· ++ ·) ByteArray.empty ++ l2.1.carry) =
+      ((q2.extract (min q1.size q2.size) q2.size).toList.map bl).flatten ++ bl l2.1.carry := by
     rw [show ∀ a b : ByteArray, bl (a ++ b) = bl a ++ bl b from fun a b => data_toList_append' a b,
       ← Array.foldl_toList, foldl_append_bl]; simp
-  generalize hrest1 : (q1.extract (min q1.size q2.size) q1.size).foldl (· ++ ·) ByteArray.empty ++ f1.carry = rest1 at hr1
-  generalize hrest2 : (q2.extract (min q1.size q2.size) q2.size).foldl (· ++ ·) ByteArray.empty ++ f2.carry = rest2 at hr2
+  generalize hrest1 : (q1.extract (min q1.size q2.size) q1.size).foldl (· ++ ·) ByteArray.empty ++ l1.1.carry = rest1 at hr1
+  generalize hrest2 : (q2.extract (min q1.size q2.size) q2.size).foldl (· ++ ·) ByteArray.empty ++ l2.1.carry = rest2 at hr2
   generalize hpaired : spawnPaired jb q1 q2 pend = paired at hvals
-  have hF1' : F1 = (SP.map (·.1)).flatten ++ bl rest1 := by rw [hF1, hr1]; simp only [List.append_assoc]
-  have hF2' : F2 = (SP.map (·.2)).flatten ++ bl rest2 := by rw [hF2, hr2]; simp only [List.append_assoc]
+  have hF1' : F1 = (SP.map (·.1)).flatten ++ bl rest1 := by rw [hF1, hr1]; simp only [List.append_assoc]; try rfl
+  have hF2' : F2 = (SP.map (·.2)).flatten ++ bl rest2 := by rw [hF2, hr2]; simp only [List.append_assoc]; try rfl
   have hCH := chain settings index chrs SP hSP (bl rest1) (bl rest2)
   rw [← hF1', ← hF2'] at hCH
   have hmap : SP.map (fun p => mapReads settings index chrs p.1 p.2) = pieces.map some ++ vals paired := by
@@ -463,6 +529,7 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
   constructor
   · intro st' out h
     simp only [MapFast.step] at h
+    simp only [hl1, hl2, hQ1, hQ2] at h
     simp only [hrest1, hrest2, hpaired] at h
     cases hc : collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
         else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty with
@@ -487,6 +554,7 @@ theorem end_correct (settings : InsertSettings) (index : ByteArray) (chrs : Chro
           simp only [Option.bind_some, Option.map_some, hCOL, List.flatten_append, List.append_assoc]
   · intro h
     simp only [MapFast.step] at h
+    simp only [hl1, hl2, hQ1, hQ2] at h
     simp only [hrest1, hrest2, hpaired] at h
     cases hc : collect 0 (if rest1.isEmpty && rest2.isEmpty then paired
         else paired.push (Task.spawn fun _ => jb rest1 rest2)) ByteArray.empty with
