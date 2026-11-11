@@ -348,6 +348,60 @@ theorem wlR_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU reU : USiz
       · rw [ih1 _ _ _ _ _ hj1 hj2, hone]
       · rw [ih1 _ _ _ _ _ hj1 hj2, hone]
 
+theorem rtGet_uget (B : ByteArray) (p : USize) (h : p.toNat < B.size) : rtGet B p = B.uget p h := by
+  rw [rtGet_eq, getElem!_pos B p.toNat h]; rfl
+
+/-- `wlR` with the bounds of `seq` and `qual` as hypotheses: the letter and quality loads are plain `uget`s (`wlRH_eq`). -/
+def wlRH (Q z : Int64) (seq qual : ByteArray) (i re : USize) (ps : Int64) (bs be : USize) (bsc : Int64)
+    (hs : i.toNat ≤ seq.size) (hq : i.toNat ≤ qual.size) : PackedFoldState :=
+  if h : i = 0 then ⟨0, true, re.toNat, ps.toInt, bs.toNat, be.toNat, bsc.toInt⟩
+  else
+    have hi : i.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    have hj : (i - 1).toNat = i.toNat - 1 := rt_sub1 i h
+    let f := fIU Q (seq.uget (i - 1) (by omega)) (qual.uget (i - 1) (by omega))
+    if z < ps then
+      let ps' := f + ps
+      if bsc ≤ ps' then wlRH Q z seq qual (i - 1) re ps' (i - 1) re ps' (by omega) (by omega)
+      else wlRH Q z seq qual (i - 1) re ps' bs be bsc (by omega) (by omega)
+    else if bsc ≤ f then wlRH Q z seq qual (i - 1) ((i - 1) + 1) f (i - 1) ((i - 1) + 1) f (by omega) (by omega)
+    else wlRH Q z seq qual (i - 1) ((i - 1) + 1) f bs be bsc (by omega) (by omega)
+termination_by i.toNat
+decreasing_by
+  all_goals
+    simp_wf
+    omega
+
+theorem wlRH_eq (Q z : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (i re : USize) ps bs be bsc hs hq, i.toNat = n →
+    wlRH Q z seq qual i re ps bs be bsc hs hq = wlR Q z seq qual i re ps bs be bsc
+  | 0, i, re, ps, bs, be, bsc, hs, hq, hn => by
+    have h : i = 0 := USize.toNat_inj.mp (by rw [hn]; rfl)
+    rw [wlRH, wlR, dif_pos h, dif_pos h]
+  | n + 1, i, re, ps, bs, be, bsc, hs, hq, hn => by
+    have h : i ≠ 0 := fun e => by rw [e] at hn; simp at hn
+    have hj : (i - 1).toNat = n := by rw [rt_sub1 i h, hn]; rfl
+    rw [wlRH, wlR, dif_neg h, dif_neg h]
+    dsimp only
+    rw [← rtGet_uget seq (i - 1) (by omega), ← rtGet_uget qual (i - 1) (by omega)]
+    split
+    · split
+      · rw [wlRH_eq Q z seq qual n (i - 1) _ _ _ _ _ (by omega) (by omega) hj]
+      · rw [wlRH_eq Q z seq qual n (i - 1) _ _ _ _ _ (by omega) (by omega) hj]
+    · split
+      · rw [wlRH_eq Q z seq qual n (i - 1) _ _ _ _ _ (by omega) (by omega) hj]
+      · rw [wlRH_eq Q z seq qual n (i - 1) _ _ _ _ _ (by omega) (by omega) hj]
+
+/-- `wlR`, with the unchecked loop when the bounds hold (`wlRG_eq`). -/
+@[inline] def wlRG (Q z : Int64) (seq qual : ByteArray) (i re : USize) (ps : Int64) (bs be : USize) (bsc : Int64) :
+    PackedFoldState :=
+  if h : i.toNat ≤ seq.size ∧ i.toNat ≤ qual.size then wlRH Q z seq qual i re ps bs be bsc h.1 h.2
+  else wlR Q z seq qual i re ps bs be bsc
+
+theorem wlRG_eq (Q z : Int64) (seq qual : ByteArray) (i re : USize) (ps : Int64) (bs be : USize) (bsc : Int64) :
+    wlRG Q z seq qual i re ps bs be bsc = wlR Q z seq qual i re ps bs be bsc := by
+  unfold wlRG; split
+  · exact wlRH_eq Q z seq qual i.toNat i re ps bs be bsc _ _ rfl
+  · rfl
+
 /-- `wl` for the compiled code (`wl_eq_wlF`): `wlI` from the start state (scores 0). -/
 @[inline] def wlF (Q : Nat) (seq qual : ByteArray) (i ns : Nat) (hr : Bool) (pl : Nat) (ps : Int) (bs be : Nat)
     (bsc : Int) : PackedFoldState :=
@@ -355,7 +409,7 @@ theorem wlR_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU reU : USiz
     if ns = i ∧ hr = false ∧ pl = 0 ∧ bs = 0 ∧ be = 0 ∧ 0 < i then
       let j := (i - 1).toUSize
       let f := fIU (Int64.ofNat Q) (rtGet seq j) (rtGet qual j)
-      wlR (Int64.ofNat Q) 0 seq qual j i.toUSize f j i.toUSize f
+      wlRG (Int64.ofNat Q) 0 seq qual j i.toUSize f j i.toUSize f
     else if ns < 1073741824 ∧ pl + i < 1073741824 ∧ bs < 2147483648 ∧ be < 2147483648 then
       wlU2 (Int64.ofNat Q) 0 seq qual i.toUSize ns.toUSize hr pl.toUSize 0 bs.toUSize be.toUSize 0
     else wlI (Int64.ofNat Q) seq qual i ns hr pl 0 bs be 0
@@ -395,7 +449,7 @@ theorem wlR_eq (Q : Int64) (seq qual : ByteArray) : ∀ (n : Nat) (iU reU : USiz
           hjn, rt_n i (by omega), rt_one]; omega
       rw [wlU2, dif_neg hi0]
       simp only [if_neg hi0, hj, Bool.false_eq_true, ↓reduceIte]
-      rw [wlR_eq _ seq qual (i - 1) _ _ hjn (by rw [rt_n i (by omega)]; omega) (by rw [rt_n i (by omega)]; omega), h1,
+      rw [wlRG_eq, wlR_eq _ seq qual (i - 1) _ _ hjn (by rw [rt_n i (by omega)]; omega) (by rw [rt_n i (by omega)]; omega), h1,
         ← hre]
     · split
       · rename_i _ hb

@@ -26,6 +26,38 @@ decreasing_by
   have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
   rw [toNat_sub1 i h0]; omega
 
+theorem size_uset' (o : ByteArray) (p : USize) (v : UInt8) (h : p.toNat < o.size) : (o.uset p v h).size = o.size := by
+  show (o.data.uset p v h).size = o.data.size
+  exact Array.size_uset h
+
+
+-- the reversed `bytes` written in place (`uset` is inline C; `push` is an out-of-line runtime call) into `o`, which holds `bytes` at `p ..`;
+-- the bounds are hypotheses, so no run-time checks
+@[specialize] def revFillV (f : UInt8 → UInt8) (bytes o : ByteArray) (p i : USize)
+    (hb : i.toNat ≤ bytes.size) (hp : p.toNat + i.toNat ≤ o.size) (ho : o.size ≤ 4294967295) : ByteArray :=
+  if h0 : i = 0 then o
+  else
+    have hi : i.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
+    have hj : (i - 1).toNat = i.toNat - 1 := toNat_sub1 i h0
+    have hpp : (p + 1).toNat = p.toNat + 1 := toNat_add1 p (by omega)
+    revFillV f bytes (o.uset p (f (bytes.uget (i - 1) (by omega))) (by omega)) (p + 1) (i - 1) (by omega)
+      (by rw [size_uset', hpp, hj]; omega) (by rw [size_uset']; omega)
+termination_by i.toNat
+decreasing_by
+  rw [hj]; omega
+
+
+-- `out ++ reverseMapBytes f bytes`, the reversed bytes written in place into a copy of `bytes` appended to `out`
+@[inline] def pushRevMapV (f : UInt8 → UInt8) (out bytes : ByteArray) : ByteArray :=
+  -- `out.usize` is read BEFORE `out ++ bytes` consumes `out` (else `out` is shared and the append copies it)
+  let p := out.usize
+  if h : out.size + bytes.size ≤ 4294967295 then
+    revFillV f bytes (out ++ bytes) p bytes.usize (usize_le bytes)
+      (by rw [show p = out.usize from rfl, usize_eq out (by omega), usize_eq bytes (by omega), ByteArray.size_append]; omega)
+      (by rw [ByteArray.size_append]; exact h)
+  else out ++ reverseMapBytes f bytes
+
+
 -- `out ++ reverseMapBytes f bytes`
 @[inline] def pushRevMap (f : UInt8 → UInt8) (out bytes : ByteArray) : ByteArray :=
   if bytes.size ≤ 4294967295 then revPush f bytes out bytes.usize (usize_le bytes)
@@ -64,7 +96,7 @@ def uniqB : Uniqueness → ByteArray
   if read.seq.isEmpty then ((b.push 9).push 42).push 9 |>.push 42 else
   match strand with
   | .forward => (((b.push 9) ++ read.seq).push 9) ++ read.qual
-  | .reverse => pushRevMap id ((pushRevMap complementByte (b.push 9) read.seq).push 9) read.qual
+  | .reverse => pushRevMapV id ((pushRevMapV complementByte (b.push 9) read.seq).push 9) read.qual
 
 -- TAB XB:i:… TAB XU:Z:…
 @[inline] def pushAnswer (b : ByteArray) (answer : PairAnswer) : ByteArray :=
@@ -164,6 +196,57 @@ theorem pushRevMap_eq (f : UInt8 → UInt8) (out bytes : ByteArray) :
     rfl
   · rfl
 
+theorem bl_uset (o : ByteArray) (p : USize) (v : UInt8) (h : p.toNat < o.size) :
+    bl (o.uset p v h) = (bl o).set p.toNat v := by
+  show (o.data.uset p v h).toList = o.data.toList.set p.toNat v
+  rw [Array.uset_eq_set]; exact Array.toList_set ..
+
+theorem revFillV_bl (f : UInt8 → UInt8) (bytes : ByteArray) : ∀ (m : Nat) (o : ByteArray) (p i : USize) hb hp ho, i.toNat = m →
+    bl (revFillV f bytes o p i hb hp ho) =
+      (bl o).take p.toNat ++ (((bl bytes).take m).map f).reverse ++ (bl o).drop (p.toNat + m)
+  | 0, o, p, i, hb, hp, ho, hi => by
+    have h0 : i = 0 := USize.toNat_inj.mp (by rw [hi]; rfl)
+    rw [revFillV, dif_pos h0]
+    simp
+  | m + 1, o, p, i, hb, hp, ho, hi => by
+    have h0 : i ≠ 0 := fun e => by rw [e] at hi; simp at hi
+    have hj : (i - 1).toNat = m := by rw [toNat_sub1 i h0, hi]; rfl
+    have hlen : (bl o).length = o.size := by rw [bl, Array.length_toList]; rfl
+    have hlenb : (bl bytes).length = bytes.size := by rw [bl, Array.length_toList]; rfl
+    rw [revFillV, dif_neg h0]
+    dsimp only
+    rw [revFillV_bl f bytes m _ _ _ _ _ _ hj, bl_uset]
+    have hpm : p.toNat < (bl o).length := by omega
+    have hmb : m < (bl bytes).length := by omega
+    have hvv : f (bytes.uget (i - 1) (by omega)) = f (bl bytes)[m] := by
+      congr 1
+      show bytes.data[(i - 1).toNat]'(by have : bytes.size = bytes.data.size := rfl; omega) = (bl bytes)[m]
+      simp only [hj, bl, Array.getElem_toList]
+    rw [toNat_add1 p (by omega), hvv]
+    have e1 : ((bl o).set p.toNat (f (bl bytes)[m])).take (p.toNat + 1) = (bl o).take p.toNat ++ [f (bl bytes)[m]] := by
+      have hl : ((bl o).take p.toNat).length = p.toNat := by rw [List.length_take]; omega
+      rw [List.take_set, List.take_succ_eq_append_getElem hpm, List.set_append_right _ _ (by omega), hl]
+      simp
+    have e2 : ((bl o).set p.toNat (f (bl bytes)[m])).drop (p.toNat + 1 + m) = (bl o).drop (p.toNat + (m + 1)) := by
+      rw [List.drop_set, if_pos (by omega)]; congr 1; omega
+    rw [e1, e2, List.take_succ_eq_append_getElem hmb, List.map_append, List.reverse_append]
+    simp only [List.map_cons, List.map_nil, List.reverse_cons, List.reverse_nil, List.nil_append, List.append_assoc,
+      List.singleton_append, List.cons_append]
+
+
+theorem pushRevMapV_eq (f : UInt8 → UInt8) (out bytes : ByteArray) : pushRevMapV f out bytes = out ++ reverseMapBytes f bytes := by
+  unfold pushRevMapV
+  dsimp only
+  split
+  · rename_i h
+    apply bl_inj
+    have hs : (bl out).length = out.size := by rw [bl, Array.length_toList]; rfl
+    have hb : (bl bytes).length = bytes.size := by rw [bl, Array.length_toList]; rfl
+    rw [revFillV_bl f bytes bytes.size _ _ _ _ _ _ (usize_eq bytes (by omega)), usize_eq out (by omega), bl_append, bl_append,
+      bl_reverseMap, List.take_left' hs, List.take_of_length_le (by omega), List.drop_eq_nil_of_le (by simp [hs, hb])]
+    simp
+  · rfl
+
 theorem pushPrefix_eq (out src : ByteArray) (n : Nat) : pushPrefix out src n = out ++ src.extract 0 n := by
   unfold pushPrefix
   rw [ByteArray.copySlice_eq_append, ByteArray.extract_zero_size]
@@ -220,7 +303,7 @@ theorem bl_pushSeqQual (b : ByteArray) (read : ReadB) (st : Strand) :
     cases st with
     | forward => simp [bl_push, bl_append]
     | reverse =>
-      simp only [pushRevMap_eq, bl_append, bl_push]
+      simp only [pushRevMapV_eq, bl_append, bl_push]
       simp
 
 theorem bl_pushAnswer (b : ByteArray) (a : PairAnswer) :
