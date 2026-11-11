@@ -942,13 +942,78 @@ theorem scanAWU_eq (hU : System.Platform.numBits = 64) (ix : MzIdx) (G : PGen) (
     · have h' : ¬ (nextKU hU ix.sl swU hs kb keyU hiU hhi t).toNat < hiU.toNat := h
       rw [dif_neg h, dif_neg h']
 
+/-- `scanAWU` as one loop over the slots: each slot read once, the key test and the match test on the same read
+(`scanAWV_eq`). -/
+def scanAWV (hU : System.Platform.numBits = 64) (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (kb keyU : UInt64) (s o key bw aw pmo o2 n1 a2 n2 base bit : Nat)
+    (Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU o2U sh2 sh3 m1 m2 m3 : UInt64) (kfEq : Bool)
+    (swU : USize) (hs : swU.toNat < 16) (hiU : USize) (hhi : hiU.toNat ≤ 2 ^ 40) (t : USize) (acc : Array Nat) :
+    Array Nat :=
+  if h : t < hiU then
+    have h' : t.toNat < hiU.toNat := h
+    let e := slotWU hU ix.sl swU t hs (by omega)
+    let acc' := if (e &&& kb) != keyU then acc else
+      let r := fastOkW G.w Gn Go oU rc e Tu tM fsh bsh ash fM pmoU bwU awU o2U sh2 sh3 m1 m2 m3 kfEq
+      if (if r == 2 then okAtW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t.toNat else r == 1) then
+        acc.push (anc base bit ((e >>> Tu).toNat - o)) else acc
+    scanAWV hU ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU
+      o2U sh2 sh3 m1 m2 m3 kfEq swU hs hiU hhi (t + 1) acc'
+  else acc
+termination_by hiU.toNat - t.toNat
+decreasing_by
+  have _h2 : t.toNat < hiU.toNat := by assumption
+  have e1 : ∀ u : USize, u.toNat < 2 ^ 40 → (u + 1).toNat = u.toNat + 1 :=
+    fun u hu => uaddl hU u 1 (by decide) (by omega)
+  have h3 := e1 t (by omega)
+  omega
+
+theorem scanAWV_eq (hU : System.Platform.numBits = 64) (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64)
+    (rok : Bool) (kb keyU : UInt64) (s o key bw aw pmo o2 n1 a2 n2 base bit : Nat)
+    (Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU o2U sh2 sh3 m1 m2 m3 : UInt64) (kfEq : Bool)
+    (swU : USize) (hs : swU.toNat < 16) (hiU : USize) (hhi : hiU.toNat ≤ 2 ^ 40) :
+    ∀ n (t : USize) acc, hiU.toNat - t.toNat = n →
+      scanAWV hU ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit Gn Go oU Tu tM fsh bsh ash fM pmoU bwU
+        awU o2U sh2 sh3 m1 m2 m3 kfEq swU hs hiU hhi t acc =
+      scanAWU hU ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit Gn Go oU Tu tM fsh bsh ash fM pmoU bwU
+        awU o2U sh2 sh3 m1 m2 m3 kfEq swU hs hiU hhi t acc := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro t acc hn
+    by_cases h : t < hiU
+    · have h' : t.toNat < hiU.toNat := h
+      have e1 : (t + 1).toNat = t.toNat + 1 := uaddl hU t 1 (by decide) (by omega)
+      rw [scanAWV, dif_pos h]
+      dsimp only
+      rw [ih _ (by omega) (t + 1) _ rfl]
+      -- the next key slot from `t`
+      have hk : nextKU hU ix.sl swU hs kb keyU hiU hhi t =
+          if (slotWU hU ix.sl swU t hs (by omega) &&& kb) != keyU then nextKU hU ix.sl swU hs kb keyU hiU hhi (t + 1)
+          else t := by
+        rw [nextKU, dif_pos h]
+      by_cases hc : ((slotWU hU ix.sl swU t hs (by omega) &&& kb) != keyU) = true
+      · rw [if_pos hc]
+        have hk3 : nextKU hU ix.sl swU hs kb keyU hiU hhi t = nextKU hU ix.sl swU hs kb keyU hiU hhi (t + 1) := by
+          rw [hk, if_pos hc]
+        conv => rhs; rw [scanAWU]
+        conv => lhs; rw [scanAWU]
+        simp only [hk3]
+      · rw [if_neg hc]
+        have hk2 : nextKU hU ix.sl swU hs kb keyU hiU hhi t = t := by rw [hk, if_neg hc]
+        conv => rhs; rw [scanAWU]
+        simp only [hk2, dif_pos h]
+    · rw [scanAWV, dif_neg h, scanAWU]
+      simp only []
+      have hk : nextKU hU ix.sl swU hs kb keyU hiU hhi t = t := by rw [nextKU, dif_neg h]
+      simp only [hk, dif_neg h]
+
 /-- `scanAWK2` with the match test on machine words when every conversion is exact (`scanAWK_eq3`). -/
 def scanAWK3 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
     (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
   if fastG ix G rok kb keyU o key bw aw pmo o2 n1 a2 n2 then
     if h : System.Platform.numBits = 64 ∧ ix.sw < 16 ∧ hi ≤ two40 ∧ t ≤ hi then
       have h2 : hi ≤ 2 ^ 40 := by have := h.2.2.1; unfold two40 at this; omega
-      scanAWU h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit G.n.toUInt64 G.o.toUInt64 o.toUInt64
+      scanAWV h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit G.n.toUInt64 G.o.toUInt64 o.toUInt64
         ix.T.toUInt64 ix.tM.toUInt64 ix.fsh.toUInt64 ix.bsh.toUInt64 ix.ash.toUInt64 ix.fM.toUInt64 pmo.toUInt64
         bw.toUInt64 aw.toUInt64 o2.toUInt64 (2 * (o + a2)).toUInt64 (2 * o).toUInt64
         ((1 <<< (2 * n1).toUInt64) - 1) ((1 <<< (2 * n2).toUInt64) - 1) ((1 <<< (2 * ix.k).toUInt64) - 1)
@@ -971,6 +1036,8 @@ def scanAWK3 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) 
     split
     · next h =>
       have h2 : hi ≤ 2 ^ 40 := by have := h.2.2.1; unfold two40 at this; omega
+      rw [scanAWV_eq h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+        _ _ _ _ _ _ _ _ rfl]
       rw [scanAWU_eq h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
         _ _ _ (usz_n64 h.1 ix.sw (by omega)) _ _ _ _ _ rfl
         (by rw [usz_n64 h.1 hi (by omega), usz_n64 h.1 t (by omega)]; exact h.2.2.2),
