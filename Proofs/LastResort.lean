@@ -529,6 +529,25 @@ def splitOf (c : Nat) (pk : PkMz) (R1 R2 : ByteArray) : Nat :=
     let k := costP pk a s1 + costP pk (c - a - 1) s2
     if k < acc.1 then (k, a) else acc) (today, c)).2
 
+/-- `splitOf` with each strand's bucket sizes sorted once (`costZ_eq`, `costZ_eqS`: the sort does not depend on
+the cap), not once per split tried. -/
+def splitOfS (c : Nat) (pk : PkMz) (R1 R2 : ByteArray) : Nat :=
+  let s1 := prepMate pk R1
+  let s2 := prepMate pk R2
+  let l11 := (s1.ps.map (LookG.size pk)).foldr insN []
+  let l12 := (s1.pr.map (LookG.size pk)).foldr insN []
+  let l21 := (s2.ps.map (LookG.size pk)).foldr insN []
+  let l22 := (s2.pr.map (LookG.size pk)).foldr insN []
+  let today := min (costZS c l11 l12) (costZS c l21 l22)
+  ((List.range c).foldl (fun (acc : Nat × Nat) a =>
+    let k := costZS a l11 l12 + costZS (c - a - 1) l21 l22
+    if k < acc.1 then (k, a) else acc) (today, c)).2
+
+@[csimp] theorem splitOf_eqS : @splitOf = @splitOfS := by
+  funext c pk R1 R2
+  unfold splitOf splitOfS
+  simp only [← costZ_eqS, costZ_eq]
+
 def pairsAtS (sl lo hi c : Nat) (pk : PkMz) (offs : Array Nat) (pgs : Array PGen) (R1 R2 : ByteArray) :
     List PairHit :=
   let a := splitOf c pk R1 R2
