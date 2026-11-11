@@ -67,6 +67,12 @@ Speed work must keep paying off as cores go up (16, 32 and beyond). Every change
 for single-thread instructions: CPU per pair at 1, 2 and 4 threads, shared reference counts, cross-thread frees,
 the single reader loop, decompression. Nothing above 4 cores has been measured yet.
 
+## Index build memory (measured 2026-11-11, f465a57)
+`lean-align build` on hg38 (multi-line FASTA): 1,557 s wall on 4 cores, peak 13.84 GB. A one-line-per-chromosome
+FASTA needs a few hundred MB more (killed at a 14.0 GB limit, twice). The peak is during the save: about 8.9 GB of
+built tables plus the 5.3 GB index being written. Allow 16 GB. An older note records 9.85-10.76 GB; the builder code
+has not changed since, so that figure was probably measured differently. Not investigated further.
+
 ## 6. Open items (yours)
 1. `Main.lean`: refuse a non-regular OUT and OUT equal to an input; cap on how far one file may run past the other.
 2. EC2 run at 16 and 32 threads (`Testing/ec2/README.md`). Expect gunzip and the reader loop to cap near 400-450
