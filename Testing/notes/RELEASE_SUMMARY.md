@@ -15,7 +15,7 @@ command that checks it, and what is not done. Numbers are from 4-core cloud boxe
   - jobs of 4000 pairs, 32 in flight; faster newline scan.
   All are exact-equality swaps. SAM is byte-identical before and after (md5 on 5M gz both sets and streamed 10M).
 - Test and benchmark material: `Testing/verify.sh`, `Testing/ec2/`, `Testing/results/blog/` (figures, tables, zip),
-  `Testing/results/stream/` (per-run files of the streamed runs).
+  `Testing/results/stream/` (per-run files of the streamed runs), `Testing/results/ec2_check/` (raw timing.tsv, compare.txt and verify logs).
 
 ## 2. Checks you can rerun
 | claim | command | expected | last run |
