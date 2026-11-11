@@ -1,0 +1,14 @@
+##### STEP 5 start 00:17:32
+
+=== step 5: speed: 4 threads, SAM to a drained FIFO, index load separate, median of 3
+
+set            tool       load_s    map_s     cpu_s     Gbp/hr  Gbp/core-hr
+novaseq_200k   ours          1.6      3.4      12.7       63.2        17.18
+novaseq_200k   minibwa       2.4     10.6      40.0       20.5         5.43
+
+novaseq_200k   minibwa/ours: map 3.12x, CPU 3.15x
+(minibwa paper: 135.8 Gbp/hr on 32 threads, 2x Xeon Gold 6130 = ~4.2 Gbp per thread-hour)
+
+ALL REQUESTED STEPS PASSED (5)
+##### STEP 5 rc=0 time 313 s
+VERIFY_DONE

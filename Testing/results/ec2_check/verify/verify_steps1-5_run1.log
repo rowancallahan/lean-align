@@ -1,0 +1,40 @@
+##### STEP 1 start 00:07:54
+
+=== step 1: build + proofs + tiny-genome fuzz (10-15 min)
+ok   build.log: 472 theorems, standard axioms only
+ok: proofs, axioms, Spec mirrors, FROZEN hashes, output fuzz
+
+ALL REQUESTED STEPS PASSED (1)
+##### STEP 1 rc=0 time 45 s
+##### STEP 2 start 00:08:39
+
+=== step 2: index freshness (2,000 pairs of novaseq_200k must mostly map)
+mapped records: 3740 / 4000
+ok: index matches this code
+
+ALL REQUESTED STEPS PASSED (2)
+##### STEP 2 rc=0 time 15 s
+##### STEP 3 start 00:08:54
+
+=== step 3: hg38 fuzz vs minibwa, 3 seeds x 3 modes (~5 min)
+        9   HARD A: AS != recomputed score: 0
+        9   HARD B: XB < AS1 + AS2: 0
+        9   HARD C: XB below a minibwa proper pair score: 0
+        9   HARD D: unique but minibwa has a proper pair elsewhere scoring >= ours: 0
+ok: rules A-D are 0 on every seed and mode
+
+ALL REQUESTED STEPS PASSED (3)
+##### STEP 3 rc=0 time 116 s
+##### STEP 4 start 00:10:50
+
+=== step 4: unique genome, ours == minibwa (~5 min)
+ok: flagstat equal, columns 1-11 identical
+
+ALL REQUESTED STEPS PASSED (4)
+##### STEP 4 rc=0 time 258 s
+##### STEP 5 start 00:15:08
+
+=== step 5: speed: 4 threads, SAM to a drained FIFO, index load separate, median of 3
+
+set            tool       load_s    map_s     cpu_s     Gbp/hr  Gbp/core-hr
+novaseq_200k   ours          5.0      3.1      11.3       70.4        19.26
