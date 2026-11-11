@@ -441,6 +441,78 @@ theorem nextK_spec (B : ByteArray) (sw : Nat) (kb keyU : UInt64) (hi : Nat) :
     · obtain ⟨h1, h2, h3⟩ := ih (t + 1) (by omega); exact ⟨by omega, h2, h3⟩
     · next h => simp only [bne_iff_ne, ne_eq, Classical.not_not] at h; exact ⟨Nat.le_refl _, fun _ => h, by omega⟩
 
+/-- `nextK` on machine words: `t`, `hi` as `USize` (`hi ≤ 2^40`), the slot read by `slotWU` (`nextK_eqF`). -/
+def nextKU (hU : System.Platform.numBits = 64) (B : ByteArray) (sw : USize) (hs : sw.toNat < 16) (kb keyU : UInt64)
+    (hi : USize) (hhi : hi.toNat ≤ 2 ^ 40) (t : USize) : USize :=
+  if h : t < hi then
+    have ht : t.toNat < hi.toNat := h
+    if (slotWU hU B sw t hs (by omega) &&& kb) != keyU then
+      nextKU hU B sw hs kb keyU hi hhi (t + 1)
+    else t
+  else t
+termination_by hi.toNat - t.toNat
+decreasing_by
+  have : (t + 1).toNat = t.toNat + 1 := uaddl hU t 1 (by decide) (by omega)
+  omega
+
+theorem nextKU_eq (hU : System.Platform.numBits = 64) (B : ByteArray) (sw : USize) (hs : sw.toNat < 16)
+    (kb keyU : UInt64) (hi : USize) (hhi : hi.toNat ≤ 2 ^ 40) :
+    ∀ n (t : USize), hi.toNat - t.toNat = n → t.toNat ≤ hi.toNat →
+      (nextKU hU B sw hs kb keyU hi hhi t).toNat = nextK B sw.toNat kb keyU hi.toNat t.toNat := by
+  intro n
+  induction n with
+  | zero =>
+    intro t hn hle
+    rw [nextKU, nextK, dif_neg (by intro h; have : t.toNat < hi.toNat := h; omega), if_neg (by omega)]
+  | succ n ih =>
+    intro t hn hle
+    have hlt' : t.toNat < hi.toNat := by omega
+    have hlt : t < hi := hlt'
+    rw [nextKU, dif_pos hlt, nextK, if_pos hlt']
+    simp only [slotWU_eq]
+    split
+    · have e1 : (t + 1).toNat = t.toNat + 1 := uaddl hU t 1 (by decide) (by omega)
+      rw [ih (t + 1) (by omega) (by omega), e1]
+    · rfl
+
+/-- A copy of `nextK` for `nextKF`'s slow path (`nextK` itself is replaced by `nextKF` in compiled code). -/
+def nextKN (B : ByteArray) (sw : Nat) (kb keyU : UInt64) (hi t : Nat) : Nat :=
+  if t < hi then
+    if (slotW B sw t &&& kb) != keyU then nextKN B sw kb keyU hi (t + 1) else t
+  else t
+termination_by hi - t
+
+theorem nextKN_eq (B : ByteArray) (sw : Nat) (kb keyU : UInt64) (hi : Nat) :
+    ∀ n t, hi - t = n → nextKN B sw kb keyU hi t = nextK B sw kb keyU hi t := by
+  intro n
+  induction n with
+  | zero => intro t hn; rw [nextKN, nextK, if_neg (by omega), if_neg (by omega)]
+  | succ n ih =>
+    intro t hn
+    have h : t < hi := by omega
+    rw [nextKN, if_pos h, nextK, if_pos h]
+    by_cases hc : (slotW B sw t &&& kb != keyU) = true
+    · rw [if_pos hc, if_pos hc]; exact ih (t + 1) (by omega)
+    · rw [if_neg hc, if_neg hc]
+
+/-- `nextK` for the compiled code: the loop on machine words when `hi ≤ 2^40` (checked once per call). -/
+@[inline] def nextKF (B : ByteArray) (sw : Nat) (kb keyU : UInt64) (hi t : Nat) : Nat :=
+  if h : System.Platform.numBits = 64 ∧ sw < 16 ∧ hi ≤ two40 ∧ t ≤ hi then
+    have h2 : hi ≤ 2 ^ 40 := by have := h.2.2.1; unfold two40 at this; omega
+    (nextKU h.1 B sw.toUSize (by rw [usz_n64 h.1 sw (by omega)]; exact h.2.1) kb keyU hi.toUSize
+      (by rw [usz_n64 h.1 hi (by omega)]; exact h2) t.toUSize).toNat
+  else nextKN B sw kb keyU hi t
+
+@[csimp] theorem nextK_eqF : @nextK = @nextKF := by
+  funext B sw kb keyU hi t
+  unfold nextKF
+  split
+  · rename_i h
+    have h2 : hi ≤ 2 ^ 40 := by have := h.2.2.1; unfold two40 at this; omega
+    rw [nextKU_eq h.1 B _ _ kb keyU _ _ _ t.toUSize rfl (by rw [usz_n64 h.1 hi (by omega), usz_n64 h.1 t (by omega)]; exact h.2.2.2),
+      usz_n64 h.1 sw (by omega), usz_n64 h.1 hi (by omega), usz_n64 h.1 t (by omega)]
+  · exact (nextKN_eq B sw kb keyU hi _ t rfl).symm
+
 /-- `scanAWK` skipping to the next key match with `nextK` (`scanAWK_eq2`). -/
 def scanAWK2 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
     (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
