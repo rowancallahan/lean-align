@@ -32,7 +32,9 @@ DS = {'hiseq_2x250': 'HiSeq 2x250', 'novaseq_2x151': 'NovaSeq 2x151'}
 T3 = ['lean-align-before', 'lean-align', 'minibwa']
 # vs_minibwa: ONLY current lean-align vs minibwa, every single run from reps.tsv. bar = median, whisker = min to max (none for n = 1), dots = single runs.
 RP = tsv('reps'); SC = ['lean-align', 'minibwa']; DSN = ['novaseq_2x151', 'hiseq_2x250']
-def runs_of(exp, ds, tool, col): return sorted(x for x in (num(r[col]) for r in RP if r['experiment'] == exp and r['data'] == ds and r['tool'] == tool) if x is not None)
+def src(exp, ds):   # streamed column: same-method repetition rows ('stream') where a data set has them, else the older single runs ('stream_single')
+    return 'stream_single' if exp == 'stream' and not any(r['experiment'] == 'stream' and r['data'] == ds for r in RP) else exp
+def runs_of(exp, ds, tool, col): return sorted(x for x in (num(r[col]) for r in RP if r['experiment'] == src(exp, ds) and r['data'] == ds and r['tool'] == tool) if x is not None)
 def rep_panel(ax, exp, col, top, fmt='{:.1f}'):
     w = .36
     for i, d in enumerate(DSN):
@@ -46,8 +48,12 @@ def rep_panel(ax, exp, col, top, fmt='{:.1f}'):
             else: ax.bar(x, top * .9, w, fill=False, edgecolor=C[t], lw=1, ls='--'); ax.text(x, top * .45, 'no runs', rotation=90, ha='center', va='center', fontsize=7.5)
             ax.text(x, -.035, f'n={n}', transform=ax.get_xaxis_transform(), ha='center', va='top', fontsize=7.5, color='#444')
     ax.set_xticks(range(len(DSN))); ax.set_xticklabels([DS[d] for d in DSN]); ax.tick_params(axis='x', pad=14); ax.set_ylim(0, top * 1.14); ax.set_xlim(-.6, len(DSN) - .4)
-def sizes(ds): return sorted({int(r['pairs']) for r in RP if r['experiment'] == 'stream' and r['data'] == ds})
-foot = lambda: 'bar = median, whisker = min to max, dots = single runs, 4 threads, n = runs.  streamed runs: ' + '; '.join(f"{DS[d].split()[0]} {', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs" for d in DSN if sizes(d))
+def sizes(ds): return sorted({int(r['pairs']) for r in RP if r['experiment'] == src('stream', ds) and r['data'] == ds})
+def nruns(ds): return [len(runs_of('stream', ds, t, 'wall_s')) for t in SC]
+def sdesc(d):
+    n = nruns(d); per = (f"{n[0]} run{'s' if n[0] != 1 else ''} per tool") if n[0] == n[1] else f'{n[0]} and {n[1]} runs'
+    return f"{DS[d].split()[0]} " + (f"first {', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs, {per}" if src('stream', d) == 'stream' else f"{', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs (older single runs), {per}")
+foot = lambda: 'bar = median, whisker = min to max, dots = single runs, 4 threads, n = runs.  streamed: ' + '; '.join(sdesc(d) for d in DSN if sizes(d))
 def vs_fig(rows, name, h):
     fig, ax = plt.subplots(len(rows), 2, figsize=(9, h), sharey='row', squeeze=False)
     for r, (col, yl) in enumerate(rows):
