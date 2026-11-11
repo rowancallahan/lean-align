@@ -809,7 +809,7 @@ the index's `t = 6` runs the straight-line `mini20`. -/
   let x := if wq = 20 ∧ shU = 38 then Mz.mini20 c ix.tmU bh else Mz.miniGo c ix.tmU wq 1 0 (shU - 2) bh
   let o := if x < ix.w then x else x % ix.w
   let h := ((((c >>> (2 * (Mz.q - o - ix.k)).toUInt64) &&& ix.kmU) * Mz.HC) &&& ix.kmU).toNat
-  ⟨true, c.toNat, o, h, h >>> ix.kb⟩
+  ⟨true, c.toNat, o, h, (h >>> ix.kb) + pfOffs ix.offs ix.ob (h >>> ix.kb)⟩
 
 theorem mzPrepC_eq (ix : Mz.MzIdx) (c : UInt64) :
     mzPrepC ix (2 * (Mz.q - ix.t)).toUInt64 (Mz.q + 1 - ix.t) c = mzPrepV ix c := by

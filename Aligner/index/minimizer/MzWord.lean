@@ -1023,6 +1023,17 @@ def pfB (_ : Unit) : USize := 0
 @[extern c inline "({ extern char* getenv(const char*); extern int atoi(const char*); static size_t v = (size_t)-1; if (v == (size_t)-1) { const char* s = getenv(\"LA_PF_MODE\"); v = s ? (size_t)atoi(s) : 0; } v; })"]
 def pfMode (_ : Unit) : USize := 0
 
+@[extern c inline "({ extern char* getenv(const char*); extern int atoi(const char*); static size_t v = (size_t)-1; if (v == (size_t)-1) { const char* s = getenv(\"LA_PF_OFFS\"); v = s ? (size_t)atoi(s) : 0; } v; })"]
+def pfOffsMode (_ : Unit) : USize := 0
+
+/-- EXPERIMENT: touch the bucket-offset entry `b` (`LA_PF_OFFS`: 1 = volatile read, 2 = prefetch); `0` always. -/
+def pfOffs (offs : @& ByteArray) (ob b : Nat) : Nat :=
+  let m := pfOffsMode ()
+  if m == 0 then 0 else
+  let off : USize := (4 * (ob + b)).toUSize
+  if m == 2 then (prefetchAt offs off - off).toNat
+  else if off + 4 < offs.usize then (touchAt offs off - off).toNat else 0
+
 /-- Touch the genome block that the candidate with slot `e` will read (`0` always). -/
 @[inline] def pfOne (w : @& ByteArray) (Go oU Tu e : UInt64) (mode : USize) : USize :=
   let pos := e >>> Tu
