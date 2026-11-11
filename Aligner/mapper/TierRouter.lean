@@ -157,6 +157,121 @@ def alnC (pgs : Array PGen) (R Rr : ByteArray) (v st mm : Nat) : (Placement × I
   let h := (decB pgs.size ⟨v, st, R.size⟩, -((4 * mm : Nat) : Int))
   (h, chkCand pgs R Rr h [(Step.diag, R.size)])
 
+/-! ### The gap-free re-check as a byte compare (`alnC_eqB`) -/
+
+-- penalty sum of `k` read letters `X[i ..]` against `G[st + i ..]`, mismatch −4
+def diagPenB (X : ByteArray) (G : PGen) (st : Nat) : Nat → Nat → Int → Int
+  | 0, _, acc => acc
+  | k + 1, i, acc => diagPenB X G st k (i + 1) (acc + if X.get! i == G.get (st + i) then 0 else -4)
+
+theorem charOfByte_inj (a b : UInt8) : Char.ofNat a.toNat = Char.ofNat b.toNat ↔ a = b := by
+  have t : ∀ n, n < 256 → (Char.ofNat n).toNat = n := fun n h => by
+    have hv : n.isValidChar := Or.inl (by omega)
+    rw [Char.ofNat, dif_pos hv]; simp [Char.toNat, Char.ofNatAux]
+  constructor
+  · intro h
+    have := congrArg Char.toNat h
+    rw [t _ a.toNat_lt, t _ b.toNat_lt] at this
+    exact UInt8.toNat_inj.mp this
+  · intro h; rw [h]
+
+theorem walkB_diag (X : ByteArray) (G : PGen) (st n : Nat) (xa ya : Array Char)
+    (hxs : xa.size = n) (hys : ya.size = n)
+    (hx : ∀ t (h : t < xa.size), xa[t] = Char.ofNat (X.get! t).toNat)
+    (hy : ∀ t (h : t < ya.size), ya[t] = Char.ofNat (G.get (st + t)).toNat) :
+    ∀ k i prev acc, i + k = n →
+      walkCheckA sc0 xa ya (List.replicate k .diag) i i prev acc = some (diagPenB X G st k i acc)
+  | 0, i, prev, acc, h => by
+    simp only [List.replicate, walkCheckA, diagPenB]
+    rw [Array.getElem?_eq_none (by omega), Array.getElem?_eq_none (by omega)]
+  | k + 1, i, prev, acc, h => by
+    simp only [List.replicate, walkCheckA, diagPenB]
+    rw [Array.getElem?_eq_getElem (by omega), Array.getElem?_eq_getElem (by omega)]
+    simp only
+    rw [walkB_diag X G st n xa ya hxs hys hx hy k (i + 1) _ _ (by omega)]
+    congr 2
+    rw [hx i (by omega), hy i (by omega)]
+    unfold diagCost
+    by_cases e : X.get! i = G.get (st + i)
+    · simp [e, sc0]
+    · have : ¬ Char.ofNat (X.get! i).toNat = Char.ofNat (G.get (st + i)).toNat := fun h => e ((charOfByte_inj _ _).1 h)
+      simp [e, this, sc0]
+
+-- a diagonal walk that succeeds ends exactly at the ends of both arrays
+theorem walkB_sizes (sc : Scoring) (xa ya : Array Char) : ∀ k i prev acc s,
+    walkCheckA sc xa ya (List.replicate k Step.diag) i i prev acc = some s →
+      xa.size ≤ i + k ∧ ya.size ≤ i + k ∧ (0 < k → i + k ≤ xa.size ∧ i + k ≤ ya.size)
+  | 0, i, prev, acc, s, h => by
+    simp only [List.replicate, walkCheckA] at h
+    split at h
+    · rename_i hx hy
+      rw [Array.getElem?_eq_none_iff] at hx hy
+      exact ⟨by omega, by omega, fun h => absurd h (Nat.lt_irrefl 0)⟩
+    · cases h
+  | k + 1, i, prev, acc, s, h => by
+    simp only [List.replicate, walkCheckA] at h
+    split at h
+    · rename_i x y hx hy
+      have hx' : i < xa.size := by
+        rcases Nat.lt_or_ge i xa.size with h1 | h1
+        · exact h1
+        · rw [Array.getElem?_eq_none h1] at hx; cases hx
+      have hy' : i < ya.size := by
+        rcases Nat.lt_or_ge i ya.size with h1 | h1
+        · exact h1
+        · rw [Array.getElem?_eq_none h1] at hy; cases hy
+      obtain ⟨a1, a2, a3⟩ := walkB_sizes sc xa ya k (i + 1) _ _ s h
+      refine ⟨by omega, by omega, fun _ => ?_⟩
+      rcases Nat.eq_zero_or_pos k with hk | hk
+      · subst hk; omega
+      · have := a3 hk; omega
+    · cases h
+
+-- `chkCand` on the gap-free CIGAR `[(diag, R.size)]`, by the byte compare
+def chkCandB (pgs : Array PGen) (R Rr : ByteArray) (h : Placement × Int) : Bool :=
+  let X := if h.1.2 = .fwd then R else Rr
+  decide (h.1.1.chr < pgs.size) && decide (h.1.1.start + h.1.1.len ≤ pgs[h.1.1.chr]!.n) && decide (h.2 ≤ 0) &&
+    X.size == R.size && h.1.1.len == R.size && diagPenB X pgs[h.1.1.chr]! h.1.1.start R.size 0 0 == h.2
+
+theorem chkCand_eqB (pgs : Array PGen) (R Rr : ByteArray) (h : Placement × Int) :
+    chkCand pgs R Rr h [(Step.diag, R.size)] = chkCandB pgs R Rr h := by
+  apply Bool.eq_iff_iff.mpr
+  unfold chkCand rescoreRuns chkCandB
+  simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
+  rw [checkRuns_check]
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil]
+  constructor
+  · rintro ⟨⟨⟨h1, h2⟩, h3⟩, hr⟩
+    obtain ⟨s1, s2, s3⟩ := walkB_sizes sc0 _ _ R.size 0 none 0 _ hr
+    simp only [Array.size_map, List.size_toArray, List.length_range, Nat.zero_add] at s1 s2 s3
+    have hX : (if h.1.2 = .fwd then R else Rr).size = R.size := by
+      rcases Nat.eq_zero_or_pos R.size with hz | hz
+      · omega
+      · have := s3 hz; omega
+    have hL : h.1.1.len = R.size := by
+      rcases Nat.eq_zero_or_pos R.size with hz | hz
+      · omega
+      · have := s3 hz; omega
+    refine ⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, hX⟩, hL⟩, ?_⟩
+    rw [walkB_diag (if h.1.2 = .fwd then R else Rr) pgs[h.1.1.chr]! h.1.1.start R.size _ _
+      (by simp [hX]) (by simp [hL]) (fun t ht => by simp) (fun t ht => by simp) R.size 0 none 0 (by omega)] at hr
+    exact Option.some.inj hr
+  · rintro ⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, hX⟩, hL⟩, hd⟩
+    refine ⟨⟨⟨h1, h2⟩, h3⟩, ?_⟩
+    rw [walkB_diag (if h.1.2 = .fwd then R else Rr) pgs[h.1.1.chr]! h.1.1.start R.size _ _
+      (by simp [hX]) (by simp [hL]) (fun t ht => by simp) (fun t ht => by simp) R.size 0 none 0 (by omega)]
+    exact congrArg some hd
+
+/-- `alnC` with the byte compare. -/
+def alnCB (pgs : Array PGen) (R Rr : ByteArray) (v st mm : Nat) : (Placement × Int) × Bool :=
+  let h := (decB pgs.size ⟨v, st, R.size⟩, -((4 * mm : Nat) : Int))
+  (h, chkCandB pgs R Rr h)
+
+@[csimp] theorem alnC_eqB : @alnC = @alnCB := by
+  funext pgs R Rr v st mm
+  unfold alnC alnCB
+  simp only [chkCand_eqB]
+
 /-- The best-scoring entry of a list. -/
 def bestOf (l : List (Placement × Int)) : Option (Placement × Int) :=
   l.foldl (fun acc x => match acc with | some y => if y.2 < x.2 then some x else acc | none => some x) none
