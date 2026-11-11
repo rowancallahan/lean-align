@@ -30,6 +30,35 @@ def pick(**kw):                                        # median of a column over
     return lambda col: (lambda v: st.median(v) if v else None)([num(r[col]) for r in R if all(r[k] == str(x) for k, x in kw.items()) and num(r[col]) is not None])
 DS = {'hiseq_2x250': 'HiSeq 2x250', 'novaseq_2x151': 'NovaSeq 2x151'}
 T3 = ['lean-align-before', 'lean-align', 'minibwa']
+# vs_minibwa: ONLY current lean-align vs minibwa, every single run from reps.tsv. bar = median, whisker = min to max (none for n = 1), dots = single runs.
+RP = tsv('reps'); SC = ['lean-align', 'minibwa']; DSN = ['novaseq_2x151', 'hiseq_2x250']
+def runs_of(exp, ds, tool, col): return sorted(x for x in (num(r[col]) for r in RP if r['experiment'] == exp and r['data'] == ds and r['tool'] == tool) if x is not None)
+def rep_panel(ax, exp, col, top, fmt='{:.1f}'):
+    w = .36
+    for i, d in enumerate(DSN):
+        for j, t in enumerate(SC):
+            x = i + (j - .5) * w * 1.15; v = runs_of(exp, d, t, col); n = len(v)
+            if n:
+                m = st.median(v); ax.bar(x, m, w, color=C[t], alpha=.9, zorder=2)
+                if n > 1: ax.errorbar(x, m, yerr=[[m - v[0]], [v[-1] - m]], color='#222', capsize=4, lw=1.2, zorder=3)
+                ax.scatter([x + (k - (n - 1) / 2) * .035 for k in range(n)], v, s=9, color='#111', zorder=4)
+                ax.text(x, v[-1] + top * .02, fmt.format(m), ha='center', va='bottom', fontsize=8, zorder=5)
+            else: ax.bar(x, top * .9, w, fill=False, edgecolor=C[t], lw=1, ls='--'); ax.text(x, top * .45, 'no runs', rotation=90, ha='center', va='center', fontsize=7.5)
+            ax.text(x, -.035, f'n={n}', transform=ax.get_xaxis_transform(), ha='center', va='top', fontsize=7.5, color='#444')
+    ax.set_xticks(range(len(DSN))); ax.set_xticklabels([DS[d] for d in DSN]); ax.tick_params(axis='x', pad=14); ax.set_ylim(0, top * 1.14); ax.set_xlim(-.6, len(DSN) - .4)
+def sizes(ds): return sorted({int(r['pairs']) for r in RP if r['experiment'] == 'stream' and r['data'] == ds})
+foot = lambda: 'bar = median, whisker = min to max, dots = single runs, 4 threads, n = runs.  streamed runs: ' + '; '.join(f"{DS[d].split()[0]} {', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs" for d in DSN if sizes(d))
+def vs_fig(rows, name, h):
+    fig, ax = plt.subplots(len(rows), 2, figsize=(9, h), sharey='row', squeeze=False)
+    for r, (col, yl) in enumerate(rows):
+        top = max([max(runs_of(e, d, t, col) or [0]) for e in ('gz5m', 'stream') for d in DSN for t in SC] + [1e-9])
+        for c, exp in enumerate(('gz5m', 'stream')): rep_panel(ax[r][c], exp, col, top)
+        ax[r][0].set_ylabel(yl)
+    ax[0][0].set_title('gzipped files, 5M pairs', fontsize=9); ax[0][1].set_title('streamed from the network', fontsize=9)
+    fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in SC], labels=['lean-align (f465a57)', 'minibwa (c07de5c)'], loc='lower center', ncol=2, frameon=False, fontsize=8.5, bbox_to_anchor=(.5, .035))
+    fig.text(.5, .008, foot(), ha='center', fontsize=7, color='#444'); fig.tight_layout(rect=(0, .08, 1, 1)); [fig.savefig(f'{O}/{name}.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
+vs_fig([('Gbp_hr', 'speed (Gbp/hour)'), ('Gbp_core_hr', 'Gbp per core-hour')], 'vs_minibwa', 7.4)
+vs_fig([('peak_GB', 'peak memory (GB)')], 'vs_minibwa_memory', 4.2)
 # (a) speed at 4 threads, 5M pairs, gz. Two methods, two columns: A = before/after on the same method (gz5m: map time, index load excluded);
 #     B = ours vs minibwa with the same script for both tools (gz5m_script: wall incl. index load, CPU incl. both gzips).
 SC = ['lean-align', 'minibwa']
