@@ -1,0 +1,1 @@
+analyze.py ours.sam minibwa.sam LABEL (pysam; run with the python that has pysam). SAMs: cc26db2 and minibwa c07de5c, first 1M pairs of nova5m / hiseq5m (Testing/ec2/bench.py cmp set, 4 thr). "unmapped" for us = not both mates mapped (includes single-mate cases, listed separately in table 1).
