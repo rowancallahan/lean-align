@@ -68,6 +68,7 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   `stream_single`: lean-align on the trace box, minibwa on the trim box, resuming downloader, md5 sink). The script plots the experiment `stream` for a
   data set when it has rows of it and `stream_single` otherwise, so HiSeq repetitions appended as `stream` rows replace the single runs.
   The older NovaSeq single runs (10M, 20M, 40M; other sinks and downloaders) stay in `reps.tsv` as `stream_single` and are not in this figure.
+- HiSeq streamed repetitions (experiment `stream`, first 10M pairs, 4.9638 Gbp, 3 per tool, from S-P; `reps.tsv` rows as given to me, their `result.json` not yet checked): the container restarted between lean-align run 2 and minibwa run 2; after the restart both tools used 10 to 25 percent more CPU for the same work, so the HiSeq spread is mostly the restart, not run-to-run noise. The figure footnote says so. These rows are to be replaced by repetitions on the integrated build.
 - A bar with n = 1 shows no error bar.
 
 ### (b) Peak memory (`figs/b_memory`)
