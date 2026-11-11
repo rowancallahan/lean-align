@@ -5,9 +5,10 @@ import re, sys
 top = int(sys.argv[2]) if len(sys.argv) > 2 else 25
 rows = []; tot = None
 for l in open(sys.argv[1]):
-    m = re.match(r'\s*([\d,]+) \(\s*[\d.]+%\)\s+([\d,.]+)(?: \(\s*[\d.]+%\))?\s+([\d,.]+)(?: \(\s*[\d.]+%\))?\s+([\d,.]+)(?: \(\s*[\d.]+%\))?\s+([\d,.]+)(?: \(\s*[\d.]+%\))?\s+(.*)', l)
+    l2 = re.sub(r'\(\s*[\d.]+%(?:,\s*[\d.]+%)?\)', '', l.lstrip('< ').rstrip('\n'))   # drop (xx.x%) and (xx.x%, yy.y%)
+    m = re.match(r'\s*(-?[\d,]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(.+)', l2)
     if not m: continue
-    v = [0 if x == '.' else int(x.replace(',', '')) for x in m.groups()[:5]]; name = m.group(6)
+    v = [0 if x == '.' else abs(int(x.replace(',', ''))) for x in m.groups()[:5]]; name = m.group(6).strip()   # abs: cg_diff output is negated
     if 'PROGRAM TOTALS' in name: tot = v; continue
     rows.append((10 * (v[1] + v[2]) + 100 * (v[3] + v[4]), v, name.split(' [')[0].replace('???:', '').replace('lp_lean__align_', '')))
 rows.sort(key=lambda r: -r[0])
