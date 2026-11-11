@@ -11,6 +11,7 @@ run() { # variant cores envs...
 cat $IDX > /dev/null
 for rep in 1 2 3; do for c in 0 0-3; do
   thp madvise; pool 0;  run base $c A=1
+  thp never;   pool 0;  run thp_never $c A=1
   thp madvise; pool 0;  run mi_large $c MIMALLOC_ALLOW_LARGE_OS_PAGES=1
   thp always;  pool 0;  run thp_always $c A=1
   thp always;  pool 0;  run thp_always+mi_large $c MIMALLOC_ALLOW_LARGE_OS_PAGES=1
