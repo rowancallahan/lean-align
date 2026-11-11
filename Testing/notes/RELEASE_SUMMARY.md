@@ -28,7 +28,7 @@ command that checks it, and what is not done. Numbers are from 4-core cloud boxe
 | step 3: no false claim vs minibwa on hg38 | inside verify | HARD A-D = 0 in 9 cells | pass |
 | step 4: unique genome, columns 1-11 identical to minibwa | inside verify | identical, flagstat equal | pass (adapter-like pairs left out, see section 5) |
 | output unchanged by the speed work | full-run SAM md5, 5M gz, both sets, cc26db2 vs f465a57 | equal | timing box: equal on both |
-| laptop check | `bash Testing/ec2/setup.sh tiny DIR && bash Testing/ec2/run.sh tiny DIR` | `IDENTICAL: columns 1-11 of every record` | lead box (Linux), on f465a57 code; not rerun on cc26db2 |
+| laptop check | `bash Testing/ec2/setup.sh tiny DIR && bash Testing/ec2/run.sh tiny DIR` | `IDENTICAL: columns 1-11 of every record` | lead box (Linux), festive 3cf96fb (code cc26db2): passes, 199,710 pairs identical |
 | timing and agreement vs minibwa | `bash Testing/ec2/run.sh full DIR` | `timing.tsv`, `compare.txt` | timing box, 4 threads, 5M pairs, both sets, cc26db2 |
 
 Not run by me: CI on GitHub for the head commit; anything on macOS; anything above 4 cores.
