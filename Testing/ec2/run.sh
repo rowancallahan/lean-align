@@ -12,6 +12,15 @@ for t in $THREADS; do for tool in ours minibwa; do for i in $(seq "$REPS"); do
   $PY $B/bench.py $tool "$t" "$W" reads | tee -a "$W/timing.tsv"
 done; done; done
 
+# median of the REPS runs per tool and thread count
+$PY - "$W/timing.tsv" <<'PYEOF'
+import collections, statistics, sys
+rows = collections.defaultdict(list)
+for l in list(open(sys.argv[1]))[1:]: f = l.split("\t"); rows[f[0], f[1]].append([float(x) for x in f[3:6] + f[7:9]])
+print("median\ttool\tthreads\twall_s\tcpu_s\tpeak_GB\tGbp/hr\tGbp/core-hr")
+for (tool, t), v in rows.items(): print("median", tool, t, *(f"{statistics.median(c):.2f}" for c in zip(*v)), sep="\t")
+PYEOF
+
 # 2. agreement: the cmp read set, SAM kept
 t=${THREADS##* }
 $PY $B/bench.py ours "$t" "$W" cmp "$W/ours.sam" > /dev/null
