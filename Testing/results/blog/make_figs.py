@@ -55,6 +55,15 @@ def sdesc(d):
     n = nruns(d); per = (f"{n[0]} run{'s' if n[0] != 1 else ''} per tool") if n[0] == n[1] else f'{n[0]} and {n[1]} runs'
     return f"{DS[d].split()[0]} " + (f"first {', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs, {per}" if src('stream', d) == 'stream' else f"{', '.join(f'{p / 1e6:.3g}M' for p in sizes(d))} pairs (older single runs), {per}") + srs(d)
 foot = lambda: 'bar = median, whisker = min to max, dots = single runs, 4 threads, n = runs.\nstreamed: ' + '\nstreamed: '.join(sdesc(d) for d in DSN if sizes(d))
+def commits(tool, exp):   # build(s) of a tool among the rows plotted in one column
+    seen = []
+    for d in DSN:
+        for r in RP:
+            if r['tool'] == tool and r['experiment'] == src(exp, d) and r['data'] == d and r['commit'] not in seen: seen.append(r['commit'])
+    return seen
+def tool_label(tool):    # the legend names the build(s) actually plotted
+    g, t = commits(tool, 'gz5m'), commits(tool, 'stream')
+    return f"{tool} ({'/'.join(g)})" if g == t or not t else f"{tool} (gz {'/'.join(g)}, streamed {'/'.join(t)})"
 def vs_fig(rows, name, h):
     fig, ax = plt.subplots(len(rows), 2, figsize=(9, h), sharey='row', squeeze=False)
     for r, (col, yl) in enumerate(rows):
@@ -62,10 +71,40 @@ def vs_fig(rows, name, h):
         for c, exp in enumerate(('gz5m', 'stream')): rep_panel(ax[r][c], exp, col, top)
         ax[r][0].set_ylabel(yl)
     ax[0][0].set_title('gzipped files, 5M pairs', fontsize=9); ax[0][1].set_title('streamed from the network', fontsize=9)
-    fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in SC], labels=['lean-align (f465a57)', 'minibwa (c07de5c)'], loc='lower center', ncol=2, frameon=False, fontsize=8.5, bbox_to_anchor=(.5, .075))
+    fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in SC], labels=[tool_label('lean-align'), tool_label('minibwa')], loc='lower center', ncol=2, frameon=False, fontsize=8.5, bbox_to_anchor=(.5, .075))
     fig.text(.5, .008, foot(), ha='center', va='bottom', fontsize=7, color='#444'); fig.tight_layout(rect=(0, .14, 1, 1)); [fig.savefig(f'{O}/{name}.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 vs_fig([('Gbp_hr', 'speed (Gbp/hour)'), ('Gbp_core_hr', 'Gbp per core-hour')], 'vs_minibwa', 7.4)
 vs_fig([('peak_GB', 'peak memory (GB)')], 'vs_minibwa_memory', 4.2)
+AB_PENDING = True   # HiSeq streamed: a clean alternating A/B is running; set False when its result replaces the note
+# this round: lean-align new build against the previous build, same session (wall and CPU from reps.tsv, instructions from this_round.tsv)
+TR = tsv('this_round')
+def med(exp, ds, col): return (lambda v: st.median(v) if v else None)(runs_of(exp, ds, 'lean-align', col))
+def prevnew(ds):
+    out = []
+    for lab, col in (('wall time', 'wall_s'), ('CPU (incl. gzips)', 'cpu_s')):
+        a, b = med('gz5m_prev_build', ds, col), med('gz5m', ds, col)
+        if a and b: out.append((lab, 100 * (b / a - 1)))
+    sa = [x for x in runs_of('stream_prev_build', ds, 'lean-align', 'wall_s')]; sb = runs_of('stream', ds, 'lean-align', 'wall_s')
+    if sa and sb: out.append(('wall time, streamed', 100 * (sum(sb) / len(sb) / (sum(sa) / len(sa)) - 1)))
+    t = [num(r['change_pct']) for r in TR if r['data'] == ds and r['metric'] == 'instructions']
+    if t: out.append(('instructions', t[0]))
+    return out
+PN = [(d, prevnew(d)) for d in DSN if prevnew(d)]
+if PN:
+    labs = ['wall time', 'CPU (incl. gzips)', 'wall time, streamed', 'instructions']; newb = '/'.join(sorted({r['commit'] for r in RP if r['experiment'] == 'gz5m' and r['tool'] == 'lean-align'})); prevb = '/'.join(sorted({r['commit'] for r in RP if r['experiment'] == 'gz5m_prev_build'}))
+    fig, ax = plt.subplots(figsize=(7.6, 3.8)); w = .8 / len(PN); done = set()
+    for j, (d, vals) in enumerate(PN):
+        for i, lab in enumerate(labs):
+            v = dict(vals).get(lab)
+            if v is None: continue
+            x = i + (j - (len(PN) - 1) / 2) * w
+            ax.bar(x, v, w * .92, color=C['lean-align'] if j == 0 else C['lean-align-before'], label=DS[d] if d not in done else None); done.add(d)
+            ax.text(x, v + 0.4 if v > 0 else v - 0.5, f'{v:+.1f}%', ha='center', va='bottom' if v > 0 else 'top', fontsize=8)
+            if lab == 'wall time, streamed' and abs(v) < 3: ax.text(x, v + 1.6, 'no gain separable from noise' + ('\n(A/B pending)' if AB_PENDING else ''), ha='center', va='bottom', fontsize=6.5, color='#444')
+    ax.set_xticks(range(len(labs))); ax.set_xticklabels(labs); ax.axhline(0, color='#222', lw=.8); ax.set_ylabel(f'change, {newb} vs {prevb} (%)')
+    ax.set_ylim(min(v for _, vals in PN for _, v in vals) - 4, max(2, max(v for _, vals in PN for _, v in vals) + 5)); ax.legend(frameon=False, fontsize=8, loc='upper right')
+    fig.text(.5, .01, 'wall, CPU: medians of 3 alternating runs, same session, 5M gz pairs, 4 threads;  streamed wall: means, first 10M pairs, one container;  instructions: callgrind, 50k pairs, 1 thread', ha='center', fontsize=6.5, color='#444')
+    fig.tight_layout(rect=(0, .04, 1, 1)); [fig.savefig(f'{O}/this_round.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 # (a) speed at 4 threads, 5M pairs, gz. Two methods, two columns: A = before/after on the same method (gz5m: map time, index load excluded);
 #     B = ours vs minibwa with the same script for both tools (gz5m_script: wall incl. index load, CPU incl. both gzips).
 SC = ['lean-align', 'minibwa']
@@ -135,7 +174,7 @@ cl = ['unique', 'unknown', 'not proper']; G = [f'{m} / {c}' for m in ('mason', '
 bars(ax[2], G, two, lambda g, s: v(block='sim', dataset=g.split(' / ')[0], **{'class': g.split(' / ')[1]}, metric='pct_pair_correct', tool=s), fmt='{:.0f}')
 ax[2].set_ylabel('pairs placed correctly (%), by our class'); ax[2].set_ylim(0, 112); ax[2].tick_params(axis='x', rotation=60); [t.set_fontsize(6.5) for t in ax[2].texts]
 ax[2].set_title('simulated reads, 100k pairs each', fontsize=8.5)
-fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in two], labels=['lean-align (f465a57)', LAB['minibwa']], loc='upper center', ncol=2, frameon=False, fontsize=8)
+fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in two], labels=['lean-align (f465a57; same counts on cc26db2)', LAB['minibwa']], loc='upper center', ncol=2, frameon=False, fontsize=8)
 fig.tight_layout(rect=(0, 0, 1, .92)); [fig.savefig(f'{O}/f_accuracy.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 # (g) ROC on simulated reads
 Rc = tsv('roc'); fig, ax = plt.subplots(1, 3, figsize=(12, 3.6))

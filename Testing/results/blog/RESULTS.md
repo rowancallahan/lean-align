@@ -12,18 +12,30 @@ Bar = median, whisker = min to max, dots = single runs, 4 threads, n = number of
 
 ## lean-align against minibwa: medians
 
-The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to max in brackets; n = number of runs. Four threads on four cores, lean-align f465a57 against minibwa c07de5c. gz5m = 5M pairs from gz files; stream = the first 10M NovaSeq pairs streamed from the network, same pipeline for both tools, 3 runs each; stream_single = older single streamed runs (other sizes, and the HiSeq lane, which figs/vs_minibwa plots for HiSeq until HiSeq repetitions exist).
+The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to max in brackets; n = number of runs. Four threads on four cores, lean-align (builds in the commit column of the per-run table) against minibwa c07de5c. gz5m = 5M pairs from gz files, the newest session (lean-align cc26db2 and minibwa; gz5m_prev_build = f465a57 runs of the same session; gz5m_old_session = the earlier session, not plotted); stream = the first 10M NovaSeq pairs streamed from the network, same pipeline for both tools, 3 runs each; stream_single = older single streamed runs (other sizes, and the HiSeq lane, which figs/vs_minibwa plots for HiSeq until HiSeq repetitions exist).
 
 | experiment | data | tool | n | Gbp/hr | Gbp/core-hr | peak GB |
 |---|---|---|---|---|---|---|
-| gz5m | hiseq_2x250 | lean-align | 3 | 107.3 (102.6 to 109.3) | 28.3 (28.1 to 29.0) | 5.9 (5.8 to 5.9) |
-| gz5m | hiseq_2x250 | minibwa | 3 | 19.4 (19.3 to 19.7) | 5.0 (5.0 to 5.0) | 8.5 (8.5 to 8.5) |
-| gz5m | novaseq_2x151 | lean-align | 3 | 65.0 (64.0 to 70.0) | 17.6 (17.4 to 18.0) | 5.7 (5.7 to 5.7) |
-| gz5m | novaseq_2x151 | minibwa | 3 | 20.5 (20.4 to 21.0) | 5.4 (5.4 to 5.4) | 8.8 (8.8 to 8.8) |
-| stream | hiseq_2x250 | lean-align | 3 | 92.2 (84.5 to 103.0) | 29.2 (26.6 to 33.2) | 5.9 (5.9 to 6.0) |
-| stream | hiseq_2x250 | minibwa | 3 | 16.5 (16.1 to 20.4) | 4.4 (4.3 to 5.3) | 8.6 (8.6 to 8.6) |
-| stream | novaseq_2x151 | lean-align | 3 | 62.6 (60.9 to 63.5) | 17.8 (17.5 to 18.1) | 5.8 (5.8 to 5.8) |
-| stream | novaseq_2x151 | minibwa | 3 | 22.0 (21.8 to 22.3) | 5.8 (5.7 to 5.9) | 8.8 (8.8 to 8.8) |
+| gz5m | hiseq_2x250 | lean-align | 3 | 95.1 (89.8 to 99.0) | 25.6 (23.8 to 26.0) | 5.9 (5.8 to 5.9) |
+| gz5m | hiseq_2x250 | minibwa | 3 | 17.0 (16.9 to 17.2) | 4.4 (4.3 to 4.4) | 8.5 (8.5 to 8.5) |
+| gz5m | novaseq_2x151 | lean-align | 3 | 63.5 (62.5 to 63.7) | 16.9 (16.4 to 17.1) | 5.7 (5.7 to 5.7) |
+| gz5m | novaseq_2x151 | minibwa | 3 | 19.6 (19.6 to 19.8) | 5.1 (5.1 to 5.1) | 8.8 (8.8 to 8.8) |
+| gz5m_old_session | hiseq_2x250 | lean-align | 3 | 107.3 (102.6 to 109.3) | 28.3 (28.1 to 29.0) | 5.9 (5.8 to 5.9) |
+| gz5m_old_session | hiseq_2x250 | minibwa | 3 | 19.4 (19.3 to 19.7) | 5.0 (5.0 to 5.0) | 8.5 (8.5 to 8.5) |
+| gz5m_old_session | novaseq_2x151 | lean-align | 3 | 65.0 (64.0 to 70.0) | 17.6 (17.4 to 18.0) | 5.7 (5.7 to 5.7) |
+| gz5m_old_session | novaseq_2x151 | minibwa | 3 | 20.5 (20.4 to 21.0) | 5.4 (5.4 to 5.4) | 8.8 (8.8 to 8.8) |
+| gz5m_prev_build | hiseq_2x250 | lean-align | 3 | 88.1 (87.1 to 88.5) | 23.6 (23.2 to 23.7) | 5.9 (5.8 to 5.9) |
+| gz5m_prev_build | novaseq_2x151 | lean-align | 3 | 57.5 (57.4 to 57.5) | 15.5 (15.4 to 15.5) | 5.7 (5.7 to 5.7) |
+| stream | hiseq_2x250 | lean-align | 3 | 78.9 (76.6 to 79.2) | 24.8 (24.1 to 25.3) | 6.1 (6.0 to 6.1) |
+| stream | hiseq_2x250 | minibwa | 3 | 15.9 (15.7 to 16.0) | 4.2 (4.1 to 4.2) | 8.6 (8.6 to 8.6) |
+| stream | novaseq_2x151 | lean-align | 3 | 56.8 (56.6 to 57.5) | 16.7 (16.4 to 16.8) | 5.7 (5.7 to 5.7) |
+| stream | novaseq_2x151 | minibwa | 3 | 18.2 (18.2 to 18.7) | 4.8 (4.8 to 5.0) | 8.8 (8.8 to 8.8) |
+| stream_old_session | hiseq_2x250 | lean-align | 3 | 92.2 (84.5 to 103.0) | 29.2 (26.6 to 33.2) | 5.9 (5.9 to 6.0) |
+| stream_old_session | hiseq_2x250 | minibwa | 3 | 16.5 (16.1 to 20.4) | 4.4 (4.3 to 5.3) | 8.6 (8.6 to 8.6) |
+| stream_old_session | novaseq_2x151 | lean-align | 3 | 62.6 (60.9 to 63.5) | 17.8 (17.5 to 18.1) | 5.8 (5.8 to 5.8) |
+| stream_old_session | novaseq_2x151 | minibwa | 3 | 22.0 (21.8 to 22.3) | 5.8 (5.7 to 5.9) | 8.8 (8.8 to 8.8) |
+| stream_prev_build | hiseq_2x250 | lean-align | 2 | 79.6 (75.3 to 83.9) | 24.8 (23.4 to 26.2) | 6.1 (6.0 to 6.1) |
+| stream_prev_build | novaseq_2x151 | lean-align | 2 | 52.4 (51.5 to 53.2) | 15.1 (14.9 to 15.4) | 5.7 (5.7 to 5.8) |
 | stream_single | hiseq_2x250 | lean-align | 1 | 88.7 | 26.3 | 5.9 |
 | stream_single | hiseq_2x250 | minibwa | 1 | 17.3 | 4.5 | 8.6 |
 | stream_single | novaseq_2x151 | lean-align | 3 | 55.9 (55.4 to 55.9) | 16.1 (16.1 to 16.1) | 5.7 (5.7 to 5.7) |
@@ -35,18 +47,18 @@ One row per run, as in data/reps.tsv. The older minibwa NovaSeq 10M single run i
 
 | experiment | data | pairs | tool | commit | run | wall s | CPU s | peak GB | Gbp/hr | Gbp/core-hr |
 |---|---|---|---|---|---|---|---|---|---|---|
-| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 1 | 85.0 | 309.7 | 5.71 | 63.97 | 17.55 |
-| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 2 | 77.7 | 301.4 | 5.71 | 69.99 | 18.03 |
-| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 3 | 83.6 | 312.0 | 5.67 | 65.02 | 17.42 |
-| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 1 | 259.0 | 1001.5 | 8.82 | 20.99 | 5.43 |
-| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 2 | 266.5 | 1012.5 | 8.79 | 20.39 | 5.37 |
-| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 3 | 264.7 | 1010.7 | 8.80 | 20.53 | 5.38 |
-| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 1 | 87.1 | 317.6 | 5.85 | 102.57 | 28.14 |
-| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 2 | 83.2 | 315.3 | 5.86 | 107.35 | 28.34 |
-| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 3 | 81.7 | 308.3 | 5.88 | 109.32 | 28.99 |
-| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 1 | 454.0 | 1784.6 | 8.51 | 19.69 | 5.01 |
-| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 2 | 462.7 | 1806.1 | 8.51 | 19.31 | 4.95 |
-| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 3 | 461.7 | 1806.6 | 8.52 | 19.36 | 4.95 |
+| gz5m_old_session | novaseq_2x151 | 5000000 | lean-align | f465a57 | 1 | 85.0 | 309.7 | 5.71 | 63.97 | 17.55 |
+| gz5m_old_session | novaseq_2x151 | 5000000 | lean-align | f465a57 | 2 | 77.7 | 301.4 | 5.71 | 69.99 | 18.03 |
+| gz5m_old_session | novaseq_2x151 | 5000000 | lean-align | f465a57 | 3 | 83.6 | 312.0 | 5.67 | 65.02 | 17.42 |
+| gz5m_old_session | novaseq_2x151 | 5000000 | minibwa | c07de5c | 1 | 259.0 | 1001.5 | 8.82 | 20.99 | 5.43 |
+| gz5m_old_session | novaseq_2x151 | 5000000 | minibwa | c07de5c | 2 | 266.5 | 1012.5 | 8.79 | 20.39 | 5.37 |
+| gz5m_old_session | novaseq_2x151 | 5000000 | minibwa | c07de5c | 3 | 264.7 | 1010.7 | 8.80 | 20.53 | 5.38 |
+| gz5m_old_session | hiseq_2x250 | 5000000 | lean-align | f465a57 | 1 | 87.1 | 317.6 | 5.85 | 102.57 | 28.14 |
+| gz5m_old_session | hiseq_2x250 | 5000000 | lean-align | f465a57 | 2 | 83.2 | 315.3 | 5.86 | 107.35 | 28.34 |
+| gz5m_old_session | hiseq_2x250 | 5000000 | lean-align | f465a57 | 3 | 81.7 | 308.3 | 5.88 | 109.32 | 28.99 |
+| gz5m_old_session | hiseq_2x250 | 5000000 | minibwa | c07de5c | 1 | 454.0 | 1784.6 | 8.51 | 19.69 | 5.01 |
+| gz5m_old_session | hiseq_2x250 | 5000000 | minibwa | c07de5c | 2 | 462.7 | 1806.1 | 8.51 | 19.31 | 4.95 |
+| gz5m_old_session | hiseq_2x250 | 5000000 | minibwa | c07de5c | 3 | 461.7 | 1806.6 | 8.52 | 19.36 | 4.95 |
 | stream_single | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 196.1 | 676.1 | 5.73 | 55.4 | 16.08 |
 | stream_single | novaseq_2x151 | 20000000 | lean-align | f465a57 | 1 | 389.0 | 1350.0 | 5.74 | 55.9 | 16.11 |
 | stream_single | novaseq_2x151 | 40000000 | lean-align | f465a57 | 1 | 778.5 | 2709.3 | 5.74 | 55.9 | 16.05 |
@@ -54,18 +66,52 @@ One row per run, as in data/reps.tsv. The older minibwa NovaSeq 10M single run i
 | stream_single | novaseq_2x151 | 40000000 | minibwa | c07de5c | 1 | 2192.6 | 8364.7 | 8.81 | 19.8 | 5.20 |
 | stream_single | hiseq_2x250 | 33916091 | lean-align | f465a57 | 1 | 686.3 | 2300.2 | 5.88 | 88.7 | 26.3 |
 | stream_single | hiseq_2x250 | 33916091 | minibwa | c07de5c | 1 | 3494.7 | 13383 | 8.61 | 17.3 | 4.53 |
-| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 178.6 | 621.2 | 5.78 | 60.9 | 17.50 |
-| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 2 | 171.2 | 600.0 | 5.75 | 63.5 | 18.12 |
-| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 3 | 173.6 | 609.8 | 5.80 | 62.6 | 17.83 |
-| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 487.7 | 1854.6 | 8.81 | 22.3 | 5.86 |
-| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 494.2 | 1881.2 | 8.80 | 22.0 | 5.78 |
-| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 498.9 | 1894.8 | 8.80 | 21.8 | 5.74 |
-| stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 1 | 193.9 | 611.3 | 5.91 | 92.2 | 29.23 |
-| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 1 | 876.8 | 3362.5 | 8.62 | 20.4 | 5.31 |
-| stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 2 | 173.4 | 538.2 | 5.93 | 103.0 | 33.20 |
-| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 2 | 1107.0 | 4188.6 | 8.62 | 16.1 | 4.27 |
-| stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 3 | 211.4 | 672.1 | 6.02 | 84.5 | 26.59 |
-| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 3 | 1083.6 | 4088.1 | 8.60 | 16.5 | 4.37 |
+| stream_old_session | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 178.6 | 621.2 | 5.78 | 60.9 | 17.50 |
+| stream_old_session | novaseq_2x151 | 10000000 | lean-align | f465a57 | 2 | 171.2 | 600.0 | 5.75 | 63.5 | 18.12 |
+| stream_old_session | novaseq_2x151 | 10000000 | lean-align | f465a57 | 3 | 173.6 | 609.8 | 5.80 | 62.6 | 17.83 |
+| stream_old_session | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 487.7 | 1854.6 | 8.81 | 22.3 | 5.86 |
+| stream_old_session | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 494.2 | 1881.2 | 8.80 | 22.0 | 5.78 |
+| stream_old_session | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 498.9 | 1894.8 | 8.80 | 21.8 | 5.74 |
+| stream_old_session | hiseq_2x250 | 10000000 | lean-align | f465a57 | 1 | 193.9 | 611.3 | 5.91 | 92.2 | 29.23 |
+| stream_old_session | hiseq_2x250 | 10000000 | minibwa | c07de5c | 1 | 876.8 | 3362.5 | 8.62 | 20.4 | 5.31 |
+| stream_old_session | hiseq_2x250 | 10000000 | lean-align | f465a57 | 2 | 173.4 | 538.2 | 5.93 | 103.0 | 33.20 |
+| stream_old_session | hiseq_2x250 | 10000000 | minibwa | c07de5c | 2 | 1107.0 | 4188.6 | 8.62 | 16.1 | 4.27 |
+| stream_old_session | hiseq_2x250 | 10000000 | lean-align | f465a57 | 3 | 211.4 | 672.1 | 6.02 | 84.5 | 26.59 |
+| stream_old_session | hiseq_2x250 | 10000000 | minibwa | c07de5c | 3 | 1083.6 | 4088.1 | 8.60 | 16.5 | 4.37 |
+| gz5m_prev_build | novaseq_2x151 | 5000000 | lean-align | f465a57 | 1 | 94.5 | 350.5 | 5.71 | 57.55 | 15.51 |
+| gz5m | novaseq_2x151 | 5000000 | lean-align | cc26db2 | 1 | 85.5 | 321.8 | 5.70 | 63.55 | 16.90 |
+| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 1 | 275.3 | 1062.1 | 8.80 | 19.75 | 5.12 |
+| gz5m | novaseq_2x151 | 5000000 | lean-align | cc26db2 | 2 | 85.4 | 316.9 | 5.71 | 63.67 | 17.15 |
+| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 2 | 276.8 | 1073.8 | 8.79 | 19.64 | 5.06 |
+| gz5m_prev_build | novaseq_2x151 | 5000000 | lean-align | f465a57 | 2 | 94.5 | 351.3 | 5.70 | 57.53 | 15.48 |
+| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 3 | 277.8 | 1069.0 | 8.82 | 19.57 | 5.09 |
+| gz5m_prev_build | novaseq_2x151 | 5000000 | lean-align | f465a57 | 3 | 94.7 | 353.0 | 5.68 | 57.41 | 15.40 |
+| gz5m | novaseq_2x151 | 5000000 | lean-align | cc26db2 | 3 | 86.9 | 331.6 | 5.69 | 62.55 | 16.39 |
+| stream_prev_build | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 204.3 | 707.6 | 5.74 | 53.2 | 15.36 |
+| stream | novaseq_2x151 | 10000000 | lean-align | cc26db2 | 1 | 192.2 | 664.3 | 5.72 | 56.6 | 16.37 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 596.0 | 2242.5 | 8.80 | 18.2 | 4.85 |
+| stream | novaseq_2x151 | 10000000 | lean-align | cc26db2 | 2 | 189.2 | 648.0 | 5.73 | 57.5 | 16.78 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 581.9 | 2187.7 | 8.79 | 18.7 | 4.97 |
+| stream | novaseq_2x151 | 10000000 | lean-align | cc26db2 | 3 | 191.5 | 652.5 | 5.73 | 56.8 | 16.66 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 597.7 | 2248.0 | 8.82 | 18.2 | 4.84 |
+| stream_prev_build | novaseq_2x151 | 10000000 | lean-align | f465a57 | 2 | 211.1 | 729.0 | 5.75 | 51.5 | 14.91 |
+| gz5m_prev_build | hiseq_2x250 | 5000000 | lean-align | f465a57 | 1 | 101.5 | 378.4 | 5.86 | 88.07 | 23.62 |
+| gz5m | hiseq_2x250 | 5000000 | lean-align | cc26db2 | 1 | 90.2 | 343.2 | 5.83 | 99.05 | 26.04 |
+| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 1 | 525.3 | 2050.6 | 8.51 | 17.01 | 4.36 |
+| gz5m | hiseq_2x250 | 5000000 | lean-align | cc26db2 | 2 | 93.9 | 349.3 | 5.88 | 95.12 | 25.59 |
+| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 2 | 519.8 | 2031.9 | 8.52 | 17.19 | 4.40 |
+| gz5m_prev_build | hiseq_2x250 | 5000000 | lean-align | f465a57 | 2 | 100.9 | 377.7 | 5.85 | 88.53 | 23.66 |
+| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 3 | 528.2 | 2063.1 | 8.51 | 16.92 | 4.33 |
+| gz5m_prev_build | hiseq_2x250 | 5000000 | lean-align | f465a57 | 3 | 102.6 | 384.5 | 5.86 | 87.09 | 23.24 |
+| gz5m | hiseq_2x250 | 5000000 | lean-align | cc26db2 | 3 | 99.5 | 375.4 | 5.86 | 89.84 | 23.81 |
+| stream_prev_build | hiseq_2x250 | 10000000 | lean-align | f465a57 | 1 | 237.3 | 765.1 | 6.07 | 75.3 | 23.36 |
+| stream | hiseq_2x250 | 10000000 | lean-align | cc26db2 | 1 | 225.7 | 721.2 | 6.08 | 79.2 | 24.78 |
+| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 1 | 1140.5 | 4321.6 | 8.62 | 15.7 | 4.13 |
+| stream | hiseq_2x250 | 10000000 | lean-align | cc26db2 | 2 | 226.5 | 706.2 | 6.04 | 78.9 | 25.30 |
+| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 2 | 1123.6 | 4249.9 | 8.61 | 15.9 | 4.20 |
+| stream | hiseq_2x250 | 10000000 | lean-align | cc26db2 | 3 | 233.3 | 742.2 | 6.07 | 76.6 | 24.08 |
+| stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 3 | 1119.4 | 4242.2 | 8.61 | 16.0 | 4.21 |
+| stream_prev_build | hiseq_2x250 | 10000000 | lean-align | f465a57 | 2 | 213.0 | 680.7 | 6.04 | 83.9 | 26.25 |
 
 # Streamed runs, whole lanes and accuracy
 
@@ -135,6 +181,31 @@ Re-measured on f465a57; every value is identical to the 027ef1e measurement. Pai
 | high | not proper | 16908 | 0 | 94.96 |
 
 # How it got faster (before and after)
+
+## This round: lean-align new build against the previous build (same session)
+
+Medians of the 3 alternating runs of the same session (5M gz pairs, 4 threads), means for the streamed rows (previous build: 2 runs, new build: 3 runs, first 10M pairs, one container, slower than the night before, so compare within the session only), plus the callgrind instruction change. HiSeq streamed: the new build shows NO gain separable from noise in this series (the two f465a57 reference runs are 237.3 and 213.0 s, 11 percent apart; the new build 225.7 to 233.3 s; means +1.5 percent wall, +0.0 percent CPU). A/B PENDING: a clean alternating A/B (6 runs each) is running and will replace this line. The figure is figs/this_round.svg. Negative wall, CPU and instruction changes are improvements.
+
+| data | metric | previous build (f465a57) | new build | change |
+|---|---|---|---|---|
+| novaseq_2x151 | wall s | 94.50 | 85.50 | -9.5% |
+| novaseq_2x151 | CPU s (incl. gzips) | 351.30 | 321.80 | -8.4% |
+| novaseq_2x151 | Gbp/hr | 57.53 | 63.55 | +10.5% |
+| novaseq_2x151 | Gbp/core-hr | 15.48 | 16.90 | +9.2% |
+| novaseq_2x151 | instructions (callgrind, 50k pairs) | n/m | n/m | -12.0% |
+| hiseq_2x250 | wall s | 101.50 | 93.90 | -7.5% |
+| hiseq_2x250 | CPU s (incl. gzips) | 378.40 | 349.30 | -7.7% |
+| hiseq_2x250 | Gbp/hr | 88.07 | 95.12 | +8.0% |
+| hiseq_2x250 | Gbp/core-hr | 23.62 | 25.59 | +8.3% |
+| hiseq_2x250 | instructions (callgrind, 50k pairs) | n/m | n/m | -7.4% |
+| novaseq_2x151 | streamed wall s (mean) | 207.70 | 190.97 | -8.1% |
+| novaseq_2x151 | streamed aligner CPU s (mean) | 718.30 | 654.93 | -8.8% |
+| novaseq_2x151 | streamed Gbp/hr (mean) | 52.35 | 56.97 | +8.8% |
+| novaseq_2x151 | streamed Gbp/core-hr (mean) | 15.13 | 16.60 | +9.7% |
+| hiseq_2x250 | streamed wall s (mean) | 225.15 | 228.50 | +1.5% |
+| hiseq_2x250 | streamed aligner CPU s (mean) | 722.90 | 723.20 | +0.0% |
+| hiseq_2x250 | streamed Gbp/hr (mean) | 79.60 | 78.23 | -1.7% |
+| hiseq_2x250 | streamed Gbp/core-hr (mean) | 24.80 | 24.72 | -0.3% |
 
 ## Speed at 4 threads, 5M pairs from gz files
 

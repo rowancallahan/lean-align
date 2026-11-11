@@ -52,18 +52,22 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   Rows: Gbp/hour and Gbp per core-hour; memory is a separate figure with the same layout.
 - Data: `data/reps.tsv`, one row per single run. `make_figs.py` reads only this file for these two figures and uses all rows it
   finds, so new runs are added by appending rows (new `rep` numbers or sizes); nothing has to be edited in the script.
-- Column "gzipped files, 5M pairs" (`gz5m`, 3 runs per tool and data set): raw rows from `Testing/results/ec2_check/{nova5m,hiseq5m}/timing.tsv`,
-  made with `THREADS=4 REPS=3 bash Testing/ec2/run.sh full WORKDIR` on a 4-vCPU Xeon 2.3 GHz Firecracker VM, 15 GB RAM (see
-  `Testing/results/ec2_check/README.md`). The script version was the one before `fix/ec2-scripts` (ccc7cd9): lean-align writes to a
-  pipe drained by `cat`, minibwa to /dev/null. Wall includes the index load. CPU is the aligner plus both `gzip -dc`. Peak memory =
-  `ru_maxrss` of the aligner. Reads: the first 5M pairs of each file (URLs under "How it got faster", (d)), recompressed to gz.
-- Column "streamed" (experiment `stream` in `data/reps.tsv`, 3 runs per tool): NovaSeq, the first 10M pairs (3.020 Gbp) streamed from the
-  network, 4 threads, made by S-P on the streaming box (branch `bench/stream-results`, folders `Testing/results/stream/runs/n10000000_{ours,minibwa}_rep{1,2,3}`).
-  Same pipeline for both tools: resuming downloader (`retrycat.py`), `gunzip`, output to `cat > /dev/null` (lean-align through its `OUT.tmp`
-  FIFO), own index file cat-ed into the page cache before each run, runs alternating ours / minibwa. Wall includes the index load;
-  CPU is the aligner only (not the gunzip and downloader), so Gbp/core-hr of this column is not the same measure as in the gz column.
-  Script `wgrun3.py` / `chain7.sh` (same branch). `reps.tsv` rows are copied from S-P's numbers; I checked the first lean-align run
-  against its `result.json` (wall 178.55 s, aligner CPU 621.2 s, peak 5.78 GB).
+- Column "gzipped files, 5M pairs" (experiment `gz5m` in `data/reps.tsv`, 3 runs per tool and data set): the newest session, timing box, `Testing/ec2/bench.py`,
+  4 threads, default pipes, the SAME output sink for all tools, one session with the 3 repetitions alternating between the builds and minibwa. Wall includes the
+  index load. CPU is the aligner plus both `gzip -dc`. Peak memory = `ru_maxrss` of the aligner. `verify.sh` steps 1 to 5 passed on cc26db2. Reads: the first 5M
+  pairs of each file (URLs under "How it got faster", (d)), recompressed to gz (NovaSeq 1.510 Gbp). The legend names the lean-align build(s) plotted in each column;
+  lean-align is the new build (cc26db2) and minibwa is c07de5c. Rows are as given to me; I did not recompute them.
+  HiSeq 5M (2.482 Gbp): the third cc26db2 repetition is slow (99.5 s against 90.2 and 93.9 s); the median is 7.5 percent faster than f465a57 (93.9 against 101.5 s) and the worst repetition only 2 percent faster (99.5 against 101.5 s).
+  The rows were checked against `Testing/results/ec2_check/instr_all/timing_{nova5m,hiseq5m}.tsv` on festive (identical).
+  The same session's lean-align f465a57 runs are in experiment `gz5m_prev_build` (used only by `figs/this_round`). The earlier `ec2_check` session
+  (script version before `fix/ec2-scripts`: lean-align through a `cat` pipe, minibwa to /dev/null; Xeon 2.3 GHz VM) is kept as experiment `gz5m_old_session` and is not plotted.
+- Column "streamed" (experiment `stream` in `data/reps.tsv`): NovaSeq, the first 10M pairs (3.020 Gbp) streamed from the network, 4 threads, newest session, made by S-P in
+  ONE container (branch `bench/stream-results`, folders `Testing/results/stream/runs/n10000000_*_s_*`): lean-align cc26db2 x3 and minibwa c07de5c x3, with two lean-align f465a57
+  reference runs of the same session (experiment `stream_prev_build`, used only by `figs/this_round`). Same pipeline for all runs: resuming downloader (`retrycat.py`),
+  `gunzip`, output to `cat > /dev/null`, own index file cat-ed into the page cache before each run, runs alternating. Wall includes the index load; CPU is the aligner only
+  (not the gunzip and downloader), so Gbp/core-hr of this column is not the same measure as in the gz column. This container was slower than the one of the night before
+  (f465a57 204 to 211 s now against 171 to 178 s then), so compare within one session only. Rows are as given to me (not checked against `result.json`).
+  Last night's NovaSeq repetitions (f465a57 and minibwa, first 10M pairs, a faster container) are kept as experiment `stream_old_session` and are not plotted.
 - HiSeq in the streamed column: no repetitions yet. The bars show the older single runs of the whole GIAB lane (33,916,091 pairs; experiment
   `stream_single`: lean-align on the trace box, minibwa on the trim box, resuming downloader, md5 sink). The script plots the experiment `stream` for a
   data set when it has rows of it and `stream_single` otherwise, so HiSeq repetitions appended as `stream` rows replace the single runs.
@@ -97,7 +101,7 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   Different boxes and downloaders were used for the lean-align and minibwa lane rows.
 
 ### (f) Accuracy and uniqueness against minibwa (`figs/f_accuracy`; tables "Real reads, 1M pairs", "Real reads, 200k pairs", "Simulated reads")
-- Real reads, in the figure (left, middle): 1M pairs of each data set, lean-align f465a57 against minibwa c07de5c, from
+- Real reads, in the figure (left, middle): 1M pairs of each data set, lean-align f465a57 against minibwa c07de5c (the counts were reproduced unchanged on cc26db2, `Testing/results/ec2_check/instr_all/compare_*.txt`), from
   `Testing/ec2/compare.py` (run by `Testing/ec2/run.sh` on the timing box); numbers in `data/ec2_compare.tsv`. The compare output
   files are not in this folder; the numbers were given to me and I did not recompute them. "Mapped" = neither mate unmapped.
   "Unique" = our `XU:Z:unique` on both mates; minibwa = MAPQ 60 or more on both mates. "Same place" = same chromosome and strand and
@@ -132,6 +136,11 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
 ## How it got faster (before and after)
 
 The figures that compare lean-align builds with each other: (a) 5M pairs, (d) slow jobs and (e2) slow pairs inside the lane run, (e) slow pairs alone.
+
+### this_round: new build against the previous build, same session (`figs/this_round`, table "This round")
+- Percent change of cc26db2 against f465a57 for wall time and CPU (medians of the 3 alternating runs of the same session, 5M gz pairs, 4 threads;
+  experiments `gz5m` and `gz5m_prev_build`) and for instructions (callgrind, first 50k pairs, 1 thread, `MapFast.job`; the percentages come from the lead,
+  `data/this_round.tsv`, the absolute counts were not given to me). Negative is better.
 
 ### (a) Speed at 4 threads, 5M pairs (`figs/a_speed_4threads`, table "Speed at 4 threads")
 - Two methods, in two columns of the figure. Do not compare a bar of one column with a bar of the other.
@@ -185,7 +194,13 @@ The figures that compare lean-align builds with each other: (a) 5M pairs, (d) sl
 
 ## What changed since the first version of this folder
 
-- Newest (results-4): the streamed NovaSeq bars of `figs/vs_minibwa` and `figs/vs_minibwa_memory` use only the same-method repetition runs (`stream`, first 10M pairs, 3 per tool);
+- HiSeq streamed, newest session (S-P, one container 09:46 to 11:15 UTC, first 10M pairs, 4.964 Gbp; experiments `stream` = cc26db2 and minibwa, `stream_prev_build` = f465a57 x2,
+  `stream_old_session` = last night's HiSeq reps): **the new build shows no gain separable from noise in this series.** The two f465a57 reference runs are 237.3 and 213.0 s (11 percent apart),
+  the cc26db2 runs 225.7 to 233.3 s; means: wall +1.5 percent, CPU +0.0 percent. Do not read a HiSeq streamed speed-up from `figs/this_round` or the table. **A/B PENDING:** a clean
+  alternating A/B (6 runs each) is running; this paragraph is to be replaced with its result.
+- Newest (this round): `gz5m` is now the newest session (cc26db2 and minibwa, same sink for all tools); the older `ec2_check` rows are `gz5m_old_session` (not plotted);
+  the same session's f465a57 rows are `gz5m_prev_build`; new figure `figs/this_round`; the vs_minibwa legend names the plotted lean-align build(s) from the data.
+- Before that (results-4): the streamed NovaSeq bars of `figs/vs_minibwa` and `figs/vs_minibwa_memory` use only the same-method repetition runs (`stream`, first 10M pairs, 3 per tool);
   the older single streamed runs moved to `stream_single`. HiSeq still shows the single lane runs.
 - Before that: the headline figure `figs/vs_minibwa` and `figs/vs_minibwa_memory` (lean-align against minibwa only, every single run,
   from the new `data/reps.tsv`) is the first figure in this README and in RESULTS.md. The before/after figures (a, d, e, e2) moved
