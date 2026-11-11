@@ -25,8 +25,11 @@ The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to m
 | gz5m_prev_build | novaseq_2x151 | lean-align | 3 | 57.5 (57.4 to 57.5) | 15.5 (15.4 to 15.5) | 5.7 (5.7 to 5.7) |
 | stream | hiseq_2x250 | lean-align | 3 | 92.2 (84.5 to 103.0) | 29.2 (26.6 to 33.2) | 5.9 (5.9 to 6.0) |
 | stream | hiseq_2x250 | minibwa | 3 | 16.5 (16.1 to 20.4) | 4.4 (4.3 to 5.3) | 8.6 (8.6 to 8.6) |
-| stream | novaseq_2x151 | lean-align | 3 | 62.6 (60.9 to 63.5) | 17.8 (17.5 to 18.1) | 5.8 (5.8 to 5.8) |
-| stream | novaseq_2x151 | minibwa | 3 | 22.0 (21.8 to 22.3) | 5.8 (5.7 to 5.9) | 8.8 (8.8 to 8.8) |
+| stream | novaseq_2x151 | lean-align | 3 | 56.8 (56.6 to 57.5) | 16.7 (16.4 to 16.8) | 5.7 (5.7 to 5.7) |
+| stream | novaseq_2x151 | minibwa | 3 | 18.2 (18.2 to 18.7) | 4.8 (4.8 to 5.0) | 8.8 (8.8 to 8.8) |
+| stream_old_session | novaseq_2x151 | lean-align | 3 | 62.6 (60.9 to 63.5) | 17.8 (17.5 to 18.1) | 5.8 (5.8 to 5.8) |
+| stream_old_session | novaseq_2x151 | minibwa | 3 | 22.0 (21.8 to 22.3) | 5.8 (5.7 to 5.9) | 8.8 (8.8 to 8.8) |
+| stream_prev_build | novaseq_2x151 | lean-align | 2 | 52.4 (51.5 to 53.2) | 15.1 (14.9 to 15.4) | 5.7 (5.7 to 5.8) |
 | stream_single | hiseq_2x250 | lean-align | 1 | 88.7 | 26.3 | 5.9 |
 | stream_single | hiseq_2x250 | minibwa | 1 | 17.3 | 4.5 | 8.6 |
 | stream_single | novaseq_2x151 | lean-align | 3 | 55.9 (55.4 to 55.9) | 16.1 (16.1 to 16.1) | 5.7 (5.7 to 5.7) |
@@ -57,12 +60,12 @@ One row per run, as in data/reps.tsv. The older minibwa NovaSeq 10M single run i
 | stream_single | novaseq_2x151 | 40000000 | minibwa | c07de5c | 1 | 2192.6 | 8364.7 | 8.81 | 19.8 | 5.20 |
 | stream_single | hiseq_2x250 | 33916091 | lean-align | f465a57 | 1 | 686.3 | 2300.2 | 5.88 | 88.7 | 26.3 |
 | stream_single | hiseq_2x250 | 33916091 | minibwa | c07de5c | 1 | 3494.7 | 13383 | 8.61 | 17.3 | 4.53 |
-| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 178.6 | 621.2 | 5.78 | 60.9 | 17.50 |
-| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 2 | 171.2 | 600.0 | 5.75 | 63.5 | 18.12 |
-| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 3 | 173.6 | 609.8 | 5.80 | 62.6 | 17.83 |
-| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 487.7 | 1854.6 | 8.81 | 22.3 | 5.86 |
-| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 494.2 | 1881.2 | 8.80 | 22.0 | 5.78 |
-| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 498.9 | 1894.8 | 8.80 | 21.8 | 5.74 |
+| stream_old_session | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 178.6 | 621.2 | 5.78 | 60.9 | 17.50 |
+| stream_old_session | novaseq_2x151 | 10000000 | lean-align | f465a57 | 2 | 171.2 | 600.0 | 5.75 | 63.5 | 18.12 |
+| stream_old_session | novaseq_2x151 | 10000000 | lean-align | f465a57 | 3 | 173.6 | 609.8 | 5.80 | 62.6 | 17.83 |
+| stream_old_session | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 487.7 | 1854.6 | 8.81 | 22.3 | 5.86 |
+| stream_old_session | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 494.2 | 1881.2 | 8.80 | 22.0 | 5.78 |
+| stream_old_session | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 498.9 | 1894.8 | 8.80 | 21.8 | 5.74 |
 | stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 1 | 193.9 | 611.3 | 5.91 | 92.2 | 29.23 |
 | stream | hiseq_2x250 | 10000000 | minibwa | c07de5c | 1 | 876.8 | 3362.5 | 8.62 | 20.4 | 5.31 |
 | stream | hiseq_2x250 | 10000000 | lean-align | f465a57 | 2 | 173.4 | 538.2 | 5.93 | 103.0 | 33.20 |
@@ -78,6 +81,14 @@ One row per run, as in data/reps.tsv. The older minibwa NovaSeq 10M single run i
 | gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 3 | 277.8 | 1069.0 | 8.82 | 19.57 | 5.09 |
 | gz5m_prev_build | novaseq_2x151 | 5000000 | lean-align | f465a57 | 3 | 94.7 | 353.0 | 5.68 | 57.41 | 15.40 |
 | gz5m | novaseq_2x151 | 5000000 | lean-align | cc26db2 | 3 | 86.9 | 331.6 | 5.69 | 62.55 | 16.39 |
+| stream_prev_build | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 204.3 | 707.6 | 5.74 | 53.2 | 15.36 |
+| stream | novaseq_2x151 | 10000000 | lean-align | cc26db2 | 1 | 192.2 | 664.3 | 5.72 | 56.6 | 16.37 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 596.0 | 2242.5 | 8.80 | 18.2 | 4.85 |
+| stream | novaseq_2x151 | 10000000 | lean-align | cc26db2 | 2 | 189.2 | 648.0 | 5.73 | 57.5 | 16.78 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 581.9 | 2187.7 | 8.79 | 18.7 | 4.97 |
+| stream | novaseq_2x151 | 10000000 | lean-align | cc26db2 | 3 | 191.5 | 652.5 | 5.73 | 56.8 | 16.66 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 597.7 | 2248.0 | 8.82 | 18.2 | 4.84 |
+| stream_prev_build | novaseq_2x151 | 10000000 | lean-align | f465a57 | 2 | 211.1 | 729.0 | 5.75 | 51.5 | 14.91 |
 
 # Streamed runs, whole lanes and accuracy
 
@@ -150,7 +161,7 @@ Re-measured on f465a57; every value is identical to the 027ef1e measurement. Pai
 
 ## This round: lean-align new build against the previous build (same session)
 
-Medians of 3 alternating runs of the same session (5M gz pairs, 4 threads), plus the callgrind instruction change. The figure is figs/this_round.svg. Negative wall, CPU and instruction changes are improvements.
+Medians of the 3 alternating runs of the same session (5M gz pairs, 4 threads), means for the streamed rows (previous build: 2 runs, new build: 3 runs, first 10M pairs, one container, slower than the night before, so compare within the session only), plus the callgrind instruction change. The figure is figs/this_round.svg. Negative wall, CPU and instruction changes are improvements.
 
 | data | metric | previous build (f465a57) | new build | change |
 |---|---|---|---|---|
@@ -160,6 +171,10 @@ Medians of 3 alternating runs of the same session (5M gz pairs, 4 threads), plus
 | novaseq_2x151 | Gbp/core-hr | 15.48 | 16.90 | +9.2% |
 | novaseq_2x151 | instructions (callgrind, 50k pairs) | n/m | n/m | -12.0% |
 | hiseq_2x250 | instructions (callgrind, 50k pairs) | n/m | n/m | -7.4% |
+| novaseq_2x151 | streamed wall s (mean) | 207.70 | 190.97 | -8.1% |
+| novaseq_2x151 | streamed aligner CPU s (mean) | 718.30 | 654.93 | -8.8% |
+| novaseq_2x151 | streamed Gbp/hr (mean) | 52.35 | 56.97 | +8.8% |
+| novaseq_2x151 | streamed Gbp/core-hr (mean) | 15.13 | 16.60 | +9.7% |
 
 ## Speed at 4 threads, 5M pairs from gz files
 

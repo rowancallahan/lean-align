@@ -59,13 +59,13 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   lean-align is the new build (cc26db2) and minibwa is c07de5c. Rows are as given to me; I did not recompute them.
   The same session's lean-align f465a57 runs are in experiment `gz5m_prev_build` (used only by `figs/this_round`). The earlier `ec2_check` session
   (script version before `fix/ec2-scripts`: lean-align through a `cat` pipe, minibwa to /dev/null; Xeon 2.3 GHz VM) is kept as experiment `gz5m_old_session` and is not plotted.
-- Column "streamed" (experiment `stream` in `data/reps.tsv`, 3 runs per tool): NovaSeq, the first 10M pairs (3.020 Gbp) streamed from the
-  network, 4 threads, made by S-P on the streaming box (branch `bench/stream-results`, folders `Testing/results/stream/runs/n10000000_{ours,minibwa}_rep{1,2,3}`).
-  Same pipeline for both tools: resuming downloader (`retrycat.py`), `gunzip`, output to `cat > /dev/null` (lean-align through its `OUT.tmp`
-  FIFO), own index file cat-ed into the page cache before each run, runs alternating ours / minibwa. Wall includes the index load;
-  CPU is the aligner only (not the gunzip and downloader), so Gbp/core-hr of this column is not the same measure as in the gz column.
-  Script `wgrun3.py` / `chain7.sh` (same branch). `reps.tsv` rows are copied from S-P's numbers; I checked the first lean-align run
-  against its `result.json` (wall 178.55 s, aligner CPU 621.2 s, peak 5.78 GB).
+- Column "streamed" (experiment `stream` in `data/reps.tsv`): NovaSeq, the first 10M pairs (3.020 Gbp) streamed from the network, 4 threads, newest session, made by S-P in
+  ONE container (branch `bench/stream-results`, folders `Testing/results/stream/runs/n10000000_*_s_*`): lean-align cc26db2 x3 and minibwa c07de5c x3, with two lean-align f465a57
+  reference runs of the same session (experiment `stream_prev_build`, used only by `figs/this_round`). Same pipeline for all runs: resuming downloader (`retrycat.py`),
+  `gunzip`, output to `cat > /dev/null`, own index file cat-ed into the page cache before each run, runs alternating. Wall includes the index load; CPU is the aligner only
+  (not the gunzip and downloader), so Gbp/core-hr of this column is not the same measure as in the gz column. This container was slower than the one of the night before
+  (f465a57 204 to 211 s now against 171 to 178 s then), so compare within one session only. Rows are as given to me (not checked against `result.json`).
+  Last night's NovaSeq repetitions (f465a57 and minibwa, first 10M pairs, a faster container) are kept as experiment `stream_old_session` and are not plotted.
 - HiSeq in the streamed column: no repetitions yet. The bars show the older single runs of the whole GIAB lane (33,916,091 pairs; experiment
   `stream_single`: lean-align on the trace box, minibwa on the trim box, resuming downloader, md5 sink). The script plots the experiment `stream` for a
   data set when it has rows of it and `stream_single` otherwise, so HiSeq repetitions appended as `stream` rows replace the single runs.

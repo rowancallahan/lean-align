@@ -83,13 +83,15 @@ def prevnew(ds):
     for lab, col in (('wall time', 'wall_s'), ('CPU (incl. gzips)', 'cpu_s')):
         a, b = med('gz5m_prev_build', ds, col), med('gz5m', ds, col)
         if a and b: out.append((lab, 100 * (b / a - 1)))
+    sa = [x for x in runs_of('stream_prev_build', ds, 'lean-align', 'wall_s')]; sb = runs_of('stream', ds, 'lean-align', 'wall_s')
+    if sa and sb: out.append(('wall time, streamed', 100 * (sum(sb) / len(sb) / (sum(sa) / len(sa)) - 1)))
     t = [num(r['change_pct']) for r in TR if r['data'] == ds and r['metric'] == 'instructions']
     if t: out.append(('instructions', t[0]))
     return out
 PN = [(d, prevnew(d)) for d in DSN if prevnew(d)]
 if PN:
-    labs = ['wall time', 'CPU (incl. gzips)', 'instructions']; newb = '/'.join(sorted({r['commit'] for r in RP if r['experiment'] == 'gz5m' and r['tool'] == 'lean-align'})); prevb = '/'.join(sorted({r['commit'] for r in RP if r['experiment'] == 'gz5m_prev_build'}))
-    fig, ax = plt.subplots(figsize=(6.2, 3.6)); w = .8 / len(PN); done = set()
+    labs = ['wall time', 'CPU (incl. gzips)', 'wall time, streamed', 'instructions']; newb = '/'.join(sorted({r['commit'] for r in RP if r['experiment'] == 'gz5m' and r['tool'] == 'lean-align'})); prevb = '/'.join(sorted({r['commit'] for r in RP if r['experiment'] == 'gz5m_prev_build'}))
+    fig, ax = plt.subplots(figsize=(7.6, 3.8)); w = .8 / len(PN); done = set()
     for j, (d, vals) in enumerate(PN):
         for i, lab in enumerate(labs):
             v = dict(vals).get(lab)
@@ -98,8 +100,8 @@ if PN:
             ax.bar(x, v, w * .92, color=C['lean-align'] if j == 0 else C['lean-align-before'], label=DS[d] if d not in done else None); done.add(d)
             ax.text(x, v - 0.5, f'{v:.1f}%', ha='center', va='top', fontsize=8)
     ax.set_xticks(range(len(labs))); ax.set_xticklabels(labs); ax.axhline(0, color='#222', lw=.8); ax.set_ylabel(f'change, {newb} vs {prevb} (%)')
-    ax.set_ylim(min(v for _, vals in PN for _, v in vals) - 4, 2); ax.legend(frameon=False, fontsize=8, loc='lower right')
-    fig.text(.5, .01, 'wall, CPU: medians of 3 alternating runs, same session, 5M gz pairs, 4 threads;  instructions: callgrind, 50k pairs, 1 thread', ha='center', fontsize=6.5, color='#444')
+    ax.set_ylim(min(v for _, vals in PN for _, v in vals) - 4, 2); ax.legend(frameon=False, fontsize=8, loc='upper right')
+    fig.text(.5, .01, 'wall, CPU: medians of 3 alternating runs, same session, 5M gz pairs, 4 threads;  streamed wall: means, first 10M pairs, one container;  instructions: callgrind, 50k pairs, 1 thread', ha='center', fontsize=6.5, color='#444')
     fig.tight_layout(rect=(0, .04, 1, 1)); [fig.savefig(f'{O}/this_round.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 # (a) speed at 4 threads, 5M pairs, gz. Two methods, two columns: A = before/after on the same method (gz5m: map time, index load excluded);
 #     B = ours vs minibwa with the same script for both tools (gz5m_script: wall incl. index load, CPU incl. both gzips).

@@ -51,7 +51,14 @@ for ds in ('novaseq_2x151', 'hiseq_2x250'):
         if a and b: rows.append([ds, lab, f'{a:.2f}', f'{b:.2f}', f'{100 * (b / a - 1):+.1f}%'])
     for r in TR:
         if r['data'] == ds: rows.append([ds, r['metric'] + ' (callgrind, 50k pairs)', 'n/m', 'n/m', f"{float(r['change_pct']):+.1f}%"])
-if rows: add('This round: lean-align new build against the previous build (same session)', 'Medians of 3 alternating runs of the same session (5M gz pairs, 4 threads), plus the callgrind instruction change. The figure is figs/this_round.svg. Negative wall, CPU and instruction changes are improvements.', table(['data', 'metric', 'previous build (f465a57)', 'new build', 'change'], rows))
+def meanv(e, ds, col):
+    v = [float(r[col]) for r in RP if r['experiment'] == e and r['data'] == ds and r['tool'] == 'lean-align' and r[col] not in ('', 'NA')]
+    return sum(v) / len(v) if v else None
+for ds in ('novaseq_2x151', 'hiseq_2x250'):
+    for lab, col in (('streamed wall s (mean)', 'wall_s'), ('streamed aligner CPU s (mean)', 'cpu_s'), ('streamed Gbp/hr (mean)', 'Gbp_hr'), ('streamed Gbp/core-hr (mean)', 'Gbp_core_hr')):
+        a, b = meanv('stream_prev_build', ds, col), meanv('stream', ds, col)
+        if a and b: rows.append([ds, lab, f'{a:.2f}', f'{b:.2f}', f'{100 * (b / a - 1):+.1f}%'])
+if rows: add('This round: lean-align new build against the previous build (same session)', 'Medians of the 3 alternating runs of the same session (5M gz pairs, 4 threads), means for the streamed rows (previous build: 2 runs, new build: 3 runs, first 10M pairs, one container, slower than the night before, so compare within the session only), plus the callgrind instruction change. The figure is figs/this_round.svg. Negative wall, CPU and instruction changes are improvements.', table(['data', 'metric', 'previous build (f465a57)', 'new build', 'change'], rows))
 order = [('lean-align against minibwa', ['lean-align against minibwa: medians', 'lean-align against minibwa: every single run']),
          ('Streamed runs, whole lanes and accuracy', ['Large streamed runs (from the network, no disk)', 'Whole lanes (HiSeq 33.9M pairs, NovaSeq 40M pairs)', 'Real reads, 1M pairs each: lean-align f465a57 against minibwa (Testing/ec2/compare.py)', 'Real reads, 200k pairs: proper and unique pairs against minibwa (% of all pairs)', 'Simulated reads: pairs placed correctly (%), by our class']),
          ('How it got faster (before and after)', ['This round: lean-align new build against the previous build (same session)'] * (1 if rows else 0) + ['Speed at 4 threads, 5M pairs from gz files', 'Slow jobs', 'Slow pairs, mapped alone on 1 core (seconds)', 'Slow pairs inside the HiSeq lane run'])]
