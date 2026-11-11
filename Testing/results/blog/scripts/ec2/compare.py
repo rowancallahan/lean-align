@@ -43,6 +43,11 @@ for (name, o1, o2), (name2, m1, m2) in zip(pairs(sys.argv[1]), pairs(sys.argv[2]
         count["ours unique and minibwa MAPQ 60, match"] += same
 
 n = count["pairs"]
-for k, v in count.items(): print(f"{v:>12,}  {100 * v / n:6.2f}%  {k}")
+for k, v in count.items(): print(f"{v:>12,}  {100 * v / n:6.2f}%  {k}")          # % of all pairs
+print("agreement rates (% of the row they are divided by):")
+for num, den in [("both mapped, match", "both mapped"), ("both mapped, identical", "both mapped"),
+                 ("ours unique, minibwa mapped, match", "ours unique, minibwa mapped"),
+                 ("ours unique and minibwa MAPQ 60, match", "ours unique and minibwa MAPQ 60")]:
+    print(f"  {100 * count[num] / max(count[den], 1):6.2f}%  {num} / {den}")
 print("ours unique but a different place than minibwa (name, ours, minibwa, minibwa MAPQ):")
 for e in examples: print("  ", e)

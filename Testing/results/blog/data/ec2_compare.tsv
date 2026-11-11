@@ -1,0 +1,15 @@
+# lean-align f465a57 vs minibwa c07de5c on 1M pairs of each data set, from Testing/ec2/compare.py (run by Testing/ec2/run.sh). Source: timing box, Testing/ec2/compare.py (numbers as given to me; the compare output files are not in this folder).
+# pct_* = % of the 1M pairs. 'mapped' = neither mate unmapped. 'unique' = ours: XU:Z:unique on both mates; minibwa: MAPQ >= 60 on both mates. same_place = both tools put the mate on the same chromosome and strand with overlapping alignments (compare.py 'match'); n = pairs in the comparison class (n_same of n).
+dataset	metric	tool	value	n_same	n
+novaseq_2x151	pct_mapped	lean-align	93.71		
+novaseq_2x151	pct_mapped	minibwa	99.13		
+novaseq_2x151	pct_unique	lean-align	81.93		
+novaseq_2x151	pct_unique	minibwa	84.97		
+novaseq_2x151	same_place_ours_unique_and_minibwa_mapped	both	99.9908	819216	819291
+novaseq_2x151	same_place_ours_unique_and_minibwa_mapq60	both	100.0000	781588	781588
+hiseq_2x250	pct_mapped	lean-align	93.95		
+hiseq_2x250	pct_mapped	minibwa	99.43		
+hiseq_2x250	pct_unique	lean-align	84.86		
+hiseq_2x250	pct_unique	minibwa	87.48		
+hiseq_2x250	same_place_ours_unique_and_minibwa_mapped	both	99.9797	848466	848638
+hiseq_2x250	same_place_ours_unique_and_minibwa_mapq60	both	99.9998	818320	818322
