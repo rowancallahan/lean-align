@@ -1,0 +1,16 @@
+{
+ "tool": "ours",
+ "commit": "f465a57",
+ "exit": 0,
+ "wall_s": 230.11193537712097,
+ "aligner_user_s": 709.878816,
+ "aligner_sys_s": 40.45123,
+ "peak_rss_GB": 5.925748,
+ "all_children_user_s": 800.256832,
+ "all_children_sys_s": 69.023978,
+ "index_load_s": 3.6404664516448975,
+ "pairs_R1": 10000000.0,
+ "bases_R1": 2482641753.0,
+ "pairs_R2": 10000000.0,
+ "bases_R2": 2481156793.0
+}

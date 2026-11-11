@@ -19,3 +19,5 @@ HiSeq reps (dirs h10000000_*): first 10M pairs of the GIAB HG002 D1_S1_L001 2x25
 
 ## fix/instr-all series (dirs n10000000_*_s_*, h10000000_*_s_*; scripts chain10.sh, wgrun3.py, wgrun3h.py)
 Per data set, one container, in this order: ours f465a57 (_s_ref1), ours cc26db2 (_s_new1), minibwa c07de5c (_s_mb1), new2, mb2, new3, mb3, ours f465a57 (_s_ref2). Pipeline as in the 3+3 reps above.
+
+## HiSeq A/B (dirs h10000000_ours_ab_*; chain11.sh): one discarded warm-up (cc26db2), then new1, old1, new2, old2, ... new6, old6 (new = fix/instr-all cc26db2, old = f465a57), no minibwa, one container.
