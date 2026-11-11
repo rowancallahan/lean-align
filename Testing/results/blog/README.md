@@ -194,10 +194,13 @@ The figures that compare lean-align builds with each other: (a) 5M pairs, (d) sl
 
 ## What changed since the first version of this folder
 
-- HiSeq streamed, newest session (S-P, one container 09:46 to 11:15 UTC, first 10M pairs, 4.964 Gbp; experiments `stream` = cc26db2 and minibwa, `stream_prev_build` = f465a57 x2,
-  `stream_old_session` = last night's HiSeq reps): **the new build shows no gain separable from noise in this series.** The two f465a57 reference runs are 237.3 and 213.0 s (11 percent apart),
-  the cc26db2 runs 225.7 to 233.3 s; means: wall +1.5 percent, CPU +0.0 percent. Do not read a HiSeq streamed speed-up from `figs/this_round` or the table. **A/B PENDING:** a clean
-  alternating A/B (6 runs each) is running; this paragraph is to be replaced with its result.
+- HiSeq streamed A/B (experiment `stream_ab`, not plotted in `vs_minibwa`; 6 alternating pairs, rep = pair number, cc26db2 against f465a57, first 10M pairs, 4.964 Gbp, no minibwa): paired
+  differences new - old: wall median -8.2 s (range -16.3 to +10.0; new faster in 4 of 6), aligner CPU median -34.0 s (range -62.0 to +24.5; new lower in 5 of 6); means wall 225.5 against
+  231.2 s (-2.5 percent), CPU 723.4 against 752.2 s (-3.8 percent); sign test p = 0.69 (wall), 0.22 (CPU). The container drifted slower during the series (new build CPU 678 to 771 s over pairs 1 to 5).
+  **On streamed HiSeq there is no measurable difference between the builds, within about +/-3%; no regression is shown.** `figs/this_round` shows the A/B mean (-2.5 percent) marked "not separable from noise".
+  The earlier series (`stream` = cc26db2 and minibwa, `stream_prev_build` = f465a57 x2, `stream_old_session` = last night's reps; f465a57 runs 237.3 and 213.0 s, 11 percent apart) is superseded by this A/B.
+- Second gz series (experiment `gz5m_pipes1MiB`, pipes = 1 MiB for all tools, fix/ec2-pipes be60ea4; table row only, not plotted): cc26db2 against f465a57 medians NovaSeq 89.2 against 96.7 s (-7.8%),
+  HiSeq 98.0 against 102.9 s (-4.8%). 1 MiB pipes gave no gain for any tool.
 - Newest (this round): `gz5m` is now the newest session (cc26db2 and minibwa, same sink for all tools); the older `ec2_check` rows are `gz5m_old_session` (not plotted);
   the same session's f465a57 rows are `gz5m_prev_build`; new figure `figs/this_round`; the vs_minibwa legend names the plotted lean-align build(s) from the data.
 - Before that (results-4): the streamed NovaSeq bars of `figs/vs_minibwa` and `figs/vs_minibwa_memory` use only the same-method repetition runs (`stream`, first 10M pairs, 3 per tool);

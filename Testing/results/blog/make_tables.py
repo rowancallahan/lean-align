@@ -58,7 +58,26 @@ for ds in ('novaseq_2x151', 'hiseq_2x250'):
     for lab, col in (('streamed wall s (mean)', 'wall_s'), ('streamed aligner CPU s (mean)', 'cpu_s'), ('streamed Gbp/hr (mean)', 'Gbp_hr'), ('streamed Gbp/core-hr (mean)', 'Gbp_core_hr')):
         a, b = meanv('stream_prev_build', ds, col), meanv('stream', ds, col)
         if a and b: rows.append([ds, lab, f'{a:.2f}', f'{b:.2f}', f'{100 * (b / a - 1):+.1f}%'])
-if rows: add('This round: lean-align new build against the previous build (same session)', 'Medians of the 3 alternating runs of the same session (5M gz pairs, 4 threads), means for the streamed rows (previous build: 2 runs, new build: 3 runs, first 10M pairs, one container, slower than the night before, so compare within the session only), plus the callgrind instruction change. HiSeq streamed: the new build shows NO gain separable from noise in this series (the two f465a57 reference runs are 237.3 and 213.0 s, 11 percent apart; the new build 225.7 to 233.3 s; means +1.5 percent wall, +0.0 percent CPU). A/B PENDING: a clean alternating A/B (6 runs each) is running and will replace this line. The figure is figs/this_round.svg. Negative wall, CPU and instruction changes are improvements.', table(['data', 'metric', 'previous build (f465a57)', 'new build', 'change'], rows))
+import math
+AB = lambda b, col: [float(r[col]) for r in sorted((r for r in RP if r['experiment'] == 'stream_ab' and r['commit'] == b and r['data'] == 'hiseq_2x250'), key=lambda r: int(r['rep']))]
+if AB('cc26db2', 'wall_s') and AB('f465a57', 'wall_s'):
+    for lab, col in (('A/B wall s (mean of 6)', 'wall_s'), ('A/B aligner CPU s (mean of 6)', 'cpu_s')):
+        a, b = AB('f465a57', col), AB('cc26db2', col)
+        rows.append(['hiseq_2x250', 'streamed ' + lab, f'{sum(a) / len(a):.2f}', f'{sum(b) / len(b):.2f}', f'{100 * (sum(b) / len(b) / (sum(a) / len(a)) - 1):+.1f}%'])
+    AB_TXT = []
+    for lab, col in (('wall', 'wall_s'), ('aligner CPU', 'cpu_s')):
+        a, b = AB('f465a57', col), AB('cc26db2', col); d = sorted(y - x for x, y in zip(a, b)); k = sum(x < 0 for x in d); n = len(d)
+        p = min(1.0, 2 * sum(math.comb(n, i) for i in range(0, min(k, n - k) + 1)) / 2 ** n)
+        AB_TXT.append(f'{lab}: median {st.median(d):+.1f} s (range {d[0]:+.1f} to {d[-1]:+.1f}; new lower in {k} of {n}), sign test p = {p:.2f}')
+    AB_NOTE = 'Streamed HiSeq A/B (paired differences new - old): ' + '; '.join(AB_TXT) + '. The container drifted slower during the series. On streamed HiSeq there is no measurable difference between the builds, within about +/-3 percent; no regression is shown.'
+else: AB_NOTE = ''
+def pmed(b, ds, col):
+    v = sorted(float(r[col]) for r in RP if r['experiment'] == 'gz5m_pipes1MiB' and r['data'] == ds and r['tool'] == 'lean-align' and r['commit'] == b)
+    return st.median(v) if v else None
+for ds in ('novaseq_2x151', 'hiseq_2x250'):
+    a, b = pmed('f465a57', ds, 'wall_s'), pmed('cc26db2', ds, 'wall_s')
+    if a and b: rows.append([ds, 'wall s, gz 5M, second series with 1 MiB pipes (median of 3)', f'{a:.2f}', f'{b:.2f}', f'{100 * (b / a - 1):+.1f}%'])
+if rows: add('This round: lean-align new build against the previous build (same session)', 'Medians of the 3 alternating runs of the same session (5M gz pairs, 4 threads), means for the streamed rows (previous build: 2 runs, new build: 3 runs, first 10M pairs, one container, slower than the night before, so compare within the session only), plus the callgrind instruction change. HiSeq streamed, first series (2 f465a57 runs against 3 new runs, one container): the two f465a57 references were 237.3 and 213.0 s, 11 percent apart, so no gain was separable from noise; the clean alternating A/B (6 pairs, after one discarded warm-up, no minibwa) supersedes it: on streamed HiSeq there is no measurable difference between the builds, within about +/-3 percent; no regression is shown. ' + AB_NOTE + ' The second gz series (pipes = 1 MiB for all tools) is shown as one row per data set; 1 MiB pipes gave no gain for any tool. The figure is figs/this_round.svg. Negative wall, CPU and instruction changes are improvements.', table(['data', 'metric', 'previous build (f465a57)', 'new build', 'change'], rows))
 order = [('lean-align against minibwa', ['lean-align against minibwa: medians', 'lean-align against minibwa: every single run']),
          ('Streamed runs, whole lanes and accuracy', ['Large streamed runs (from the network, no disk)', 'Whole lanes (HiSeq 33.9M pairs, NovaSeq 40M pairs)', 'Real reads, 1M pairs each: lean-align f465a57 against minibwa (Testing/ec2/compare.py)', 'Real reads, 200k pairs: proper and unique pairs against minibwa (% of all pairs)', 'Simulated reads: pairs placed correctly (%), by our class']),
          ('How it got faster (before and after)', ['This round: lean-align new build against the previous build (same session)'] * (1 if rows else 0) + ['Speed at 4 threads, 5M pairs from gz files', 'Slow jobs', 'Slow pairs, mapped alone on 1 core (seconds)', 'Slow pairs inside the HiSeq lane run'])]
