@@ -57,6 +57,8 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   index load. CPU is the aligner plus both `gzip -dc`. Peak memory = `ru_maxrss` of the aligner. `verify.sh` steps 1 to 5 passed on cc26db2. Reads: the first 5M
   pairs of each file (URLs under "How it got faster", (d)), recompressed to gz (NovaSeq 1.510 Gbp). The legend names the lean-align build(s) plotted in each column;
   lean-align is the new build (cc26db2) and minibwa is c07de5c. Rows are as given to me; I did not recompute them.
+  HiSeq 5M (2.482 Gbp): the third cc26db2 repetition is slow (99.5 s against 90.2 and 93.9 s); the median is 7.5 percent faster than f465a57 (93.9 against 101.5 s) and the worst repetition only 2 percent faster (99.5 against 101.5 s).
+  The rows were checked against `Testing/results/ec2_check/instr_all/timing_{nova5m,hiseq5m}.tsv` on festive (identical).
   The same session's lean-align f465a57 runs are in experiment `gz5m_prev_build` (used only by `figs/this_round`). The earlier `ec2_check` session
   (script version before `fix/ec2-scripts`: lean-align through a `cat` pipe, minibwa to /dev/null; Xeon 2.3 GHz VM) is kept as experiment `gz5m_old_session` and is not plotted.
 - Column "streamed" (experiment `stream` in `data/reps.tsv`): NovaSeq, the first 10M pairs (3.020 Gbp) streamed from the network, 4 threads, newest session, made by S-P in
@@ -99,7 +101,7 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   Different boxes and downloaders were used for the lean-align and minibwa lane rows.
 
 ### (f) Accuracy and uniqueness against minibwa (`figs/f_accuracy`; tables "Real reads, 1M pairs", "Real reads, 200k pairs", "Simulated reads")
-- Real reads, in the figure (left, middle): 1M pairs of each data set, lean-align f465a57 against minibwa c07de5c, from
+- Real reads, in the figure (left, middle): 1M pairs of each data set, lean-align f465a57 against minibwa c07de5c (the counts were reproduced unchanged on cc26db2, `Testing/results/ec2_check/instr_all/compare_*.txt`), from
   `Testing/ec2/compare.py` (run by `Testing/ec2/run.sh` on the timing box); numbers in `data/ec2_compare.tsv`. The compare output
   files are not in this folder; the numbers were given to me and I did not recompute them. "Mapped" = neither mate unmapped.
   "Unique" = our `XU:Z:unique` on both mates; minibwa = MAPQ 60 or more on both mates. "Same place" = same chromosome and strand and

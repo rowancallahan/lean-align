@@ -172,7 +172,7 @@ cl = ['unique', 'unknown', 'not proper']; G = [f'{m} / {c}' for m in ('mason', '
 bars(ax[2], G, two, lambda g, s: v(block='sim', dataset=g.split(' / ')[0], **{'class': g.split(' / ')[1]}, metric='pct_pair_correct', tool=s), fmt='{:.0f}')
 ax[2].set_ylabel('pairs placed correctly (%), by our class'); ax[2].set_ylim(0, 112); ax[2].tick_params(axis='x', rotation=60); [t.set_fontsize(6.5) for t in ax[2].texts]
 ax[2].set_title('simulated reads, 100k pairs each', fontsize=8.5)
-fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in two], labels=['lean-align (f465a57)', LAB['minibwa']], loc='upper center', ncol=2, frameon=False, fontsize=8)
+fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=C[t]) for t in two], labels=['lean-align (f465a57; same counts on cc26db2)', LAB['minibwa']], loc='upper center', ncol=2, frameon=False, fontsize=8)
 fig.tight_layout(rect=(0, 0, 1, .92)); [fig.savefig(f'{O}/f_accuracy.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 # (g) ROC on simulated reads
 Rc = tsv('roc'); fig, ax = plt.subplots(1, 3, figsize=(12, 3.6))
