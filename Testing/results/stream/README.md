@@ -8,3 +8,8 @@ minibwa 20M/40M (dirs *_rf1) used scripts/retrycat.py (resuming Range downloader
 n20000000_minibwa (14.26M pairs) and an earlier one (17.24M, not kept) are INVALID short runs, kept only as evidence. n10000000_minibwa is plain curl, 10M complete.
 Builds: f973b77 / 4ced426 (trace, NEVER MERGE), 6164113 (fix/fast), f465a57 (fix/fast); minibwa c07de5c. Index: ic.idx built by 027ef1e. Traces and SAMs are not included (large).
 Dirs: *_ours = f973b77; *_ours_4ced = 4ced426 10M; n10000000_ours_fast = 6164113; *_ours_f465 = f465a57; *_minibwa_rf1 = minibwa with resuming downloader.
+
+## 3+3 alternating reps, same pipeline for both tools (dirs n10000000_{ours,minibwa}_rep{1,2,3}; scripts wgrun3.py, chain7.sh)
+First 10M NovaSeq pairs, ours f465a57 vs minibwa c07de5c, 4 threads. Both tools: resuming downloader (retrycat.py), sink = `cat > /dev/null` (ours via the OUT.tmp FIFO, minibwa via a pipe),
+own index files `cat`-ed into the page cache before each run (outside the timing), order ours, minibwa, ours, minibwa, ours, minibwa, full-count check. index_load_s: ours = time until /proc rchar reaches the
+index size (0.1 s resolution), minibwa = its own "index loaded" line. HiSeq reps (first 10M pairs of the GIAB D1_S1_L001 files) are in dirs h10000000_* (wgrun3h.py, chain8.sh) when present.
