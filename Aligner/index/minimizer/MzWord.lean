@@ -1007,13 +1007,96 @@ theorem scanAWV_eq (hU : System.Platform.numBits = 64) (ix : MzIdx) (G : PGen) (
       have hk : nextKU hU ix.sl swU hs kb keyU hiU hhi t = t := by rw [nextKU, dif_neg h]
       simp only [hk, dif_neg h]
 
+/-! ## EXPERIMENT (exp/prefetch, measurement only; not for merge)
+`prefetchAt` / `touchAt` are the identity on `i`; the C body touches the byte `i` of the array (inline C, no new .c file or build change).
+`pfB` / `pfMode` read `LA_PF_B` (look-ahead in slots, 0 = off) and `LA_PF_MODE` (1 = volatile read, 2 = prefetch) from the environment once. -/
+
+@[extern c inline "(__builtin_prefetch(lean_sarray_cptr(#1) + #2, 0, 3), #2)"]
+def prefetchAt (a : @& ByteArray) (i : USize) : USize := i
+
+@[extern c inline "((void)*(volatile unsigned char*)(lean_sarray_cptr(#1) + #2), #2)"]
+def touchAt (a : @& ByteArray) (i : USize) : USize := i
+
+@[extern c inline "({ extern char* getenv(const char*); extern int atoi(const char*); static size_t v = (size_t)-1; if (v == (size_t)-1) { const char* s = getenv(\"LA_PF_B\"); v = s ? (size_t)atoi(s) : 0; } v; })"]
+def pfB (_ : Unit) : USize := 0
+
+@[extern c inline "({ extern char* getenv(const char*); extern int atoi(const char*); static size_t v = (size_t)-1; if (v == (size_t)-1) { const char* s = getenv(\"LA_PF_MODE\"); v = s ? (size_t)atoi(s) : 0; } v; })"]
+def pfMode (_ : Unit) : USize := 0
+
+/-- Touch the genome block that the candidate with slot `e` will read (`0` always). -/
+@[inline] def pfOne (w : @& ByteArray) (Go oU Tu e : UInt64) (mode : USize) : USize :=
+  let pos := e >>> Tu
+  if oU ≤ pos then
+    let a := Go + (pos - oU)
+    let off : USize := ((17 : UInt64) * (a >>> 6)).toUSize
+    let off2 : USize := ((17 : UInt64) * (((a + 24) >>> 6) + 1)).toUSize
+    if mode == 2 then (prefetchAt w off - off) + (prefetchAt w off2 - off2)
+    else if mode == 1 && off2 < w.usize then (touchAt w off - off) + (touchAt w off2 - off2)
+    else 0
+  else 0
+
+/-- EXPERIMENT: `scanAWV` with a look-ahead of `LA_PF_B` slots (touches the genome block of slot `t + B`; no effect on the result).
+`partial`: its equality with `scanAWV` is `scanAWVP_eq` (sorry, measurement only). -/
+partial def scanAWVP (hU : System.Platform.numBits = 64) (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (kb keyU : UInt64) (s o key bw aw pmo o2 n1 a2 n2 base bit : Nat)
+    (Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU o2U sh2 sh3 m1 m2 m3 : UInt64) (kfEq : Bool)
+    (swU : USize) (hs : swU.toNat < 16) (hiU : USize) (hhi : hiU.toNat ≤ 2 ^ 40) (t : USize) (acc : Array Nat) :
+    Array Nat :=
+  if h : t < hiU then
+    have h' : t.toNat < hiU.toNat := h
+    let e := slotWU hU ix.sl swU t hs (by omega)
+    let B := pfB ()
+    let ahead : USize :=
+      if B == 0 then 0 else
+      if h2 : t + B < hiU then
+        have h2' : (t + B).toNat < hiU.toNat := h2
+        pfOne G.w Go oU Tu (slotWU hU ix.sl swU (t + B) hs (by omega)) (pfMode ())
+      else 0
+    let acc' := if (e &&& kb) != keyU then acc else
+      let r := fastOkW G.w Gn Go oU rc e Tu tM fsh bsh ash fM pmoU bwU awU o2U sh2 sh3 m1 m2 m3 kfEq
+      if (if r == 2 then okAtW ix G R rc rok s o key bw aw pmo o2 n1 a2 n2 t.toNat else r == 1) then
+        acc.push (anc base bit ((e >>> Tu).toNat - o)) else acc
+    scanAWVP hU ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU
+      o2U sh2 sh3 m1 m2 m3 kfEq swU hs hiU hhi (t + 1 + ahead) acc'
+  else acc
+
+/-- EXPERIMENT: touches the genome blocks of the first `LA_PF_B` slots, then `scanAWVP`. -/
+def scanAWVQ (hU : System.Platform.numBits = 64) (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (kb keyU : UInt64) (s o key bw aw pmo o2 n1 a2 n2 base bit : Nat)
+    (Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU o2U sh2 sh3 m1 m2 m3 : UInt64) (kfEq : Bool)
+    (swU : USize) (hs : swU.toNat < 16) (hiU : USize) (hhi : hiU.toNat ≤ 2 ^ 40) (t : USize) (acc : Array Nat) :
+    Array Nat :=
+  let B := pfB ()
+  let first : USize := Id.run do
+    let mut a : USize := 0
+    if B != 0 then
+      let mut j : USize := 0
+      while j < B do
+        if h2 : t + j < hiU then
+          have h2' : (t + j).toNat < hiU.toNat := h2
+          a := a + pfOne G.w Go oU Tu (slotWU hU ix.sl swU (t + j) hs (by omega)) (pfMode ())
+        j := j + 1
+    return a
+  scanAWVP hU ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU
+    o2U sh2 sh3 m1 m2 m3 kfEq swU hs hiU hhi (t + first) acc
+
+theorem scanAWVQ_eq (hU : System.Platform.numBits = 64) (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool)
+    (kb keyU : UInt64) (s o key bw aw pmo o2 n1 a2 n2 base bit : Nat)
+    (Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU o2U sh2 sh3 m1 m2 m3 : UInt64) (kfEq : Bool)
+    (swU : USize) (hs : swU.toNat < 16) (hiU : USize) (hhi : hiU.toNat ≤ 2 ^ 40) (t : USize) (acc : Array Nat) :
+    scanAWVQ hU ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU
+      o2U sh2 sh3 m1 m2 m3 kfEq swU hs hiU hhi t acc =
+    scanAWV hU ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit Gn Go oU Tu tM fsh bsh ash fM pmoU bwU awU
+      o2U sh2 sh3 m1 m2 m3 kfEq swU hs hiU hhi t acc := by
+  sorry
+
 /-- `scanAWK2` with the match test on machine words when every conversion is exact (`scanAWK_eq3`). -/
 def scanAWK3 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) (kb keyU : UInt64)
     (s o key bw aw pmo o2 n1 a2 n2 hi base bit : Nat) (t : Nat) (acc : Array Nat) : Array Nat :=
   if fastG ix G rok kb keyU o key bw aw pmo o2 n1 a2 n2 then
     if h : System.Platform.numBits = 64 ∧ ix.sw < 16 ∧ hi ≤ two40 ∧ t ≤ hi then
       have h2 : hi ≤ 2 ^ 40 := by have := h.2.2.1; unfold two40 at this; omega
-      scanAWV h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit G.n.toUInt64 G.o.toUInt64 o.toUInt64
+      scanAWVQ h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit G.n.toUInt64 G.o.toUInt64 o.toUInt64
         ix.T.toUInt64 ix.tM.toUInt64 ix.fsh.toUInt64 ix.bsh.toUInt64 ix.ash.toUInt64 ix.fM.toUInt64 pmo.toUInt64
         bw.toUInt64 aw.toUInt64 o2.toUInt64 (2 * (o + a2)).toUInt64 (2 * o).toUInt64
         ((1 <<< (2 * n1).toUInt64) - 1) ((1 <<< (2 * n2).toUInt64) - 1) ((1 <<< (2 * ix.k).toUInt64) - 1)
@@ -1036,6 +1119,7 @@ def scanAWK3 (ix : MzIdx) (G : PGen) (R : ByteArray) (rc : UInt64) (rok : Bool) 
     split
     · next h =>
       have h2 : hi ≤ 2 ^ 40 := by have := h.2.2.1; unfold two40 at this; omega
+      rw [scanAWVQ_eq]
       rw [scanAWV_eq h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
         _ _ _ _ _ _ _ _ rfl]
       rw [scanAWU_eq h.1 ix G R rc rok kb keyU s o key bw aw pmo o2 n1 a2 n2 base bit _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
