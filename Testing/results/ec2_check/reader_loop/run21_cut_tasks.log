@@ -1,0 +1,220 @@
+== CI_check FUZZ=1 on merged cut-tasks 694e69d 07:07:26
+CI rc=0
+ok   read of 1000 bases: exit 0 (want 0)
+FASTQ cases: 20/20 as the spec says
+
+== result
+ALL CHECKS PASSED
+ok   build.log: 472 theorems, standard axioms only
+ok   Aligner_kernels_band_Certificate.lean.log: 8 theorems, standard axioms only
+ok   Aligner_kernels_gotoh_Certificate.lean.log: 7 theorems, standard axioms only
+ok   Aligner_kernels_wfa_Certificate.lean.log: 16 theorems, standard axioms only
+ok   Aligner_kernels_wfa_fast_Certificate.lean.log: 26 theorems, standard axioms only
+ok   Aligner_kernels_wfa_offsets_Certificate.lean.log: 30 theorems, standard axioms only
+ok   Aligner_kernels_wfa_runs_Certificate.lean.log: 17 theorems, standard axioms only
+ok   Aligner_kernels_wfa_small_errors_Certificate.lean.log: 13 theorems, standard axioms only
+ok   Aligner_kernels_wfa_u32_Certificate.lean.log: 80 theorems, standard axioms only
+ok   Proofs_core_Certificate.lean.log: 6 theorems, standard axioms only
+ok   Aligner_trimmer_Certificate.lean.log: 6 theorems, standard axioms only
+ok   Proofs_core_Cli.lean.log: 4 theorems, standard axioms only
+ok   Proofs_core_Run.lean.log: 4 theorems, standard axioms only
+ok   Aligner_trimmer_ReadWindowProofAudit.lean.log: 6 theorems, standard axioms only
+VIOLATIONS: none
+ALL CHECKS PASSED
+== SAM md5
+SAMMD5 cut nova5m a5a8f23fdd9d
+SAMMD5 cut hiseq5m 2d9475e1cbba
+== timings
+RUN nova5m H0 rep1 | ours	4	reads	94.6	354.7	5.68	1.510	57.43	15.33
+LOOPSTAT tid+4 INPUT-ONLY (after index read): read syscalls 108068, 3.68 GB, avg 33 KiB
+LOOPSTAT tid+4: usr 5.3 sys 11.0 cpu 16.3 s, read syscalls 108586, rchar 9.03 GB, avg read 81 KiB, R-state 28%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+2 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+2: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 333.3 s over 8 threads (last samples)
+RUN nova5m C0 rep1 | ours	4	reads	95.7	365.4	5.79	1.510	56.82	14.88
+LOOPSTAT tid+4 INPUT-ONLY (after index read): read syscalls 107976, 3.68 GB, avg 33 KiB
+LOOPSTAT tid+4: usr 1.2 sys 8.7 cpu 9.9 s, read syscalls 108278, rchar 9.03 GB, avg read 81 KiB, R-state 17%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 335.9 s over 108 threads (last samples)
+RUN nova5m H1 rep1 | ours	4	reads	88.9	340.9	5.72	1.510	61.14	15.95
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 85200, 3.68 GB, avg 42 KiB
+LOOPSTAT tid+3: usr 5.2 sys 7.8 cpu 13.0 s, read syscalls 85527, rchar 9.03 GB, avg read 103 KiB, R-state 25%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 319.9 s over 8 threads (last samples)
+RUN nova5m C1 rep1 | ours	4	reads	89.2	340.5	5.78	1.510	60.96	15.96
+LOOPSTAT tid+4 INPUT-ONLY (after index read): read syscalls 83828, 3.69 GB, avg 43 KiB
+LOOPSTAT tid+4: usr 1.2 sys 7.8 cpu 8.9 s, read syscalls 84061, rchar 9.03 GB, avg read 105 KiB, R-state 18%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+2 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+2: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 312.5 s over 90 threads (last samples)
+RUN nova5m C0 rep2 | ours	4	reads	89.0	338.8	5.77	1.510	61.06	16.04
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 108412, 3.69 GB, avg 33 KiB
+LOOPSTAT tid+3: usr 1.1 sys 8.7 cpu 9.8 s, read syscalls 108436, rchar 9.03 GB, avg read 81 KiB, R-state 19%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 311.0 s over 102 threads (last samples)
+RUN nova5m H0 rep2 | ours	4	reads	86.5	333.5	5.72	1.510	62.81	16.30
+LOOPSTAT tid+4 INPUT-ONLY (after index read): read syscalls 107454, 3.67 GB, avg 33 KiB
+LOOPSTAT tid+4: usr 5.3 sys 7.4 cpu 12.8 s, read syscalls 108102, rchar 9.03 GB, avg read 82 KiB, R-state 29%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 313.2 s over 8 threads (last samples)
+RUN nova5m C1 rep2 | ours	4	reads	93.0	356.7	5.77	1.510	58.46	15.24
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 84610, 3.69 GB, avg 43 KiB
+LOOPSTAT tid+3: usr 1.3 sys 7.3 cpu 8.6 s, read syscalls 84749, rchar 9.03 GB, avg read 104 KiB, R-state 15%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 327.3 s over 93 threads (last samples)
+RUN nova5m H1 rep2 | ours	4	reads	93.8	358.4	5.69	1.510	57.93	15.17
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 84326, 3.69 GB, avg 43 KiB
+LOOPSTAT tid+3: usr 5.4 sys 8.9 cpu 14.3 s, read syscalls 84487, rchar 9.03 GB, avg read 104 KiB, R-state 27%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 337.3 s over 8 threads (last samples)
+RUN nova5m H0 rep3 | ours	4	reads	94.2	359.1	5.69	1.510	57.72	15.14
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 107706, 3.69 GB, avg 33 KiB
+LOOPSTAT tid+3: usr 5.5 sys 9.4 cpu 14.9 s, read syscalls 107812, rchar 9.03 GB, avg read 82 KiB, R-state 26%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 337.7 s over 8 threads (last samples)
+RUN nova5m C0 rep3 | ours	4	reads	90.7	346.0	5.74	1.510	59.95	15.71
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 108056, 3.69 GB, avg 33 KiB
+LOOPSTAT tid+3: usr 1.1 sys 9.1 cpu 10.2 s, read syscalls 108318, rchar 9.03 GB, avg read 81 KiB, R-state 20%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 317.1 s over 91 threads (last samples)
+RUN nova5m H1 rep3 | ours	4	reads	86.3	332.0	5.71	1.510	63.00	16.37
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 84998, 3.69 GB, avg 42 KiB
+LOOPSTAT tid+3: usr 5.3 sys 7.4 cpu 12.7 s, read syscalls 85178, rchar 9.03 GB, avg read 104 KiB, R-state 28%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 311.5 s over 8 threads (last samples)
+RUN nova5m C1 rep3 | ours	4	reads	90.7	348.6	5.78	1.510	59.93	15.60
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 84150, 3.67 GB, avg 43 KiB
+LOOPSTAT tid+3: usr 1.2 sys 7.3 cpu 8.5 s, read syscalls 84843, rchar 9.03 GB, avg read 104 KiB, R-state 16%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 319.9 s over 92 threads (last samples)
+RUN hiseq5m H0 rep1 | ours	4	reads	105.7	384.5	5.85	2.482	84.56	23.24
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 162331, 5.52 GB, avg 33 KiB
+LOOPSTAT tid+3: usr 6.7 sys 15.9 cpu 22.6 s, read syscalls 162686, rchar 10.87 GB, avg read 65 KiB, R-state 30%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 342.9 s over 8 threads (last samples)
+RUN hiseq5m C0 rep1 | ours	4	reads	107.4	407.3	5.95	2.482	83.24	21.94
+LOOPSTAT tid+4 INPUT-ONLY (after index read): read syscalls 160763, 5.51 GB, avg 33 KiB
+LOOPSTAT tid+4: usr 1.6 sys 11.2 cpu 12.8 s, read syscalls 161246, rchar 10.87 GB, avg read 66 KiB, R-state 22%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 352.2 s over 137 threads (last samples)
+RUN hiseq5m H1 rep1 | ours	4	reads	99.5	377.3	5.89	2.482	89.83	23.68
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 129090, 5.51 GB, avg 42 KiB
+LOOPSTAT tid+3: usr 6.5 sys 12.8 cpu 19.4 s, read syscalls 129547, rchar 10.87 GB, avg read 82 KiB, R-state 33%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 335.8 s over 8 threads (last samples)
+RUN hiseq5m C1 rep1 | ours	4	reads	108.6	411.6	5.98	2.482	82.30	21.71
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 129024, 5.51 GB, avg 42 KiB
+LOOPSTAT tid+3: usr 1.6 sys 12.4 cpu 14.0 s, read syscalls 129417, rchar 10.87 GB, avg read 82 KiB, R-state 23%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 354.4 s over 159 threads (last samples)
+RUN hiseq5m C0 rep2 | ours	4	reads	107.6	409.1	5.95	2.482	83.05	21.85
+LOOPSTAT tid+4 INPUT-ONLY (after index read): read syscalls 161281, 5.52 GB, avg 33 KiB
+LOOPSTAT tid+4: usr 1.5 sys 12.3 cpu 13.8 s, read syscalls 161523, rchar 10.87 GB, avg read 66 KiB, R-state 21%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+2 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+2: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 352.5 s over 177 threads (last samples)
+RUN hiseq5m H0 rep2 | ours	4	reads	103.1	394.1	5.87	2.482	86.67	22.68
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 162366, 5.53 GB, avg 33 KiB
+LOOPSTAT tid+3: usr 6.8 sys 11.8 cpu 18.7 s, read syscalls 162436, rchar 10.87 GB, avg read 65 KiB, R-state 28%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 351.7 s over 8 threads (last samples)
+RUN hiseq5m C1 rep2 | ours	4	reads	105.5	401.2	5.97	2.482	84.74	22.28
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 128462, 5.52 GB, avg 42 KiB
+LOOPSTAT tid+3: usr 1.6 sys 11.5 cpu 13.1 s, read syscalls 128697, rchar 10.87 GB, avg read 82 KiB, R-state 21%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 345.6 s over 154 threads (last samples)
+RUN hiseq5m H1 rep2 | ours	4	reads	100.3	382.5	5.84	2.482	89.13	23.36
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 129965, 5.53 GB, avg 42 KiB
+LOOPSTAT tid+3: usr 6.6 sys 12.2 cpu 18.9 s, read syscalls 129998, rchar 10.87 GB, avg read 82 KiB, R-state 38%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 340.4 s over 8 threads (last samples)
+RUN hiseq5m H0 rep3 | ours	4	reads	104.8	401.8	5.86	2.482	85.25	22.24
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 162500, 5.52 GB, avg 33 KiB
+LOOPSTAT tid+3: usr 7.0 sys 12.8 cpu 19.8 s, read syscalls 162714, rchar 10.87 GB, avg read 65 KiB, R-state 28%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 359.1 s over 8 threads (last samples)
+RUN hiseq5m C0 rep3 | ours	4	reads	108.7	412.4	5.98	2.482	82.24	21.67
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 161109, 5.52 GB, avg 33 KiB
+LOOPSTAT tid+3: usr 1.7 sys 13.1 cpu 14.8 s, read syscalls 161306, rchar 10.87 GB, avg read 66 KiB, R-state 24%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 355.8 s over 141 threads (last samples)
+RUN hiseq5m H1 rep3 | ours	4	reads	102.4	394.3	5.85	2.482	87.24	22.66
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 129089, 5.52 GB, avg 42 KiB
+LOOPSTAT tid+3: usr 7.0 sys 11.6 cpu 18.6 s, read syscalls 129367, rchar 10.87 GB, avg read 82 KiB, R-state 32%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 351.5 s over 8 threads (last samples)
+RUN hiseq5m C1 rep3 | ours	4	reads	108.3	413.1	5.90	2.482	82.53	21.63
+LOOPSTAT tid+3 INPUT-ONLY (after index read): read syscalls 130161, 5.52 GB, avg 41 KiB
+LOOPSTAT tid+3: usr 1.6 sys 12.1 cpu 13.7 s, read syscalls 130341, rchar 10.87 GB, avg read 81 KiB, R-state 22%
+LOOPSTAT tid+0 INPUT-ONLY (after index read): read syscalls 15, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1 INPUT-ONLY (after index read): read syscalls 0, 0.00 GB, avg 0 KiB
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 355.7 s over 143 threads (last samples)
+FINISHED21

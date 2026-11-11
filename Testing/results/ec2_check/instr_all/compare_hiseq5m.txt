@@ -1,0 +1,28 @@
+   1,000,000  100.00%  pairs
+     939,477   93.95%  ours mapped
+     994,278   99.43%  minibwa mapped
+     848,640   84.86%  ours unique
+     874,779   87.48%  minibwa MAPQ 60
+     939,286   93.93%  both mapped
+     901,517   90.15%  both mapped, match
+     116,415   11.64%  both mapped, identical
+     848,638   84.86%  ours unique, minibwa mapped
+     848,466   84.85%  ours unique, minibwa mapped, match
+     818,322   81.83%  ours unique and minibwa MAPQ 60
+     818,320   81.83%  ours unique and minibwa MAPQ 60, match
+agreement rates (% of the row they are divided by):
+   95.98%  both mapped, match / both mapped
+   12.39%  both mapped, identical / both mapped
+   99.98%  ours unique, minibwa mapped, match / ours unique, minibwa mapped
+  100.00%  ours unique and minibwa MAPQ 60, match / ours unique and minibwa MAPQ 60
+ours unique but a different place than minibwa (name, ours, minibwa, minibwa MAPQ):
+   ('D00360:95:H2YWMBCXX:1:1101:18379:2293', ('chr17', True, 26603915, '249M'), ('chr17', False, 26885700, '5S244M'), 60)
+   ('D00360:95:H2YWMBCXX:1:1101:13949:5479', ('chr10', True, 40392622, '240M'), ('chr10', True, 40202477, '240M'), 0)
+   ('D00360:95:H2YWMBCXX:1:1101:16804:5496', ('chrY', True, 56707101, '248M'), ('chrY', True, 56735674, '110M15D140M'), 0)
+   ('D00360:95:H2YWMBCXX:1:1101:3647:7148', ('chr9', False, 64490525, '206M'), ('chr9', False, 64490525, '246M'), 4)
+   ('D00360:95:H2YWMBCXX:1:1101:6362:11923', ('chr17', False, 26603869, '247M'), ('chr17', True, 26885740, '240M10S'), 48)
+   ('D00360:95:H2YWMBCXX:1:1101:13217:12057', ('chr4', False, 102953329, '248M'), ('chr11', True, 125541029, '250M'), 0)
+   ('D00360:95:H2YWMBCXX:1:1101:5144:13547', ('chr1', True, 143213009, '249M'), ('chr1', False, 125180461, '250M'), 1)
+   ('D00360:95:H2YWMBCXX:1:1101:12596:19166', ('chr1', False, 143254454, '196M'), ('chr1', False, 125182181, '245M5S'), 0)
+   ('D00360:95:H2YWMBCXX:1:1101:16597:20582', ('chr6', True, 168593164, '174M'), ('chr6', True, 168593088, '250M'), 1)
+   ('D00360:95:H2YWMBCXX:1:1101:6332:21829', ('chr17', True, 26619543, '211M'), ('chr17', False, 26885357, '211M'), 11)
