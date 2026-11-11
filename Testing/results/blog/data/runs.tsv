@@ -23,3 +23,7 @@ lane	hiseq_2x250	33916091	minibwa	c07de5c	3494.7	3488.0	13383	8.61	17.3	4.53	1	t
 lane	novaseq_2x151	40000000	lean-align-before	64ae73f	1330.6	1327.4	3648.1	5.63	32.8	11.9	1	trace box, traced; trace build = 64ae73f + trace commits
 lane	novaseq_2x151	40000000	lean-align	f465a57	759.6	756.8	2738.2	5.65	57.5	15.9	1	trace box, traced; trace build = f465a57 + trace commits
 lane	novaseq_2x151	40000000	lean-align	f465a57	774.9	771.7	2798.1	5.65	56.4	15.5	1	trace box, untraced
+gz5m_script	hiseq_2x250	5000000	lean-align	f465a57	83.2	NA	315.3	5.86	107.35	28.34	3	timing box, Testing/ec2/run.sh (bench.py): wall incl. index load, cpu incl. both gzips, median of 3
+gz5m_script	hiseq_2x250	5000000	minibwa	c07de5c	461.7	NA	1806.1	8.51	19.36	4.95	3	timing box, Testing/ec2/run.sh (bench.py): wall incl. index load, cpu incl. both gzips, median of 3
+gz5m_script	novaseq_2x151	5000000	lean-align	f465a57	83.6	NA	309.7	5.71	65.02	17.55	3	timing box, Testing/ec2/run.sh (bench.py): wall incl. index load, cpu incl. both gzips, median of 3
+gz5m_script	novaseq_2x151	5000000	minibwa	c07de5c	264.7	NA	1010.7	8.80	20.53	5.38	3	timing box, Testing/ec2/run.sh (bench.py): wall incl. index load, cpu incl. both gzips, median of 3
