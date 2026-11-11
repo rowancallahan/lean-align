@@ -1,5 +1,9 @@
 # Results for the README and blog: how every number and figure was made
 
+![lean-align against minibwa: speed](figs/vs_minibwa.png)
+
+lean-align f465a57 against minibwa c07de5c, 4 threads on 4 cores. Bar = median, whisker = min to max, dots = single runs, n = number of runs. Peak memory is in `figs/vs_minibwa_memory.png`. How it was made: the first section under "Per figure and table".
+
 Everything here was made on 4-core boxes (4 threads, `taskset -c 0-3`) unless a row says otherwise. Data are in `data/`,
 figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `python3 make_figs.py` and `python3 make_tables.py`
 (matplotlib only). The scripts read `data/*.tsv` and skip NA rows; the table numbers are not hard-coded.
@@ -9,7 +13,8 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
 
 | file | content |
 |---|---|
-| `data/runs.tsv` | every timing run: 5M gz runs, streamed runs, whole lanes |
+| `data/reps.tsv` | one row per single run of lean-align f465a57 and minibwa (gz 5M and streamed): the data of `figs/vs_minibwa*` |
+| `data/runs.tsv` | every timing run, with medians where there are repeats: 5M gz runs, streamed runs, whole lanes, before and after builds |
 | `data/slow_jobs.tsv` | jobs longer than 5 s and idle cores, before and after |
 | `data/slow_pairs.tsv` | the slowest single pairs, mapped alone on 1 core |
 | `data/slow_pairs_stream.tsv` | the 36 slowest pairs of the HiSeq lane, before and after, same pair indexes |
@@ -21,7 +26,8 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
 ## Box and common method
 
 - Box: 4 cores (Intel Xeon @ 2.10 GHz, 1 thread per core), 15 GB RAM, Linux. This is the box of my own runs (the lane and trace
-  runs). The other rows were made on other boxes, named in the `source` column; all rows are 4 threads on 4 cores. Everything runs on those 4 cores:
+  runs). The other rows were made on other boxes, named in the `source` column (the gz5m_script / `ec2_check` rows: 4 vCPU Xeon 2.3 GHz,
+  15 GB RAM); all rows are 4 threads on 4 cores. Everything runs on those 4 cores:
   the aligner, the decompressors and the output sink (`os.sched_setaffinity` / `taskset -c 0-3`). hg38, one index per tool.
 - lean-align index: `lean-align build hg38.upper.fa ic.idx` (5,338,015,764 bytes, built once with the code under test; the
   format has not changed between the builds compared). minibwa c07de5c with its own index.
@@ -40,17 +46,24 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
 
 ## Per figure and table
 
-### (a) Speed at 4 threads, 5M pairs (`figs/a_speed_4threads`, table "Speed at 4 threads")
-- Two methods, in two columns of the figure. Do not compare a bar of one column with a bar of the other.
-- Column A, before and after (rows `gz5m`, `lean-align-before` e96862d and `lean-align` f465a57): map time with the index load
-  excluded; 3-run median; both read files fed through `zcat` FIFOs; output discarded. Method: `Testing/notes/BENCH_SETUP.md`
-  section 5 (branch `notes/bench-setup`). Timing box; I did not run these and did not re-check them against logs.
-- Column B, lean-align against minibwa (rows `gz5m_script`, f465a57 and c07de5c): the same script for both tools,
-  `Testing/ec2/run.sh` (`bench.py`), 4 threads, 3-run median. Wall time includes the index load. CPU includes both `gzip -dc`.
-  Everything is pinned to the same 4 cores. The output goes to a pipe drained by `cat` for both tools (`cat`'s CPU is not
-  counted). Peak memory = `ru_maxrss` of the aligner. Gbp/hr = letters / wall; Gbp/core-hr = letters / CPU. Timing box.
-- Reads: the first 5M pairs of each file (URLs under (d)), recompressed to gz.
-- The earlier minibwa `gz5m` rows (`TO RE-MEASURE`, wall time only) are deleted: column B replaces them and nothing else used them.
+### vs_minibwa and vs_minibwa_memory: lean-align against minibwa, every single run (`figs/vs_minibwa`, `figs/vs_minibwa_memory`)
+- The headline figure. Only current lean-align (f465a57) and minibwa (c07de5c), 4 threads on 4 cores, no "before" bars.
+  Bar = median of the runs, whisker = min to max (none when n = 1), dots = single runs, n = number of runs under each bar.
+  Rows: Gbp/hour and Gbp per core-hour; memory is a separate figure with the same layout.
+- Data: `data/reps.tsv`, one row per single run. `make_figs.py` reads only this file for these two figures and uses all rows it
+  finds, so new runs are added by appending rows (new `rep` numbers or sizes); nothing has to be edited in the script.
+- Column "gzipped files, 5M pairs" (`gz5m`, 3 runs per tool and data set): raw rows from `Testing/results/ec2_check/{nova5m,hiseq5m}/timing.tsv`,
+  made with `THREADS=4 REPS=3 bash Testing/ec2/run.sh full WORKDIR` on a 4-vCPU Xeon 2.3 GHz Firecracker VM, 15 GB RAM (see
+  `Testing/results/ec2_check/README.md`). The script version was the one before `fix/ec2-scripts` (ccc7cd9): lean-align writes to a
+  pipe drained by `cat`, minibwa to /dev/null. Wall includes the index load. CPU is the aligner plus both `gzip -dc`. Peak memory =
+  `ru_maxrss` of the aligner. Reads: the first 5M pairs of each file (URLs under "How it got faster", (d)), recompressed to gz.
+- Column "streamed" (`stream`): runs from the network without a file on disk, values copied from `runs.tsv`. NovaSeq: lean-align at
+  10M, 20M and 40M pairs, minibwa at 20M and 40M (resuming downloader). HiSeq: the whole GIAB lane (33,916,091 pairs) for both tools.
+  Different boxes were used (`source` column): streaming box for NovaSeq, trace box for lean-align on the HiSeq lane, trim box for
+  minibwa on the HiSeq lane. The streamed bar is the median over the runs of all sizes of that data set. The minibwa NovaSeq 10M run
+  (742.8 s) is left out because its wall includes a cold index load of 158.9 s. The lane rates of lean-align use map seconds, the NovaSeq
+  stream rates use wall (about 0.4 percent apart). CPU definitions differ by source (see the `runs.tsv` header).
+- A bar with n = 1 shows no error bar. With so few streamed runs, treat the streamed whiskers as run-size spread, not as noise.
 
 ### (b) Peak memory (`figs/b_memory`)
 - Left: the `gz5m_script` rows (5M pairs, same script for both tools, peak = `ru_maxrss` of the aligner).
@@ -73,6 +86,56 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   the 40M `stream` row (not a lane run). Rates use `map_s` where it exists and the wall time otherwise, so the minibwa NovaSeq
   bar includes its index load (see the `source` column of the row).
   Different boxes and downloaders were used for the lean-align and minibwa lane rows.
+
+### (f) Accuracy and uniqueness against minibwa (`figs/f_accuracy`; tables "Real reads, 1M pairs", "Real reads, 200k pairs", "Simulated reads")
+- Real reads, in the figure (left, middle): 1M pairs of each data set, lean-align f465a57 against minibwa c07de5c, from
+  `Testing/ec2/compare.py` (run by `Testing/ec2/run.sh` on the timing box); numbers in `data/ec2_compare.tsv`. The compare output
+  files are not in this folder; the numbers were given to me and I did not recompute them. "Mapped" = neither mate unmapped.
+  "Unique" = our `XU:Z:unique` on both mates; minibwa = MAPQ 60 or more on both mates. "Same place" = same chromosome and strand and
+  overlapping alignments (not the same start: we trim low-quality ends, minibwa soft-clips them). The percentages in the
+  "same place" rows are my division of the two counts.
+- Simulated reads, in the figure (right): `scripts/sim_pairs.py mason|low|high`, seed 1, 100k pairs each, from hg38. Re-measured on
+  f465a57; every value is identical to the first measurement (027ef1e). A pair is correct if both mates start within 10 bp
+  of the true start. Classes (unique / unknown / not proper) are our own tags (`XU`); pairs we do not place count as wrong for us.
+- Older measurement, in `data/accuracy.tsv` and in RESULTS.md only: `Testing/notes/UNIQUE_VS_MINIBWA.md`, lean-align 027ef1e,
+  first 200k pairs of the bench release's `novaseq_200k` and `hg002_200k` (HiSeq 2x250); a pair is proper if flag 0x2 is set on both
+  mates. Its real-read block was not re-run on f465a57. The 1M-pair f465a57 numbers above replace it in the figure; the two
+  agree within 0.5 points for the unique share.
+
+### (g) ROC on simulated reads (`figs/g_roc`)
+- `data/roc.tsv` (made by `scripts/roc_from_sams.py` from the SAMs of the simulated sets in (f)). Per read, not per pair.
+  Correct = same chromosome and the mapped and true intervals overlap by at least 10 percent (the paper's rule).
+  x = reads mapped / all reads; y = correct / mapped. minibwa: one point per MAPQ threshold (60, 59, ... 0).
+  lean-align: two points (MAPQ 60 = unique, and all mapped reads).
+- Simulator vs the paper: the paper used mason v2.0.9 with `--illumina-read-length 150 --illumina-prob-mismatch-scale 2.5`
+  on GRCh38. Mason is not installed here. `sim_pairs.py` `mason` mode approximates those options (no variants; mismatch rate
+  0.2/0.4/1.2 percent times 2.5 at start / 66 percent / end of the read; 1 bp indels at 0.005 percent per base; fragment
+  N(300, 30)). `low` and `high` add haplotype variants (1 SNP per 1000 bp and 1 per 100 bp). They are our own models, not the paper's data.
+- Re-measured on f465a57 with minibwa c07de5c; all 69 rows are identical to the first measurement (027ef1e).
+
+### (h) The paper's Fig. 3, WGS bars (`figs/h_paper_fig3_wgs`)
+- `data/paper_perf.tsv`: `perf.tsv` of lh3/minibwa at c07de5c, WGS (HG002 NovaSeq 30x), 32 threads, two Xeon Gold 6130, as published.
+- lean-align at 32 threads is not measured. The dashed slot is empty on purpose. A 16/32-core test is prepared in `scripts/ec2/`
+  (`setup.sh`, `run.sh`; AWS c7a.8xlarge; its README explains the method and the differences from the paper).
+- The 4-thread numbers in (a) to (c) are not comparable to the paper's 32-thread bars.
+
+
+## How it got faster (before and after)
+
+The figures that compare lean-align builds with each other: (a) 5M pairs, (d) slow jobs and (e2) slow pairs inside the lane run, (e) slow pairs alone.
+
+### (a) Speed at 4 threads, 5M pairs (`figs/a_speed_4threads`, table "Speed at 4 threads")
+- Two methods, in two columns of the figure. Do not compare a bar of one column with a bar of the other.
+- Column A, before and after (rows `gz5m`, `lean-align-before` e96862d and `lean-align` f465a57): map time with the index load
+  excluded; 3-run median; both read files fed through `zcat` FIFOs; output discarded. Method: `Testing/notes/BENCH_SETUP.md`
+  section 5 (branch `notes/bench-setup`). Timing box; I did not run these and did not re-check them against logs.
+- Column B, lean-align against minibwa (rows `gz5m_script`, f465a57 and c07de5c): the same script for both tools,
+  `Testing/ec2/run.sh` (`bench.py`), 4 threads, 3-run median (the single runs are in `data/reps.tsv`). Wall time includes the index
+  load. CPU includes both `gzip -dc`. Everything is pinned to the same 4 cores. Output: these runs used the script version before
+  `fix/ec2-scripts` (ccc7cd9): lean-align writes to a pipe drained by `cat`, minibwa to /dev/null; later versions use the same sink for both
+  (`cat`'s CPU is not counted). Peak memory = `ru_maxrss` of the aligner. Gbp/hr = letters / wall; Gbp/core-hr = letters / CPU. Timing box.
+- Reads: the first 5M pairs of each file (URLs under (d)), recompressed to gz.
+- The earlier minibwa `gz5m` rows (`TO RE-MEASURE`, wall time only) are deleted: column B replaces them and nothing else used them.
 
 ### (d) Slow jobs (`figs/d_slow_jobs`, table "Slow jobs"), (e2) slow pairs inside the lane (`figs/e2_slow_pairs_in_lane`)
 - My runs, trace box (this 4-core box). One run each per cell.
@@ -110,39 +173,12 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   Pairs: `bench/slow-pairs` branch (`Testing/notes/slow_pairs/`). Builds 64ae73f, 351301d, f465a57. From the timing box; not rechecked.
   The SAM output of the pairs is identical in the three builds (as reported when the rows were made).
 
-### (f) Accuracy and uniqueness against minibwa (`figs/f_accuracy`; tables "Real reads, 1M pairs", "Real reads, 200k pairs", "Simulated reads")
-- Real reads, in the figure (left, middle): 1M pairs of each data set, lean-align f465a57 against minibwa c07de5c, from
-  `Testing/ec2/compare.py` (run by `Testing/ec2/run.sh` on the timing box); numbers in `data/ec2_compare.tsv`. The compare output
-  files are not in this folder; the numbers were given to me and I did not recompute them. "Mapped" = neither mate unmapped.
-  "Unique" = our `XU:Z:unique` on both mates; minibwa = MAPQ 60 or more on both mates. "Same place" = same chromosome and strand and
-  overlapping alignments (not the same start: we trim low-quality ends, minibwa soft-clips them). The percentages in the
-  "same place" rows are my division of the two counts.
-- Simulated reads, in the figure (right): `scripts/sim_pairs.py mason|low|high`, seed 1, 100k pairs each, from hg38. Re-measured on
-  f465a57; every value is identical to the first measurement (027ef1e). A pair is correct if both mates start within 10 bp
-  of the true start. Classes (unique / unknown / not proper) are our own tags (`XU`); pairs we do not place count as wrong for us.
-- Older measurement, in `data/accuracy.tsv` and in RESULTS.md only: `Testing/notes/UNIQUE_VS_MINIBWA.md`, lean-align 027ef1e,
-  first 200k pairs of the bench release's `novaseq_200k` and `hg002_200k` (HiSeq 2x250); a pair is proper if flag 0x2 is set on both
-  mates. Its real-read block was not re-run on f465a57. The 1M-pair f465a57 numbers above replace it in the figure; the two
-  agree within 0.5 points for the unique share.
-
-### (g) ROC on simulated reads (`figs/g_roc`)
-- `data/roc.tsv` (made by `scripts/roc_from_sams.py` from the SAMs of the simulated sets in (f)). Per read, not per pair.
-  Correct = same chromosome and the mapped and true intervals overlap by at least 10 percent (the paper's rule).
-  x = reads mapped / all reads; y = correct / mapped. minibwa: one point per MAPQ threshold (60, 59, ... 0).
-  lean-align: two points (MAPQ 60 = unique, and all mapped reads).
-- Simulator vs the paper: the paper used mason v2.0.9 with `--illumina-read-length 150 --illumina-prob-mismatch-scale 2.5`
-  on GRCh38. Mason is not installed here. `sim_pairs.py` `mason` mode approximates those options (no variants; mismatch rate
-  0.2/0.4/1.2 percent times 2.5 at start / 66 percent / end of the read; 1 bp indels at 0.005 percent per base; fragment
-  N(300, 30)). `low` and `high` add haplotype variants (1 SNP per 1000 bp and 1 per 100 bp). They are our own models, not the paper's data.
-- Re-measured on f465a57 with minibwa c07de5c; all 69 rows are identical to the first measurement (027ef1e).
-
-### (h) The paper's Fig. 3, WGS bars (`figs/h_paper_fig3_wgs`)
-- `data/paper_perf.tsv`: `perf.tsv` of lh3/minibwa at c07de5c, WGS (HG002 NovaSeq 30x), 32 threads, two Xeon Gold 6130, as published.
-- lean-align at 32 threads is not measured. The dashed slot is empty on purpose. A 16/32-core test is prepared in `scripts/ec2/`
-  (`setup.sh`, `run.sh`; AWS c7a.8xlarge; its README explains the method and the differences from the paper).
-- The 4-thread numbers in (a) to (c) are not comparable to the paper's 32-thread bars.
 
 ## What changed since the first version of this folder
+
+- Newest: the headline figure `figs/vs_minibwa` and `figs/vs_minibwa_memory` (lean-align against minibwa only, every single run,
+  from the new `data/reps.tsv`) is the first figure in this README and in RESULTS.md. The before/after figures (a, d, e, e2) moved
+  under "How it got faster". The "Box" line for the gz5m_script rows is the ec2_check box (Xeon 2.3 GHz), see above.
 
 - Figures (a) and (b): the ours-against-minibwa bars now use the `gz5m_script` rows (same script for both tools); the before/after
   bars keep the `gz5m` rows. The old minibwa `gz5m` rows are deleted.
@@ -159,6 +195,7 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
 ## Not measured, or older than f465a57
 
 - lean-align at 16 and 32 threads; any run with more than 4 cores. The 4-thread numbers are not comparable to the paper's 32-thread bars.
+- Streamed bars of `figs/vs_minibwa` have few runs (NovaSeq lean-align 3, minibwa 2; HiSeq lane 1 each); more streamed repeats are being run and will be appended to `data/reps.tsv`.
 - minibwa on NovaSeq has no lane run of its own: the 40M row of the streamed runs stands in (different box and downloader).
 - The streamed "before" rows and the 5M "before" rows use `64ae73f`- and `e96862d`-era builds.
 - Real-read accuracy on f465a57 is 1M pairs per data set; the 200k real-read numbers are from 027ef1e.

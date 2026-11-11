@@ -2,20 +2,56 @@
 
 Box: 4 cores (Intel Xeon 2.10 GHz, 1 thread per core), 15 GB RAM, hg38. Details: README.md.
 
-## Speed at 4 threads, 5M pairs from gz files
+# lean-align against minibwa
 
-Two methods. gz5m (before and after bars): map time, index load excluded. gz5m_script (lean-align against minibwa): the same script, Testing/ec2/run.sh, for both tools; wall includes index load and CPU includes both gzips. Do not mix the two methods in one bar chart.
+![lean-align against minibwa: speed](figs/vs_minibwa.png)
 
-| experiment | data | pairs | tool | commit | wall s | map s | CPU s | peak GB | Gbp/hr | Gbp/core-hr | runs |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 83.4 | 81.1 | 286.2 | n/m | 110.2 | 31.23 | 3 |
-| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 78.7 | 76.7 | 284.4 | n/m | 70.9 | 19.12 | 3 |
-| gz5m | hiseq_2x250 | 5000000 | lean-align-before | e96862d | 110.3 | 105.8 | 382.5 | n/m | 84.5 | 23.36 | 3 |
-| gz5m | novaseq_2x151 | 5000000 | lean-align-before | e96862d | 94.0 | 91.8 | 345.0 | n/m | 59.2 | 15.76 | 3 |
-| gz5m_script | hiseq_2x250 | 5000000 | lean-align | f465a57 | 83.2 | n/m | 315.3 | 5.86 | 107.35 | 28.34 | 3 |
-| gz5m_script | hiseq_2x250 | 5000000 | minibwa | c07de5c | 461.7 | n/m | 1806.1 | 8.51 | 19.36 | 4.95 | 3 |
-| gz5m_script | novaseq_2x151 | 5000000 | lean-align | f465a57 | 83.6 | n/m | 309.7 | 5.71 | 65.02 | 17.55 | 3 |
-| gz5m_script | novaseq_2x151 | 5000000 | minibwa | c07de5c | 264.7 | n/m | 1010.7 | 8.80 | 20.53 | 5.38 | 3 |
+![lean-align against minibwa: peak memory](figs/vs_minibwa_memory.png)
+
+Bar = median, whisker = min to max, dots = single runs, 4 threads, n = number of runs (see the tables below).
+
+## lean-align against minibwa: medians
+
+The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to max in brackets; n = number of runs. Four threads on four cores, lean-align f465a57 against minibwa c07de5c. gz5m = 5M pairs from gz files; stream = streamed from the network (run sizes in the next table).
+
+| experiment | data | tool | n | Gbp/hr | Gbp/core-hr | peak GB |
+|---|---|---|---|---|---|---|
+| gz5m | hiseq_2x250 | lean-align | 3 | 107.3 (102.6 to 109.3) | 28.3 (28.1 to 29.0) | 5.9 (5.8 to 5.9) |
+| gz5m | hiseq_2x250 | minibwa | 3 | 19.4 (19.3 to 19.7) | 5.0 (5.0 to 5.0) | 8.5 (8.5 to 8.5) |
+| gz5m | novaseq_2x151 | lean-align | 3 | 65.0 (64.0 to 70.0) | 17.6 (17.4 to 18.0) | 5.7 (5.7 to 5.7) |
+| gz5m | novaseq_2x151 | minibwa | 3 | 20.5 (20.4 to 21.0) | 5.4 (5.4 to 5.4) | 8.8 (8.8 to 8.8) |
+| stream | hiseq_2x250 | lean-align | 1 | 88.7 | 26.3 | 5.9 |
+| stream | hiseq_2x250 | minibwa | 1 | 17.3 | 4.5 | 8.6 |
+| stream | novaseq_2x151 | lean-align | 3 | 55.9 (55.4 to 55.9) | 16.1 (16.1 to 16.1) | 5.7 (5.7 to 5.7) |
+| stream | novaseq_2x151 | minibwa | 2 | 19.9 (19.8 to 20.0) | 5.2 (5.2 to 5.3) | 8.8 (8.8 to 8.8) |
+
+## lean-align against minibwa: every single run
+
+One row per run, as in data/reps.tsv. The minibwa NovaSeq 10M streamed run is not here because its wall time includes a cold index load of 158.9 s (it is in the streamed table below).
+
+| experiment | data | pairs | tool | commit | run | wall s | CPU s | peak GB | Gbp/hr | Gbp/core-hr |
+|---|---|---|---|---|---|---|---|---|---|---|
+| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 1 | 85.0 | 309.7 | 5.71 | 63.97 | 17.55 |
+| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 2 | 77.7 | 301.4 | 5.71 | 69.99 | 18.03 |
+| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 3 | 83.6 | 312.0 | 5.67 | 65.02 | 17.42 |
+| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 1 | 259.0 | 1001.5 | 8.82 | 20.99 | 5.43 |
+| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 2 | 266.5 | 1012.5 | 8.79 | 20.39 | 5.37 |
+| gz5m | novaseq_2x151 | 5000000 | minibwa | c07de5c | 3 | 264.7 | 1010.7 | 8.80 | 20.53 | 5.38 |
+| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 1 | 87.1 | 317.6 | 5.85 | 102.57 | 28.14 |
+| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 2 | 83.2 | 315.3 | 5.86 | 107.35 | 28.34 |
+| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 3 | 81.7 | 308.3 | 5.88 | 109.32 | 28.99 |
+| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 1 | 454.0 | 1784.6 | 8.51 | 19.69 | 5.01 |
+| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 2 | 462.7 | 1806.1 | 8.51 | 19.31 | 4.95 |
+| gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 3 | 461.7 | 1806.6 | 8.52 | 19.36 | 4.95 |
+| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 196.1 | 676.1 | 5.73 | 55.4 | 16.08 |
+| stream | novaseq_2x151 | 20000000 | lean-align | f465a57 | 1 | 389.0 | 1350.0 | 5.74 | 55.9 | 16.11 |
+| stream | novaseq_2x151 | 40000000 | lean-align | f465a57 | 1 | 778.5 | 2709.3 | 5.74 | 55.9 | 16.05 |
+| stream | novaseq_2x151 | 20000000 | minibwa | c07de5c | 1 | 1086.7 | 4135.9 | 8.81 | 20.0 | 5.26 |
+| stream | novaseq_2x151 | 40000000 | minibwa | c07de5c | 1 | 2192.6 | 8364.7 | 8.81 | 19.8 | 5.20 |
+| stream | hiseq_2x250 | 33916091 | lean-align | f465a57 | 1 | 686.3 | 2300.2 | 5.88 | 88.7 | 26.3 |
+| stream | hiseq_2x250 | 33916091 | minibwa | c07de5c | 1 | 3494.7 | 13383 | 8.61 | 17.3 | 4.53 |
+
+# Streamed runs, whole lanes and accuracy
 
 ## Large streamed runs (from the network, no disk)
 
@@ -44,6 +80,60 @@ The slow-pair fix cuts the map time by 48 percent on the HiSeq lane and by 42 to
 | lane | novaseq_2x151 | 40000000 | lean-align-before | 64ae73f | 1330.6 | 1327.4 | 3648.1 | 5.63 | 32.8 | 11.9 | 1 |
 | lane | novaseq_2x151 | 40000000 | lean-align | f465a57 | 759.6 | 756.8 | 2738.2 | 5.65 | 57.5 | 15.9 | 1 |
 | lane | novaseq_2x151 | 40000000 | lean-align | f465a57 | 774.9 | 771.7 | 2798.1 | 5.65 | 56.4 | 15.5 | 1 |
+
+## Real reads, 1M pairs each: lean-align f465a57 against minibwa (Testing/ec2/compare.py)
+
+Mapped and unique pairs (% of 1M pairs), and how often the two tools agree where both give an answer. "Unique" = our XU:Z:unique, minibwa MAPQ 60 on both mates. Same place = same chromosome and strand, overlapping alignment.
+
+| dataset | mapped: lean-align | mapped: minibwa | unique: lean-align | unique: minibwa MAPQ 60 | ours unique and minibwa mapped: same place | ours unique and minibwa MAPQ 60: same place |
+|---|---|---|---|---|---|---|
+| novaseq_2x151 | 93.71 | 99.13 | 81.93 | 84.97 | 819,216 of 819,291 | 781,588 of 781,588 |
+| hiseq_2x250 | 93.95 | 99.43 | 84.86 | 87.48 | 848,466 of 848,638 | 818,320 of 818,322 |
+
+## Real reads, 200k pairs: proper and unique pairs against minibwa (% of all pairs)
+
+The older 200k-pair measurement, on lean-align 027ef1e (the real-read part was not re-run on f465a57). "Unique" is our XU:Z:unique against minibwa MAPQ 60 on both mates.
+
+| dataset | proper: lean-align | proper: minibwa | unique: lean-align | unique: minibwa |
+|---|---|---|---|---|
+| novaseq_200k | 93.8 | 97.62 | 82.42 | 84.89 |
+| hiseq_200k | 93.61 | 98.06 | 84.55 | 87.41 |
+
+## Simulated reads: pairs placed correctly (%), by our class
+
+Re-measured on f465a57; every value is identical to the 027ef1e measurement. Pairs we call unique are as correct as minibwa. Pairs we leave unknown or not proper are not placed, so they count as wrong for us.
+
+| simulation | our class | pairs | lean-align | minibwa |
+|---|---|---|---|---|
+| mason | all pairs | 100000 | 93.91 | 98.03 |
+| mason | unique | 86604 | 100.0 | 99.99 |
+| mason | unknown | 10017 | 72.94 | 84.66 |
+| mason | not proper | 3379 | 0 | 87.54 |
+| low | all pairs | 100000 | 96.6 | 98.26 |
+| low | unique | 94164 | 99.99 | 99.99 |
+| low | unknown | 5348 | 45.62 | 69.67 |
+| low | not proper | 488 | 0 | 76.43 |
+| high | all pairs | 100000 | 80.87 | 97.98 |
+| high | unique | 59278 | 99.94 | 99.97 |
+| high | unknown | 23814 | 90.82 | 95.19 |
+| high | not proper | 16908 | 0 | 94.96 |
+
+# How it got faster (before and after)
+
+## Speed at 4 threads, 5M pairs from gz files
+
+Two methods. gz5m (before and after bars): map time, index load excluded. gz5m_script (lean-align against minibwa): the same script, Testing/ec2/run.sh, for both tools; wall includes index load and CPU includes both gzips. Do not mix the two methods in one bar chart.
+
+| experiment | data | pairs | tool | commit | wall s | map s | CPU s | peak GB | Gbp/hr | Gbp/core-hr | runs |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| gz5m | hiseq_2x250 | 5000000 | lean-align | f465a57 | 83.4 | 81.1 | 286.2 | n/m | 110.2 | 31.23 | 3 |
+| gz5m | novaseq_2x151 | 5000000 | lean-align | f465a57 | 78.7 | 76.7 | 284.4 | n/m | 70.9 | 19.12 | 3 |
+| gz5m | hiseq_2x250 | 5000000 | lean-align-before | e96862d | 110.3 | 105.8 | 382.5 | n/m | 84.5 | 23.36 | 3 |
+| gz5m | novaseq_2x151 | 5000000 | lean-align-before | e96862d | 94.0 | 91.8 | 345.0 | n/m | 59.2 | 15.76 | 3 |
+| gz5m_script | hiseq_2x250 | 5000000 | lean-align | f465a57 | 83.2 | n/m | 315.3 | 5.86 | 107.35 | 28.34 | 3 |
+| gz5m_script | hiseq_2x250 | 5000000 | minibwa | c07de5c | 461.7 | n/m | 1806.1 | 8.51 | 19.36 | 4.95 | 3 |
+| gz5m_script | novaseq_2x151 | 5000000 | lean-align | f465a57 | 83.6 | n/m | 309.7 | 5.71 | 65.02 | 17.55 | 3 |
+| gz5m_script | novaseq_2x151 | 5000000 | minibwa | c07de5c | 264.7 | n/m | 1010.7 | 8.80 | 20.53 | 5.38 | 3 |
 
 ## Slow jobs
 
@@ -87,40 +177,3 @@ The slowest single pairs, before and after. The SAM lines are identical in all t
 | 27886551 | 28861 | 280 | 32/32 | poly-run |
 
 (12 of 36 rows shown; all rows in data/slow_pairs_stream.tsv.)
-
-## Real reads, 1M pairs each: lean-align f465a57 against minibwa (Testing/ec2/compare.py)
-
-Mapped and unique pairs (% of 1M pairs), and how often the two tools agree where both give an answer. "Unique" = our XU:Z:unique, minibwa MAPQ 60 on both mates. Same place = same chromosome and strand, overlapping alignment.
-
-| dataset | mapped: lean-align | mapped: minibwa | unique: lean-align | unique: minibwa MAPQ 60 | ours unique and minibwa mapped: same place | ours unique and minibwa MAPQ 60: same place |
-|---|---|---|---|---|---|---|
-| novaseq_2x151 | 93.71 | 99.13 | 81.93 | 84.97 | 819,216 of 819,291 | 781,588 of 781,588 |
-| hiseq_2x250 | 93.95 | 99.43 | 84.86 | 87.48 | 848,466 of 848,638 | 818,320 of 818,322 |
-
-## Real reads, 200k pairs: proper and unique pairs against minibwa (% of all pairs)
-
-The older 200k-pair measurement, on lean-align 027ef1e (the real-read part was not re-run on f465a57). "Unique" is our XU:Z:unique against minibwa MAPQ 60 on both mates.
-
-| dataset | proper: lean-align | proper: minibwa | unique: lean-align | unique: minibwa |
-|---|---|---|---|---|
-| novaseq_200k | 93.8 | 97.62 | 82.42 | 84.89 |
-| hiseq_200k | 93.61 | 98.06 | 84.55 | 87.41 |
-
-## Simulated reads: pairs placed correctly (%), by our class
-
-Re-measured on f465a57; every value is identical to the 027ef1e measurement. Pairs we call unique are as correct as minibwa. Pairs we leave unknown or not proper are not placed, so they count as wrong for us.
-
-| simulation | our class | pairs | lean-align | minibwa |
-|---|---|---|---|---|
-| mason | all pairs | 100000 | 93.91 | 98.03 |
-| mason | unique | 86604 | 100.0 | 99.99 |
-| mason | unknown | 10017 | 72.94 | 84.66 |
-| mason | not proper | 3379 | 0 | 87.54 |
-| low | all pairs | 100000 | 96.6 | 98.26 |
-| low | unique | 94164 | 99.99 | 99.99 |
-| low | unknown | 5348 | 45.62 | 69.67 |
-| low | not proper | 488 | 0 | 76.43 |
-| high | all pairs | 100000 | 80.87 | 97.98 |
-| high | unique | 59278 | 99.94 | 99.97 |
-| high | unknown | 23814 | 90.82 | 95.19 |
-| high | not proper | 16908 | 0 | 94.96 |
