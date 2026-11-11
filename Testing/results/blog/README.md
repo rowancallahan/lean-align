@@ -13,7 +13,7 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
 
 | file | content |
 |---|---|
-| `data/reps.tsv` | one row per single run of lean-align f465a57 and minibwa (gz 5M and streamed): the data of `figs/vs_minibwa*` |
+| `data/reps.tsv` | one row per single run of lean-align f465a57 and minibwa: `gz5m` (5M pairs from gz), `stream` (NovaSeq first 10M pairs, same pipeline for both tools), `stream_single` (older single streamed runs). The data of `figs/vs_minibwa*` |
 | `data/runs.tsv` | every timing run, with medians where there are repeats: 5M gz runs, streamed runs, whole lanes, before and after builds |
 | `data/slow_jobs.tsv` | jobs longer than 5 s and idle cores, before and after |
 | `data/slow_pairs.tsv` | the slowest single pairs, mapped alone on 1 core |
@@ -57,13 +57,18 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   `Testing/results/ec2_check/README.md`). The script version was the one before `fix/ec2-scripts` (ccc7cd9): lean-align writes to a
   pipe drained by `cat`, minibwa to /dev/null. Wall includes the index load. CPU is the aligner plus both `gzip -dc`. Peak memory =
   `ru_maxrss` of the aligner. Reads: the first 5M pairs of each file (URLs under "How it got faster", (d)), recompressed to gz.
-- Column "streamed" (`stream`): runs from the network without a file on disk, values copied from `runs.tsv`. NovaSeq: lean-align at
-  10M, 20M and 40M pairs, minibwa at 20M and 40M (resuming downloader). HiSeq: the whole GIAB lane (33,916,091 pairs) for both tools.
-  Different boxes were used (`source` column): streaming box for NovaSeq, trace box for lean-align on the HiSeq lane, trim box for
-  minibwa on the HiSeq lane. The streamed bar is the median over the runs of all sizes of that data set. The minibwa NovaSeq 10M run
-  (742.8 s) is left out because its wall includes a cold index load of 158.9 s. The lane rates of lean-align use map seconds, the NovaSeq
-  stream rates use wall (about 0.4 percent apart). CPU definitions differ by source (see the `runs.tsv` header).
-- A bar with n = 1 shows no error bar. With so few streamed runs, treat the streamed whiskers as run-size spread, not as noise.
+- Column "streamed" (experiment `stream` in `data/reps.tsv`, 3 runs per tool): NovaSeq, the first 10M pairs (3.020 Gbp) streamed from the
+  network, 4 threads, made by S-P on the streaming box (branch `bench/stream-results`, folders `Testing/results/stream/runs/n10000000_{ours,minibwa}_rep{1,2,3}`).
+  Same pipeline for both tools: resuming downloader (`retrycat.py`), `gunzip`, output to `cat > /dev/null` (lean-align through its `OUT.tmp`
+  FIFO), own index file cat-ed into the page cache before each run, runs alternating ours / minibwa. Wall includes the index load;
+  CPU is the aligner only (not the gunzip and downloader), so Gbp/core-hr of this column is not the same measure as in the gz column.
+  Script `wgrun3.py` / `chain7.sh` (same branch). `reps.tsv` rows are copied from S-P's numbers; I checked the first lean-align run
+  against its `result.json` (wall 178.55 s, aligner CPU 621.2 s, peak 5.78 GB).
+- HiSeq in the streamed column: no repetitions yet. The bars show the older single runs of the whole GIAB lane (33,916,091 pairs; experiment
+  `stream_single`: lean-align on the trace box, minibwa on the trim box, resuming downloader, md5 sink). The script plots the experiment `stream` for a
+  data set when it has rows of it and `stream_single` otherwise, so HiSeq repetitions appended as `stream` rows replace the single runs.
+  The older NovaSeq single runs (10M, 20M, 40M; other sinks and downloaders) stay in `reps.tsv` as `stream_single` and are not in this figure.
+- A bar with n = 1 shows no error bar.
 
 ### (b) Peak memory (`figs/b_memory`)
 - Left: the `gz5m_script` rows (5M pairs, same script for both tools, peak = `ru_maxrss` of the aligner).
@@ -81,6 +86,9 @@ figures in `figs/` (`.svg` and `.png`), tables in `RESULTS.md`. Rerun with `pyth
   20M and 40M with a resuming downloader (`scripts/stream/retrycat.py`), because plain `curl` dropped the stream under
   backpressure. Plain-curl attempts at 20M (14.26M pairs) and one earlier try ended short and are not used.
 - "Before" is a `64ae73f`-era build (trace commit `f973b77`); the 10M and 20M rows are single runs.
+- These are the older single streamed runs (`stream_single` in `reps.tsv`), kept for this run-size figure. Their pipelines differ from the repetition runs
+  in `figs/vs_minibwa` (md5 or /dev/null sinks, plain `curl` or a resuming downloader, different boxes), so the 10M values here (lean-align 55.4 Gbp/hr) are not the
+  same measurement as the 10M repetition runs (60.9 to 63.5 Gbp/hr).
 - Right panel: whole lanes. HiSeq lane (33,916,091 pairs) and NovaSeq 40M pairs, before / after on my box (rows `lane`).
   minibwa on the HiSeq lane is the `trim box` row (resuming downloader, md5 sink, all on cores 0-3). minibwa on NovaSeq 40M is
   the 40M `stream` row (not a lane run). Rates use `map_s` where it exists and the wall time otherwise, so the minibwa NovaSeq
@@ -176,7 +184,9 @@ The figures that compare lean-align builds with each other: (a) 5M pairs, (d) sl
 
 ## What changed since the first version of this folder
 
-- Newest: the headline figure `figs/vs_minibwa` and `figs/vs_minibwa_memory` (lean-align against minibwa only, every single run,
+- Newest (results-4): the streamed NovaSeq bars of `figs/vs_minibwa` and `figs/vs_minibwa_memory` use only the same-method repetition runs (`stream`, first 10M pairs, 3 per tool);
+  the older single streamed runs moved to `stream_single`. HiSeq still shows the single lane runs.
+- Before that: the headline figure `figs/vs_minibwa` and `figs/vs_minibwa_memory` (lean-align against minibwa only, every single run,
   from the new `data/reps.tsv`) is the first figure in this README and in RESULTS.md. The before/after figures (a, d, e, e2) moved
   under "How it got faster". The "Box" line for the gz5m_script rows is the ec2_check box (Xeon 2.3 GHz), see above.
 
@@ -195,7 +205,7 @@ The figures that compare lean-align builds with each other: (a) 5M pairs, (d) sl
 ## Not measured, or older than f465a57
 
 - lean-align at 16 and 32 threads; any run with more than 4 cores. The 4-thread numbers are not comparable to the paper's 32-thread bars.
-- Streamed bars of `figs/vs_minibwa` have few runs (NovaSeq lean-align 3, minibwa 2; HiSeq lane 1 each); more streamed repeats are being run and will be appended to `data/reps.tsv`.
+- Streamed bars of `figs/vs_minibwa`: NovaSeq has 3 runs per tool (first 10M pairs); HiSeq has 1 run per tool (older single lane runs) until the HiSeq 10M repetitions are appended to `data/reps.tsv`. Streamed runs of other sizes and the lanes have no repetitions.
 - minibwa on NovaSeq has no lane run of its own: the 40M row of the streamed runs stands in (different box and downloader).
 - The streamed "before" rows and the 5M "before" rows use `64ae73f`- and `e96862d`-era builds.
 - Real-read accuracy on f465a57 is 1M pairs per data set; the 200k real-read numbers are from 027ef1e.

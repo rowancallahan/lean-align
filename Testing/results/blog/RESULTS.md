@@ -12,7 +12,7 @@ Bar = median, whisker = min to max, dots = single runs, 4 threads, n = number of
 
 ## lean-align against minibwa: medians
 
-The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to max in brackets; n = number of runs. Four threads on four cores, lean-align f465a57 against minibwa c07de5c. gz5m = 5M pairs from gz files; stream = streamed from the network (run sizes in the next table).
+The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to max in brackets; n = number of runs. Four threads on four cores, lean-align f465a57 against minibwa c07de5c. gz5m = 5M pairs from gz files; stream = the first 10M NovaSeq pairs streamed from the network, same pipeline for both tools, 3 runs each; stream_single = older single streamed runs (other sizes, and the HiSeq lane, which figs/vs_minibwa plots for HiSeq until HiSeq repetitions exist).
 
 | experiment | data | tool | n | Gbp/hr | Gbp/core-hr | peak GB |
 |---|---|---|---|---|---|---|
@@ -20,14 +20,16 @@ The headline comparison (figs/vs_minibwa.svg). Median of the runs, with min to m
 | gz5m | hiseq_2x250 | minibwa | 3 | 19.4 (19.3 to 19.7) | 5.0 (5.0 to 5.0) | 8.5 (8.5 to 8.5) |
 | gz5m | novaseq_2x151 | lean-align | 3 | 65.0 (64.0 to 70.0) | 17.6 (17.4 to 18.0) | 5.7 (5.7 to 5.7) |
 | gz5m | novaseq_2x151 | minibwa | 3 | 20.5 (20.4 to 21.0) | 5.4 (5.4 to 5.4) | 8.8 (8.8 to 8.8) |
-| stream | hiseq_2x250 | lean-align | 1 | 88.7 | 26.3 | 5.9 |
-| stream | hiseq_2x250 | minibwa | 1 | 17.3 | 4.5 | 8.6 |
-| stream | novaseq_2x151 | lean-align | 3 | 55.9 (55.4 to 55.9) | 16.1 (16.1 to 16.1) | 5.7 (5.7 to 5.7) |
-| stream | novaseq_2x151 | minibwa | 2 | 19.9 (19.8 to 20.0) | 5.2 (5.2 to 5.3) | 8.8 (8.8 to 8.8) |
+| stream | novaseq_2x151 | lean-align | 3 | 62.6 (60.9 to 63.5) | 17.8 (17.5 to 18.1) | 5.8 (5.8 to 5.8) |
+| stream | novaseq_2x151 | minibwa | 3 | 22.0 (21.8 to 22.3) | 5.8 (5.7 to 5.9) | 8.8 (8.8 to 8.8) |
+| stream_single | hiseq_2x250 | lean-align | 1 | 88.7 | 26.3 | 5.9 |
+| stream_single | hiseq_2x250 | minibwa | 1 | 17.3 | 4.5 | 8.6 |
+| stream_single | novaseq_2x151 | lean-align | 3 | 55.9 (55.4 to 55.9) | 16.1 (16.1 to 16.1) | 5.7 (5.7 to 5.7) |
+| stream_single | novaseq_2x151 | minibwa | 2 | 19.9 (19.8 to 20.0) | 5.2 (5.2 to 5.3) | 8.8 (8.8 to 8.8) |
 
 ## lean-align against minibwa: every single run
 
-One row per run, as in data/reps.tsv. The minibwa NovaSeq 10M streamed run is not here because its wall time includes a cold index load of 158.9 s (it is in the streamed table below).
+One row per run, as in data/reps.tsv. The older minibwa NovaSeq 10M single run is not here because its wall time includes a cold index load of 158.9 s (it is in the streamed table below). CPU of the stream rows is the aligner only; for gz5m it includes both gzips.
 
 | experiment | data | pairs | tool | commit | run | wall s | CPU s | peak GB | Gbp/hr | Gbp/core-hr |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -43,13 +45,19 @@ One row per run, as in data/reps.tsv. The minibwa NovaSeq 10M streamed run is no
 | gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 1 | 454.0 | 1784.6 | 8.51 | 19.69 | 5.01 |
 | gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 2 | 462.7 | 1806.1 | 8.51 | 19.31 | 4.95 |
 | gz5m | hiseq_2x250 | 5000000 | minibwa | c07de5c | 3 | 461.7 | 1806.6 | 8.52 | 19.36 | 4.95 |
-| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 196.1 | 676.1 | 5.73 | 55.4 | 16.08 |
-| stream | novaseq_2x151 | 20000000 | lean-align | f465a57 | 1 | 389.0 | 1350.0 | 5.74 | 55.9 | 16.11 |
-| stream | novaseq_2x151 | 40000000 | lean-align | f465a57 | 1 | 778.5 | 2709.3 | 5.74 | 55.9 | 16.05 |
-| stream | novaseq_2x151 | 20000000 | minibwa | c07de5c | 1 | 1086.7 | 4135.9 | 8.81 | 20.0 | 5.26 |
-| stream | novaseq_2x151 | 40000000 | minibwa | c07de5c | 1 | 2192.6 | 8364.7 | 8.81 | 19.8 | 5.20 |
-| stream | hiseq_2x250 | 33916091 | lean-align | f465a57 | 1 | 686.3 | 2300.2 | 5.88 | 88.7 | 26.3 |
-| stream | hiseq_2x250 | 33916091 | minibwa | c07de5c | 1 | 3494.7 | 13383 | 8.61 | 17.3 | 4.53 |
+| stream_single | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 196.1 | 676.1 | 5.73 | 55.4 | 16.08 |
+| stream_single | novaseq_2x151 | 20000000 | lean-align | f465a57 | 1 | 389.0 | 1350.0 | 5.74 | 55.9 | 16.11 |
+| stream_single | novaseq_2x151 | 40000000 | lean-align | f465a57 | 1 | 778.5 | 2709.3 | 5.74 | 55.9 | 16.05 |
+| stream_single | novaseq_2x151 | 20000000 | minibwa | c07de5c | 1 | 1086.7 | 4135.9 | 8.81 | 20.0 | 5.26 |
+| stream_single | novaseq_2x151 | 40000000 | minibwa | c07de5c | 1 | 2192.6 | 8364.7 | 8.81 | 19.8 | 5.20 |
+| stream_single | hiseq_2x250 | 33916091 | lean-align | f465a57 | 1 | 686.3 | 2300.2 | 5.88 | 88.7 | 26.3 |
+| stream_single | hiseq_2x250 | 33916091 | minibwa | c07de5c | 1 | 3494.7 | 13383 | 8.61 | 17.3 | 4.53 |
+| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 1 | 178.6 | 621.2 | 5.78 | 60.9 | 17.50 |
+| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 2 | 171.2 | 600.0 | 5.75 | 63.5 | 18.12 |
+| stream | novaseq_2x151 | 10000000 | lean-align | f465a57 | 3 | 173.6 | 609.8 | 5.80 | 62.6 | 17.83 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 1 | 487.7 | 1854.6 | 8.81 | 22.3 | 5.86 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 2 | 494.2 | 1881.2 | 8.80 | 22.0 | 5.78 |
+| stream | novaseq_2x151 | 10000000 | minibwa | c07de5c | 3 | 498.9 | 1894.8 | 8.80 | 21.8 | 5.74 |
 
 # Streamed runs, whole lanes and accuracy
 
