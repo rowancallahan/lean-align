@@ -7,8 +7,6 @@ gz5m	hiseq_2x250	5000000	lean-align	f465a57	83.4	81.1	286.2	NA	110.2	31.23	3	tim
 gz5m	novaseq_2x151	5000000	lean-align	f465a57	78.7	76.7	284.4	NA	70.9	19.12	3	timing box, gz FIFOs
 gz5m	hiseq_2x250	5000000	lean-align-before	e96862d	110.3	105.8	382.5	NA	84.5	23.36	3	timing box, gz FIFOs
 gz5m	novaseq_2x151	5000000	lean-align-before	e96862d	94.0	91.8	345.0	NA	59.2	15.76	3	timing box, gz FIFOs
-gz5m	hiseq_2x250	5000000	minibwa	c07de5c	474.0	NA	NA	NA	NA	NA	3	timing box, earlier session; TO RE-MEASURE
-gz5m	novaseq_2x151	5000000	minibwa	c07de5c	255.6	NA	NA	NA	NA	NA	3	timing box, earlier session; TO RE-MEASURE
 stream	novaseq_2x151	10000000	lean-align-before	f973b77	303.5	NA	832.8	5.74	35.8	13.06	1	streaming box, curl|gunzip, cat sink
 stream	novaseq_2x151	20000000	lean-align-before	f973b77	717.7	NA	1987.2	5.74	30.3	10.94	1	streaming box, curl|gunzip, cat sink
 stream	novaseq_2x151	10000000	lean-align	f465a57	196.1	NA	676.1	5.73	55.4	16.08	1	streaming box, curl|gunzip, md5 sink
