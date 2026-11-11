@@ -192,6 +192,52 @@ def pushNat (b : ByteArray) (n : Nat) : ByteArray :=
 termination_by n
 decreasing_by omega
 
+-- the decimal digits of `n` in `UInt64` arithmetic (`pushNatU_eq`)
+def pushNatU (b : ByteArray) (n : UInt64) : ByteArray :=
+  if h : n < 10 then b.push (48 + n.toUInt8) else (pushNatU b (n / 10)).push (48 + (n % 10).toUInt8)
+termination_by n.toNat
+decreasing_by
+  have h1 : ¬ n < 10 := h
+  have h2 : 10 ≤ n.toNat := by simpa [UInt64.lt_iff_toNat_lt] using h1
+  rw [UInt64.toNat_div]; show n.toNat / (10 : UInt64).toNat < n.toNat
+  have : (10 : UInt64).toNat = 10 := rfl
+  rw [this]; omega
+
+theorem pushNatU_eq (b : ByteArray) : ∀ (k : Nat) (m : UInt64), m.toNat = k → pushNatU b m = pushNat b k := by
+  intro k
+  induction k using Nat.strongRecOn with
+  | _ k ih =>
+    intro m hm
+    rw [pushNatU, pushNat]
+    by_cases h : m < 10
+    · have hk : k < 10 := by
+        have := UInt64.lt_iff_toNat_lt.mp h; simpa [hm] using this
+      rw [dif_pos h, dif_pos hk]
+      congr 2
+      rw [← hm]; rfl
+    · have hk : ¬ k < 10 := by
+        intro hk; apply h; rw [UInt64.lt_iff_toNat_lt]; simpa [hm] using hk
+      rw [dif_neg h, dif_neg hk]
+      have hd : (m / 10).toNat = k / 10 := by rw [UInt64.toNat_div, hm]; rfl
+      have hmod : (m % 10).toNat = k % 10 := by rw [UInt64.toNat_mod, hm]; rfl
+      rw [ih (k / 10) (by omega) (m / 10) hd]
+      congr 2
+      apply UInt8.toNat_inj.mp
+      rw [UInt64.toNat_toUInt8, hmod]
+      simp [Nat.toUInt8]
+
+/-- `pushNat` for the compiled code: UInt64 digit arithmetic (no `Nat` division and compare per digit). -/
+@[inline] def pushNatF (b : ByteArray) (n : Nat) : ByteArray :=
+  if n < 18446744073709551616 then pushNatU b n.toUInt64 else pushNat b n
+
+@[csimp] theorem pushNat_eqF : @pushNat = @pushNatF := by
+  funext b n
+  unfold pushNatF
+  split
+  · rename_i h
+    exact (pushNatU_eq b n n.toUInt64 (by rw [Nat.toUInt64, UInt64.toNat_ofNat', Nat.mod_eq_of_lt h])).symm
+  · rfl
+
 -- `toString i` appended to `b`
 def pushInt (b : ByteArray) (i : Int) : ByteArray :=
   if i < 0 then pushNat (b.push 45) i.natAbs else pushNat b i.toNat
