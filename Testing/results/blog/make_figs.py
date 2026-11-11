@@ -75,6 +75,7 @@ def vs_fig(rows, name, h):
     fig.text(.5, .008, foot(), ha='center', va='bottom', fontsize=7, color='#444'); fig.tight_layout(rect=(0, .14, 1, 1)); [fig.savefig(f'{O}/{name}.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 vs_fig([('Gbp_hr', 'speed (Gbp/hour)'), ('Gbp_core_hr', 'Gbp per core-hour')], 'vs_minibwa', 7.4)
 vs_fig([('peak_GB', 'peak memory (GB)')], 'vs_minibwa_memory', 4.2)
+AB_PENDING = True   # HiSeq streamed: a clean alternating A/B is running; set False when its result replaces the note
 # this round: lean-align new build against the previous build, same session (wall and CPU from reps.tsv, instructions from this_round.tsv)
 TR = tsv('this_round')
 def med(exp, ds, col): return (lambda v: st.median(v) if v else None)(runs_of(exp, ds, 'lean-align', col))
@@ -98,9 +99,10 @@ if PN:
             if v is None: continue
             x = i + (j - (len(PN) - 1) / 2) * w
             ax.bar(x, v, w * .92, color=C['lean-align'] if j == 0 else C['lean-align-before'], label=DS[d] if d not in done else None); done.add(d)
-            ax.text(x, v - 0.5, f'{v:.1f}%', ha='center', va='top', fontsize=8)
+            ax.text(x, v + 0.4 if v > 0 else v - 0.5, f'{v:+.1f}%', ha='center', va='bottom' if v > 0 else 'top', fontsize=8)
+            if lab == 'wall time, streamed' and abs(v) < 3: ax.text(x, v + 1.6, 'no gain separable from noise' + ('\n(A/B pending)' if AB_PENDING else ''), ha='center', va='bottom', fontsize=6.5, color='#444')
     ax.set_xticks(range(len(labs))); ax.set_xticklabels(labs); ax.axhline(0, color='#222', lw=.8); ax.set_ylabel(f'change, {newb} vs {prevb} (%)')
-    ax.set_ylim(min(v for _, vals in PN for _, v in vals) - 4, 2); ax.legend(frameon=False, fontsize=8, loc='upper right')
+    ax.set_ylim(min(v for _, vals in PN for _, v in vals) - 4, max(2, max(v for _, vals in PN for _, v in vals) + 5)); ax.legend(frameon=False, fontsize=8, loc='upper right')
     fig.text(.5, .01, 'wall, CPU: medians of 3 alternating runs, same session, 5M gz pairs, 4 threads;  streamed wall: means, first 10M pairs, one container;  instructions: callgrind, 50k pairs, 1 thread', ha='center', fontsize=6.5, color='#444')
     fig.tight_layout(rect=(0, .04, 1, 1)); [fig.savefig(f'{O}/this_round.{e}', dpi=150) for e in ('svg', 'png')]; plt.close(fig)
 # (a) speed at 4 threads, 5M pairs, gz. Two methods, two columns: A = before/after on the same method (gz5m: map time, index load excluded);
