@@ -46,6 +46,32 @@ def properPairU (sl lo hi : Nat) (a b : Placement) : Bool :=
     decide ((fwdRev a b).1.1.start + (fwdRev a b).1.1.len ≤
       (fwdRev a b).2.1.start + (fwdRev a b).2.1.len + sl)
 
+/-- `fragLen` with no tuple (compiled code runs this through `fragLen_eqF`; `fwdRev` allocated a pair per call). -/
+def fragLenF (a b : Placement) : Nat :=
+  if a.2 = Strand.fwd then b.1.start + b.1.len - a.1.start else a.1.start + a.1.len - b.1.start
+
+@[csimp] theorem fragLen_eqF : @fragLen = @fragLenF := by
+  funext a b
+  unfold fragLen fragLenF fwdRev
+  split <;> rfl
+
+/-- `properPairU` with no tuple: `properPair`'s test and the dovetail tests, once with `a` forward, once with `b`
+(same `&&` nesting as `properPair lo hi a b && _ && _`, so the proof is `rfl`). -/
+def properPairUF (sl lo hi : Nat) (a b : Placement) : Bool :=
+  let t := fun (f r : Placement) =>
+    decide (f.1.chr = r.1.chr) && decide (f.2 = Strand.fwd) && decide (r.2 = Strand.rev) &&
+      decide (f.1.start ≤ r.1.start + r.1.len) &&
+      decide (lo ≤ r.1.start + r.1.len - f.1.start) && decide (r.1.start + r.1.len - f.1.start ≤ hi) &&
+      decide (f.1.start ≤ r.1.start + sl) &&
+      decide (f.1.start + f.1.len ≤ r.1.start + r.1.len + sl)
+  if a.2 = Strand.fwd then t a b else t b a
+
+@[csimp] theorem properPairU_eqF : @properPairU = @properPairUF := by
+  funext sl lo hi a b
+  by_cases h : a.2 = Strand.fwd
+  · simp only [properPairU, properPairUF, properPair, fwdRev, h, ite_true]
+  · simp only [properPairU, properPairUF, properPair, fwdRev, h, ite_false]
+
 /-- Pair score: summed mate scores minus the distance cost of the fragment. -/
 def pairScoreD (dc : Nat → Nat) (p : PairHit) : Int :=
   p.1.2 + p.2.2 - (dc (fragLen p.1.1 p.2.1) : Int)
