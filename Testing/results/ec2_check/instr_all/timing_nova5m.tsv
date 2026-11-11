@@ -1,0 +1,10 @@
+tool	build	threads	set	wall_s	cpu_s	peak_GB	Gbp	Gbp/hr	Gbp/core-hr
+ours	head-00c24c5	ours	4	nova5m	94.5	350.5	5.71	1.510	57.55	15.51
+ours	instr-all-cc26db2	ours	4	nova5m	85.5	321.8	5.70	1.510	63.55	16.90
+minibwa	c07de5c	minibwa	4	nova5m	275.3	1062.1	8.80	1.510	19.75	5.12
+ours	instr-all-cc26db2	ours	4	nova5m	85.4	316.9	5.71	1.510	63.67	17.15
+minibwa	c07de5c	minibwa	4	nova5m	276.8	1073.8	8.79	1.510	19.64	5.06
+ours	head-00c24c5	ours	4	nova5m	94.5	351.3	5.70	1.510	57.53	15.48
+minibwa	c07de5c	minibwa	4	nova5m	277.8	1069.0	8.82	1.510	19.57	5.09
+ours	head-00c24c5	ours	4	nova5m	94.7	353.0	5.68	1.510	57.41	15.40
+ours	instr-all-cc26db2	ours	4	nova5m	86.9	331.6	5.69	1.510	62.55	16.39

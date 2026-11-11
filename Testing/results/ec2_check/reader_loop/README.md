@@ -1,0 +1,2 @@
+Reader-loop experiments (festive head 00c24c5, fix/cut-tasks merged = 694e69d, bench.py PIPE_BYTES = fix/ec2-pipes be60ea4): run20 = head with 64 KiB vs 1 MiB pipes (+ minibwa), run21 = CI of the merged cut-tasks, SAM md5, then head/cut x pipes timings.
+LOOPSTAT lines: per-thread CPU (usr/sys), read syscalls (INPUT-ONLY = after the index file was read), R-state fraction. Medians and conclusions were sent in the session report.
