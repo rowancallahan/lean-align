@@ -16,3 +16,6 @@ index size (0.1 s resolution), minibwa = its own "index loaded" line. HiSeq reps
 
 HiSeq reps (dirs h10000000_*): first 10M pairs of the GIAB HG002 D1_S1_L001 2x250 files (R1 2,482,641,753 bp, R2 2,481,156,793 bp, counted by awk on the stream). Order was ours, minibwa, ours, then the container restarted
 (runs lost: minibwa rep 2 in progress), then minibwa rep 2, ours rep 3, minibwa rep 3 (chain9.sh). So reps 2 (minibwa) and 3 (both) ran on the restarted container; their CPU/wall are higher (see result.json).
+
+## fix/instr-all series (dirs n10000000_*_s_*, h10000000_*_s_*; scripts chain10.sh, wgrun3.py, wgrun3h.py)
+Per data set, one container, in this order: ours f465a57 (_s_ref1), ours cc26db2 (_s_new1), minibwa c07de5c (_s_mb1), new2, mb2, new3, mb3, ours f465a57 (_s_ref2). Pipeline as in the 3+3 reps above.
