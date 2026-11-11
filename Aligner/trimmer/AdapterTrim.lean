@@ -760,6 +760,26 @@ def tsMsk : UInt64 := ((1 : UInt64) <<< truSeq.size.toUInt64) - 1
 def tsSh : UInt64 := (truSeq.size - 1).toUInt64
 def tsM : USize := truSeq.size.toUSize
 
+/-- The TruSeq letter masks `bOf 1413 4112 2658 8` without compare-and-branch per letter: `tsShTab` gives each byte the
+shift of its mask in `tsPack` (A 0, C 13, G 26, T 39; any other byte 52, a field of zeros). `tsB_eq`. -/
+def tsShTab : ByteArray := ⟨Array.ofFn fun (i : Fin 256) =>
+  if i.val == 65 then 0 else if i.val == 67 then 13 else if i.val == 71 then 26 else if i.val == 84 then 39 else 52⟩
+def tsPack : UInt64 := (1413 : UInt64) ||| ((4112 : UInt64) <<< 13) ||| ((2658 : UInt64) <<< 26) ||| ((8 : UInt64) <<< 39)
+
+theorem tsShTab_size : tsShTab.size = 256 := by simp [tsShTab, ByteArray.size]
+
+@[inline] def tsB (c : UInt8) : UInt64 :=
+  (tsPack >>> (tsShTab.uget c.toUSize (by
+    have h1 : c.toUSize.toNat = c.toNat := by simp
+    rw [h1, tsShTab_size]; exact c.toNat_lt)).toUInt64) &&& 8191
+
+theorem tsB_all : ∀ n, n < 256 → tsB (UInt8.ofNat n) = bOf 1413 4112 2658 8 (UInt8.ofNat n) := by
+  decide +kernel
+
+theorem tsB_eq (c : UInt8) : tsB c = bOf 1413 4112 2658 8 c := by
+  have := tsB_all c.toNat c.toNat_lt
+  rwa [UInt8.ofNat_toNat] at this
+
 /-- `scanP` with `saLoopTS`'s end test inlined (no closure): `scanTS_eq`. -/
 def scanTS (read : ByteArray) (e0 : UInt64) : (k i : Nat) → Nat
   | 0, i => i
@@ -773,7 +793,7 @@ theorem scanTS_eq (read : ByteArray) (e0 : UInt64) : ∀ k i,
 /-- `saLoopV` for TruSeq with its constants as literals (`saLoopTS_eq`; the masks `tsConst`). -/
 def saLoopTS (read : ByteArray) (nU p : USize) (e0 e1 : UInt64) : Nat :=
   if h : p < nU then
-    let b := bOf 1413 4112 2658 8 (ReadTrim.rtGet read p)
+    let b := tsB (ReadTrim.rtGet read p)
     let e0' := ((e0 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& b
     let e1' := (((e1 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& b) ||| (((e0 <<< (1 : UInt64)) ||| (1 : UInt64)) &&& 8191)
     if 13 ≤ p + 1 && (((e1' >>> (12 : UInt64)) &&& (1 : UInt64)) != 0) then (p + 1 - 13).toNat
@@ -807,7 +827,7 @@ theorem saLoopTS_eq (read : ByteArray) (nU : USize) (hnU : nU.toNat = read.size)
       (by rw [ReadTrim.rt_add _ _ (by rw [ReadTrim.rt_one]; omega), ReadTrim.rt_one]; omega)
     rw [saLoopTS, saLoopV, dif_pos (show p < nU from show p.toNat < nU.toNat by omega),
       dif_pos (show p < nU from show p.toNat < nU.toNat by omega)]
-    simp only [ih, hA, hC, hG, hT, hM, hS, hm, Bool.and_true, if_true]
+    simp only [ih, tsB_eq, hA, hC, hG, hT, hM, hS, hm, Bool.and_true, if_true]
 
 /-- `cutPos truSeq 6 1` with the precomputed masks (`cutPosTS_eq`). -/
 @[inline] def cutPosTS (read : ByteArray) : Nat :=
