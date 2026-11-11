@@ -44,6 +44,14 @@ Knobs: `PAIRS=100000000 bash ... setup.sh` for more reads (the whole 30x file is
 - The paper's Fig. 3 number to compare with is Gbp/hr at 32 threads: minibwa 135.82, strobealign 149.96,
   on two Xeon Gold 6130 (32 cores, 64 hyper-threads, not pinned), whole 30x file.
 
+## What to expect and what to try at 16-32 threads
+- Leave transparent huge pages at the system default (`madvise` or `always`). With `never`, runs are 12-17% slower.
+- Index build needs about 14 GB of memory (measured peak 13.84 GB); the suggested instances have plenty.
+- Estimated ceilings from 4-core measurements: gunzip of the two files near 400 Gbp/hr; the single reader loop near
+  365-450 Gbp/hr. If wall time at 32 threads falls well short of CPU time / 32, try in this order: `rapidgzip` in
+  `bench.py`, then branch `fix/cut-tasks-2` (proved, same SAM; no gain at 4 cores, slightly slower on HiSeq there).
+- Bigger pipes were tested (branch `fix/ec2-pipes`, `PIPE_BYTES`) and gave no gain.
+
 ## Differences from the paper's setup
 - Different CPU, and pinned to 32 cores instead of 32 threads on a 64-thread machine.
 - 40M pairs by default, not the whole file, so index load is a larger share of the wall time.
