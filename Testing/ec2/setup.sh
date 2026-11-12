@@ -9,7 +9,7 @@ PAIRS=${PAIRS:-40000000}; CMP_PAIRS=1000000
 ZIP=$(command -v pigz || command -v gzip)
 
 # tools: Lean and our aligner, minibwa at the paper's commit, pysam
-if command -v apt-get > /dev/null; then sudo apt-get update && sudo apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv; fi
+if command -v apt-get > /dev/null; then sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv; fi
 [ -x "$HOME/.elan/bin/lake" ] || curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
 export PATH=$HOME/.elan/bin:$PATH
 lake build lean-align
