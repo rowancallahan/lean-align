@@ -10,8 +10,11 @@ set -uo pipefail
 MODE=$1; mkdir -p "$2"; W=$(cd "$2" && pwd); cd "$(dirname "$0")/../.."
 # safety net: power off after MAX_MIN minutes (default 12 h) even if something hangs
 [ "${NO_SHUTDOWN:-0}" = 1 ] || sudo shutdown -h +"${MAX_MIN:-720}"
+# for diagnosis: every 10 s, the 40 threads with the most CPU time so far (cumulative, so two samples give the rate)
+( while true; do date +%s; ps -eLo pid,tid,comm,time,pcpu --sort=-time | head -41; sleep 10; done > "$W/threads.log" ) &
+SAMPLER=$!
 {
-  date; git rev-parse HEAD; nproc; free -g | head -2
+  date; git rev-parse HEAD; nproc; free -g | head -2; lscpu
   bash Testing/ec2/setup.sh "$MODE" "$W"; echo "SETUP EXIT $?"
   bash Testing/ec2/run.sh "$MODE" "$W";   echo "RUN EXIT $?"
   if [ "${VERIFY:-0}" = 1 ]; then
@@ -23,5 +26,6 @@ MODE=$1; mkdir -p "$2"; W=$(cd "$2" && pwd); cd "$(dirname "$0")/../.."
   fi
   date
 } > "$W/all.log" 2>&1
-cd "$W" && tar czf results.tgz all.log $(ls timing.tsv compare.txt minibwa.log verify/*.log verify/*.txt 2>/dev/null)
+kill $SAMPLER
+cd "$W" && tar czf results.tgz all.log threads.log $(ls timing.tsv compare.txt minibwa.log verify/*.log verify/*.txt 2>/dev/null)
 [ "${NO_SHUTDOWN:-0}" = 1 ] || sudo shutdown -h now
