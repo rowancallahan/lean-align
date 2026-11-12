@@ -1,0 +1,18 @@
+# NovaSeq slow pairs (first 10M pairs of HG002 NovaSeq 30x, trace build 4ced426)
+
+slowNN_R1/R2.fq = one pair each (original reads); all_R1/R2.fq = the 10 together. ms = pair time in the stream run (alignPairsP); alone = same pair mapped alone with 4ced426 (ten pairs together: 123 s wall, sum of the ms below is about 120 s).
+
+| file | ms | trimmed len | trimmed seq1 | trimmed seq2 |
+|---|---|---|---|---|
+| slow01 | 27933 | 31/32 | TATATATATATATATATATATATATATATAT | ATATATATATATATATATATATATATATATAT |
+| slow02 | 26054 | 25/25 | GGCTCACGCCTGTAATCCCAGCACT | AGTGCTGGGATTACAGGCGTGAGCC |
+| slow03 | 24575 | 27/27 | AAGTGCTGGGATTACAGGCGTGAGCCA | TGGCTCACGCCTGTAATCCCAGCACTT |
+| slow04 | 15436 | 33/33 | CCCAAAGTGCTGGGATTACAGGCGTGAGCCACC | GGTGGCTCACGCCTGTAATCCCAGCACTTTGGG |
+| slow05 | 9360 | 31/31 | TGCCTCGGCCTCCCAAAGTGCTGGGATTACA | TGTAATCCCAGCACTTTGGGAGGCCGAGGCA |
+| slow06 | 8561 | 31/31 | TCTCCTGCCTCAGCCTCCCAAGTAGCTGGGA | TCCCAGCTACTTGGGAGGCTGAGGCAGGAGA |
+| slow07 | 3260 | 42/38 | TTTCTTTCTTTCTTTCTTTCTTTCTTTCTTTCTTTCTTTCTT | AAGAAAGAAAGAAAGAAAGAAAGAAAGAAAGAAAGAAA |
+| slow08 | 2168 | 32/32 | CAGCTACTCAGGAGGCTGAGGCAGGAGAATCG | CGATTCTCCTGCCTCAGCCTCCTGAGTAGCTG |
+| slow09 | 1612 | 34/32 | GGTTCAAGTGATTCTCCTGCCTCAGCCTCCCAAG | CGGGAGGCTGAGGCAGGAGAATCACTTGAACC |
+| slow10 | 1304 | 29/29 | GGGATTACAGGCGTGAGCCACCGCGCCCG | CGGGCGCGGTGGCTCACGCCTGTAATCCC |
+
+All ten map to chr1 with AS 0, XU unknown, MAPQ 0, short trimmed mates (25-42 letters) (sequence is exactly periodic only for #1 period 2 and #7 period 4; the rest are not exactly periodic); all stall in the `look` stage.

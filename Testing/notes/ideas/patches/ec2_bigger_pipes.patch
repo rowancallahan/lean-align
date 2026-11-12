@@ -1,0 +1,50 @@
+# branch fix/ec2-pipes, tip be60ea4, diff against 00c24c5
+diff --git a/Testing/ec2/bench.py b/Testing/ec2/bench.py
+index 3048859..03c9fd0 100755
+--- a/Testing/ec2/bench.py
++++ b/Testing/ec2/bench.py
+@@ -6,12 +6,14 @@ What is measured, the same way for both tools:
+   - Everything is pinned to cores 0..THREADS-1 (Linux): the aligner and the two `gzip -dc` that feed it.
+   - wall    = from start to exit of the aligner. Index load is included.
+   - output  = without OUT.sam, written to a pipe drained by `cat` for both tools (cat's CPU is not counted).
++  - pipes   = the gzip->aligner pipes and the output pipe are set to PIPE_BYTES (default 1 MiB, Linux; 0 = kernel default 64 KiB),
++              so the aligner can read big chunks in one call. The same for every tool.
+   - cpu     = user + system time of the aligner plus both gzips (from the kernel, via wait4).
+   - peak    = largest resident memory of the aligner (from the kernel, via wait4).
+   - Gbp     = letters in both read files (WORKDIR/SET.bases, counted by setup.sh).
+   - Gbp/hr  = Gbp / wall hours.     Gbp/core-hr = Gbp / cpu hours.
+ Prints one tab-separated row: tool threads set wall_s cpu_s peak_GB Gbp Gbp/hr Gbp/core-hr"""
+-import os, subprocess, sys, time
++import fcntl, os, subprocess, sys, time
+ tool, threads, W, name = sys.argv[1], int(sys.argv[2]), os.path.abspath(sys.argv[3]), sys.argv[4]
+ sam = sys.argv[5] if len(sys.argv) > 5 else None
+ linux = sys.platform == "linux"
+@@ -22,6 +24,9 @@ for f in index: subprocess.run(["cat", f], stdout=subprocess.DEVNULL, check=True
+ start = time.perf_counter()
+ gz = [subprocess.Popen(["gzip", "-dc", f"{W}/{name}_R{r}.fq.gz"], stdout=subprocess.PIPE) for r in (1, 2)]
+ fds = [g.stdout.fileno() for g in gz]
++PIPE = int(os.environ.get("PIPE_BYTES", 1 << 20))
++if linux and PIPE:
++    for fd in fds: fcntl.fcntl(fd, 1031, PIPE)                          # F_SETPIPE_SZ
+ r1, r2 = (f"/dev/fd/{fd}" for fd in fds)
+ # Without OUT.sam the output goes through a pipe drained by `cat` (pinned like everything else), the same for both tools.
+ # Our tool writes OUT.tmp and renames it to OUT, so for it the pipe is OUT.tmp; minibwa writes to stdout.
+@@ -32,8 +37,10 @@ if not sam:
+         if os.path.exists(out + ".tmp"): os.remove(out + ".tmp")
+         os.mkfifo(out + ".tmp")
+         sink = subprocess.Popen(["cat", out + ".tmp"], stdout=subprocess.DEVNULL)
++        if linux and PIPE: hold = os.open(out + ".tmp", os.O_RDWR); fcntl.fcntl(hold, 1031, PIPE)   # closed after the run: cat then sees EOF
+     else:
+         sink = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
++        if linux and PIPE: fcntl.fcntl(sink.stdin.fileno(), 1031, PIPE)
+ if tool == "ours":
+     env = dict(os.environ, LEAN_NUM_THREADS=str(threads))
+     run = subprocess.Popen(["./.lake/build/bin/lean-align", "map", index[0], r1, r2, out, "100", "1000"], pass_fds=fds, env=env)
+@@ -50,6 +57,7 @@ try:
+         _, status, u = os.wait4(g.pid, 0)
+         assert status == 0, f"gzip failed with status {status}"
+         cpu += u.ru_utime + u.ru_stime
++    if "hold" in globals(): os.close(hold)
+     if sink: assert sink.wait() == 0, "output sink failed"
+ finally:                                                                   # also on failure: no stray gzip / cat / FIFO
+     for p in gz + ([sink] if sink else []):
