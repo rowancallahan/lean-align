@@ -32,6 +32,9 @@ Not tested on macOS: there is no core pinning there, so tiny timings on a Mac on
 
 3. Copy back `~/bench/timing.tsv` and `~/bench/compare.txt`, then terminate the instance.
 
+Thread counts default to half the cores and all the cores of the machine (16 and 32 on a 32-core instance,
+8 and 16 on a 16-core one).
+
 Knobs: `PAIRS=100000000 bash ... setup.sh` for more reads (the whole 30x file is about 360M pairs; use a
 300 GB disk). `THREADS="8 16 32" REPS=1 bash ... run.sh`.
 

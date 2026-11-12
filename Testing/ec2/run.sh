@@ -3,7 +3,8 @@
 # Needs setup.sh run first with the same arguments. THREADS and REPS can be set from outside.
 set -euo pipefail
 MODE=$1; W=$(cd "$2" && pwd); cd "$(dirname "$0")/../.."
-case $MODE in tiny) THREADS=${THREADS:-2}; REPS=${REPS:-1} ;; full) THREADS=${THREADS:-"16 32"}; REPS=${REPS:-3} ;; esac
+N=$(getconf _NPROCESSORS_ONLN)                                   # full mode: half the cores, then all of them
+case $MODE in tiny) THREADS=${THREADS:-2}; REPS=${REPS:-1} ;; full) THREADS=${THREADS:-"$((N / 2)) $N"}; REPS=${REPS:-3} ;; esac
 PY=$W/venv/bin/python; B=Testing/ec2
 
 # 1. timing: output thrown away, one tool at a time
