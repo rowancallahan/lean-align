@@ -1,0 +1,11 @@
+# The minibwa paper's Fig. 3 numbers as published (perf.tsv of lh3/minibwa c07de5c), WGS = HG002 NovaSeq 30x, 32 threads, 2 x Xeon Gold 6130. Columns: dataset tool Gbp_hr peak_GB (tab-separated).
+dataset	tool	Gbp_hr	peak_GB
+WGS	bowtie2	34.37	4.06
+WGS	bwa-mem	30.37	9.77
+WGS	bwa-mem2	50.79	26.02
+WGS	bwa-mem3	97.05	17.39
+WGS	bwa-meme	74.57	131.26
+WGS	dragmap	30.51	38.66
+WGS	minibwa	135.82	8.28
+WGS	minimap2	60.89	12.93
+WGS	strobealign	149.96	63.53

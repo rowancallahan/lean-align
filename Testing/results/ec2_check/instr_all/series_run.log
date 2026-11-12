@@ -1,0 +1,40 @@
+ours head-00c24c5 nova5m rep1 ours	4	reads	94.5	350.5	5.71	1.510	57.55	15.51
+ours instr-all-cc26db2 nova5m rep1 ours	4	reads	85.5	321.8	5.70	1.510	63.55	16.90
+minibwa c07de5c nova5m rep1 minibwa	4	reads	275.3	1062.1	8.80	1.510	19.75	5.12
+ours instr-all-cc26db2 nova5m rep2 ours	4	reads	85.4	316.9	5.71	1.510	63.67	17.15
+minibwa c07de5c nova5m rep2 minibwa	4	reads	276.8	1073.8	8.79	1.510	19.64	5.06
+ours head-00c24c5 nova5m rep2 ours	4	reads	94.5	351.3	5.70	1.510	57.53	15.48
+minibwa c07de5c nova5m rep3 minibwa	4	reads	277.8	1069.0	8.82	1.510	19.57	5.09
+ours head-00c24c5 nova5m rep3 ours	4	reads	94.7	353.0	5.68	1.510	57.41	15.40
+ours instr-all-cc26db2 nova5m rep3 ours	4	reads	86.9	331.6	5.69	1.510	62.55	16.39
+uncaught exception: resource exhausted (error code: 28, no space left on device)
+Traceback (most recent call last):
+  File "/root/wt-instr/Testing/ec2/bench.py", line 47, in <module>
+    assert status == 0, f"{tool} failed with status {status}" + (f" (see {W}/minibwa.log)" if tool == "minibwa" else "")
+           ^^^^^^^^^^^
+AssertionError: ours failed with status 256
+[E::hts_open_format] Failed to open file "/root/ec2w/ours.sam" : No such file or directory
+Traceback (most recent call last):
+  File "/root/wt-instr/Testing/ec2/compare.py", line 23, in <module>
+    for (name, o1, o2), (name2, m1, m2) in zip(pairs(sys.argv[1]), pairs(sys.argv[2]), strict=True):
+                                           ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/wt-instr/Testing/ec2/compare.py", line 11, in pairs
+    mates = (r for r in pysam.AlignmentFile(path, check_sq=False) if not (r.is_secondary or r.is_supplementary))
+                        ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "pysam/libcalignmentfile.pyx", line 752, in pysam.libcalignmentfile.AlignmentFile.__cinit__
+  File "pysam/libcalignmentfile.pyx", line 952, in pysam.libcalignmentfile.AlignmentFile._open
+FileNotFoundError: [Errno 2] Could not open alignment file: No such file or directory: '/root/ec2w/ours.sam'
+SAMMD5 nova5m new a5a8f23fdd9d head a5a8f23fdd9d
+SET_DONE nova5m
+ours head-00c24c5 hiseq5m rep1 ours	4	reads	101.5	378.4	5.86	2.482	88.07	23.62
+ours instr-all-cc26db2 hiseq5m rep1 ours	4	reads	90.2	343.2	5.83	2.482	99.05	26.04
+minibwa c07de5c hiseq5m rep1 minibwa	4	reads	525.3	2050.6	8.51	2.482	17.01	4.36
+ours instr-all-cc26db2 hiseq5m rep2 ours	4	reads	93.9	349.3	5.88	2.482	95.12	25.59
+minibwa c07de5c hiseq5m rep2 minibwa	4	reads	519.8	2031.9	8.52	2.482	17.19	4.40
+ours head-00c24c5 hiseq5m rep2 ours	4	reads	100.9	377.7	5.85	2.482	88.53	23.66
+minibwa c07de5c hiseq5m rep3 minibwa	4	reads	528.2	2063.1	8.51	2.482	16.92	4.33
+ours head-00c24c5 hiseq5m rep3 ours	4	reads	102.6	384.5	5.86	2.482	87.09	23.24
+ours instr-all-cc26db2 hiseq5m rep3 ours	4	reads	99.5	375.4	5.86	2.482	89.84	23.81
+SAMMD5 hiseq5m new 2d9475e1cbba head 2d9475e1cbba
+SET_DONE hiseq5m
+SERIES_DONE

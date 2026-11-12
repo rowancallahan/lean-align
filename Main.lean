@@ -1,55 +1,55 @@
--- The lean-align executable: Spec/Shim.lean line for line, importing Proofs (the proved buildIndex / alignPairs) instead of Spec.
-import Proofs.Sam
+-- LOCKED (Rowan, 2026-11-10): the streaming main; it runs `process` of `process_correct`.
+import Proofs.MapFiles
 
-/-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
-then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
-Everything here except the boxed `alignPairs` call is unproved plumbing (reading, writing).
-Stand-ins for now: no trimming (every mate is `some`). -/
+open Spec
 
--- a chunk of read pairs, as `alignPairs` takes them
-def Spec.chunkPairs (chunk : Array (Spec.FastqRecord × Spec.FastqRecord)) :
-    List (Option ByteArray × Option ByteArray) :=
-  chunk.toList.map fun (record1, record2) => (some record1.letters, some record2.letters)
+def chunkSize : USize := 8 * 1024 * 1024
+
+def fail (tmpPath why : String) : IO UInt32 := do
+  IO.FS.removeFile tmpPath
+  IO.eprintln s!"lean-align: {why}"
+  return 1
+
+def fuel : Nat := 2 ^ 64
+
+-- the next chunk of each FASTQ file; none when both files have ended
+def nextChunks (fastq1 fastq2 : IO.FS.Handle) : IO (Option (ByteArray × ByteArray)) := do
+  let chunk1 ← fastq1.read chunkSize
+  let chunk2 ← fastq2.read chunkSize
+  match chunk1.isEmpty && chunk2.isEmpty with
+  | true  => return none
+  | false => return some (chunk1, chunk2)
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  | ["build", genomePath, indexPath] =>
-    let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
-    IO.FS.writeBinFile indexPath (Spec.buildIndex byteGenome)
-    IO.FS.writeFile (indexPath ++ ".chromosomes") (Spec.chromosomeListText byteGenome)
-    return 0
   | ["map", indexPath, reads1Path, reads2Path, outPath, minFragment, maxFragment] =>
-    let insertSettings : Spec.InsertSettings := { range := (minFragment.toNat!, maxFragment.toNat!) }
-    -- TRUSTED: the index file is `buildIndex byteGenome` for the genome (the theorem's `hIndex`),
-    -- and INDEX.chromosomes lists that genome's names and lengths
+    let settings : InsertSettings := { range := (minFragment.toNat!, maxFragment.toNat!) }
+    -- TRUSTED: the index file is `buildIndex` of the genome,
+    -- and INDEX.chromosomes lists its chromosomes
     let index ← IO.FS.readBinFile indexPath
-    let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
-    let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
-    let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
-    let out ← IO.FS.Handle.mk outPath .write
-    for line in Spec.samHeader chromosomes do
-      out.putStrLn line
-    -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
-    let mut next ← IO.asTask (Spec.readChunk reads1 reads2 100000)
-    let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
-    repeat
-      let chunk ← IO.ofExcept next.get
-      if chunk.isEmpty then
-        break
-      next ← IO.asTask (Spec.readChunk reads1 reads2 100000)
-      -- ╔══════════════════════════════════════════════════════════════════════════════════╗
-      -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
-      -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
-      -- ║ index was built from. Everything around it only reads inputs and writes output.   ║
-      -- ╚══════════════════════════════════════════════════════════════════════════════════╝
-      let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
-      -- ══════════════════════════════════════════════════════════════════════════════════
-      -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
-      let text := Spec.samChunk chromosomes chunk results 16
-      let previous := writing
-      writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
-    IO.ofExcept writing.get
+    let chrs ← readChromosomeList (indexPath ++ ".chromosomes")
+    let fastq1 ← IO.FS.Handle.mk reads1Path .read
+    let fastq2 ← IO.FS.Handle.mk reads2Path .read
+    -- written to OUT.tmp, renamed to OUT only when everything succeeded
+    let tmpPath := outPath ++ ".tmp"
+    let out ← IO.FS.Handle.mk tmpPath .write
+    -- the header, then `process` exactly as in `process_correct`,
+    -- with the FASTQ files as `nextChunks` and the output file as `out.write`
+    out.write ⟨(SamSpec.header chrs).toArray⟩
+    let state := Total.mapInit settings index chrs
+    match ← Total.process (nextChunks fastq1 fastq2) out.write fuel state with
+    | some () =>
+      out.flush
+      IO.FS.rename tmpPath outPath
+      return 0
+    | none =>
+      fail tmpPath "the FASTQ files are not valid, matching FASTQ"
+  | ["build", genomePath, indexPath] =>
+    let genome ← readFasta (← IO.FS.Handle.mk genomePath .read)
+    IO.FS.writeBinFile indexPath (buildIndex genome)
+    IO.FS.writeFile (indexPath ++ ".chromosomes") (chromosomeListText genome)
     return 0
   | _ =>
-    IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
+    IO.eprintln "usage: lean-align build GENOME.fa INDEX"
+    IO.eprintln "       lean-align map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
     return 1

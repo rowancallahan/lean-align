@@ -1,0 +1,40 @@
+# Lemmas for the parallel byte reader and the byte SAM writer
+
+Both draft files now type-check with `lake env lean Testing/notes/byte_specs/FastqBytes.lean` (and `SamBytes.lean`) with **no `sorry`**; every theorem below depends on
+`[propext, Classical.choice, Quot.sound]` only (`#print axioms` at the end of each file). Nothing in Spec/, Shim or Main was changed; the files are not built by lake.
+
+## Verdict on the two drafts' sorry lemmas
+Both statements were **true as written**; no change needed. Two points that cost effort and that Rowan may want to change in the spec text:
+- `lines` goes through `ByteArray.toList`, which core defines by an index loop with no lemma. I proved `toList_eq : bs.toList = bs.data.toList` (and the loop invariant `toList_loop`); defining `lines` with `bytes.data.toList` would make this unnecessary.
+- `samChunk_eq` (the chunk the shim writes = `linesBytes` of its pairs' lines) needs `0 < parts` (`parts = 0` gives an empty chunk); the shim passes 16.
+
+## The lemmas
+
+| lemma (file) | statement | unlocks | proof status | effort / notes |
+|---|---|---|---|---|
+| `lines_append_of_end` (Fastq) | if `a` ends with `\n`, `lines (a ++ b) = lines a ++ lines b` | cutting a FASTQ at line ends | proved | ~40 lines; core `List.splitOn_append_cons_self`, a `getLast`/`dropLast` case split |
+| `parseLines_append` (Fastq) | `parseLines (L1 ++ L2) = (parseLines L1).bind (.. (parseLines L2).map (ra ++ ·))` when `L1.length = 4 n` | per-record composition, including which error wins | proved | first error in slice order |
+| **`parseFastq_append`** (Fastq) | the draft lemma: cut after a record (ends with `\n`, `(lines a).length % 4 = 0`), parse parts = parse whole | splitting one chunk's bytes over tasks | **proved** | the empty-slice case included |
+| **`parseSlices_eq`** (Fastq) | `parseSlices slices = parseFastq (concatBytes slices)` when all slices but the last are `Boundary` (ends with `\n`, whole records) | the parallel parser: parse each slice on a task, join in slice order, first error in order | **proved** | induction on the slice list using `parseFastq_append` |
+| **`cutLinesL_spec`**, `cutLinesL_boundary` (Fastq) | the finder `cutLinesL (4 n) l = some (pre, post)` gives `l = pre ++ post`, `pre` holds exactly `4 n` lines, ends with `\n`, and `Boundary pre` | the serial record-boundary scan really cuts at record boundaries | **proved** at list level | the shim's scan is a byte-index loop (`findNewline` / `scanLines`); that it equals `cutLinesL` on the byte array is the missing bridge (below) |
+| `linesBytes_append`, **`samFile_chunks`** (Sam) | `samFile` of the concatenation of chunks = header ++ the chunks' bytes in order | writing chunk after chunk (chained writer, any chunking) | **proved** | |
+| **`samChunk_eq`** (Sam) | `samChunk chromosomes chunk results parts = linesBytes (all lines of the chunk's pairs)` for `0 < parts` | the per-chunk term of `samFile_chunks`; with `samChunkB_eq` (research/io2) it connects the byte writer to `samFile` | **proved** | slicing lemma `range_slices`; task join lemma `foldl_tasks` |
+
+Composition for the byte writer, no new work: for chunks whose letters and qualities are ASCII, `samChunkB = samChunk` (**`samChunkB_eq`**, research/io2 `Proofs/SamBytes.lean`, `Testing/notes/sam_bytes.patch`, standard axioms, full `CI_check.sh` passes)
+and `samChunk = linesBytes (...)` (`samChunk_eq`, this file), so `samChunkB chunk results 16 = linesBytes (lines of the chunk)`, which is the term inside `samFile_chunks`. To state it as one theorem the two files must be in one build (the patch applied).
+
+## Open items of the first round: status (second round, branch notes/byte-lemmas2)
+All checked with `lake env lean <file>`, no `sorry`, axioms `[propext, Classical.choice, Quot.sound]`.
+
+1. **Byte scan refines `cutLinesL`: proved** (FastqBytes.lean). `nl b i` = first newline at or after `i`, by plain recursion; `findNewlineU_eq`: the USize loop of `shim_speed.patch` computes `nl` (needs the shim's guard `size < 4294967295`); `scanK b k i` = position after the k-th newline; `cutLinesL_scanK : cutLinesL k (D b i) = (scanK b k i).map fun p => ((D b i).take (p - i), D b p)`; `scanK_boundary`: the bytes `[i, p)` that `scanK b (4*n) i` cuts are a `Boundary`, so `parseSlices_eq` applies to them. **Catch:** the `while` loops (`findNewline` in Spec/Fastq.lean, the prototype's `qnameEnd`, `scanLines` which is `partial`) cannot be unfolded in a proof (`Loop.forIn` is `partial`): the proofs are about the recursive versions above. To close the last step the shim's scan has to be written as these recursions (or as `findNewlineU` + `scanK`), not as `while` / `partial`.
+2. **One slice parsed from the shared buffer = `parseFastq` of that slice: proved for the line structure** (`linesFrom_eq`, `parseFastq_slice`): reading lines by position (`[s, nl)`, a "\r" before the "\n" dropped, next line at `nl + 1`) gives `lines (b.extract s e)` for every slice that ends with "\n" (every slice of the parallel parser; the prototype appends a "\n" at EOF). What remains is mechanical: `parseOne` = `parseRecord` on four consecutive `linesFrom` entries (`nextLine` is one step of `linesFrom`). The QNAME rule on positions (`qnameEnd`, a `while` loop) vs `qnameOf` is NOT proved (same `while` problem; write it recursively).
+3. **`pairsOfFiles` = what `readChunk` + `trimChunk` return**: not done (~1 day). `ProvisionalSpec.lean` has `pairUp`, `pairsOfFiles` (now with the trimming) for the byte record.
+4. **ASCII of parsed records: proved** (ProvisionalSpec.lean): `parseRecord_ascii`, `parseLines_ascii`, `parseFastq_ascii`, `trimRecord_ascii`, `pairsOfFiles_ascii`: every record `pairsOfFiles` yields has ASCII qname, letters and quality, which is the `RecordAscii` hypothesis of `samChunkB_eq` (research/io2). (Its `Ascii` is the same definition.)
+5. **`samName` on bytes: stated and tested, equality with today's `samName` / `mateName` NOT proved.** `qnameOf` (bytes, one function for both) is in ProvisionalSpec.lean with `#guard` tests against the String functions on 13 names (checked at elaboration). Proving it needs a lemma on the legacy `String.splitOn` (position-based `splitOnAux`, no lemmas in core 4.35). Either prove it (est. 1 day) or, simpler, make the byte rule the definition and delete the String one: then nothing is left to prove.
+
+**A spec difference to decide.** `lines` strips a "\r" before the final "\n" and also on a last line that has NO "\n" (and a last line that is only "\r" disappears); today's block reader (`FastqReader.line`) strips the "\r" only before a "\n" and keeps it on an unterminated last line (so `...IIII\r<EOF>` is rejected today: the quality has byte 13). The prototype reader appends "\n" at EOF, so it behaves like the spec, not like today's reader. Only malformed files differ; Rowan to pick the intended behaviour.
+
+## What they enable (measured, NovaSeq, 2 000 pairs unless said; instruction counts are exact, times are noisy)
+- Reader as the critical path (S-G): about 27 us/pair serial parse. The unproved prototype (research/io `IoFast.lean`) moves parse, validate and trim to 16 tasks and leaves a serial scan of about 1.3 us/pair (25 ms per 20k chunk, 4 cores); parse overhead 108 M to 47 M Ir (2.3x), `readChunk` 187.5 M to 126.0 M Ir, byte-identical SAM. Lemmas 1-3 above are what turns that prototype into a proved reader; `parseSlices_eq` and `cutLinesL_boundary` are the two inequalities-free pieces that already exist.
+- Byte SAM writer (proved): format step 157.9 M to 126.6 M Ir (-20 %), whole process 1 226 M to 1 196 M Ir (-2.4 %); with the QNAME as bytes (item 5) about 30 M more per 2 000 pairs; wall: SAM format 126 ms per 20k chunk now (4 cores), it is not on the critical path at 4 threads, matters when alignment scales to 8-10+ threads.
+- Per-chunk times at 4 cores (corrected, d0d2a79): read 265 ms, trim 77, align 676, sam 126 (NovaSeq); the serial reader becomes the cap above about 10 threads; with the parallel parser the serial remainder is the 25 ms scan, so the reader stops being the cap until about 100 threads.

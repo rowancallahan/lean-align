@@ -11,6 +11,7 @@
 | `Answer.lean` | `Spec/Aligner.lean` up to the holes, unchanged | (no proofs needed) |
 | `Bridge.lean` (+ `Hits.lean`, `Tiers.lean`) | old router proofs (`tierPair_sound`, `TierOk`) → new spec | proved |
 | `Aligner.lean` | `buildIndex`, `alignPairs` defined on the tier router; `alignPairs_correct` proved from the bridge (+ `Index.lean`) | proved |
+| `IndexBuild.lean` | `check3P_buildLoaded`: the built minimizer index passes `check3P` (genome < 2^32 letters); core `Mz.check_buildW` in Aligner/index/minimizer/MzBuildOk.lean, packed/view builders in Aligner/index/packed_genome/MzBuildP.lean | proved |
 
 `alignPairs_correct` is already proved *from* the open lemmas, so each one below is independent.
 

@@ -329,7 +329,7 @@ stays behind `GRead.get` (at `(a + i).toNat`). Taken when every index is below 2
 
 @[specialize] def hammingU {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : USize) (i stop m : USize) : USize :=
   if h : i < stop then
-    if pgGet r i != GRead.get g (a + i).toNat then
+    if pgGet r i != GRead.getW g (a + i) then
       if lim < m + 1 then m + 1 else hammingU r g a lim (i + 1) stop (m + 1)
     else hammingU r g a lim (i + 1) stop m
   else m
@@ -342,7 +342,7 @@ decreasing_by
     rw [USize.toNat_add, pgu_one, Nat.mod_eq_of_lt (by omega)]
     omega
 
-theorem hammingU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (aU limU stopU : USize) (a lim stop : Nat)
+theorem hammingU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (hg : GRead.ok g = true) (aU limU stopU : USize) (a lim stop : Nat)
     (ha : aU.toNat = a) (hl : limU.toNat = lim) (hp : stopU.toNat = stop) (hb : a + stop < 2 ^ 32) :
     ∀ n (iU mU : USize) (i m : Nat), stop - i = n → iU.toNat = i → mU.toNat = m → i ≤ stop →
       m + (stop - i) < 2 ^ 32 →
@@ -359,7 +359,7 @@ theorem hammingU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (aU limU sto
     have ex : (aU + iU).toNat = a + i := by rw [pgu_add _ _ (by omega), ha, hi]
     have e1 : (iU + 1).toNat = i + 1 := by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, hi]
     have em : (mU + 1).toNat = m + 1 := by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, hm]
-    rw [hammingU, dif_pos h, hamming, if_pos (show i < stop by omega), pgGet_eq, ex, hi]
+    rw [hammingU, dif_pos h, hamming, if_pos (show i < stop by omega), pgGet_eq, GRead.getW_eq g _ hg, ex, hi]
     split
     · have el : (limU < mU + 1) = (lim < m + 1) := by
         rw [← hl, ← em]; rfl
@@ -396,7 +396,7 @@ theorem hammingS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim stop 
 
 /-- `hamming` for the compiled code (`hamming_eq_hammingF`). -/
 @[inline] def hammingF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim : Nat) (i stop m : Nat) : Nat :=
-  if a + stop < 4294967295 ∧ lim < 4294967295 ∧ i ≤ stop ∧ m + stop < 4294967295 then
+  if a + stop < 4294967295 ∧ lim < 4294967295 ∧ i ≤ stop ∧ m + stop < 4294967295 ∧ GRead.ok g = true then
     (hammingU r g a.toUSize lim.toUSize i.toUSize stop.toUSize m.toUSize).toNat
   else hammingS r g a lim i stop m
 
@@ -404,7 +404,7 @@ theorem hammingS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (a lim stop 
   funext Gt inst r g a lim i stop m
   unfold hammingF; split
   · rename_i h
-    exact (hammingU_eq r g _ _ _ a lim stop (pgu_n _ (by omega)) (pgu_n _ (by omega)) (pgu_n _ (by omega)) (by omega)
+    exact (hammingU_eq r g h.2.2.2.2 _ _ _ a lim stop (pgu_n _ (by omega)) (pgu_n _ (by omega)) (pgu_n _ (by omega)) (by omega)
       _ _ _ i m rfl (pgu_n _ (by omega)) (pgu_n _ (by omega)) h.2.2.1 (by omega)).symm
   · exact (hammingS_eq r g a lim stop _ i m rfl).symm
 
@@ -444,7 +444,7 @@ termination_by e - lo
 
 @[specialize] def fwdMisU {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (s stop : USize) (i k : USize) : USize :=
   if h : i < stop then
-    if pgGet r i != GRead.get g (s + i).toNat then
+    if pgGet r i != GRead.getW g (s + i) then
       (if k ≤ 1 then i else fwdMisU r g s stop (i + 1) (k - 1))
     else fwdMisU r g s stop (i + 1) k
   else stop
@@ -457,7 +457,7 @@ decreasing_by
     rw [USize.toNat_add, pgu_one, Nat.mod_eq_of_lt (by omega)]
     omega
 
-theorem fwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (s stopU : USize) (st stop : Nat)
+theorem fwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (hg : GRead.ok g = true) (s stopU : USize) (st stop : Nat)
     (hs : s.toNat = st) (hp : stopU.toNat = stop) (hb : st + stop < 2 ^ 32) :
     ∀ m (iU kU : USize) (i k : Nat), stop - i = m → iU.toNat = i → kU.toNat = k → i ≤ stop →
       (fwdMisU r g s stopU iU kU).toNat = fwdMis r g st stop i k := by
@@ -472,7 +472,7 @@ theorem fwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (s stopU : US
     have h : iU < stopU := by show iU.toNat < stopU.toNat; omega
     have ex : (s + iU).toNat = st + i := by rw [pgu_add _ _ (by omega), hs, hi]
     have e1 : (iU + 1).toNat = i + 1 := by rw [pgu_add _ _ (by rw [pgu_one]; omega), pgu_one, hi]
-    rw [fwdMisU, dif_pos h, fwdMis, if_pos (show i < stop by omega), pgGet_eq, ex, hi]
+    rw [fwdMisU, dif_pos h, fwdMis, if_pos (show i < stop by omega), pgGet_eq, GRead.getW_eq g _ hg, ex, hi]
     split
     · split
       · rename_i hk1; rw [if_pos (by have : kU.toNat ≤ (1 : USize).toNat := hk1; rw [pgu_one] at this; omega), hi]
@@ -510,7 +510,7 @@ theorem fwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Na
 
 /-- `fwdMis` for the compiled code (`fwdMis_eq_fwdMisF`). -/
 @[inline] def fwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Nat) (i k : Nat) : Nat :=
-  if st + stop < 4294967295 ∧ i ≤ stop ∧ k < 4294967295 then
+  if st + stop < 4294967295 ∧ i ≤ stop ∧ k < 4294967295 ∧ GRead.ok g = true then
     (fwdMisU r g st.toUSize stop.toUSize i.toUSize k.toUSize).toNat
   else fwdMisS r g st stop i k
 
@@ -518,14 +518,14 @@ theorem fwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st stop : Na
   funext Gt inst r g st stop i k
   unfold fwdMisF; split
   · rename_i h
-    exact (fwdMisU_eq r g _ _ st stop (pgu_n _ (by omega)) (pgu_n _ (by omega)) (by omega) _ _ _ i k rfl
+    exact (fwdMisU_eq r g h.2.2.2 _ _ st stop (pgu_n _ (by omega)) (pgu_n _ (by omega)) (by omega) _ _ _ i k rfl
       (pgu_n _ (by omega)) (pgu_n _ (by omega)) h.2.1).symm
   · exact (fwdMisS_eq r g st stop _ i k rfl).symm
 
 /-- `bwdMis r g st len lo e k` with `b = st + len - r.size` (`st + len ≥ r.size`) (`bwdMisU_eq`). -/
 @[specialize] def bwdMisU {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (b lo : USize) (e k : USize) : USize :=
   if h : lo < e then
-    if pgGet r (e - 1) != GRead.get g (b + (e - 1)).toNat then
+    if pgGet r (e - 1) != GRead.getW g (b + (e - 1)) then
       (if k ≤ 1 then e else bwdMisU r g b lo (e - 1) (k - 1))
     else bwdMisU r g b lo (e - 1) k
   else lo
@@ -536,7 +536,7 @@ decreasing_by
     rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ e.toNat; rw [pgu_one]; omega), pgu_one]
     omega
 
-theorem bwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (bU loU : USize) (st len lo : Nat)
+theorem bwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (hg : GRead.ok g = true) (bU loU : USize) (st len lo : Nat)
     (hr : r.size ≤ st + len) (hb : bU.toNat = st + len - r.size) (hl : loU.toNat = lo) :
     ∀ (e : Nat) (eU kU : USize) (k : Nat), st + len + e < 2 ^ 32 → eU.toNat = e → kU.toNat = k →
       (bwdMisU r g bU loU eU kU).toNat = bwdMis r g st len lo e k := by
@@ -554,7 +554,7 @@ theorem bwdMisU_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (bU loU : USi
         rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ eU.toNat; rw [pgu_one]; omega), pgu_one, he]; rfl
       have ex : (bU + (eU - 1)).toNat = st + len + e - r.size := by
         rw [pgu_add _ _ (by omega), hb, e1]; omega
-      rw [bwdMisU, dif_pos h, bwdMis, if_pos hlt, pgGet_eq, ex, e1]
+      rw [bwdMisU, dif_pos h, bwdMis, if_pos hlt, pgGet_eq, GRead.getW_eq g _ hg, ex, e1]
       simp only [Nat.add_sub_cancel]
       split
       · split
@@ -593,7 +593,7 @@ theorem bwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : 
 
 /-- `bwdMis` for the compiled code (`bwdMis_eq_bwdMisF`). -/
 @[inline] def bwdMisF {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : Nat) (e k : Nat) : Nat :=
-  if r.size ≤ st + len ∧ st + len + e < 4294967295 ∧ lo < 4294967295 ∧ k < 4294967295 then
+  if r.size ≤ st + len ∧ st + len + e < 4294967295 ∧ lo < 4294967295 ∧ k < 4294967295 ∧ GRead.ok g = true then
     (bwdMisU r g (st + len - r.size).toUSize lo.toUSize e.toUSize k.toUSize).toNat
   else bwdMisS r g st len lo e k
 
@@ -601,7 +601,7 @@ theorem bwdMisS_eq {Gt : Type} [GRead Gt] (r : ByteArray) (g : Gt) (st len lo : 
   funext Gt inst r g st len lo e k
   unfold bwdMisF; split
   · rename_i h
-    exact (bwdMisU_eq r g _ _ st len lo h.1 (pgu_n _ (by omega)) (pgu_n _ (by omega)) e _ _ k (by omega)
+    exact (bwdMisU_eq r g h.2.2.2.2 _ _ st len lo h.1 (pgu_n _ (by omega)) (pgu_n _ (by omega)) e _ _ k (by omega)
       (pgu_n _ (by omega)) (pgu_n _ (by omega))).symm
   · exact (bwdMisS_eq r g st len lo e k).symm
 

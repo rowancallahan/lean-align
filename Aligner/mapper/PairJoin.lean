@@ -101,6 +101,182 @@ def noPairJ {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : Byte
         let f2 := anchAll ix G R2
         !nearAnyF W (r1.length + f2.length + 1) r1 f2))
 
+/-- `anchAll` over the seeds `sel` only. -/
+def anchSel {L Pp : Type} [LookG L Pp] (ix : L) (G R : ByteArray) (sel : List Nat) : List Nat :=
+  let m := R.size / 25
+  let Ls := R.size / m
+  sel.foldl (fun acc j => List.merge acc
+    ((LookG.look ix G R (j * Ls) (R.size - j * Ls) (LookG.prep ix (seedHashAt R (j * Ls)))).toList.map (· / 16))
+    (fun a b => decide (a ≤ b))) []
+
+/-- A seed choice the pigeonhole covers at cap `P`: distinct seeds of `R`, more than `sbound P` of them. -/
+def selOk (P : Nat) (R : ByteArray) (sel : List Nat) : Bool :=
+  decide sel.Nodup && sel.all (fun j => decide (j < R.size / 25)) && decide (sbound P < sel.length)
+
+/-- **`noPairJ` on chosen seeds** (`s1`, `sr1`: mate 1 and its reverse complement; `s2`, `sr2` likewise), e.g. the
+`sbound P + 1` rarest per strand: any choice passing `selOk` is sound (`noPairJS_ok`). -/
+def noPairJS {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : ByteArray)
+    (s1 sr1 s2 sr2 : List Nat) : Bool :=
+  fastT P1 R1 && fastT P2 R2 &&
+    selOk P1 R1 s1 && selOk P1 R1 sr1 && selOk P2 R2 s2 && selOk P2 R2 sr2 &&
+    (let W := joinW P1 P2 hi R1.size R2.size
+     let f1 := anchSel ix G R1 s1
+     let r2 := anchSel ix G (revCompK R2) sr2
+     !nearAnyF W (f1.length + r2.length + 1) f1 r2 &&
+       (let r1 := anchSel ix G (revCompK R1) sr1
+        let f2 := anchSel ix G R2 s2
+        !nearAnyF W (r1.length + f2.length + 1) r1 f2))
+
+/-- `noPairJS` without the second strand's lookups when the first strand has no anchors (`nearAnyF` is then false:
+no near pair), `noPairJS_eqL`. -/
+def noPairJSL {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : ByteArray)
+    (s1 sr1 s2 sr2 : List Nat) : Bool :=
+  fastT P1 R1 && fastT P2 R2 &&
+    selOk P1 R1 s1 && selOk P1 R1 sr1 && selOk P2 R2 s2 && selOk P2 R2 sr2 &&
+    (let W := joinW P1 P2 hi R1.size R2.size
+     let f1 := anchSel ix G R1 s1
+     (f1.isEmpty || (let r2 := anchSel ix G (revCompK R2) sr2; !nearAnyF W (f1.length + r2.length + 1) f1 r2)) &&
+       (let r1 := anchSel ix G (revCompK R1) sr1
+        r1.isEmpty || (let f2 := anchSel ix G R2 s2; !nearAnyF W (r1.length + f2.length + 1) r1 f2)))
+
+theorem nearAnyF_nil (W n : Nat) (ys : List Nat) : nearAnyF W (n + 1) [] ys = false := rfl
+
+theorem skip_empty (W : Nat) (xs ys : List Nat) :
+    (xs.isEmpty || !nearAnyF W (xs.length + ys.length + 1) xs ys) = !nearAnyF W (xs.length + ys.length + 1) xs ys := by
+  cases xs with
+  | nil => simp only [List.isEmpty_nil, Bool.true_or, List.length_nil]; rw [nearAnyF_nil]; rfl
+  | cons x xs => simp
+
+theorem noPairJS_eqL : @noPairJS = @noPairJSL := by
+  funext L Pp _ P1 P2 hi ix G R1 R2 s1 sr1 s2 sr2
+  unfold noPairJS noPairJSL
+  simp only [skip_empty]
+
+/-! ### Compiled join: anchors merged as arrays, the near test over arrays (`noPairJS_eqA`) -/
+
+-- merge of two sorted arrays (`List.merge` with `≤`: `mergeGo_toList`)
+def mergeGo (a b : Array Nat) (i j : Nat) (acc : Array Nat) : Array Nat :=
+  if hi : i < a.size then
+    if hj : j < b.size then
+      if a[i] ≤ b[j] then mergeGo a b (i + 1) j (acc.push a[i]) else mergeGo a b i (j + 1) (acc.push b[j])
+    else acc ++ a.extract i a.size
+  else acc ++ b.extract j b.size
+termination_by (a.size - i) + (b.size - j)
+
+theorem drop_cons_getElem (a : Array Nat) (i : Nat) (h : i < a.size) : a.toList.drop i = a[i] :: a.toList.drop (i + 1) := by
+  rw [List.drop_eq_getElem_cons (by simpa using h)]; simp
+
+theorem mergeGo_toList (a b : Array Nat) : ∀ n i j (acc : Array Nat), (a.size - i) + (b.size - j) = n →
+    (mergeGo a b i j acc).toList = acc.toList ++ List.merge (a.toList.drop i) (b.toList.drop j) (fun x y => decide (x ≤ y)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro i j acc hn
+    rw [mergeGo]
+    split
+    · rename_i hi
+      split
+      · rename_i hj
+        rw [drop_cons_getElem a i hi, drop_cons_getElem b j hj]
+        split
+        · rename_i hle
+          rw [ih _ (by omega) (i + 1) j _ rfl, List.cons_merge_cons_pos _ _ _ (by simpa using hle),
+            ← drop_cons_getElem b j hj]
+          simp
+        · rename_i hle
+          rw [ih _ (by omega) i (j + 1) _ rfl, List.cons_merge_cons_neg _ _ _ (by simpa using hle),
+            ← drop_cons_getElem a i hi]
+          simp
+      · rename_i hj
+        rw [List.drop_of_length_le (l := b.toList) (by simp; omega), List.merge_right]
+        simp [Array.toList_extract, List.extract]
+        exact List.take_of_length_le (by simp)
+    · rename_i hi
+      rw [List.drop_of_length_le (l := a.toList) (by simp; omega), List.nil_merge]
+      simp [Array.toList_extract, List.extract]
+      exact List.take_of_length_le (by simp)
+
+def mergeA (a b : Array Nat) : Array Nat := mergeGo a b 0 0 (Array.emptyWithCapacity (a.size + b.size))
+
+theorem mergeA_toList (a b : Array Nat) :
+    (mergeA a b).toList = List.merge a.toList b.toList (fun x y => decide (x ≤ y)) := by
+  unfold mergeA; rw [mergeGo_toList a b _ 0 0 _ rfl]; simp
+
+def anchSelA {L Pp : Type} [LookG L Pp] (ix : L) (G R : ByteArray) (sel : List Nat) : Array Nat :=
+  let m := R.size / 25
+  let Ls := R.size / m
+  sel.foldl (fun acc j => mergeA acc
+    ((LookG.look ix G R (j * Ls) (R.size - j * Ls) (LookG.prep ix (seedHashAt R (j * Ls)))).map (· / 16))) #[]
+
+theorem anchSelA_toList {L Pp : Type} [LookG L Pp] (ix : L) (G R : ByteArray) (sel : List Nat) :
+    (anchSelA ix G R sel).toList = anchSel ix G R sel := by
+  unfold anchSelA anchSel
+  simp only []
+  suffices ∀ (acc : Array Nat), (sel.foldl (fun acc j => mergeA acc
+      ((LookG.look ix G R (j * (R.size / (R.size / 25))) (R.size - j * (R.size / (R.size / 25)))
+        (LookG.prep ix (seedHashAt R (j * (R.size / (R.size / 25)))))).map (· / 16))) acc).toList =
+      sel.foldl (fun acc j => List.merge acc
+        ((LookG.look ix G R (j * (R.size / (R.size / 25))) (R.size - j * (R.size / (R.size / 25)))
+          (LookG.prep ix (seedHashAt R (j * (R.size / (R.size / 25)))))).toList.map (· / 16))
+        (fun a b => decide (a ≤ b))) acc.toList from this #[]
+  induction sel with
+  | nil => intro acc; rfl
+  | cons j l ih =>
+    intro acc
+    simp only [List.foldl_cons]
+    rw [ih, mergeA_toList, Array.toList_map]
+
+-- `nearAnyF` over arrays from positions `i`, `j`
+def nearGo (W : Nat) (a b : Array Nat) : (f i j : Nat) → Bool
+  | 0, _, _ => true
+  | f + 1, i, j =>
+    if hi : i < a.size then
+      if hj : j < b.size then
+        if a[i] + W < b[j] then nearGo W a b f (i + 1) j
+        else if b[j] + W < a[i] then nearGo W a b f i (j + 1)
+        else true
+      else false
+    else false
+
+theorem nearGo_eq (W : Nat) (a b : Array Nat) : ∀ f i j,
+    nearGo W a b f i j = nearAnyF W f (a.toList.drop i) (b.toList.drop j)
+  | 0, _, _ => by simp [nearGo, nearAnyF]
+  | f + 1, i, j => by
+    unfold nearGo
+    split
+    · rename_i hi
+      split
+      · rename_i hj
+        rw [drop_cons_getElem a i hi, drop_cons_getElem b j hj, nearAnyF]
+        split
+        · rw [nearGo_eq W a b f (i + 1) j, ← drop_cons_getElem b j hj]
+        · split
+          · rw [nearGo_eq W a b f i (j + 1), ← drop_cons_getElem a i hi]
+          · rfl
+      · rename_i hj
+        rw [List.drop_of_length_le (l := b.toList) (by simp; omega)]
+        cases a.toList.drop i <;> rfl
+    · rename_i hi
+      rw [List.drop_of_length_le (l := a.toList) (by simp; omega)]
+      rfl
+
+def noPairJSA {L Pp : Type} [LookG L Pp] (P1 P2 hi : Nat) (ix : L) (G R1 R2 : ByteArray)
+    (s1 sr1 s2 sr2 : List Nat) : Bool :=
+  fastT P1 R1 && fastT P2 R2 &&
+    selOk P1 R1 s1 && selOk P1 R1 sr1 && selOk P2 R2 s2 && selOk P2 R2 sr2 &&
+    (let W := joinW P1 P2 hi R1.size R2.size
+     let f1 := anchSelA ix G R1 s1
+     (f1.isEmpty || (let r2 := anchSelA ix G (revCompK R2) sr2; !nearGo W f1 r2 (f1.size + r2.size + 1) 0 0)) &&
+       (let r1 := anchSelA ix G (revCompK R1) sr1
+        r1.isEmpty || (let f2 := anchSelA ix G R2 s2; !nearGo W r1 f2 (r1.size + f2.size + 1) 0 0)))
+
+/-- Compiled code runs `noPairJSA`. -/
+@[csimp] theorem noPairJS_eqA : @noPairJS = @noPairJSA := by
+  funext L Pp _ P1 P2 hi ix G R1 R2 s1 sr1 s2 sr2
+  rw [noPairJS_eqL]
+  unfold noPairJSL noPairJSA
+  simp only [nearGo_eq, List.drop_zero, anchSelA_toList, ← Array.length_toList, ← Array.isEmpty_toList]
+
 /-! ## Proofs -/
 
 section fold
@@ -202,6 +378,64 @@ theorem anch_of_hit (P : Nat) (read : List Char) (R : ByteArray) (hr : Encodes R
     omega
   · omega
 
+include hlk in
+theorem anchSel_sorted (R : ByteArray) (hm : 0 < R.size / 25) (sel : List Nat) (hsel : ∀ j ∈ sel, j < R.size / 25) :
+    (anchSel ix G R sel).Pairwise (· ≤ ·) := by
+  unfold anchSel
+  apply foldMerge_sorted _ _ _ _ List.Pairwise.nil
+  intro j hj
+  have hl := hlk R (j * (R.size / (R.size / 25))) (R.size - j * (R.size / (R.size / 25)))
+    (seed_fits R.size j hm (hsel j hj))
+  rw [List.pairwise_map]
+  exact hl.1.imp fun {a b} hab => Nat.div_le_div_right (Nat.le_of_lt hab)
+
+include hg hcat hlk in
+/-- `anch_of_hit` for the anchors of chosen seeds `sel` (distinct, more than `sbound P`). -/
+theorem anch_of_hit_sel (P : Nat) (read : List Char) (R : ByteArray) (hr : Encodes R read) (hf : fastT P R = true)
+    (sel : List Nat) (hsel : selOk P R sel = true)
+    (w : Window) (s : Int) (hs : windowScore sc0 read g w = some s) (hS : -(P : Int) ≤ s) :
+    ∃ x ∈ anchSel ix G R sel, ∃ a b : Int, a.natAbs + b.natAbs ≤ gapBound sc0 (-(P : Int)) ∧
+      (x : Int) = (offs[w.chr]! : Int) + w.start + a + R.size ∧ (w.len : Int) = R.size + a + b := by
+  unfold fastT at hf
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hf
+  obtain ⟨hm, -⟩ := hf
+  unfold selOk at hsel
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at hsel
+  obtain ⟨⟨hnd, hlt⟩, hlen⟩ := hsel
+  have hn : R.size = read.length := hr.1
+  generalize hM : R.size / 25 = m at hm hlt
+  have hk1 : m - 1 + 1 = m := by omega
+  have hLs : read.length / (m - 1 + 1) = R.size / m := by rw [hk1, hn]
+  have h25 := le_div_seeds R.size (by omega)
+  rw [hM] at h25
+  obtain ⟨j, hj, p, a, b, hc, hmatch, hshape, ha1, hnn, hst, hwl⟩ :=
+    coverLE g read gbs R hg hr (-(P : Int)) q (by decide) (m - 1) (by rw [hLs]; exact h25)
+      (by rw [hLs]; have : q = 25 := rfl; omega)
+      sel hnd (fun j hj => by have := hlt j hj; omega)
+      (by rw [← sbound_def]; exact hlen) w s hs hS
+  rw [hLs] at hmatch ha1 hst
+  rw [← hn] at hwl
+  have hjm := hlt j hj
+  generalize hL : R.size / m = Ls at hmatch ha1 hst
+  have hfit : j * Ls + q ≤ R.size := by
+    have := seed_fits R.size j (by omega) (by omega); rw [hM, hL] at this; exact this
+  obtain ⟨hcs, hce⟩ := catOk_spec G offs gbs hcat w.chr hc
+  have hmG : MatchAt G (offs[w.chr]! + p) R (j * Ls) := ⟨by have := hmatch.1; omega, fun k hk => by
+    rw [Nat.add_assoc, hce _ (by have := hmatch.1; omega)]; exact hmatch.2 k hk⟩
+  have hl := hlk R (j * Ls) (R.size - j * Ls) hfit
+  have he : (offs[w.chr]! + p + (R.size - j * Ls)) * 16 + 0 ∈
+      (LookG.look ix G R (j * Ls) (R.size - j * Ls) (LookG.prep ix (seedHashAt R (j * Ls)))).toList :=
+    (hl.2 _).mpr ⟨_, hmG, rfl⟩
+  refine ⟨offs[w.chr]! + p + (R.size - j * Ls), ?_, a, b, hshape.1, ?_, ?_⟩
+  · unfold anchSel
+    simp only [hM, hL]
+    apply foldMerge_mem
+    right
+    exact ⟨j, hj, List.mem_map.2 ⟨_, he, by omega⟩⟩
+  · have : q = 25 := rfl
+    omega
+  · omega
+
 end anch
 
 section main
@@ -289,6 +523,79 @@ theorem noPairJ_ok (lo hi P1 P2 : Nat) (m1 m2 : List Char) (R1 R2 : ByteArray) (
     omega
   · simp [properPair] at hp
 
+theorem sel_lt {P : Nat} {R : ByteArray} {sel : List Nat} (h : selOk P R sel = true) : ∀ j ∈ sel, j < R.size / 25 := by
+  unfold selOk at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
+  exact h.1.2
+
+theorem selOk_size (P : Nat) (R R' : ByteArray) (sel : List Nat) (h : R'.size = R.size) :
+    selOk P R' sel = selOk P R sel := by
+  unfold selOk; rw [h]
+
+set_option maxHeartbeats 1000000 in
+include hg hcat hlk in
+/-- **`noPairJS` proves `noPair`** (any seeds passing `selOk`): no hit of mate 1 (cap `P1`) and hit of mate 2 (cap
+`P2`) form a proper pair. -/
+theorem noPairJS_ok (lo hi P1 P2 : Nat) (m1 m2 : List Char) (R1 R2 : ByteArray) (h1 : Encodes R1 m1)
+    (h2 : Encodes R2 m2) (s1 sr1 s2 sr2 : List Nat) (h : noPairJS P1 P2 hi ix G R1 R2 s1 sr1 s2 sr2 = true) :
+    ∀ a ∈ hitsBoth sc0 (-(P1 : Int)) g m1, ∀ b ∈ hitsBoth sc0 (-(P2 : Int)) g m2,
+      properPair lo hi a.1 b.1 = false := by
+  unfold noPairJS at h
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨⟨⟨⟨⟨⟨hf1, hf2⟩, ho1⟩, hor1⟩, ho2⟩, hor2⟩, hj1, hj2⟩ := h
+  have hm1 : 0 < R1.size / 25 := by unfold fastT at hf1; simp at hf1; omega
+  have hm2 : 0 < R2.size / 25 := by unfold fastT at hf2; simp at hf2; omega
+  have hs1 := revCompK_size R1 m1 h1
+  have hs2 := revCompK_size R2 m2 h2
+  have hfr1 : fastT P1 (revCompK R1) = true := by rw [fastT_size P1 R1 _ hs1]; exact hf1
+  have hfr2 : fastT P2 (revCompK R2) = true := by rw [fastT_size P2 R2 _ hs2]; exact hf2
+  have hmr1 : 0 < (revCompK R1).size / 25 := by rw [hs1]; exact hm1
+  have hmr2 : 0 < (revCompK R2).size / 25 := by rw [hs2]; exact hm2
+  have hd1 := nearAnyF_false _ _ _ _ (anchSel_sorted ix G hlk R1 hm1 s1 (sel_lt ho1)) (anchSel_sorted ix G hlk _ hmr2 sr2 (by rw [hs2]; exact sel_lt hor2)) hj1
+  have hd2 := nearAnyF_false _ _ _ _ (anchSel_sorted ix G hlk _ hmr1 sr1 (by rw [hs1]; exact sel_lt hor1)) (anchSel_sorted ix G hlk R2 hm2 s2 (sel_lt ho2)) hj2
+  intro ⟨⟨w1, st1⟩, s1'⟩ ha ⟨⟨w2, st2⟩, s2'⟩ hb
+  rw [mem_hitsBoth_T] at ha hb
+  obtain ⟨-, hsa, hTa⟩ := ha
+  obtain ⟨-, hsb, hTb⟩ := hb
+  apply Classical.byContradiction
+  intro hp
+  simp only [Bool.not_eq_false] at hp
+  unfold joinW at hd1 hd2
+  cases st1 <;> cases st2
+  · simp [properPair] at hp
+  · -- mate 1 forward, mate 2 reverse
+    simp only [properPair, if_true, Bool.and_eq_true, decide_eq_true_eq] at hp
+    obtain ⟨⟨⟨⟨⟨hc, -⟩, -⟩, hle⟩, -⟩, hhi⟩ := hp
+    obtain ⟨x1, hx1, a1, b1, hab1, hx1e, -⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P1 m1 R1 h1 hf1 s1 ho1 w1 s1' hsa hTa
+    obtain ⟨x2, hx2, a2, b2, hab2, hx2e, hl2⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P2 (revComp m2) (revCompK R2) (revCompK_encodes R2 m2 h2) hfr2
+        sr2 (by rw [selOk_size _ _ _ _ hs2]; exact hor2) w2 s2' hsb hTb
+    rw [hs2] at hx2e hl2
+    rw [← hc] at hx2e
+    have := hd1 x1 hx1 x2 hx2
+    have := absB a1; have := absB b1; have := absB a2; have := absB b2
+    generalize a1.natAbs = A1 at *; generalize b1.natAbs = B1 at *
+    generalize a2.natAbs = A2 at *; generalize b2.natAbs = B2 at *
+    omega
+  · -- mate 1 reverse, mate 2 forward
+    simp only [properPair, Bool.and_eq_true, decide_eq_true_eq] at hp
+    simp only [reduceCtorEq, if_false, Bool.and_eq_true, decide_eq_true_eq] at hp
+    obtain ⟨⟨⟨⟨⟨hc, -⟩, -⟩, hle⟩, -⟩, hhi⟩ := hp
+    obtain ⟨x1, hx1, a1, b1, hab1, hx1e, hl1⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P1 (revComp m1) (revCompK R1) (revCompK_encodes R1 m1 h1) hfr1
+        sr1 (by rw [selOk_size _ _ _ _ hs1]; exact hor1) w1 s1' hsa hTa
+    obtain ⟨x2, hx2, a2, b2, hab2, hx2e, -⟩ :=
+      anch_of_hit_sel ix G offs gbs g hg hcat hlk P2 m2 R2 h2 hf2 s2 ho2 w2 s2' hsb hTb
+    rw [hs1] at hx1e hl1
+    rw [hc] at hx2e
+    have := hd2 x1 hx1 x2 hx2
+    have := absB a1; have := absB b1; have := absB a2; have := absB b2
+    generalize a1.natAbs = A1 at *; generalize b1.natAbs = B1 at *
+    generalize a2.natAbs = A2 at *; generalize b2.natAbs = B2 at *
+    omega
+  · simp [properPair] at hp
+
 end main
 
 end MapSpec.Fast
@@ -296,3 +603,5 @@ end MapSpec.Fast
 #print axioms MapSpec.Fast.nearAnyF_false
 #print axioms MapSpec.Fast.anch_of_hit
 #print axioms MapSpec.Fast.noPairJ_ok
+
+#print axioms MapSpec.Fast.noPairJS_eqA

@@ -1,0 +1,35 @@
+RUN head pipe=0 rep1 | ours	4	reads	94.6	355.4	5.67	1.510	57.44	15.30
+LOOPSTAT tid+3: usr 5.5 sys 10.4 cpu 15.9 s, read syscalls 107935, rchar 9.03 GB, avg read 82 KiB, R-state 27%
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 334.2 s over 8 threads (last samples)
+RUN head pipe=1048576 rep1 | ours	4	reads	91.0	350.0	5.68	1.510	59.76	15.53
+LOOPSTAT tid+3: usr 5.3 sys 7.9 cpu 13.1 s, read syscalls 85044, rchar 9.03 GB, avg read 104 KiB, R-state 25%
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 329.1 s over 8 threads (last samples)
+RUN head pipe=0 rep2 | ours	4	reads	88.0	338.2	5.71	1.510	61.78	16.07
+LOOPSTAT tid+3: usr 5.5 sys 7.2 cpu 12.7 s, read syscalls 108425, rchar 9.03 GB, avg read 81 KiB, R-state 28%
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 317.8 s over 8 threads (last samples)
+RUN head pipe=1048576 rep2 | ours	4	reads	88.4	339.7	5.68	1.510	61.50	16.00
+LOOPSTAT tid+4: usr 5.2 sys 8.1 cpu 13.2 s, read syscalls 85007, rchar 9.03 GB, avg read 104 KiB, R-state 25%
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 319.4 s over 8 threads (last samples)
+RUN head pipe=0 rep3 | ours	4	reads	90.3	346.1	5.71	1.510	60.21	15.71
+LOOPSTAT tid+3: usr 5.7 sys 7.9 cpu 13.6 s, read syscalls 108072, rchar 9.03 GB, avg read 82 KiB, R-state 25%
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 325.4 s over 8 threads (last samples)
+RUN head pipe=1048576 rep3 | ours	4	reads	87.7	336.6	5.67	1.510	61.96	16.15
+LOOPSTAT tid+3: usr 5.1 sys 8.0 cpu 13.1 s, read syscalls 85742, rchar 9.03 GB, avg read 103 KiB, R-state 27%
+LOOPSTAT tid+0: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 15, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT tid+1: usr 0.0 sys 0.0 cpu 0.0 s, read syscalls 0, rchar 0.00 GB, avg read 0 KiB, R-state 0%
+LOOPSTAT all threads cpu 315.9 s over 8 threads (last samples)
+RUN minibwa pipe=0 rep1 | minibwa	4	reads	256.7	1000.0	8.80	1.510	21.18	5.44
+RUN minibwa pipe=1048576 rep1 | minibwa	4	reads	255.9	991.3	8.79	1.510	21.25	5.48
+RUN minibwa pipe=0 rep2 | minibwa	4	reads	260.3	1009.1	8.79	1.510	20.88	5.39
+RUN minibwa pipe=1048576 rep2 | minibwa	4	reads	258.5	1003.9	8.81	1.510	21.03	5.41
+FINISHED

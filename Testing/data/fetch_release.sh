@@ -10,7 +10,9 @@ mkdir -p "$dst"
 if [ -L "$dl" ] && [ ! -e "$dl" ]; then rm "$dl"; fi   # a dangling link (the repo once tracked one)
 mkdir -p "$dl"
 if [ -n "${FROM_DIR:-}" ]; then cp "$FROM_DIR"/* "$dst/"
-elif command -v gh >/dev/null; then gh release download "$tag" -R "$repo" -D "$dst" --clobber
+elif command -v gh >/dev/null; then   # REST only (GraphQL, used by `gh release download`, is blocked in cloud sessions)
+  gh api "repos/$repo/releases/tags/$tag" --jq '.assets[] | "\(.id) \(.name)"' | while read id name; do
+    gh api -H "Accept: application/octet-stream" "repos/$repo/releases/assets/$id" > "$dst/$name"; done
 else echo "need gh (private repo) or FROM_DIR"; exit 1; fi
 cd "$dst"
 for p in $(ls | grep '\.partaa$' | sed 's/\.partaa$//'); do cat "$p".part* > "$p" && rm "$p".part*; done

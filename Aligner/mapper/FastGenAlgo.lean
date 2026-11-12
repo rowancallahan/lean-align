@@ -104,6 +104,130 @@ def phase1 {L Pp : Type} [LookG L Pp] [Inhabited Pp] (ix : L) (R : ByteArray) (g
 def diags (acc : List (Array Nat)) : List Nat :=
   dedupAdj ((acc.flatMap fun arr => arr.toList.map (· / 16)).mergeSort fun a b => decide (a ≤ b))
 
+/-! ### `diags` by merging (compiled; `diags_eqM`) -/
+
+local notation "leN" => fun (a b : Nat) => decide (a ≤ b)
+
+/-- The diagonals `x / 16` of one anchor array. -/
+def runD (arr : Array Nat) : List Nat := arr.foldr (fun x r => x / 16 :: r) []
+
+/-- `l` is increasing (`ascB_sorted`). -/
+def ascB : List Nat → Bool
+  | a :: b :: t => decide (a ≤ b) && ascB (b :: t)
+  | _ => true
+
+theorem ascB_sorted : ∀ l : List Nat, ascB l = true → l.Pairwise (fun a b => decide (a ≤ b) = true)
+  | [], _ => List.Pairwise.nil
+  | [_], _ => List.pairwise_singleton _ _
+  | a :: b :: t, h => by
+    simp only [ascB, Bool.and_eq_true, decide_eq_true_eq] at h
+    have ih := ascB_sorted (b :: t) h.2
+    refine List.Pairwise.cons ?_ ih
+    intro c hc
+    simp only [List.mem_cons] at hc
+    rcases hc with rfl | hc
+    · simpa using h.1
+    · have := List.rel_of_pairwise_cons ih hc; simp only [decide_eq_true_eq] at this ⊢; omega
+
+/-- `l` sorted: as it is when already increasing. -/
+@[inline] def srtN (l : List Nat) : List Nat := if ascB l then l else l.mergeSort leN
+
+theorem srtN_sorted (l : List Nat) : (srtN l).Pairwise (fun a b => decide (a ≤ b) = true) := by
+  unfold srtN; split
+  · exact ascB_sorted l (by assumption)
+  · exact List.pairwise_mergeSort (le := leN)
+      (fun a b c h1 h2 => by simp only [decide_eq_true_eq] at h1 h2 ⊢; omega)
+      (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) l
+
+theorem srtN_perm (l : List Nat) : (srtN l).Perm l := by
+  unfold srtN; split
+  · exact List.Perm.refl _
+  · exact List.mergeSort_perm l _
+
+/-- One round: neighbours merged. -/
+def dgMergePairs : List (List Nat) → List (List Nat)
+  | a :: b :: rest => List.merge a b leN :: dgMergePairs rest
+  | l => l
+
+theorem dgMergePairs_len : ∀ l : List (List Nat), (dgMergePairs l).length ≤ l.length
+  | a :: b :: rest => by simp only [dgMergePairs, List.length_cons]; have := dgMergePairs_len rest; omega
+  | [] => by simp [dgMergePairs]
+  | [_] => by simp [dgMergePairs]
+
+/-- All lists merged, rounds of neighbours (`dgMergeAll_spec`). -/
+def dgMergeAll : List (List Nat) → List Nat
+  | [] => []
+  | [a] => a
+  | a :: b :: rest => dgMergeAll (List.merge a b leN :: dgMergePairs rest)
+termination_by l => l.length
+decreasing_by simp only [List.length_cons]; have := dgMergePairs_len rest; omega
+
+theorem dgMergePairs_sorted : ∀ l : List (List Nat), (∀ x ∈ l, x.Pairwise (fun a b => decide (a ≤ b) = true)) →
+    ∀ x ∈ dgMergePairs l, x.Pairwise (fun a b => decide (a ≤ b) = true)
+  | a :: b :: rest, h => by
+    simp only [dgMergePairs, List.mem_cons, forall_eq_or_imp]
+    refine ⟨List.pairwise_merge (fun a b c h1 h2 => by simp only [decide_eq_true_eq] at h1 h2 ⊢; omega)
+      (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega)
+      a b (h a (by simp)) (h b (by simp)), ?_⟩
+    exact dgMergePairs_sorted rest (fun x hx => h x (by simp [hx]))
+  | [], h => by simp [dgMergePairs]
+  | [_], h => by simpa [dgMergePairs] using h
+
+theorem dgMergePairs_perm : ∀ l : List (List Nat), (dgMergePairs l).flatten.Perm l.flatten
+  | a :: b :: rest => by
+    simp only [dgMergePairs, List.flatten_cons, ← List.append_assoc]
+    exact List.Perm.append (List.merge_perm_append _) (dgMergePairs_perm rest)
+  | [] => by simp [dgMergePairs]
+  | [_] => by simp [dgMergePairs]
+
+theorem dgMergeAll_spec : ∀ l : List (List Nat), (∀ x ∈ l, x.Pairwise (fun a b => decide (a ≤ b) = true)) →
+    (dgMergeAll l).Pairwise (fun a b => decide (a ≤ b) = true) ∧ (dgMergeAll l).Perm l.flatten
+  | [], _ => by simp [dgMergeAll]
+  | [a], h => by simp only [dgMergeAll, List.flatten_cons, List.flatten_nil, List.append_nil]; exact ⟨h a (by simp), List.Perm.refl _⟩
+  | a :: b :: rest, h => by
+    rw [dgMergeAll]
+    have hs := dgMergePairs_sorted (a :: b :: rest) h
+    have ih := dgMergeAll_spec (List.merge a b leN :: dgMergePairs rest) (by simpa [dgMergePairs] using hs)
+    refine ⟨ih.1, ih.2.trans ?_⟩
+    have := dgMergePairs_perm (a :: b :: rest)
+    simpa [dgMergePairs] using this
+termination_by l => l.length
+decreasing_by simp only [List.length_cons]; have := dgMergePairs_len rest; omega
+
+/-- `diags` by merging each anchor array's (increasing) diagonals (`diags_eqM`). -/
+def diagsM (acc : List (Array Nat)) : List Nat :=
+  dedupAdj (dgMergeAll (acc.map fun arr => srtN (runD arr)))
+
+theorem runD_eq (arr : Array Nat) : runD arr = arr.toList.map (· / 16) := by
+  rw [runD, ← Array.foldr_toList]
+  induction arr.toList with
+  | nil => rfl
+  | cons x xs ih => simp only [List.foldr_cons, List.map_cons, ih]
+
+theorem flat_perm : ∀ acc : List (Array Nat),
+    (acc.map fun arr => srtN (runD arr)).flatten.Perm (acc.flatMap fun arr => arr.toList.map (· / 16))
+  | [] => by simp
+  | arr :: rest => by
+    simp only [List.map_cons, List.flatten_cons, List.flatMap_cons]
+    exact List.Perm.append ((srtN_perm _).trans (by rw [runD_eq])) (flat_perm rest)
+
+/-- Compiled code runs `diagsM` (an array's sort is skipped when its diagonals are already
+increasing, as the index's slot order makes them; the arrays are then merged). -/
+@[csimp] theorem diags_eqM : @diags = @diagsM := by
+  funext acc
+  unfold diags diagsM
+  congr 1
+  have hs : ∀ x ∈ acc.map (fun arr => srtN (runD arr)), x.Pairwise (fun a b => decide (a ≤ b) = true) := by
+    intro x hx; simp only [List.mem_map] at hx; obtain ⟨arr, _, rfl⟩ := hx; exact srtN_sorted _
+  have hm := dgMergeAll_spec _ hs
+  apply List.Perm.eq_of_pairwise (le := fun a b => decide (a ≤ b) = true)
+  · intro a b _ _ h1 h2; simp only [decide_eq_true_eq] at h1 h2; omega
+  · exact List.pairwise_mergeSort (le := leN)
+      (fun a b c h1 h2 => by simp only [decide_eq_true_eq] at h1 h2 ⊢; omega)
+      (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) _
+  · exact hm.1
+  · exact (List.mergeSort_perm _ _).trans ((flat_perm acc).symm.trans hm.2.symm)
+
 /-- Window of diagonal `D` and shape `sh`: start and length. -/
 @[inline] def dst (n D : Nat) (sh : Int × Int) : Int := (D : Int) - n - sh.1
 
@@ -221,6 +345,14 @@ spoiled blocks `sp` (`bandEndP_spec`). -/
 /-- Seeds (anchor arrays) with an anchor within `r` diagonals of `D`. -/
 def suppA (acc : List (Array Nat)) (D r : Nat) : Nat :=
   (acc.filter fun arr => anyNear arr (D - r) (D + r)).length
+
+/-- `suppA` counted without building the filtered list (`suppA_eqC`). -/
+@[inline] def suppAC (acc : List (Array Nat)) (D r : Nat) : Nat :=
+  acc.countP fun arr => anyNear arr (D - r) (D + r)
+
+@[csimp] theorem suppA_eqC : @suppA = @suppAC := by
+  funext acc D r
+  unfold suppA suppAC; rw [List.countP_eq_length_filter]
 
 /-- The distinct diagonals of the anchors, supported by at least `need` seeds within `r`. -/
 def diagsB (acc : List (Array Nat)) (need r : Nat) : List Nat :=

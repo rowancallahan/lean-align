@@ -1,0 +1,172 @@
+Index header patch for Rowan (Spec/Shim.lean is frozen: NOT applied).   git apply Testing/notes/index_header.patch
+Base: festive-fermi 050ef82. Touches Spec/Shim.lean + Main.lean (mirror), Spec/FROZEN.sha256 (new Shim checksum), new Spec/IndexHeader.lean,
+new Testing/scripts/index_code_hash.sh, Testing/scripts/CI_check.sh (hash check; IndexHeader in the shim token scan). Details: Testing/notes/INDEX_HEADER.md.
+`build` writes INDEX.header ("lean-align-index<TAB>code <hash><TAB>genome <FNV-1a64 of the FASTA>"); `map` throws before reading the
+index if the header is missing, malformed, or its code hash is not the one compiled in. Old indexes are rejected: re-run `build`.
+With Testing/notes/audit_medium_patches/shim_fasta_failfast.patch (either order): every hunk applies except Spec/FROZEN.sha256; use
+  git apply --exclude=Spec/FROZEN.sha256 Testing/notes/index_header.patch
+  sed -i "s/^[0-9a-f]*  Spec\/Shim.lean$/$(shasum -a 256 Spec/Shim.lean | cut -c1-64)  Spec\/Shim.lean/" Spec/FROZEN.sha256
+
+diff --git a/Main.lean b/Main.lean
+index 52a0324..3d806ad 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -1,5 +1,6 @@
+ -- The lean-align executable: Spec/Shim.lean line for line, importing Proofs (the proved buildIndex / alignPairs) instead of Spec.
+ import Proofs.Sam
++import Spec.IndexHeader
+ 
+ /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
+ then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
+@@ -14,7 +15,7 @@ def Spec.chunkPairs (chunk : Array (Spec.FastqRecord × Spec.FastqRecord)) :
+     (if record1.letters.isEmpty then none else some record1.letters,
+      if record2.letters.isEmpty then none else some record2.letters)
+ 
+-def main (args : List String) : IO UInt32 := do
++def run (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+     let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
+@@ -56,3 +57,13 @@ def main (args : List String) : IO UInt32 := do
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
+     return 1
++
++-- INDEX.header (Spec/IndexHeader.lean): `map` stops before reading an index that this binary's index code did not build;
++-- `build` removes the old header first and writes the new one after the index
++def main (args : List String) : IO UInt32 := do
++  if let ["map", indexPath, _, _, _, _, _] := args then Spec.checkIndexHeader indexPath
++  if let ["build", _, indexPath] := args then
++    if ← System.FilePath.pathExists (indexPath ++ ".header") then IO.FS.removeFile (indexPath ++ ".header")
++  let code ← run args
++  if let ["build", genomePath, indexPath] := args then Spec.writeIndexHeader genomePath indexPath
++  return code
+diff --git a/Spec/FROZEN.sha256 b/Spec/FROZEN.sha256
+index b255e70..26617ab 100644
+--- a/Spec/FROZEN.sha256
++++ b/Spec/FROZEN.sha256
+@@ -1,4 +1,4 @@
+ 1aca44fb9f1a322efe7dc00bf04e5328091316b181a0244020d810606718162e  Spec/Alignment.lean
+ bed16299002ab810b77a17f678bbbe92c704130ab61d6ba4123a17efcd649f9f  Spec/Mapping.lean
+ e8bdfff2fee4aa0bbdc41b46273ad855a04ab7d87672df62f696faa2147af1bd  Spec/Aligner.lean
+-c12b395662e0265ac5cb40166be03bf4afede52dc6f0684ad7c5cc9f97957b7c  Spec/Shim.lean
++9a10e5441e4b490ae39536175da5d8ba669e170ee519970318dad93af5c285ad  Spec/Shim.lean
+diff --git a/Spec/IndexHeader.lean b/Spec/IndexHeader.lean
+new file mode 100644
+index 0000000..48e496e
+--- /dev/null
++++ b/Spec/IndexHeader.lean
+@@ -0,0 +1,36 @@
++/-! # INDEX.header: which code and which genome an index was built from. Unproved (trusted) plumbing for the shim.
++One line, written by `build` after the index: "lean-align-index<TAB>code <indexCodeHash><TAB>genome <FNV-1a 64 of the FASTA bytes>".
++`map` stops before it reads the index when the header is missing or its code hash is not this binary's
++(an index from older code would load to nothing and every pair would come out unmapped). The genome hash is
++recorded for a later check against the FASTA; `map` does not have the FASTA. -/
++
++namespace Spec
++
++-- regenerate: sh Testing/scripts/index_code_hash.sh (sha256 of the index-building files; CI_check.sh checks it)
++def indexCodeHash : String := "c2e13edf82edcb511b79bd3321b8b8b5593ea27ab3a1d409e5ef7cb06e00193c"
++
++-- FNV-1a 64 bit over a file's bytes, read in 1 MiB pieces
++def fileFnv1a (path : String) : IO UInt64 := do
++  let handle ← IO.FS.Handle.mk path .read
++  let mut h : UInt64 := 14695981039346656037
++  repeat
++    let piece ← handle.read 1048576
++    if piece.isEmpty then break
++    for b in piece do
++      h := (h ^^^ b.toUInt64) * 1099511628211
++  return h
++
++def writeIndexHeader (genomePath indexPath : String) : IO Unit := do
++  IO.FS.writeFile (indexPath ++ ".header") s!"lean-align-index\tcode {indexCodeHash}\tgenome {← fileFnv1a genomePath}\n"
++
++-- throws (stops the run) unless INDEX.header is there and was written by this index code
++def checkIndexHeader (indexPath : String) : IO Unit := do
++  let path := indexPath ++ ".header"
++  unless ← System.FilePath.pathExists path do
++    throw (IO.userError s!"{path} is missing: the index was built by older code or not by `build`; re-run build")
++  let ["lean-align-index", code, genome] := ((← IO.FS.readFile path).replace "\n" "").splitOn "\t"
++    | throw (IO.userError s!"{path}: not an index header")
++  unless code == s!"code {indexCodeHash}" && genome.startsWith "genome " do
++    throw (IO.userError s!"{path}: index built by different index code ({code}; this binary: code {indexCodeHash}); re-run build")
++
++end Spec
+diff --git a/Spec/Shim.lean b/Spec/Shim.lean
+index 963f393..dd7cde3 100644
+--- a/Spec/Shim.lean
++++ b/Spec/Shim.lean
+@@ -1,4 +1,5 @@
+ import Spec.Sam
++import Spec.IndexHeader
+ 
+ /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
+ then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
+@@ -13,7 +14,7 @@ def Spec.chunkPairs (chunk : Array (Spec.FastqRecord × Spec.FastqRecord)) :
+     (if record1.letters.isEmpty then none else some record1.letters,
+      if record2.letters.isEmpty then none else some record2.letters)
+ 
+-def main (args : List String) : IO UInt32 := do
++def run (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+     let byteGenome ← Spec.readFasta (← IO.FS.Handle.mk genomePath .read)
+@@ -55,3 +56,13 @@ def main (args : List String) : IO UInt32 := do
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
+     return 1
++
++-- INDEX.header (Spec/IndexHeader.lean): `map` stops before reading an index that this binary's index code did not build;
++-- `build` removes the old header first and writes the new one after the index
++def main (args : List String) : IO UInt32 := do
++  if let ["map", indexPath, _, _, _, _, _] := args then Spec.checkIndexHeader indexPath
++  if let ["build", _, indexPath] := args then
++    if ← System.FilePath.pathExists (indexPath ++ ".header") then IO.FS.removeFile (indexPath ++ ".header")
++  let code ← run args
++  if let ["build", genomePath, indexPath] := args then Spec.writeIndexHeader genomePath indexPath
++  return code
+diff --git a/Testing/scripts/CI_check.sh b/Testing/scripts/CI_check.sh
+index 776bb9e..ede60a0 100644
+--- a/Testing/scripts/CI_check.sh
++++ b/Testing/scripts/CI_check.sh
+@@ -13,6 +13,7 @@ step() { printf '\n== %s\n' "$1"; }
+ step "frozen files (checksums)"
+ (cd Aligner/trimmer && shasum -a 256 -c FROZEN_CONTRACT.sha256) || fail=1
+ shasum -a 256 -c Spec/FROZEN.sha256 || fail=1
++sh Testing/scripts/index_code_hash.sh --check || fail=1
+ 
+ step "lake build"
+ lake build >"$tmp/lean_align_build.log" 2>&1 && echo "build ok" || { tail -20 "$tmp/lean_align_build.log"; fail=1; }
+@@ -69,7 +70,7 @@ tail -3 "$tmp/lean_align_cross.log"
+ step "forbidden tokens in the executables and LeanAlign/"
+ if grep -nE "sorry|native_decide|@\[extern|unsafe|IO.println|IO.eprintln|IO.print |IO.Process|getStdout|getStderr" Aligner/PairwiseMain.lean Aligner/LeanAlign/*.lean; then fail=1; else echo "none"; fi
+ if grep -nE "IO\." Aligner/LeanAlign/*.lean; then echo "FAIL: IO in the pure library"; fail=1; else echo "LeanAlign/ is IO-free"; fi
+-if grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" Main.lean Spec/Shim.lean Spec/Fasta.lean Spec/Fastq.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean; then fail=1; else echo "shim files: no sorry / native_decide / extern / unsafe / implemented_by"; fi
++if grep -nE "sorry|native_decide|@\[extern|unsafe|implemented_by" Main.lean Spec/Shim.lean Spec/IndexHeader.lean Spec/Fasta.lean Spec/Fastq.lean Spec/Sam.lean Proofs/Fasta.lean Proofs/Fastq.lean Proofs/Sam.lean; then fail=1; else echo "shim files: no sorry / native_decide / extern / unsafe / implemented_by"; fi
+ for f in Fasta Fastq Sam; do sed "s/^import Proofs\./import Spec./" Proofs/$f.lean | cmp -s - Spec/$f.lean && echo "Proofs/$f.lean mirrors Spec/$f.lean" || { echo "FAIL: Proofs/$f.lean differs from Spec/$f.lean"; fail=1; }; done
+ n=$(grep -n '^/-! ## The index and the aligner' Spec/Aligner.lean | cut -d: -f1)
+ head -n $((n-1)) Spec/Aligner.lean >"$tmp/lean_align_spec_answer.lean"
+diff --git a/Testing/scripts/index_code_hash.sh b/Testing/scripts/index_code_hash.sh
+new file mode 100644
+index 0000000..496b3b5
+--- /dev/null
++++ b/Testing/scripts/index_code_hash.sh
+@@ -0,0 +1,17 @@
++#!/bin/sh
++# The index code hash compiled into lean-align (Spec/IndexHeader.lean `indexCodeHash`, written to INDEX.header by `build`,
++# checked by `map`): sha256 of the `shasum -a 256` lines of the files that decide the index bytes.
++#   sh Testing/scripts/index_code_hash.sh           print it
++#   sh Testing/scripts/index_code_hash.sh --check   exit 1 unless Spec/IndexHeader.lean holds it (CI_check.sh)
++# After changing any of these files: paste the printed hash into Spec/IndexHeader.lean, rebuild, re-run `build` on every index.
++set -eu
++export LC_ALL=C
++cd "$(dirname "$0")/../.."
++h=$(shasum -a 256 Proofs/Aligner.lean Proofs/Index.lean Proofs/Heavy.lean Proofs/HeavyBuild.lean Proofs/LastResort.lean \
++  Aligner/index/minimizer/*.lean Aligner/index/packed_genome/*.lean | shasum -a 256 | cut -c1-64)
++if [ "${1:-}" = --check ]; then
++  grep -q "^def indexCodeHash : String := \"$h\"\$" Spec/IndexHeader.lean && echo "index code hash ok ($h)" ||
++    { echo "FAIL: index code changed: put \"$h\" in Spec/IndexHeader.lean (indexCodeHash)"; exit 1; }
++else
++  echo "$h"
++fi

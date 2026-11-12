@@ -25,7 +25,7 @@ lean_lib Spec where                  -- THE specification (statements only; buil
 
 @[default_target]
 lean_lib Proofs where                -- the spec with proofs filled in (same names; checked against Spec/ by comparator)
-  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Index, `Proofs.Aligner, `Proofs.Fasta, `Proofs.Fastq, `Proofs.Sam]
+  roots := #[`Proofs.Alignment, `Proofs.Mapping, `Proofs.Answer, `Proofs.Hits, `Proofs.Tiers, `Proofs.Bridge, `Proofs.Whole, `Proofs.Report, `Proofs.LastResort, `Proofs.GaveUp, `Proofs.Heavy, `Proofs.HeavyBuild, `Proofs.Index, `Proofs.Pack, `Proofs.Floor, `Proofs.Aligner, `Proofs.SaveLoad, `Proofs.Shift, `Proofs.Build, `Proofs.IndexBuild, `Proofs.IndexFinal, `Proofs.Fasta, `Proofs.Fastq, `Proofs.SamBytes, `Proofs.TrimCore, `Proofs.Trim, `Proofs.TrimFast, `Proofs.Sam, `Proofs.SamFast, `Proofs.SamFused, `Proofs.MapFast, `Proofs.MapFiles, `Proofs.FastqSlices, `Proofs.MapStream, `Proofs.MapProcess, `Proofs.MapDefs, `Proofs.MapJobs, `Proofs.MapScan, `Proofs.MapSlices, `Proofs.MapPending, `Proofs.MapRun, `Proofs.MapCorrect, `Proofs.MapJobEq]
 
 @[default_target]
 lean_lib Core where                  -- proof internals: what the kernels and router are proved against, translated to Spec/ in Proofs/Bridge.lean
@@ -104,12 +104,12 @@ lean_lib IndexKmer where   -- k-mer index
 @[default_target]
 lean_lib IndexMinimizer where   -- minimizer index (MzIndex) and its checkers
   srcDir := "Aligner/index/minimizer"
-  roots := #[`MapperMzWords, `MzCheckFast, `MzCheckPar, `MzIndex, `MzView, `MzWord]
+  roots := #[`MapperMzWords, `MzBuildOk, `MzCheckFast, `MzCheckPar, `MzIndex, `MzView, `MzWord]
 
 @[default_target]
 lean_lib IndexPackedGenome where   -- 2-bit packed genome
   srcDir := "Aligner/index/packed_genome"
-  roots := #[`MapperPGen, `MapperPacked, `MzPacked, `WgPacked]
+  roots := #[`MapperPGen, `MapperPacked, `MzBuildP, `MzPacked, `WgPacked]
 
 @[default_target]
 lean_lib IndexRepeatMask where   -- repeat masking
@@ -126,7 +126,7 @@ lean_lib IndexSketch where   -- seed sketches
 @[default_target]
 lean_lib Mapper where   -- tier router, pair search, batching: the code alignPairs runs
   srcDir := "Aligner/mapper"
-  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TierHeur, `TierOpt, `TierRouter]
+  roots := #[`EarlyStopMapper, `FastGen, `FastGenAlgo, `FastGenBatch, `FastGenBlock, `FastGenCover, `FastGenCoverE, `FastGenCoverL, `FastGenMz, `FastGenPair, `FastGenPairPacked, `FastGenProof, `FastGenShort, `FastGenSupp, `FastGenTier, `FastGenTierK, `FastGenTierPacked, `FastGenWordFilt, `FastMapper, `FastMapperMz, `FastMapperPar, `LowErrorMapper, `MateFloor, `PairBnB, `PairBox, `PairConcat, `PairConcatPacked, `PairDispatch, `PairExact, `PairGuarFast, `PairGuarQ, `PairGuarQB, `PairGuarQC, `PairGuarQD, `PairGuarQE, `PairGuarantee, `PairHits, `PairHitsKP, `PairHybrid, `PairInterleave, `PairJoin, `PairJoint, `PairLadder, `PairLadderF, `PairMapper, `PairNear, `PairPacked, `PairReason, `PairRegion, `PairRegionU, `PairRouter, `PairSched, `PairUnique, `ParGroup, `ParMap, `ParStream, `PreFilterMapper, `ReadTrim, `SeedMapper, `SeedMapper2, `SketchMapper, `TieCut, `TierHeur, `TierOpt, `TierRouter, `BandCellsJProof]
 
 @[default_target]
 lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
@@ -135,10 +135,14 @@ lean_lib MapperLemmas where   -- lemmas for the seed-and-index mapper
 
 -- ──────────────────────────── trimmer ───────────────────────────
 
+lean_lib FastqIO where   -- FASTQ bytes for the shim: block reader, byte parser (proved = Spec.FQ.parse in Proofs/Fastq.lean)
+  srcDir := "Aligner/io"
+  roots := #[`FastqIO]
+
 @[default_target]
 lean_lib Trimmer where
   srcDir := "Aligner/trimmer"
-  roots := #[`ReadWindowTrimmer]
+  roots := #[`ReadWindowTrimmer, `AdapterTrim]
 
 -- ───────────────────────────── tool ─────────────────────────────
 
@@ -165,9 +169,17 @@ lean_exe proto where                  -- speed prototype only (unproved)
   srcDir := "Testing/benches"
   root := `Proto
 
+lean_exe second_look_bench where     -- measurement only: pairs reaching the second look, per-mate search cost
+  srcDir := "Testing/benches"
+  root := `SecondLookBench
+
 lean_exe map_bench2 where             -- benchmark only: mapWithIndex vs mapWithIndex2 / 2V
   srcDir := "Testing/benches"
   root := `MapBench2
+
+lean_exe bandcells_ab where           -- check only: bandDPg true = bandDPg false (TierHeur.bandCellsJ) on random cases
+  srcDir := "Testing/benches"
+  root := `BandCellsAB
 
 lean_exe band_bench where             -- banded kernel vs wfaAlignU3 (benchmark only)
   srcDir := "Testing/benches"
@@ -256,3 +268,44 @@ lean_exe whole_genome where           -- whole genome held once: index over a vi
 lean_exe seed_lab where               -- seed lookup cost on the whole genome (benchmark only, unproved IO)
   srcDir := "Testing/benches"
   root := `SeedLab
+
+lean_exe bam_write where              -- BAM writer prototype with stored BGZF blocks vs SAM text (benchmark only, unproved)
+  srcDir := "Testing/benches"
+  root := `BamWrite
+
+@[default_target]
+lean_lib UniqueGenome where           -- unique-genome proofs: k-mers once ⇒ 150-windows far apart; proved k-mer checker
+  srcDir := "Testing/unique"
+  roots := #[`UniqueGenome]
+
+lean_exe kmer_check where             -- runs the proved checker UniqueGenome.checkUnique on a FASTA (the IO is unproved)
+  srcDir := "Testing/unique"
+  root := `KmerCheck
+
+lean_exe tie_prof where                   -- benchmark only: shim CPU by router stage, tier and reason (unproved IO)
+  srcDir := "Testing/benches"
+  root := `TieProf
+
+lean_exe floor_prof where                 -- benchmark only: pairs the report floor breaks and what fixes them (unproved IO)
+  srcDir := "Testing/benches"
+  root := `FloorProf
+
+lean_exe floor_pipe where                 -- benchmark only: the cheap report-floor pipeline and repeat witnesses (unproved IO)
+  srcDir := "Testing/benches"
+  root := `FloorPipe
+
+lean_exe pipe_prof where                  -- benchmark only: per-stage time of the report-floor pipeline (unproved IO)
+  srcDir := "Testing/benches"
+  root := `PipeProf
+
+lean_exe adapter_bench where              -- benchmark only: CPU and cut counts of AdapterTrim.cutTruSeq on a FASTQ (unproved IO)
+  srcDir := "Testing/benches"
+  root := `AdapterBench
+
+lean_exe gaveup_k where               -- benchmark only: repeat grid seeds per mate of named pairs (unproved IO)
+  srcDir := "Testing/benches"
+  root := `GaveUpK
+
+lean_exe heavy_bench where            -- benchmark only: build the heavy 25-mer table from a FASTA, time it, write it (unproved IO)
+  srcDir := "Testing/benches"
+  root := `HeavyBench

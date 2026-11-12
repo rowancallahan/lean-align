@@ -1,0 +1,16 @@
+{
+ "tool": "minibwa",
+ "commit": "c07de5c",
+ "exit": 0,
+ "wall_s": 876.8423008918762,
+ "aligner_user_s": 3337.746949,
+ "aligner_sys_s": 24.798364,
+ "peak_rss_GB": 8.620116,
+ "all_children_user_s": 3425.42745,
+ "all_children_sys_s": 50.171722,
+ "index_load_s": 2.426,
+ "pairs_R1": 10000000.0,
+ "bases_R1": 2482641753.0,
+ "pairs_R2": 10000000.0,
+ "bases_R2": 2481156793.0
+}

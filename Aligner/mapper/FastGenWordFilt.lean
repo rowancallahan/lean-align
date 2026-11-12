@@ -52,6 +52,42 @@ structure GW where
 @[inline] def loadG (w : ByteArray) (u0 k : Nat) : GW :=
   ⟨loadW w (u0 + 16) (k - 16) #[], ldw w u0 k 0, ldw w u0 k 1, ldw w u0 k 2, ldw w u0 k 3, ldw w u0 k 4, ldw w u0 k 5, ldw w u0 k 6, ldw w u0 k 7, ldw w u0 k 8, ldw w u0 k 9, ldw w u0 k 10, ldw w u0 k 11, ldw w u0 k 12, ldw w u0 k 13, ldw w u0 k 14, ldw w u0 k 15⟩
 
+/-- `ldw` on machine words (`ldwU_eq`). -/
+@[inline] def ldwU (w : ByteArray) (u0 k i : USize) : UInt64 := if i < k then gwordU w (u0 + i) else 0
+
+theorem ldwU_eq (w : ByteArray) (u0 k i : USize) (hu : u0.toNat + 16 < 2 ^ 28) (hi : i.toNat < 16) :
+    ldwU w u0 k i = ldw w u0.toNat k.toNat i.toNat := by
+  unfold ldwU ldw
+  have e : (u0 + i).toNat = u0.toNat + i.toNat := usz_add' _ _ (by omega)
+  by_cases c : i < k
+  · rw [if_pos c, if_pos (show i.toNat < k.toNat from c), gwordU_eq w _ (by omega), e]
+  · rw [if_neg c, if_neg (show ¬ i.toNat < k.toNat from c)]
+
+/-- `loadG` with the 16 field words read on machine words when the window fits (`loadG_eqU`). -/
+@[inline] def loadGU (w : ByteArray) (u0 k : Nat) : GW :=
+  if u0 + 16 < 2 ^ 28 ∧ k < 2 ^ 28 then
+    let uU := u0.toUSize
+    let kU := k.toUSize
+    ⟨loadW w (u0 + 16) (k - 16) #[], ldwU w uU kU 0, ldwU w uU kU 1, ldwU w uU kU 2, ldwU w uU kU 3,
+      ldwU w uU kU 4, ldwU w uU kU 5, ldwU w uU kU 6, ldwU w uU kU 7, ldwU w uU kU 8, ldwU w uU kU 9,
+      ldwU w uU kU 10, ldwU w uU kU 11, ldwU w uU kU 12, ldwU w uU kU 13, ldwU w uU kU 14, ldwU w uU kU 15⟩
+  else loadG w u0 k
+
+@[csimp] theorem loadG_eqU : @loadG = @loadGU := by
+  funext w u0 k
+  unfold loadGU
+  split
+  · next h =>
+    have hu : u0.toUSize.toNat = u0 := usz_n _ (by omega)
+    have hk : k.toUSize.toNat = k := usz_n _ (by omega)
+    have l : ∀ i : Nat, i < 16 → ldwU w u0.toUSize k.toUSize (OfNat.ofNat i) = ldw w u0 k i := by
+      intro i hi
+      rw [ldwU_eq w _ _ _ (by rw [hu]; omega) (by rw [usz_lit i (by omega)]; exact hi), hu, hk, usz_lit i (by omega)]
+    simp only [loadG, l 0 (by decide), l 1 (by decide), l 2 (by decide), l 3 (by decide), l 4 (by decide),
+      l 5 (by decide), l 6 (by decide), l 7 (by decide), l 8 (by decide), l 9 (by decide), l 10 (by decide),
+      l 11 (by decide), l 12 (by decide), l 13 (by decide), l 14 (by decide), l 15 (by decide)]
+  · rfl
+
 /-- Word `i` of the window. -/
 @[inline] def GW.get (g : GW) (i : Nat) : UInt64 :=
   if i < 8 then
@@ -80,8 +116,8 @@ def svAny (gs : GW) (sv : UInt64) (t : Nat) : Nat → Bool
   | 0 => false
   | k + 1 => eq25 (gAtW gs t) sv || svAny gs sv (t + 1) k
 
-/-! `svAny` and `lanesAny` on machine words (compiled code only): `svAny_eq_svAnyF`,
-`lanesAny_eq_lanesAnyF` (`@[csimp]`). The loops keep the field offset `t` in `USize` (word
+/-! `svAny` and `lanesAny` on machine words (compiled code only): `svAny_eq_svAnyF` (a rolling window,
+`svAnyR`, below), `lanesAny_eq_lanesAnyF` (`@[csimp]`). The `lanesAny` loops keep the field offset `t` in `USize` (word
 `t >>> 5 + j`, shift `t &&& 31`: `gAtWU`) and read the window words through `GW.getU` (`USize`
 compares); `lanesAnyU` also hoists the read word `K.w.getD j 0` and the field count `n - 32 j`. -/
 
@@ -153,23 +189,24 @@ theorem gAtWU_eq (gs : GW) (tU jU : USize) (t j : Nat) (ht : tU.toNat = t) (hj :
   simp only []
   rw [GW.getU_eq, GW.getU_eq, hu, hu1, hs, c1, c2]
 
-/-- `svAny gs sv t k` with `t` in `USize` (`svAnyU_eq`). -/
-def svAnyU (gs : GW) (sv : UInt64) (t : USize) : Nat → Bool
-  | 0 => false
-  | k + 1 => eq25 (gAtWU gs t 0) sv || svAnyU gs sv (t + 1) k
 
-theorem svAnyU_eq (gs : GW) (sv : UInt64) :
-    ∀ k (tU : USize) t, tU.toNat = t → t + k < 2 ^ 31 → svAnyU gs sv tU k = svAny gs sv t k := by
-  intro k
-  induction k with
-  | zero => intro tU t _ _; rfl
-  | succ k ih =>
-    intro tU t ht hb
-    have e := gAtWU_eq gs tU 0 t 0 ht (usz_lit 0 (by decide)) (by omega)
-    rw [Nat.mul_zero, Nat.add_zero] at e
-    simp only [svAnyU, svAny, e]
-    rw [ih _ _ (by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide), ht]) (by omega)]
+/-- `gAtW` (its slow path; not rewritten by `csimp`). -/
+@[inline] def gAtWS (gs : GW) (t : Nat) : UInt64 :=
+  let s := t % 32
+  comb (gs.get (t / 32)) (gs.get (t / 32 + 1)) s (2 * s).toUInt64 (64 - 2 * s).toUInt64
 
+/-- `gAtW` for the compiled code (`gAtW_eqF`): `USize` offsets and `GW.getU`. -/
+@[inline] def gAtWF (gs : GW) (t : Nat) : UInt64 :=
+  if t < 2147483648 then gAtWU gs t.toUSize 0 else gAtWS gs t
+
+@[csimp] theorem gAtW_eqF : @gAtW = @gAtWF := by
+  funext gs t
+  unfold gAtWF; split
+  · rename_i h
+    have := gAtWU_eq gs t.toUSize 0 t 0 (usz_n _ (by omega)) (usz_lit 0 (by decide)) (by omega)
+    rw [Nat.mul_zero, Nat.add_zero] at this
+    exact this.symm
+  · rfl
 /-- `svAny` (its slow path; not rewritten by `csimp`). -/
 def svAnyS (gs : GW) (sv : UInt64) (t : Nat) : Nat → Bool
   | 0 => false
@@ -181,14 +218,147 @@ theorem svAnyS_eq (gs : GW) (sv : UInt64) : ∀ k t, svAnyS gs sv t k = svAny gs
   | zero => intro t; rfl
   | succ k ih => intro t; simp only [svAnyS, svAny, ih]
 
-/-- `svAny` for the compiled code (`svAny_eq_svAnyF`). -/
+/-! `svAny` on a rolling window (`svAny_eq_svAnyF`): the 32 window fields at the current offset in one register `a`,
+one field shifted in per step from a pending word `b` (refilled every 32 steps), as `lanesAnyR` below. -/
+
+/-- Field `p` of the window words. -/
+def wf (gs : GW) (p : Nat) : Nat := dig (gs.get (p / 32)).toNat (p % 32)
+
+theorem gAtW_dig (gs : GW) (T f : Nat) (hf : f < 32) : dig (gAtW gs T).toNat f = wf gs (T + f) := by
+  unfold gAtW wf
+  rw [comb_dig _ _ _ _ (Nat.mod_lt _ (by omega)) hf]
+  split
+  · rw [show (T + f) / 32 = T / 32 by omega, show (T + f) % 32 = T % 32 + f by omega]
+  · rw [show (T + f) / 32 = T / 32 + 1 by omega, show (T + f) % 32 = T % 32 + f - 32 by omega]
+
+theorem roll_eq (gs : GW) (T : Nat) (a b : UInt64) (ha : a = gAtW gs T)
+    (hb : dig b.toNat 0 = wf gs (T + 32)) : (a >>> 2) ||| (b <<< 62) = gAtW gs (T + 1) := by
+  apply UInt64.toNat_inj.mp
+  apply eq_of_dig 32 _ _ (by have := UInt64.toNat_lt ((a >>> 2) ||| (b <<< 62)); simpa using this)
+    (by have := UInt64.toNat_lt (gAtW gs (T + 1)); simpa using this)
+  intro f hf
+  rw [gAtW_dig _ _ _ hf]
+  have h2 : (2 : UInt64).toNat = 2 * 1 := rfl
+  have h62 : (62 : UInt64).toNat = 2 * 31 := rfl
+  by_cases h31 : f < 31
+  · rw [or_dig_l _ _ _ (by rw [shl_dig _ _ 31 f h62 (by omega) hf, if_neg (by omega)]),
+      shr_dig _ _ 1 f h2 (by omega), ha, gAtW_dig _ _ _ (by omega)]
+    congr 1; omega
+  · rw [or_dig_r _ _ _ (by rw [shr_dig _ _ 1 f h2 (by omega)]; exact dig_hi _ _ (by omega)),
+      shl_dig _ _ 31 f h62 (by omega) hf, if_pos (by omega), show f - 31 = 0 by omega, hb]
+    congr 1; omega
+
+/-- The rolling state: `b` holds the `c` fields after the window at `T` (from word `u`). -/
+def RInv (gs : GW) (T : Nat) (b : UInt64) (c u : USize) : Prop :=
+  1 ≤ c.toNat ∧ c.toNat ≤ 32 ∧ T + 32 + c.toNat = 32 * (u.toNat + 1) ∧
+    ∀ f, f < c.toNat → dig b.toNat f = wf gs (T + 32 + f)
+
+theorem rinv_step (gs : GW) (T : Nat) (b : UInt64) (c u : USize) (h : RInv gs T b c u) (hu : u.toNat + 2 < 2 ^ 32) :
+    (if c == 1 then RInv gs (T + 1) (gs.getU (u + 1)) 32 (u + 1) else RInv gs (T + 1) (b >>> 2) (c - 1) u) := by
+  obtain ⟨h1, h32, he, hf⟩ := h
+  have hu1 : (u + 1).toNat = u.toNat + 1 := by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide)]
+  split
+  · rename_i hc
+    have hc1 : c.toNat = 1 := by rw [beq_iff_eq] at hc; rw [hc]; exact usz_lit 1 (by decide)
+    refine ⟨by rw [usz_lit 32 (by decide)]; omega, by rw [usz_lit 32 (by decide)]; omega,
+      by rw [usz_lit 32 (by decide), hu1]; omega, ?_⟩
+    intro f hf'
+    rw [usz_lit 32 (by decide)] at hf'
+    rw [GW.getU_eq, hu1]
+    unfold wf
+    rw [show (T + 1 + 32 + f) / 32 = u.toNat + 1 by omega, show (T + 1 + 32 + f) % 32 = f by omega]
+  · rename_i hc
+    have hc1 : c.toNat ≠ 1 := fun e => hc (by rw [beq_iff_eq]; exact USize.toNat_inj.mp (by rw [e, usz_lit 1 (by decide)]))
+    have hcs : (c - 1).toNat = c.toNat - 1 := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ c.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]
+    refine ⟨by omega, by omega, by omega, ?_⟩
+    intro f hf'
+    rw [shr_dig _ _ 1 f rfl (by omega), hf _ (by omega)]
+    congr 1; omega
+
+/-- `svAny gs sv T k` on the rolling window `a = gAtW gs T`, `b` (`RInv`): `svAnyR_eq`. -/
+def svAnyR (gs : GW) (sv : UInt64) (k : USize) (a b : UInt64) (c u : USize) : Bool :=
+  if h : k = 0 then false else
+    if eq25 a sv then true else
+      let a' := (a >>> 2) ||| (b <<< 62)
+      if c == 1 then svAnyR gs sv (k - 1) a' (gs.getU (u + 1)) 32 (u + 1)
+      else svAnyR gs sv (k - 1) a' (b >>> 2) (c - 1) u
+termination_by k.toNat
+decreasing_by
+  all_goals
+    have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+      usz_lit 1 (by decide)]
+    omega
+
+theorem svAnyR_eq (gs : GW) (sv : UInt64) :
+    ∀ n (k : USize), k.toNat = n → ∀ T a b c u, a = gAtW gs T → RInv gs T b c u → T + n + 64 < 2 ^ 31 →
+      svAnyR gs sv k a b c u = svAny gs sv T n := by
+  intro n
+  induction n with
+  | zero =>
+    intro k hk T a b c u _ _ _
+    have : k = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [svAnyR, dif_pos this]; rfl
+  | succ n ih =>
+    intro k hk T a b c u ha hI hB
+    have h0 : k ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    have hk1 : (k - 1).toNat = n := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]; omega
+    have hu : u.toNat + 2 < 2 ^ 32 := by obtain ⟨_, _, he, _⟩ := hI; omega
+    have ha' : (a >>> 2) ||| (b <<< 62) = gAtW gs (T + 1) :=
+      roll_eq gs T a b ha (by obtain ⟨h1, _, _, hf⟩ := hI; simpa using hf 0 (by omega))
+    have hstep := rinv_step gs T b c u hI hu
+    rw [svAnyR, dif_neg h0, svAny, ← ha]
+    simp only []
+    split
+    · rename_i he; rw [he, Bool.true_or]
+    · rename_i he
+      rw [Bool.eq_false_iff.mpr he, Bool.false_or]
+      split
+      · rename_i hc; rw [if_pos hc] at hstep; exact ih _ hk1 _ _ _ _ _ ha' hstep (by omega)
+      · rename_i hc; rw [if_neg hc] at hstep; exact ih _ hk1 _ _ _ _ _ ha' hstep (by omega)
+
+/-- The rolling state at field offset `t` (`svAnyF`, `wordR`): word `t / 32 + 1` shifted to start at field `t + 32`. -/
+theorem rinv_start (gs : GW) (t : Nat) (ht : t + 64 < 2 ^ 31) :
+    RInv gs t (gs.getU (t.toUSize >>> 5 + 1) >>> (2 * (t.toUSize &&& 31)).toUInt64) (32 - (t.toUSize &&& 31))
+      (t.toUSize >>> 5 + 1) := by
+  have ho : t.toUSize.toNat = t := usz_n _ (by omega)
+  have hs : (t.toUSize &&& 31).toNat = t % 32 := by
+    rw [USize.toNat_and, usz_lit 31 (by decide), ho, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+      Nat.and_two_pow_sub_one_eq_mod]
+  have hu : (t.toUSize >>> 5 + 1).toNat = t / 32 + 1 := by
+    rw [usz_add' _ _ (by rw [usz_shr5, ho, usz_lit 1 (by decide)]; omega), usz_shr5, ho, usz_lit 1 (by decide)]
+  have hc : (32 - (t.toUSize &&& 31)).toNat = 32 - t % 32 := by
+    rw [USize.toNat_sub_of_le _ _ (by show (t.toUSize &&& 31).toNat ≤ (32 : USize).toNat; rw [hs, usz_lit 32 (by decide)]; omega),
+      hs, usz_lit 32 (by decide)]
+  have h2s : ((2 * (t.toUSize &&& 31)).toUInt64).toNat = 2 * (t % 32) := by
+    rw [USize.toNat_toUInt64, usz_mul' _ _ (by rw [hs, usz_lit 2 (by decide)]; omega), usz_lit 2 (by decide), hs]
+  refine ⟨by rw [hc]; omega, by rw [hc]; omega, by rw [hc, hu]; omega, ?_⟩
+  intro f hf'
+  rw [hc] at hf'
+  rw [shr_dig _ _ (t % 32) f h2s (by omega), GW.getU_eq, hu]
+  unfold wf
+  rw [show (t + 32 + f) / 32 = t / 32 + 1 by omega, show (t + 32 + f) % 32 = f + t % 32 by omega]
+
+/-- `svAny` for the compiled code (`svAny_eq_svAnyF`): the rolling scan within its bounds. -/
 @[inline] def svAnyF (gs : GW) (sv : UInt64) (t k : Nat) : Bool :=
-  if t + k < 2147483648 then svAnyU gs sv t.toUSize k else svAnyS gs sv t k
+  if t + k + 64 < 2147483648 then
+    let tU := t.toUSize
+    svAnyR gs sv k.toUSize (gAtWU gs tU 0) (gs.getU (tU >>> 5 + 1) >>> (2 * (tU &&& 31)).toUInt64) (32 - (tU &&& 31))
+      (tU >>> 5 + 1)
+  else svAnyS gs sv t k
 
 @[csimp] theorem svAny_eq_svAnyF : @svAny = @svAnyF := by
   funext gs sv t k
   unfold svAnyF; split
-  · rename_i h; exact (svAnyU_eq gs sv k _ t (usz_n _ (by omega)) (by omega)).symm
+  · rename_i h
+    have ha : gAtWU gs t.toUSize 0 = gAtW gs t := by
+      have := gAtWU_eq gs t.toUSize 0 t 0 (usz_n _ (by omega)) (usz_lit 0 (by decide)) (by omega)
+      rwa [Nat.mul_zero, Nat.add_zero] at this
+    exact (svAnyR_eq gs sv k _ (usz_n _ (by omega)) t _ _ _ _ ha (rinv_start gs t (by omega)) (by omega)).symm
   · exact (svAnyS_eq gs sv k t).symm
 
 /-- `unlook` by words, for seeds inside the read: read start `s` ↦ field `o + (s − s0)`
@@ -201,6 +371,24 @@ def unlookV (K : RP) (gs : GW) (o Ls r sb : Nat) : List Nat → Nat → Bool
     let ok := eq25 (gAtW gs (o + A + r)) sv || svAny gs sv (o + A) (2 * r + 1)
     if ok then unlookV K gs o Ls r sb us f
     else if sb < f + 1 then false else unlookV K gs o Ls r sb us (f + 1)
+
+/-- The seeds `us` as (read start, seed word), computed once per read (`unlookW_eq`). -/
+def svsOf (K : RP) (Ls : Nat) (us : List Nat) : List (Nat × UInt64) := us.map fun j => (j * Ls, gAt K.w (j * Ls))
+
+/-- `unlookV` on the seeds' precomputed starts and words (`unlookW_eq`). -/
+def unlookW (gs : GW) (o r sb : Nat) : List (Nat × UInt64) → Nat → Bool
+  | [], _ => true
+  | (A, sv) :: svs, f =>
+    let ok := eq25 (gAtW gs (o + A + r)) sv || svAny gs sv (o + A) (2 * r + 1)
+    if ok then unlookW gs o r sb svs f
+    else if sb < f + 1 then false else unlookW gs o r sb svs (f + 1)
+
+theorem unlookW_eq (K : RP) (gs : GW) (o Ls r sb : Nat) :
+    ∀ us f, unlookW gs o r sb (svsOf K Ls us) f = unlookV K gs o Ls r sb us f := by
+  intro us
+  induction us with
+  | nil => intro f; rfl
+  | cons j us ih => intro f; simp only [svsOf, List.map_cons, unlookW, unlookV] at ih ⊢; simp only [ih]
 
 /-- The seeds `us` lie inside the read (`j·Ls + q ≤ n`). -/
 def usIn (Ls n : Nat) : List Nat → Bool
@@ -265,6 +453,109 @@ theorem lanesAnyU_eq (K : RP) (gs : GW) (n j : Nat) (jU : USize) (hj : jU.toNat 
       exact ih _ _ _ (by rw [usz_add' _ _ (by rw [usz_lit 1 (by decide)]; omega), usz_lit 1 (by decide), ht])
           (by omega)
 
+/-- The mask of `lowF · c`, computed once (`lowF_eqM`). -/
+@[inline] def lowM (c : Nat) : UInt64 := if c < 32 then (1 <<< (2 * c).toUInt64) - 1 else -1
+
+theorem lowF_eqM (x : UInt64) (c : Nat) : lowF x c = x &&& lowM c := by
+  unfold lowF lowM; split <;> simp
+
+/-- `lanesAnyU` with the field mask `m = lowM c` passed in and the count `k` in `USize`
+(`lanesAnyV_eq`): no `Nat` per step. -/
+def lanesAnyV (gs : GW) (wj m : UInt64) (jU : USize) (full F : UInt64) (t k : USize) : UInt64 :=
+  if h : k = 0 then F else
+    let F := F ||| laneZ (fold (wj ^^^ gAtWU gs t jU) &&& m)
+    if F &&& full == full then F else lanesAnyV gs wj m jU full F (t + 1) (k - 1)
+termination_by k.toNat
+decreasing_by
+  have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+  rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+    usz_lit 1 (by decide)]
+  omega
+
+theorem lanesAnyV_eq (gs : GW) (wj : UInt64) (c : Nat) (jU : USize) (full : UInt64) :
+    ∀ k (kU : USize), kU.toNat = k → ∀ t F,
+      lanesAnyV gs wj (lowM c) jU full F t kU = lanesAnyU gs wj c jU full F t k := by
+  intro k
+  induction k with
+  | zero =>
+    intro kU hk t F
+    have : kU = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [lanesAnyV, dif_pos this]; rfl
+  | succ k ih =>
+    intro kU hk t F
+    have h0 : kU ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    rw [lanesAnyV, dif_neg h0, lanesAnyU, lowF_eqM]
+    simp only []
+    split
+    · rfl
+    · exact ih _ (by rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ kU.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]; omega) _ _
+
+/-- `lanesAnyV` with the two field words of `gAtWU` kept while the word index `(t >>> 5) + jU` stays the same
+(`lanesAnyW_eq`): no `GW.getU` per step. -/
+def lanesAnyW (gs : GW) (wj m : UInt64) (jU : USize) (full F : UInt64) (t k u : USize) (a b : UInt64) : UInt64 :=
+  if h : k = 0 then F else
+    let s := t &&& 31
+    let F := F ||| laneZ (fold (wj ^^^ comb a b s.toNat (2 * s).toUInt64 (64 - 2 * s).toUInt64) &&& m)
+    if F &&& full == full then F else
+      let u' := ((t + 1) >>> 5) + jU
+      if u' == u then lanesAnyW gs wj m jU full F (t + 1) (k - 1) u a b
+      else lanesAnyW gs wj m jU full F (t + 1) (k - 1) u' (gs.getU u') (gs.getU (u' + 1))
+termination_by k.toNat
+decreasing_by
+  all_goals
+    have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+      usz_lit 1 (by decide)]
+    omega
+
+theorem lanesAnyW_eq (gs : GW) (wj m : UInt64) (jU : USize) (full : UInt64) :
+    ∀ n (k : USize), k.toNat = n → ∀ (t : USize) (F : UInt64),
+      lanesAnyW gs wj m jU full F t k ((t >>> 5) + jU) (gs.getU ((t >>> 5) + jU)) (gs.getU ((t >>> 5) + jU + 1)) =
+        lanesAnyV gs wj m jU full F t k := by
+  intro n
+  induction n with
+  | zero =>
+    intro k hk t F
+    have : k = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [lanesAnyW, lanesAnyV, dif_pos this, dif_pos this]
+  | succ n ih =>
+    intro k hk t F
+    have h0 : k ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    have hk1 : (k - 1).toNat = n := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]; omega
+    rw [lanesAnyW, lanesAnyV, dif_neg h0, dif_neg h0]
+    simp only [gAtWU]
+    have key : ∀ F' : UInt64,
+        (if (F' &&& full == full) = true then F' else
+          if ((t + 1) >>> 5 + jU == t >>> 5 + jU) = true then
+            lanesAnyW gs wj m jU full F' (t + 1) (k - 1) (t >>> 5 + jU) (gs.getU (t >>> 5 + jU)) (gs.getU (t >>> 5 + jU + 1))
+          else lanesAnyW gs wj m jU full F' (t + 1) (k - 1) ((t + 1) >>> 5 + jU) (gs.getU ((t + 1) >>> 5 + jU))
+            (gs.getU ((t + 1) >>> 5 + jU + 1))) =
+        (if (F' &&& full == full) = true then F' else lanesAnyV gs wj m jU full F' (t + 1) (k - 1)) := by
+      intro F'
+      by_cases hc : (F' &&& full == full) = true
+      · simp only [hc, if_true]
+      · simp only [hc, Bool.false_eq_true, if_false]
+        by_cases heq : ((t + 1) >>> 5 + jU == t >>> 5 + jU) = true
+        · rw [if_pos heq]
+          have e : (t + 1) >>> 5 + jU = t >>> 5 + jU := by simpa using heq
+          rw [← e]
+          exact ih _ hk1 _ _
+        · rw [if_neg heq]
+          exact ih _ hk1 _ _
+    exact key _
+
+/-- Compiled `lanesAnyV`. -/
+@[inline] def lanesAnyV0 (gs : GW) (wj m : UInt64) (jU : USize) (full F : UInt64) (t k : USize) : UInt64 :=
+  let u := (t >>> 5) + jU
+  lanesAnyW gs wj m jU full F t k u (gs.getU u) (gs.getU (u + 1))
+
+@[csimp] theorem lanesAnyV_eqW : @lanesAnyV = @lanesAnyV0 := by
+  funext gs wj m jU full F t k
+  exact (lanesAnyW_eq gs wj m jU full k.toNat k rfl t F).symm
+
 /-- `lanesAny` (its slow path; not rewritten by `csimp`). -/
 def lanesAnyS (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t : Nat) : Nat → UInt64
   | 0 => F
@@ -282,13 +573,14 @@ theorem lanesAnyS_eq (K : RP) (gs : GW) (n j : Nat) (full : UInt64) :
 /-- `lanesAny` for the compiled code (`lanesAny_eq_lanesAnyF`). -/
 @[inline] def lanesAnyF (K : RP) (gs : GW) (n j : Nat) (full F : UInt64) (t k : Nat) : UInt64 :=
   if t + k + 32 * j < 2147483648 then
-    lanesAnyU gs (K.w.getD j 0) (n - 32 * j) j.toUSize full F t.toUSize k
+    lanesAnyV gs (K.w.getD j 0) (lowM (n - 32 * j)) j.toUSize full F t.toUSize k.toUSize
   else lanesAnyS K gs n j full F t k
 
 @[csimp] theorem lanesAny_eq_lanesAnyF : @lanesAny = @lanesAnyF := by
   funext K gs n j full F t k
   unfold lanesAnyF; split
   · rename_i h
+    rw [lanesAnyV_eq gs _ _ _ full k _ (usz_n _ (by omega))]
     exact (lanesAnyU_eq K gs n j _ (usz_n _ (by omega)) full k _ t F (usz_n _ (by omega)) (by omega)).symm
   · exact (lanesAnyS_eq K gs n j full k t F).symm
 
@@ -319,49 +611,24 @@ def fineE (K : RP) (gs : GW) (o n r m need : Nat) : Nat → Nat → Nat → Bool
       let F := if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full
       fineE K gs o n r m need (j + 1) k (acc + lc F)
 
-/-- The word path applies: packed read, the window `[D − n − r, D + r)` inside the
-chromosome and in all-ACGT blocks, pieces of 8 letters 8 apart. -/
-@[inline] def wordWin (K : RP) (n r D : Nat) (P : PGen) : Bool :=
-  K.ok && decide (n + r ≤ D) && n / (n / pl) == 8 && winOk P (D - n - r) (n + 2 * r)
+/-- `fineE` (its slow path; not rewritten by `csimp`). -/
+def fineES (K : RP) (gs : GW) (o n r m need : Nat) : Nat → Nat → Nat → Bool
+  | _, 0, acc => decide (need ≤ acc)
+  | j, k + 1, acc =>
+    if need ≤ acc then true
+    else if acc + (m - 4 * j) < need then false
+    else
+      let full := fullL (min 4 (m - 4 * j))
+      let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
+      let F := if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full
+      fineES K gs o n r m need (j + 1) k (acc + lc F)
 
-/-- The packed genome for the word path: `GPk.pk G` when the seeds `us` lie inside the
-read (`usIn`), else `none`.  A stage computes it once (`kfiltVP`), so neither the
-seed check nor the instance call (which touches the shared genome's count) is per
-diagonal. -/
-@[inline] def pkU {Gt : Type} [GRead Gt] [GPk Gt] (G : Gt) (Ls n : Nat) (us : List Nat) : Option PGen :=
-  if usIn Ls n us then GPk.pk G else none
-
-/-- `kfiltV` with the packed genome `pk` given (`pkU`). -/
-@[inline] def kfiltVP {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
-    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
-  let Q := min lim b.pen
-  let r := 2 * gapBound sc0 (-(Q : Int))
-  let n := R.size
-  let fJ := acc.length - suppA acc D r
-  let sb := sbound Q
-  if fJ ≤ sb then
-    match pk with
-    | some P =>
-      if wordWin K n r D P then
-        let a := P.o + (D - n - r)
-        let o := a % 32
-        let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
-        unlookV K gs o Ls r sb us fJ &&
-          fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
-      else kfilt R G acc us Ls lim b D
-    | none => kfilt R G acc us Ls lim b D
-  else false
-
-/-- `kfilt` with the word path where it applies. -/
-@[inline] def kfiltV {Gt : Type} [GRead Gt] [GPk Gt] (K : RP) (R : ByteArray) (G : Gt) (acc : List (Array Nat))
-    (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
-  kfiltVP (pkU G Ls R.size us) K R G acc us Ls lim b D
-
-/-- `stageKS` with `kfiltV`. -/
-@[specialize] def stageKSV {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
-    (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) : Best :=
-  let pk := pkU G Ls R.size us
-  ds.foldl (fun b D => if kfiltVP pk K R G acc us Ls lim b D then body D b else b) b
+theorem fineES_eq (K : RP) (gs : GW) (o n r m need : Nat) :
+    ∀ k j acc, fineES K gs o n r m need j k acc = fineE K gs o n r m need j k acc := by
+  intro k
+  induction k with
+  | zero => intro j acc; rfl
+  | succ k ih => intro j acc; simp only [fineES, fineE, ih]
 
 /-! ## Proofs -/
 
@@ -1064,6 +1331,478 @@ theorem fineE_eq (K : RP) (gs : GW) (o n r m need : Nat) :
 theorem fineE_sb (K : RP) (gs : GW) (o n r m need k sb : Nat) :
     fineE K gs o n r m need 0 k sb = decide (need ≤ sb + fineV K gs o n r m 0 k 0) := by
   rw [fineE_eq, ← fineV_add, Nat.add_zero]
+
+/-! ### The piece scan on a rolling window (`fineE_eqC`) -/
+
+/-- Bit `16i + 15` set iff the 16-bit lane `i` of `x` is zero (nothing else set). -/
+@[inline] def zt (x : UInt64) : UInt64 :=
+  ~~~(((x &&& 0x7FFF7FFF7FFF7FFF) + 0x7FFF7FFF7FFF7FFF) ||| x) &&& 0x8000800080008000
+
+theorem lane_key (X M k : Nat) (hM1 : M / 2 ^ k % 2 ^ 16 = 0x7FFF) (hM2 : 2 * (M % 2 ^ k) < 2 ^ k) :
+    ((X &&& M) + M).testBit (k + 15) = decide (X / 2 ^ k % 2 ^ 15 ≠ 0) := by
+  have hp : 0 < 2 ^ k := Nat.two_pow_pos k
+  have hc : (X &&& M) % 2 ^ k + M % 2 ^ k < 2 ^ k := by
+    rw [Nat.and_mod_two_pow]
+    have := Nat.and_le_right (n := X % 2 ^ k) (m := M % 2 ^ k)
+    omega
+  have hd : ((X &&& M) + M) / 2 ^ k = (X &&& M) / 2 ^ k + M / 2 ^ k := by
+    rw [Nat.add_div hp]; simp only [show ¬ (2 ^ k ≤ (X &&& M) % 2 ^ k + M % 2 ^ k) by omega, ↓reduceIte, Nat.add_zero]
+  have hl : (X &&& M) / 2 ^ k % 2 ^ 16 = X / 2 ^ k % 2 ^ 15 := by
+    rw [← Nat.shiftRight_eq_div_pow, Nat.shiftRight_and_distrib, Nat.and_mod_two_pow,
+      Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow, hM1]
+    rw [show (0x7FFF : Nat) = 2 ^ 15 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+    exact Nat.mod_mod_of_dvd _ (by decide)
+  have hs : ((X &&& M) + M) / 2 ^ k % 2 ^ 16 = X / 2 ^ k % 2 ^ 15 + 0x7FFF := by
+    rw [hd, Nat.add_mod, hl, hM1]
+    have : X / 2 ^ k % 2 ^ 15 < 2 ^ 15 := Nat.mod_lt _ (by decide)
+    rw [Nat.mod_eq_of_lt (by omega)]
+  rw [Nat.testBit_eq_decide_div_mod_eq, Nat.pow_add, ← Nat.div_div_eq_div_mul]
+  have e : ((X &&& M) + M) / 2 ^ k / 2 ^ 15 % 2 = (((X &&& M) + M) / 2 ^ k % 2 ^ 16) / 2 ^ 15 := by
+    omega
+  rw [e, hs]
+  have : X / 2 ^ k % 2 ^ 15 < 2 ^ 15 := Nat.mod_lt _ (by decide)
+  by_cases h0 : X / 2 ^ k % 2 ^ 15 = 0
+  · simp only [h0]; decide
+  · have : (X / 2 ^ k % 2 ^ 15 + 0x7FFF) / 2 ^ 15 = 1 := by omega
+    simp [this, h0]
+
+theorem mod_two_pow_zero (n k : Nat) : n % 2 ^ k = 0 ↔ ∀ b, b < k → n.testBit b = false := by
+  constructor
+  · intro h b hb
+    have := congrArg (fun x => x.testBit b) h
+    simp only [Nat.testBit_mod_two_pow, Nat.zero_testBit] at this
+    simpa [hb] using this
+  · intro h
+    apply Nat.eq_of_testBit_eq
+    intro b
+    rw [Nat.testBit_mod_two_pow, Nat.zero_testBit]
+    by_cases hb : b < k
+    · simp [hb, h b hb]
+    · simp [hb]
+
+theorem zt_bit (x : UInt64) (i : Nat) (hi : i < 4) :
+    (zt x).toNat.testBit (16 * i + 15) = true ↔ ∀ b, b < 16 → x.toNat.testBit (16 * i + b) = false := by
+  have hM : (0x7FFF7FFF7FFF7FFF : UInt64).toNat = 0x7FFF7FFF7FFF7FFF := rfl
+  have hadd : ((x &&& 0x7FFF7FFF7FFF7FFF) + 0x7FFF7FFF7FFF7FFF : UInt64).toNat =
+      (x.toNat &&& 0x7FFF7FFF7FFF7FFF) + 0x7FFF7FFF7FFF7FFF := by
+    rw [UInt64.toNat_add, UInt64.toNat_and, hM]
+    have := Nat.and_le_right (n := x.toNat) (m := 0x7FFF7FFF7FFF7FFF)
+    rw [Nat.mod_eq_of_lt (by omega)]
+  unfold zt
+  rw [UInt64.toNat_and, Nat.testBit_and, tb_not, UInt64.toNat_or, Nat.testBit_or, hadd]
+  have hH : (0x8000800080008000 : UInt64).toNat.testBit (16 * i + 15) = true := by
+    obtain _ | _ | _ | _ | i := i <;> first | omega | decide
+  have hk := lane_key x.toNat 0x7FFF7FFF7FFF7FFF (16 * i)
+    (by obtain _ | _ | _ | _ | i := i <;> first | omega | decide)
+    (by obtain _ | _ | _ | _ | i := i <;> first | omega | decide)
+  rw [hH, hk, decide_eq_true (show 16 * i + 15 < 64 by omega)]
+  have h15 := mod_two_pow_zero (x.toNat / 2 ^ (16 * i)) 15
+  simp only [Nat.testBit_div_two_pow] at h15
+  simp only [Bool.true_and, Bool.and_true, Bool.not_eq_true', Bool.or_eq_false_iff, decide_eq_false_iff_not,
+    Decidable.not_not]
+  rw [h15]
+  constructor
+  · rintro ⟨h1, h2⟩ b hb
+    by_cases hb' : b < 15
+    · have := h1 b hb'; rwa [Nat.add_comm] at this
+    · rwa [show b = 15 by omega]
+  · intro h
+    exact ⟨fun b hb => by rw [Nat.add_comm]; exact h b (by omega), h 15 (by omega)⟩
+
+theorem zt_off (x : UInt64) (p : Nat) (hp : p % 16 ≠ 15) : (zt x).toNat.testBit p = false := by
+  unfold zt
+  rw [UInt64.toNat_and, Nat.testBit_and]
+  have : (0x8000800080008000 : UInt64).toNat.testBit p = false := by
+    by_cases h : p < 64
+    · have : ∀ p, p < 64 → p % 16 ≠ 15 → (0x8000800080008000 : UInt64).toNat.testBit p = false := by decide
+      exact this p h hp
+    · exact tb_hi _ _ (by omega)
+  rw [this, Bool.and_false]
+
+/-- Lane `i` of `x` is zero iff its 8 fields are. -/
+theorem lane0_dig (X i : Nat) :
+    (∀ b, b < 16 → X.testBit (16 * i + b) = false) ↔ ∀ f, f < 8 → dig X (8 * i + f) = 0 := by
+  constructor
+  · intro h f hf
+    rw [dig_eq, show 2 * (8 * i + f) + 1 = 16 * i + (2 * f + 1) by omega, show 2 * (8 * i + f) = 16 * i + 2 * f by omega,
+      h _ (by omega), h _ (by omega)]; rfl
+  · intro h b hb
+    have := dig_zero_bits _ _ (h (b / 2) (by omega))
+    rcases Nat.mod_two_eq_zero_or_one b with e | e
+    · rw [show 16 * i + b = 2 * (8 * i + b / 2) by omega]; exact this.2
+    · rw [show 16 * i + b = 2 * (8 * i + b / 2) + 1 by omega]; exact this.1
+
+theorem zt_lane (a g : UInt64) (i : Nat) (hi : i < 4) :
+    (zt (a ^^^ g)).toNat.testBit (16 * i + 15) = true ↔ ∀ f, f < 8 → dig a.toNat (8 * i + f) = dig g.toNat (8 * i + f) := by
+  rw [zt_bit _ _ hi, lane0_dig]
+  exact forall_congr' fun f => imp_congr_right fun _ => xor_dig a g _
+
+
+/-- The shift scan on a rolling window: `a` = the 32 fields at the current offset, `b` = the next `c`
+fields (low first), `u` = the word `b` came from. Flags in bit `16i + 15`. -/
+def lanesAnyR (gs : GW) (wj full F : UInt64) (k : USize) (a b : UInt64) (c u : USize) : UInt64 :=
+  if h : k = 0 then F else
+    let F := F ||| zt (wj ^^^ a)
+    if F &&& full == full then F else
+      let a' := (a >>> 2) ||| (b <<< 62)
+      if c == 1 then lanesAnyR gs wj full F (k - 1) a' (gs.getU (u + 1)) 32 (u + 1)
+      else lanesAnyR gs wj full F (k - 1) a' (b >>> 2) (c - 1) u
+termination_by k.toNat
+decreasing_by
+  all_goals
+    have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+    rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+      usz_lit 1 (by decide)]
+    omega
+
+theorem lanesAnyR_bit (gs : GW) (wj full : UInt64) (i : Nat) :
+    ∀ n (k : USize), k.toNat = n → ∀ T a b c u F, a = gAtW gs T → RInv gs T b c u → T + n + 64 < 2 ^ 31 →
+      (((lanesAnyR gs wj full F k a b c u) &&& full).toNat.testBit i = true ↔
+        full.toNat.testBit i = true ∧ (F.toNat.testBit i = true ∨
+          ∃ e, e < n ∧ (zt (wj ^^^ gAtW gs (T + e))).toNat.testBit i = true)) := by
+  intro n
+  induction n with
+  | zero =>
+    intro k hk T a b c u F _ _ _
+    have : k = 0 := USize.toNat_inj.mp (by rw [hk]; rfl)
+    rw [lanesAnyR, dif_pos this]
+    simp only [UInt64.toNat_and, Nat.testBit_and, Bool.and_eq_true]
+    constructor
+    · rintro ⟨h1, h2⟩; exact ⟨h2, Or.inl h1⟩
+    · rintro ⟨h2, h1 | ⟨e, he, -⟩⟩
+      · exact ⟨h1, h2⟩
+      · omega
+  | succ n ih =>
+    intro k hk T a b c u F ha hI hB
+    have h0 : k ≠ 0 := fun e => by rw [e] at hk; simp at hk
+    have hk1 : (k - 1).toNat = n := by
+      rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+        usz_lit 1 (by decide)]; omega
+    have hu : u.toNat + 2 < 2 ^ 32 := by obtain ⟨_, _, he, _⟩ := hI; omega
+    have ha' : (a >>> 2) ||| (b <<< 62) = gAtW gs (T + 1) :=
+      roll_eq gs T a b ha (by obtain ⟨h1, _, _, hf⟩ := hI; simpa using hf 0 (by omega))
+    have hstep := rinv_step gs T b c u hI hu
+    rw [lanesAnyR, dif_neg h0]
+    simp only []
+    have key : ∀ F', ((if (c == 1) = true then lanesAnyR gs wj full F' (k - 1) ((a >>> 2) ||| (b <<< 62)) (gs.getU (u + 1)) 32 (u + 1)
+        else lanesAnyR gs wj full F' (k - 1) ((a >>> 2) ||| (b <<< 62)) (b >>> 2) (c - 1) u) &&& full).toNat.testBit i = true ↔
+        full.toNat.testBit i = true ∧ (F'.toNat.testBit i = true ∨
+          ∃ e, e < n ∧ (zt (wj ^^^ gAtW gs (T + 1 + e))).toNat.testBit i = true) := by
+      intro F'
+      split
+      · rename_i hc; rw [if_pos hc] at hstep; exact ih _ hk1 _ _ _ _ _ F' ha' hstep (by omega)
+      · rename_i hc; rw [if_neg hc] at hstep; exact ih _ hk1 _ _ _ _ _ F' ha' hstep (by omega)
+    split
+    · rename_i hfull
+      rw [beq_iff_eq] at hfull
+      have hb := congrArg (fun x => x.toNat.testBit i) hfull
+      simp only [UInt64.toNat_and, Nat.testBit_and, UInt64.toNat_or, Nat.testBit_or] at hb
+      rw [hfull]
+      constructor
+      · intro h1
+        refine ⟨h1, ?_⟩
+        simp only [h1, Bool.and_true, Bool.or_eq_true] at hb
+        rcases hb with h2 | h2
+        · exact Or.inl h2
+        · exact Or.inr ⟨0, by omega, by rw [Nat.add_zero, ← ha]; exact h2⟩
+      · exact fun h => h.1
+    · rw [key]
+      simp only [UInt64.toNat_or, Nat.testBit_or, Bool.or_eq_true]
+      constructor
+      · rintro ⟨h1, (h2 | h2) | ⟨e, he, h3⟩⟩
+        · exact ⟨h1, Or.inl h2⟩
+        · exact ⟨h1, Or.inr ⟨0, by omega, by rw [Nat.add_zero, ← ha]; exact h2⟩⟩
+        · exact ⟨h1, Or.inr ⟨e + 1, by omega, by rw [show T + (e + 1) = T + 1 + e by omega]; exact h3⟩⟩
+      · rintro ⟨h1, h2 | ⟨e, he, h3⟩⟩
+        · exact ⟨h1, Or.inl (Or.inl h2)⟩
+        · cases e with
+          | zero => exact ⟨h1, Or.inl (Or.inr (by rw [ha]; simpa using h3))⟩
+          | succ e =>
+            exact ⟨h1, Or.inr ⟨e, by omega, by rw [show T + 1 + e = T + (e + 1) by omega]; exact h3⟩⟩
+
+
+/-- `fullL` on a machine word (`fullLU_eq`). -/
+@[inline] def fullLU (np : USize) : UInt64 :=
+  if np = 0 then 0 else if np = 1 then 1 else if np = 2 then 0x10001 else if np = 3 then 0x100010001
+  else 0x1000100010001
+
+theorem fullLU_eq (np : USize) : fullLU np = fullL np.toNat := by
+  unfold fullLU fullL
+  simp only [usz_eq_iff np 0 (by decide), usz_eq_iff np 1 (by decide), usz_eq_iff np 2 (by decide),
+    usz_eq_iff np 3 (by decide)]
+
+/-- `lc` on machine words (`lcU_eq`). -/
+@[inline] def lcU (F : UInt64) : UInt64 :=
+  (F &&& (1 : UInt64)) + ((F >>> (16 : UInt64)) &&& (1 : UInt64)) + ((F >>> (32 : UInt64)) &&& (1 : UInt64)) +
+    ((F >>> (48 : UInt64)) &&& (1 : UInt64))
+
+theorem lcU_eq (F : UInt64) : (lcU F).toNat = lc F := by
+  unfold lcU lc
+  have b : ∀ x : UInt64, (x &&& 1).toNat ≤ 1 := fun x => by
+    rw [UInt64.toNat_and]; exact Nat.and_le_right
+  have h1 := b F; have h2 := b (F >>> 16); have h3 := b (F >>> 32); have h4 := b (F >>> 48)
+  rw [UInt64.toNat_add, UInt64.toNat_add, UInt64.toNat_add]
+  omega
+
+/-- Read word `j`'s pieces found (bit `16i`) at the field offsets `o, …, o + 2r` (`wordR_bit`): the
+diagonal (`tU = o + r`) first, then the rolling scan. -/
+@[inline] def wordR (K : RP) (gs : GW) (oU tU rU j np : USize) : UInt64 :=
+  let wj := K.w.getD j.toNat 0
+  let full := fullLU np <<< 15
+  let F := zt (wj ^^^ gAtWU gs tU j) &&& full
+  let F := if F == full then F else
+    let s := oU &&& 31
+    lanesAnyR gs wj full F rU (gAtWU gs oU j) (gs.getU ((oU >>> 5) + j + 1) >>> (2 * s).toUInt64) (32 - s)
+      ((oU >>> 5) + j + 1) &&& full
+  F >>> 15
+
+theorem shr15_bit (x : UInt64) (i : Nat) : (x >>> 15).toNat.testBit (16 * i) = x.toNat.testBit (16 * i + 15) := by
+  rw [UInt64.toNat_shiftRight, show (15 : UInt64).toNat % 64 = 15 from rfl, Nat.testBit_shiftRight, Nat.add_comm]
+
+theorem full15_bit (np : Nat) (hnp : np ≤ 4) (i : Nat) (hi : i < 4) :
+    (fullL np <<< 15).toNat.testBit (16 * i + 15) = decide (i < np) := by
+  rw [UInt64.toNat_shiftLeft, show (15 : UInt64).toNat % 64 = 15 from rfl, Nat.testBit_mod_two_pow,
+    Nat.testBit_shiftLeft, show 16 * i + 15 - 15 = 16 * i by omega, fullL_bit np i hnp hi]
+  simp [show 16 * i + 15 < 64 by omega]
+
+theorem wordR_bit (K : RP) (gs : GW) (o r j np : Nat) (hnp : np ≤ 4) (hb : o + 32 * j + 2 * r + 1 + 64 < 2 ^ 31)
+    (i : Nat) (hi : i < 4) :
+    (wordR K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize j.toUSize np.toUSize).toNat.testBit (16 * i) = true ↔
+      i < np ∧ ∃ e, e < 2 * r + 1 ∧ (zt (K.w.getD j 0 ^^^ gAtW gs (o + e + 32 * j))).toNat.testBit (16 * i + 15) = true := by
+  have hj : j.toUSize.toNat = j := usz_n _ (by omega)
+  have ho : o.toUSize.toNat = o := usz_n _ (by omega)
+  have hnpU : np.toUSize.toNat = np := usz_n _ (by omega)
+  have hrU : (2 * r + 1).toUSize.toNat = 2 * r + 1 := usz_n _ (by omega)
+  have hf := full15_bit np hnp i hi
+  have hdiag : gAtWU gs (o + r).toUSize j.toUSize = gAtW gs (o + r + 32 * j) :=
+    gAtWU_eq gs _ _ (o + r) j (usz_n _ (by omega)) hj (by omega)
+  have ha : gAtWU gs o.toUSize j.toUSize = gAtW gs (o + 32 * j) := gAtWU_eq gs _ _ o j ho hj (by omega)
+  unfold wordR
+  simp only [hj, fullLU_eq _, hnpU]
+  rw [shr15_bit]
+  split
+  · rename_i heq
+    rw [beq_iff_eq] at heq
+    have hb := congrArg (fun x => x.toNat.testBit (16 * i + 15)) heq
+    simp only [UInt64.toNat_and, Nat.testBit_and] at hb
+    rw [heq, hf, decide_eq_true_iff]
+    constructor
+    · intro h1
+      rw [hf, decide_eq_true h1, Bool.and_true, hdiag] at hb
+      exact ⟨h1, r, by omega, by rw [show o + r + 32 * j = o + r + 32 * j from rfl]; exact hb⟩
+    · exact fun h => h.1
+  · have hs : (o.toUSize &&& 31).toNat = o % 32 := by
+      rw [USize.toNat_and, usz_lit 31 (by decide), ho, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+        Nat.and_two_pow_sub_one_eq_mod]
+    have hu : (o.toUSize >>> 5 + j.toUSize + 1).toNat = o / 32 + j + 1 := by
+      rw [usz_add' _ _ (by rw [usz_add' _ _ (by rw [usz_shr5, ho, hj]; omega), usz_shr5, ho, hj, usz_lit 1 (by decide)]; omega),
+        usz_add' _ _ (by rw [usz_shr5, ho, hj]; omega), usz_shr5, ho, hj, usz_lit 1 (by decide)]
+    have hc : (32 - (o.toUSize &&& 31)).toNat = 32 - o % 32 := by
+      rw [USize.toNat_sub_of_le _ _ (by show (o.toUSize &&& 31).toNat ≤ (32 : USize).toNat; rw [hs, usz_lit 32 (by decide)]; omega),
+        hs, usz_lit 32 (by decide)]
+    have h2s : ((2 * (o.toUSize &&& 31)).toUInt64).toNat = 2 * (o % 32) := by
+      rw [USize.toNat_toUInt64, usz_mul' _ _ (by rw [hs, usz_lit 2 (by decide)]; omega), usz_lit 2 (by decide), hs]
+    have hI : RInv gs (o + 32 * j) (gs.getU (o.toUSize >>> 5 + j.toUSize + 1) >>> (2 * (o.toUSize &&& 31)).toUInt64)
+        (32 - (o.toUSize &&& 31)) (o.toUSize >>> 5 + j.toUSize + 1) := by
+      refine ⟨by rw [hc]; omega, by rw [hc]; omega, by rw [hc, hu]; omega, ?_⟩
+      intro f hf'
+      rw [hc] at hf'
+      rw [shr_dig _ _ (o % 32) f h2s (by omega), GW.getU_eq, hu]
+      unfold wf
+      rw [show (o + 32 * j + 32 + f) / 32 = o / 32 + j + 1 by omega,
+        show (o + 32 * j + 32 + f) % 32 = f + o % 32 by omega]
+    rw [lanesAnyR_bit gs _ _ _ (2 * r + 1) _ hrU (o + 32 * j) _ _ _ _ _ ha hI (by omega)]
+    simp only [UInt64.toNat_and, Nat.testBit_and, hf, Bool.and_eq_true, decide_eq_true_iff]
+    constructor
+    · rintro ⟨h1, ⟨h2, -⟩ | ⟨e, he, h3⟩⟩
+      · exact ⟨h1, r, by omega, by rw [← hdiag]; exact h2⟩
+      · exact ⟨h1, e, he, by rw [show o + e + 32 * j = o + 32 * j + e by omega]; exact h3⟩
+    · rintro ⟨h1, e, he, h3⟩
+      exact ⟨h1, Or.inr ⟨e, he, by rw [show o + 32 * j + e = o + e + 32 * j by omega]; exact h3⟩⟩
+
+
+theorem lane_equiv (K : RP) (gs : GW) (n j t i : Nat) (hi : i < 4) (hin : 8 * i + 8 ≤ n - 32 * j) :
+    (laneZ (lowF (mAt K gs t j) (n - 32 * j))).toNat.testBit (16 * i) = true ↔
+      (zt (K.w.getD j 0 ^^^ gAtW gs (t + 32 * j))).toNat.testBit (16 * i + 15) = true := by
+  rw [laneZ_bit _ _ hi, zt_lane _ _ _ hi]
+  unfold mAt
+  apply forall_congr'; intro b; apply imp_congr_right; intro hb
+  rw [show 16 * i + 2 * b = 2 * (8 * i + b) by omega]
+  exact mdig0 _ _ _ _ (by omega) (by omega)
+
+/-- `fineE` on machine words, the pieces by `wordR` (`fineEU_eq`). -/
+def fineEU (K : RP) (gs : GW) (oU tU rU m need : USize) (j k acc : USize) : Bool :=
+  if h : k = 0 then decide (need ≤ acc)
+  else if need ≤ acc then true
+  else
+    let rest := if 4 * j ≤ m then m - 4 * j else 0
+    if acc + rest < need then false
+    else fineEU K gs oU tU rU m need (j + 1) (k - 1)
+      (acc + (lcU (wordR K gs oU tU rU j (if rest < 4 then rest else 4))).toUSize)
+termination_by k.toNat
+decreasing_by
+  have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by rw [e]; rfl))
+  rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ k.toNat; rw [usz_lit 1 (by decide)]; omega),
+    usz_lit 1 (by decide)]
+  omega
+
+theorem usz_le_iff (a b : USize) : a ≤ b ↔ a.toNat ≤ b.toNat := Iff.rfl
+theorem usz_lt_iff' (a b : USize) : a < b ↔ a.toNat < b.toNat := Iff.rfl
+
+/-- The pieces of word `j` counted the same way. -/
+theorem lc_word (K : RP) (gs : GW) (o n r m j : Nat) (hm : 8 * m ≤ n) (hj4 : 4 * j < m)
+    (hb : o + 32 * j + 2 * r + 1 + 64 < 2 ^ 31) :
+    (lcU (wordR K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize j.toUSize (min 4 (m - 4 * j)).toUSize)).toNat =
+      lc (let full := fullL (min 4 (m - 4 * j))
+          let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
+          if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full) := by
+  rw [lcU_eq]
+  have hbit : ∀ i, i < 4 →
+      (wordR K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize j.toUSize (min 4 (m - 4 * j)).toUSize).toNat.testBit (16 * i) =
+      (let full := fullL (min 4 (m - 4 * j))
+       let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
+       if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full).toNat.testBit (16 * i) := by
+    intro i hi
+    apply Bool.eq_iff_iff.mpr
+    rw [wordR_bit K gs o r j _ (by omega) hb i hi, wordF_bit K gs n j o r _ (by omega) i hi]
+    constructor
+    · rintro ⟨h1, e, he, h2⟩
+      exact ⟨h1, e, he, (lane_equiv K gs n j (o + e) i hi (by omega)).mpr h2⟩
+    · rintro ⟨h1, e, he, h2⟩
+      exact ⟨h1, e, he, (lane_equiv K gs n j (o + e) i hi (by omega)).mp h2⟩
+  rw [lc_eq, lc_eq]
+  have b0 := hbit 0 (by omega); have b1 := hbit 1 (by omega); have b2 := hbit 2 (by omega); have b3 := hbit 3 (by omega)
+  simp only [Nat.mul_zero, Nat.mul_one] at b0 b1 b2 b3
+  rw [show (32 : Nat) = 16 * 2 from rfl, show (48 : Nat) = 16 * 3 from rfl, b0, b1, hbit 2 (by omega), hbit 3 (by omega)]
+
+theorem fineEU_eq (K : RP) (gs : GW) (o n r m need : Nat) (hm : 8 * m ≤ n) (hM : m < 2 ^ 30) (hN : need < 2 ^ 30) :
+    ∀ k j acc, o + 32 * (j + k) + 2 * r + 1 + 64 < 2 ^ 31 → acc + 4 * k < 2 ^ 30 →
+      fineEU K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize m.toUSize need.toUSize j.toUSize k.toUSize acc.toUSize =
+        fineE K gs o n r m need j k acc := by
+  intro k
+  induction k with
+  | zero =>
+    intro j acc _ ha
+    rw [fineEU, dif_pos (by rfl), fineE]
+    simp only [usz_le_iff, usz_n _ (show need < 2 ^ 32 by omega), usz_n _ (show acc < 2 ^ 32 by omega)]
+  | succ k ih =>
+    intro j acc hb ha
+    have hk0 : (k + 1).toUSize ≠ 0 := fun e => by
+      have := congrArg USize.toNat e; rw [usz_n _ (by omega)] at this; simp at this
+    have hjU : j.toUSize.toNat = j := usz_n _ (by omega)
+    have hmU : m.toUSize.toNat = m := usz_n _ (by omega)
+    have hnU : need.toUSize.toNat = need := usz_n _ (by omega)
+    have haU : acc.toUSize.toNat = acc := usz_n _ (by omega)
+    have h4j : (4 * j.toUSize).toNat = 4 * j := by rw [usz_mul' _ _ (by rw [usz_lit 4 (by decide), hjU]; omega), usz_lit 4 (by decide), hjU]
+    have hrest : (if 4 * j.toUSize ≤ m.toUSize then m.toUSize - 4 * j.toUSize else 0) = (m - 4 * j).toUSize := by
+      apply USize.toNat_inj.mp
+      rw [usz_n _ (by omega)]
+      split
+      · rename_i h; rw [usz_le_iff, h4j, hmU] at h
+        rw [USize.toNat_sub_of_le _ _ (by rw [usz_le_iff, h4j, hmU]; exact h), h4j, hmU]
+      · rename_i h; rw [usz_le_iff, h4j, hmU] at h; rw [show (0 : USize).toNat = 0 from rfl]; omega
+    have hnp : (if (m - 4 * j).toUSize < 4 then (m - 4 * j).toUSize else 4) = (min 4 (m - 4 * j)).toUSize := by
+      apply USize.toNat_inj.mp
+      rw [usz_n _ (by omega)]
+      split
+      · rename_i h; rw [usz_lt_iff', usz_n _ (by omega), usz_lit 4 (by decide)] at h; rw [usz_n _ (by omega)]; omega
+      · rename_i h; rw [usz_lt_iff', usz_n _ (by omega), usz_lit 4 (by decide)] at h; rw [usz_lit 4 (by decide)]; omega
+    rw [fineEU, dif_neg hk0, fineE]
+    simp only [hrest, hnp]
+    have hle : (need.toUSize ≤ acc.toUSize) ↔ need ≤ acc := by rw [usz_le_iff, hnU, haU]
+    have hlt : (acc.toUSize + (m - 4 * j).toUSize < need.toUSize) ↔ acc + (m - 4 * j) < need := by
+      rw [usz_lt_iff', usz_add' _ _ (by rw [haU, usz_n _ (by omega)]; omega), haU, usz_n _ (by omega), hnU]
+    by_cases c1 : need ≤ acc
+    · rw [if_pos (hle.mpr c1), if_pos c1]
+    · rw [if_neg (fun h => c1 (hle.mp h)), if_neg c1]
+      by_cases c2 : acc + (m - 4 * j) < need
+      · rw [if_pos (hlt.mpr c2), if_pos c2]
+      · rw [if_neg (fun h => c2 (hlt.mp h)), if_neg c2]
+        have hj4 : 4 * j < m := by omega
+        have hL := lc_word K gs o n r m j hm hj4 (by omega)
+        have hlc4 : lc (let full := fullL (min 4 (m - 4 * j))
+            let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
+            if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full) ≤ 4 := by
+          rw [lc_eq]; split <;> split <;> split <;> split <;> omega
+        have e1 : j.toUSize + 1 = (j + 1).toUSize := by
+          apply USize.toNat_inj.mp; rw [usz_add' _ _ (by rw [hjU, usz_lit 1 (by decide)]; omega), hjU, usz_lit 1 (by decide), usz_n _ (by omega)]
+        have e2 : (k + 1).toUSize - 1 = k.toUSize := by
+          apply USize.toNat_inj.mp
+          rw [USize.toNat_sub_of_le _ _ (by show (1 : USize).toNat ≤ ((k + 1).toUSize).toNat; rw [usz_lit 1 (by decide), usz_n _ (by omega)]; omega),
+            usz_lit 1 (by decide), usz_n _ (by omega), usz_n _ (by omega)]; omega
+        have e3 : acc.toUSize + (lcU (wordR K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize j.toUSize (min 4 (m - 4 * j)).toUSize)).toUSize =
+            (acc + lc (let full := fullL (min 4 (m - 4 * j))
+              let F := laneZ (lowF (mAt K gs (o + r) j) (n - 32 * j)) &&& full
+              if F == full then F else lanesAny K gs n j full F o (2 * r + 1) &&& full)).toUSize := by
+          apply USize.toNat_inj.mp
+          have e : ∀ x a : Nat, x ≤ 4 → a < 2 ^ 30 → (a + x % 2 ^ System.Platform.numBits) % 2 ^ System.Platform.numBits = a + x := by
+            intro x a hx ha'
+            have := usz_pow
+            rw [Nat.mod_eq_of_lt (show x < 2 ^ System.Platform.numBits by omega), Nat.mod_eq_of_lt (by omega)]
+          rw [USize.toNat_add, UInt64.toNat_toUSize, haU, hL, e _ _ hlc4 (by omega), usz_n _ (by omega)]
+        rw [e1, e2, e3]
+        exact ih _ _ (by omega) (by omega)
+
+/-- `fineE` for the compiled code (`fineE_eqC`): the machine-word loop `fineEU` within its bounds. -/
+@[inline] def fineEC (K : RP) (gs : GW) (o n r m need j k acc : Nat) : Bool :=
+  if o + 32 * (j + k) + 2 * r + 1 + 64 < 2147483648 ∧ 8 * m ≤ n ∧ m < 1073741824 ∧ need < 1073741824 ∧
+      acc + 4 * k < 1073741824 then
+    fineEU K gs o.toUSize (o + r).toUSize (2 * r + 1).toUSize m.toUSize need.toUSize j.toUSize k.toUSize acc.toUSize
+  else fineES K gs o n r m need j k acc
+
+@[csimp] theorem fineE_eqC : @fineE = @fineEC := by
+  funext K gs o n r m need j k acc
+  unfold fineEC
+  split
+  · rename_i h
+    exact (fineEU_eq K gs o n r m need h.2.1 h.2.2.1 h.2.2.2.1 k j acc h.1 h.2.2.2.2).symm
+  · exact (fineES_eq K gs o n r m need k j acc).symm
+
+/-! ### The word path -/
+
+/-- The word path applies: packed read, the window `[D − n − r, D + r)` inside the
+chromosome and in all-ACGT blocks, pieces of 8 letters 8 apart. -/
+@[inline] def wordWin (K : RP) (n r D : Nat) (P : PGen) : Bool :=
+  K.ok && decide (n + r ≤ D) && n / (n / pl) == 8 && winOk P (D - n - r) (n + 2 * r)
+
+/-- The packed genome for the word path: `GPk.pk G` when the seeds `us` lie inside the
+read (`usIn`), else `none`.  A stage computes it once (`kfiltVP`), so neither the
+seed check nor the instance call (which touches the shared genome's count) is per
+diagonal. -/
+@[inline] def pkU {Gt : Type} [GRead Gt] [GPk Gt] (G : Gt) (Ls n : Nat) (us : List Nat) : Option PGen :=
+  if usIn Ls n us then GPk.pk G else none
+
+/-- `kfiltV` with the packed genome `pk` given (`pkU`). -/
+@[inline] def kfiltVP {Gt : Type} [GRead Gt] (pk : Option PGen) (K : RP) (R : ByteArray) (G : Gt)
+    (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
+  let Q := min lim b.pen
+  let r := 2 * gapBound sc0 (-(Q : Int))
+  let n := R.size
+  let fJ := acc.length - suppA acc D r
+  let sb := sbound Q
+  if fJ ≤ sb then
+    match pk with
+    | some P =>
+      if wordWin K n r D P then
+        let a := P.o + (D - n - r)
+        let o := a % 32
+        let gs := loadG P.w (a / 32) ((o + 2 * r + n) / 32 + 2)
+        unlookV K gs o Ls r sb us fJ &&
+          fineE K gs o n r (n / pl) (n / pl) 0 ((n + 31) / 32) sb
+      else kfilt R G acc us Ls lim b D
+    | none => kfilt R G acc us Ls lim b D
+  else false
+
+/-- `kfilt` with the word path where it applies. -/
+@[inline] def kfiltV {Gt : Type} [GRead Gt] [GPk Gt] (K : RP) (R : ByteArray) (G : Gt) (acc : List (Array Nat))
+    (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat) : Bool :=
+  kfiltVP (pkU G Ls R.size us) K R G acc us Ls lim b D
+
+/-- `stageKS` with `kfiltV`. -/
+@[specialize] def stageKSV {Gt : Type} [GRead Gt] [GPk Gt] (body : Nat → Best → Best) (K : RP) (R : ByteArray)
+    (G : Gt) (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (ds : List Nat) (b : Best) : Best :=
+  let pk := pkU G Ls R.size us
+  ds.foldl (fun b D => if kfiltVP pk K R G acc us Ls lim b D then body D b else b) b
 
 theorem kfiltVP_eq {Gt : Type} [GRead Gt] (pk : Option PGen) (R : ByteArray) (G : Gt)
     (acc : List (Array Nat)) (us : List Nat) (Ls lim : Nat) (b : Best) (D : Nat)

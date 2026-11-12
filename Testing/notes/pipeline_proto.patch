@@ -1,0 +1,474 @@
+Pipeline prototype for Rowan (NOT applied; touches Spec/Shim.lean + its mirror Main.lean, so Spec/FROZEN.sha256 must be
+regenerated after applying:  shasum -a 256 Spec/Alignment.lean Spec/Mapping.lean Spec/Aligner.lean Spec/Shim.lean > Spec/FROZEN.sha256).
+   git apply Testing/notes/pipeline_proto.patch
+Made against festive-fermi 89ef604. Variant A (one Spec.alignPairs per job), job = 16000 pairs (PROTOTYPE knobs: env
+PIPE_JOB / PIPE_DEPTH). The quality-length check compiles whether FastqRecord.quality is a String (festive) or a
+ByteArray (shim_speed.patch) via the small QSize class. See Testing/notes/UTILIZATION.md §5-6.
+
+diff --git a/Main.lean b/Main.lean
+index d6e284b..9f26f48 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -1,5 +1,6 @@
+ -- The lean-align executable: Spec/Shim.lean line for line, importing Proofs (the proved buildIndex / alignPairs) instead of Spec.
+ import Proofs.Sam
++import Std.Sync.Channel
+ 
+ /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
+ then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
+@@ -8,6 +9,178 @@ Each chunk is read (`Spec.readChunk`), then its mates are trimmed many at once (
+ which runs the proved trimmer `Spec.trimRecord` on every mate); a mate with no letters left is
+ trimmed away (`none`, `Spec.chunkPairs` in Spec/Fastq.lean). -/
+ 
++
++/-! ## PROTOTYPE (local, unproved): a pipeline that keeps every core busy
++
++Two readers (one per mate file) cut their input into slices of exactly `jobPairs` records (every `4 · jobPairs`-th
++newline), with no parsing. A dispatcher pairs slice k of each file into job k. `workers` workers each parse and check
++their job's records (as `readChunk` does), trim them (`trimRecord`), align them, and format the SAM bytes. The writer
++(the main thread) writes the jobs in sequence order. -/
++namespace Pipe
++open Spec
++
++def blockSize : Nat := 8 * 1024 * 1024
++def jobPairs : Nat := 16000
++def workers : Nat := 4
++-- jobs queued per worker
++def depth : Nat := 2
++
++-- the quality length in bytes, whether `FastqRecord.quality` is a String or (with shim_speed.patch) a ByteArray
++class QSize (α : Type) where qsize : α → Nat
++instance : QSize String := ⟨String.utf8ByteSize⟩
++instance : QSize ByteArray := ⟨ByteArray.size⟩
++
++-- up to 8 MB; short (pipe) reads are topped up, 1 MB at a time, until the block is full or the input ends
++def readBig (h : IO.FS.Handle) : IO ByteArray := do
++  let mut block ← h.read blockSize.toUSize
++  if block.isEmpty then return block
++  repeat
++    if blockSize ≤ block.size then break
++    let more ← h.read (min (1024 * 1024) (blockSize - block.size)).toUSize
++    if more.isEmpty then break
++    block := block ++ more
++  return block
++
++-- one past the `n`-th newline at or after `i`, and how many newlines were found (fewer than `n`: up to the end)
++def cutAfter (b : ByteArray) (i n : Nat) : Nat × Nat := Id.run do
++  let mut p := i
++  let mut f := 0
++  for _ in [0:n] do
++    let j := findNewline b p
++    if j < b.size then
++      p := j + 1
++      f := f + 1
++    else
++      p := b.size
++      break
++  return (p, f)
++
++def die (what : String) (e : IO.Error) : IO Unit := do
++  IO.eprintln s!"{what}: {e}"
++  IO.Process.exit 1
++
++-- slices of exactly `jobPairs` records (the last one may be shorter), in file order
++def reader (h : IO.FS.Handle) (k : Nat) (ch : Std.CloseableChannel.Sync ByteArray) : IO Unit := do
++  let need := 4 * k
++  let mut carry := ByteArray.empty
++  let mut scan := 0
++  let mut lines := 0
++  let mut eof := false
++  repeat
++    let (p, f) := cutAfter carry scan (need - lines)
++    if lines + f = need then
++      ch.send (carry.extract 0 p)
++      carry := carry.extract p carry.size
++      scan := 0
++      lines := 0
++    else
++      scan := carry.size
++      lines := lines + f
++      if eof then
++        if 0 < carry.size then ch.send carry
++        break
++      let blk ← readBig h
++      if blk.isEmpty then eof := true else carry := carry ++ blk
++  ch.close
++
++-- the records of a slice: lines as `FastqReader.line` cuts them (CR stripped before a newline), 4 per record,
++-- each checked by `parseRecord` (the errors of `readFastqRecord`)
++def parseSlice (b : ByteArray) : IO (Array FastqRecord) := do
++  let line := fun (i : Nat) =>
++    let j := findNewline b i
++    if j < b.size then
++      let stop := if i < j && b[j - 1]! == 13 then j - 1 else j
++      (b.extract i stop, j + 1)
++    else (b.extract i b.size, b.size)
++  let mut out := #[]
++  let mut i := 0
++  repeat
++    if b.size ≤ i then break
++    let (header, i1) := line i
++    if b.size ≤ i1 then throw (IO.userError "FASTQ: file ends inside a record")
++    let (letters, i2) := line i1
++    if b.size ≤ i2 then throw (IO.userError "FASTQ: file ends inside a record")
++    let (plus, i3) := line i2
++    if b.size ≤ i3 then throw (IO.userError "FASTQ: file ends inside a record")
++    let (quality, i4) := line i3
++    match parseRecord header letters plus quality with
++    | .ok record => out := out.push record
++    | .error why => throw (IO.userError s!"FASTQ: {why}")
++    i := i4
++  return out
++
++-- `readChunk`'s pair checks
++def pairUp (r1 r2 : Array FastqRecord) : IO (Array (FastqRecord × FastqRecord)) := do
++  let mut chunk := #[]
++  for (record1, record2) in r1.zip r2 do
++    if mateName record1.name != mateName record2.name then
++      throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
++    for record in [record1, record2] do
++      let name := mateName record.name
++      unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
++        throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
++    if record1.letters.size != QSize.qsize record1.quality || record2.letters.size != QSize.qsize record2.quality then
++      throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
++    chunk := chunk.push (record1, record2)
++  if r1.size != r2.size then
++    throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
++  return chunk
++
++def worker (ins : InsertSettings) (index : ByteArray) (chromosomes : ChromosomeList)
++    (jobs : Std.CloseableChannel.Sync (Nat × ByteArray × ByteArray))
++    (out : Std.CloseableChannel.Sync (Nat × ByteArray)) : IO Unit := do
++  repeat
++    let some (seq, b1, b2) ← jobs.recv | break
++    let chunk ← pairUp (← parseSlice b1) (← parseSlice b2)
++    let chunk := chunk.map fun (record1, record2) => (trimRecord record1, trimRecord record2)
++    let results := alignPairs ins index (chunkPairs chunk)
++    out.send (seq, samChunk chromosomes chunk results 1)
++
++def run (ins : InsertSettings) (index : ByteArray) (chromosomes : ChromosomeList) (h1 h2 : IO.FS.Handle)
++    (outH : IO.FS.Handle) : IO Unit := do
++  -- PROTOTYPE knobs for the measurements (defaults: jobPairs, depth)
++  let k := ((← IO.getEnv "PIPE_JOB").bind String.toNat?).getD jobPairs
++  let d := ((← IO.getEnv "PIPE_DEPTH").bind String.toNat?).getD depth
++  let ch1 ← Std.CloseableChannel.Sync.new (some 3)
++  let ch2 ← Std.CloseableChannel.Sync.new (some 3)
++  let jobs ← Std.CloseableChannel.Sync.new (some (d * workers))
++  let res ← Std.CloseableChannel.Sync.new (some (4 * workers))
++  let _ ← IO.asTask (prio := .dedicated) (try reader h1 k ch1 catch e => die "reader 1" e)
++  let _ ← IO.asTask (prio := .dedicated) (try reader h2 k ch2 catch e => die "reader 2" e)
++  let _ ← IO.asTask (prio := .dedicated) (try
++      let mut seq := 0
++      repeat
++        let a ← ch1.recv
++        let b ← ch2.recv
++        match a, b with
++        | some x, some y =>
++          jobs.send (seq, x, y)
++          seq := seq + 1
++        | none, none => break
++        | _, _ => throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
++      jobs.close
++    catch e => die "dispatcher" e)
++  let ws ← (List.range workers).mapM fun _ =>
++    IO.asTask (prio := .dedicated) (try worker ins index chromosomes jobs res catch e => die "worker" e)
++  let _ ← IO.asTask (prio := .dedicated) (do
++    for w in ws do let _ ← IO.wait w
++    res.close)
++  let mut pending : Std.HashMap Nat ByteArray := {}
++  let mut nextSeq := 0
++  repeat
++    let some (s, text) ← res.recv | break
++    pending := pending.insert s text
++    repeat
++      match pending[nextSeq]? with
++      | some t =>
++        outH.write t
++        pending := pending.erase nextSeq
++        nextSeq := nextSeq + 1
++      | none => break
++  unless pending.isEmpty do throw (IO.userError "pipeline: results missing")
++
++end Pipe
++
+ def main (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+@@ -21,42 +194,10 @@ def main (args : List String) : IO UInt32 := do
+     -- and INDEX.chromosomes lists that genome's names and lengths
+     let index ← IO.FS.readBinFile indexPath
+     let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
+-    let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
+-    let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
+     let out ← IO.FS.Handle.mk outPath .write
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+-    -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+-    let mut next ← IO.asTask (do
+-      let raw ← Spec.readChunk reads1 reads2 20000
+-      return Spec.trimChunk raw 16)
+-    let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
+-    repeat
+-      let chunk ← IO.ofExcept next.get
+-      if chunk.isEmpty then
+-        break
+-      next ← IO.asTask (do
+-        let raw ← Spec.readChunk reads1 reads2 20000
+-        return Spec.trimChunk raw 16)
+-      -- ╔══════════════════════════════════════════════════════════════════════════════════╗
+-      -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
+-      -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
+-      -- ║ index was built from. Everything around it only reads inputs and writes output.   ║
+-      -- ║                                                                                  ║
+-      -- ║ IN:  `chunk`, the pairs of this round, already trimmed by the proved trimmer      ║
+-      -- ║      (`trimChunk`, equal to `trimRecord` on every mate: `trimChunk_eq`).          ║
+-      -- ║ OUT: `results`, one `PairResult` per pair, in the same order as `chunk`.          ║
+-      -- ║ TRUSTED around it (not proved yet): that `readChunk` returns the FASTQ records   ║
+-      -- ║ in file order, that the tasks hand chunks over in order, and that `samChunk` and  ║
+-      -- ║ `out.write` put each pair's lines into the file correctly.                        ║
+-      -- ╚══════════════════════════════════════════════════════════════════════════════════╝
+-      let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
+-      -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
+-      -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
+-      let text := Spec.samChunk chromosomes chunk results 16
+-      let previous := writing
+-      writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+-    IO.ofExcept writing.get
++    Pipe.run insertSettings index chromosomes (← IO.FS.Handle.mk reads1Path .read) (← IO.FS.Handle.mk reads2Path .read) out
+     return 0
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"
+diff --git a/Spec/Shim.lean b/Spec/Shim.lean
+index 22e2738..67b6395 100644
+--- a/Spec/Shim.lean
++++ b/Spec/Shim.lean
+@@ -1,4 +1,5 @@
+ import Spec.Sam
++import Std.Sync.Channel
+ 
+ /-! # The execution shim. `build` reads the FASTA and saves the index; `map` reads only the index,
+ then reads pairs in chunks, calls `alignPairs` once per chunk, and writes SAM.
+@@ -7,6 +8,178 @@ Each chunk is read (`Spec.readChunk`), then its mates are trimmed many at once (
+ which runs the proved trimmer `Spec.trimRecord` on every mate); a mate with no letters left is
+ trimmed away (`none`, `Spec.chunkPairs` in Spec/Fastq.lean). -/
+ 
++
++/-! ## PROTOTYPE (local, unproved): a pipeline that keeps every core busy
++
++Two readers (one per mate file) cut their input into slices of exactly `jobPairs` records (every `4 · jobPairs`-th
++newline), with no parsing. A dispatcher pairs slice k of each file into job k. `workers` workers each parse and check
++their job's records (as `readChunk` does), trim them (`trimRecord`), align them, and format the SAM bytes. The writer
++(the main thread) writes the jobs in sequence order. -/
++namespace Pipe
++open Spec
++
++def blockSize : Nat := 8 * 1024 * 1024
++def jobPairs : Nat := 16000
++def workers : Nat := 4
++-- jobs queued per worker
++def depth : Nat := 2
++
++-- the quality length in bytes, whether `FastqRecord.quality` is a String or (with shim_speed.patch) a ByteArray
++class QSize (α : Type) where qsize : α → Nat
++instance : QSize String := ⟨String.utf8ByteSize⟩
++instance : QSize ByteArray := ⟨ByteArray.size⟩
++
++-- up to 8 MB; short (pipe) reads are topped up, 1 MB at a time, until the block is full or the input ends
++def readBig (h : IO.FS.Handle) : IO ByteArray := do
++  let mut block ← h.read blockSize.toUSize
++  if block.isEmpty then return block
++  repeat
++    if blockSize ≤ block.size then break
++    let more ← h.read (min (1024 * 1024) (blockSize - block.size)).toUSize
++    if more.isEmpty then break
++    block := block ++ more
++  return block
++
++-- one past the `n`-th newline at or after `i`, and how many newlines were found (fewer than `n`: up to the end)
++def cutAfter (b : ByteArray) (i n : Nat) : Nat × Nat := Id.run do
++  let mut p := i
++  let mut f := 0
++  for _ in [0:n] do
++    let j := findNewline b p
++    if j < b.size then
++      p := j + 1
++      f := f + 1
++    else
++      p := b.size
++      break
++  return (p, f)
++
++def die (what : String) (e : IO.Error) : IO Unit := do
++  IO.eprintln s!"{what}: {e}"
++  IO.Process.exit 1
++
++-- slices of exactly `jobPairs` records (the last one may be shorter), in file order
++def reader (h : IO.FS.Handle) (k : Nat) (ch : Std.CloseableChannel.Sync ByteArray) : IO Unit := do
++  let need := 4 * k
++  let mut carry := ByteArray.empty
++  let mut scan := 0
++  let mut lines := 0
++  let mut eof := false
++  repeat
++    let (p, f) := cutAfter carry scan (need - lines)
++    if lines + f = need then
++      ch.send (carry.extract 0 p)
++      carry := carry.extract p carry.size
++      scan := 0
++      lines := 0
++    else
++      scan := carry.size
++      lines := lines + f
++      if eof then
++        if 0 < carry.size then ch.send carry
++        break
++      let blk ← readBig h
++      if blk.isEmpty then eof := true else carry := carry ++ blk
++  ch.close
++
++-- the records of a slice: lines as `FastqReader.line` cuts them (CR stripped before a newline), 4 per record,
++-- each checked by `parseRecord` (the errors of `readFastqRecord`)
++def parseSlice (b : ByteArray) : IO (Array FastqRecord) := do
++  let line := fun (i : Nat) =>
++    let j := findNewline b i
++    if j < b.size then
++      let stop := if i < j && b[j - 1]! == 13 then j - 1 else j
++      (b.extract i stop, j + 1)
++    else (b.extract i b.size, b.size)
++  let mut out := #[]
++  let mut i := 0
++  repeat
++    if b.size ≤ i then break
++    let (header, i1) := line i
++    if b.size ≤ i1 then throw (IO.userError "FASTQ: file ends inside a record")
++    let (letters, i2) := line i1
++    if b.size ≤ i2 then throw (IO.userError "FASTQ: file ends inside a record")
++    let (plus, i3) := line i2
++    if b.size ≤ i3 then throw (IO.userError "FASTQ: file ends inside a record")
++    let (quality, i4) := line i3
++    match parseRecord header letters plus quality with
++    | .ok record => out := out.push record
++    | .error why => throw (IO.userError s!"FASTQ: {why}")
++    i := i4
++  return out
++
++-- `readChunk`'s pair checks
++def pairUp (r1 r2 : Array FastqRecord) : IO (Array (FastqRecord × FastqRecord)) := do
++  let mut chunk := #[]
++  for (record1, record2) in r1.zip r2 do
++    if mateName record1.name != mateName record2.name then
++      throw (IO.userError s!"FASTQ files out of step: mate names {record1.name} / {record2.name}")
++    for record in [record1, record2] do
++      let name := mateName record.name
++      unless 0 < name.length && name.length ≤ 254 && name.all (fun c => ('!' ≤ c && c ≤ '?') || ('A' ≤ c && c ≤ '~')) do
++        throw (IO.userError s!"FASTQ: read name '{record.name}' is not a SAM QNAME")
++    if record1.letters.size != QSize.qsize record1.quality || record2.letters.size != QSize.qsize record2.quality then
++      throw (IO.userError s!"FASTQ record {record1.name}: sequence and quality lengths differ")
++    chunk := chunk.push (record1, record2)
++  if r1.size != r2.size then
++    throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
++  return chunk
++
++def worker (ins : InsertSettings) (index : ByteArray) (chromosomes : ChromosomeList)
++    (jobs : Std.CloseableChannel.Sync (Nat × ByteArray × ByteArray))
++    (out : Std.CloseableChannel.Sync (Nat × ByteArray)) : IO Unit := do
++  repeat
++    let some (seq, b1, b2) ← jobs.recv | break
++    let chunk ← pairUp (← parseSlice b1) (← parseSlice b2)
++    let chunk := chunk.map fun (record1, record2) => (trimRecord record1, trimRecord record2)
++    let results := alignPairs ins index (chunkPairs chunk)
++    out.send (seq, samChunk chromosomes chunk results 1)
++
++def run (ins : InsertSettings) (index : ByteArray) (chromosomes : ChromosomeList) (h1 h2 : IO.FS.Handle)
++    (outH : IO.FS.Handle) : IO Unit := do
++  -- PROTOTYPE knobs for the measurements (defaults: jobPairs, depth)
++  let k := ((← IO.getEnv "PIPE_JOB").bind String.toNat?).getD jobPairs
++  let d := ((← IO.getEnv "PIPE_DEPTH").bind String.toNat?).getD depth
++  let ch1 ← Std.CloseableChannel.Sync.new (some 3)
++  let ch2 ← Std.CloseableChannel.Sync.new (some 3)
++  let jobs ← Std.CloseableChannel.Sync.new (some (d * workers))
++  let res ← Std.CloseableChannel.Sync.new (some (4 * workers))
++  let _ ← IO.asTask (prio := .dedicated) (try reader h1 k ch1 catch e => die "reader 1" e)
++  let _ ← IO.asTask (prio := .dedicated) (try reader h2 k ch2 catch e => die "reader 2" e)
++  let _ ← IO.asTask (prio := .dedicated) (try
++      let mut seq := 0
++      repeat
++        let a ← ch1.recv
++        let b ← ch2.recv
++        match a, b with
++        | some x, some y =>
++          jobs.send (seq, x, y)
++          seq := seq + 1
++        | none, none => break
++        | _, _ => throw (IO.userError "FASTQ files out of step: one file has more reads than the other")
++      jobs.close
++    catch e => die "dispatcher" e)
++  let ws ← (List.range workers).mapM fun _ =>
++    IO.asTask (prio := .dedicated) (try worker ins index chromosomes jobs res catch e => die "worker" e)
++  let _ ← IO.asTask (prio := .dedicated) (do
++    for w in ws do let _ ← IO.wait w
++    res.close)
++  let mut pending : Std.HashMap Nat ByteArray := {}
++  let mut nextSeq := 0
++  repeat
++    let some (s, text) ← res.recv | break
++    pending := pending.insert s text
++    repeat
++      match pending[nextSeq]? with
++      | some t =>
++        outH.write t
++        pending := pending.erase nextSeq
++        nextSeq := nextSeq + 1
++      | none => break
++  unless pending.isEmpty do throw (IO.userError "pipeline: results missing")
++
++end Pipe
++
+ def main (args : List String) : IO UInt32 := do
+   match args with
+   | ["build", genomePath, indexPath] =>
+@@ -20,42 +193,10 @@ def main (args : List String) : IO UInt32 := do
+     -- and INDEX.chromosomes lists that genome's names and lengths
+     let index ← IO.FS.readBinFile indexPath
+     let chromosomes ← Spec.readChromosomeList (indexPath ++ ".chromosomes")
+-    let reads1 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads1Path .read)
+-    let reads2 ← Spec.FastqReader.ofHandle (← IO.FS.Handle.mk reads2Path .read)
+     let out ← IO.FS.Handle.mk outPath .write
+     for line in Spec.samHeader chromosomes do
+       out.putStrLn line
+-    -- pipelined: the next chunk is read, and the previous one written, while this one is aligned
+-    let mut next ← IO.asTask (do
+-      let raw ← Spec.readChunk reads1 reads2 20000
+-      return Spec.trimChunk raw 16)
+-    let mut writing : Task (Except IO.Error Unit) := .pure (.ok ())
+-    repeat
+-      let chunk ← IO.ofExcept next.get
+-      if chunk.isEmpty then
+-        break
+-      next ← IO.asTask (do
+-        let raw ← Spec.readChunk reads1 reads2 20000
+-        return Spec.trimChunk raw 16)
+-      -- ╔══════════════════════════════════════════════════════════════════════════════════╗
+-      -- ║ THE PROVED PART. `alignPairs_correct` (Aligner.lean) covers this call: one result ║
+-      -- ║ per pair, in the same order, and every result's claims hold for the genome the    ║
+-      -- ║ index was built from. Everything around it only reads inputs and writes output.   ║
+-      -- ║                                                                                  ║
+-      -- ║ IN:  `chunk`, the pairs of this round, already trimmed by the proved trimmer      ║
+-      -- ║      (`trimChunk`, equal to `trimRecord` on every mate: `trimChunk_eq`).          ║
+-      -- ║ OUT: `results`, one `PairResult` per pair, in the same order as `chunk`.          ║
+-      -- ║ TRUSTED around it (not proved yet): that `readChunk` returns the FASTQ records   ║
+-      -- ║ in file order, that the tasks hand chunks over in order, and that `samChunk` and  ║
+-      -- ║ `out.write` put each pair's lines into the file correctly.                        ║
+-      -- ╚══════════════════════════════════════════════════════════════════════════════════╝
+-      let results := Spec.alignPairs insertSettings index (Spec.chunkPairs chunk)
+-      -- ═══════════════════════════════ END OF THE PROVED PART ═══════════════════════════
+-      -- results come back in the same order as the pairs; `samChunk` lines each pair up with its result
+-      let text := Spec.samChunk chromosomes chunk results 16
+-      let previous := writing
+-      writing ← IO.asTask (do IO.ofExcept previous.get; out.write text)
+-    IO.ofExcept writing.get
++    Pipe.run insertSettings index chromosomes (← IO.FS.Handle.mk reads1Path .read) (← IO.FS.Handle.mk reads2Path .read) out
+     return 0
+   | _ =>
+     IO.eprintln "usage: shim build GENOME.fa INDEX\n       shim map INDEX READS_1.fq READS_2.fq OUT.sam MIN_FRAGMENT MAX_FRAGMENT"

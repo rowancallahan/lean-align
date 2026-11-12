@@ -185,6 +185,25 @@ theorem encodes_decodeRead (bytes : ByteArray) : MapSpec.Encodes bytes (decodeRe
 
 /-! ## The answer from the router's output (M1: bounds only) -/
 
+-- `PairAnswer.Correct` without the junk clause on `.unknown` (what the router's answers prove before the
+-- last step, `Proofs/LastResort.lean`, makes every answer without a pair junk or gives it one)
+def CorrectU (insertSettings : InsertSettings) (genome : Genome) (mate1 mate2 : Read) (answer : PairAnswer) : Prop :=
+  (∀ report, answer.found = some report →
+    ∃ pair : PairAlignment genome mate1 mate2,
+      pair.report = report ∧ pair.IsProper insertSettings.range insertSettings.dovetailSlack) ∧
+  (∀ pair : PairAlignment genome mate1 mate2,
+    pair.IsProper insertSettings.range insertSettings.dovetailSlack → pair.score ≤ answer.bestPossibleScore) ∧
+  (match answer.uniqueness with
+   | .unique =>
+       ∃ report, answer.found = some report ∧
+       ∃ pair : PairAlignment genome mate1 mate2, pair.report = report ∧ pair.IsUniqueBestProper insertSettings
+   | .multimapper =>
+       ∃ report, answer.found = some report ∧
+       ∃ pair other : PairAlignment genome mate1 mate2, pair.report = report ∧
+         pair.IsBestProper insertSettings ∧ other.IsBestProper insertSettings ∧ pair.placements ≠ other.placements
+   | .unknown => True
+   | .repetitiveUnknown => answer.found = none)
+
 def tierOf : MapSpec.Fast.Tag → Tier
   | .t1   => .eachMateUnique
   | .t1g  => .quickSearchUnique
@@ -219,7 +238,7 @@ theorem answerOf_correct (insertSettings : InsertSettings) (genome : Genome) (ma
     (bytes1 bytes2 : ByteArray) (t : MapSpec.Fast.TierOut)
     (hok : MapSpec.Fast.TierOk insertSettings.dovetailSlack insertSettings.range.1 insertSettings.range.2
       (oldGenome genome) mate1 mate2 (some bytes1) (some bytes2) t) :
-    (answerOf t).Correct insertSettings genome mate1 mate2 := by
+    CorrectU insertSettings genome mate1 mate2 (answerOf t) := by
   -- an alignment gives a hit at its placement, at every threshold up to the hit's score
   have hit_at : ∀ {read : Read} (alignment : GenomicAlignment genome read),
       ∃ s, alignment.score ≤ s ∧ s ≤ 0 ∧ ∀ T, T ≤ s →

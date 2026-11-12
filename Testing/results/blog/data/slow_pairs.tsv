@@ -1,0 +1,6 @@
+# Single slow pairs mapped alone on 1 core, map seconds (index load subtracted). Timing box. SAM identical across builds.
+pair	before_64ae73f	fix1_351301d	merged_f465a57
+hiseq_slow1	55.44	1.51	0.54
+hiseq_slow2	5.58	0.40	0.29
+hiseq_slow3	2.98	0.30	0.21
+novaseq_10_pairs_together	136.1	12.4	1.66

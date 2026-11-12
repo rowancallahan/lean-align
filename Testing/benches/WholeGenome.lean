@@ -1750,8 +1750,8 @@ def uprofRun (rcfg : RouteCfg) (kK : PassKer) (pk : PkMz) (upN : Nat) (uout : St
   for k in [0:min upN r1.size] do
     let R1 := r1[k]!
     let R2 := r2[k]!
-    let P1 := rcfg.cap1 R1.size
-    let P2 := rcfg.cap1 R2.size
+    let P1 := rcfg.cap1 R1
+    let P2 := rcfg.cap1 R2
     if !(fastT P1 R1 && fastT P2 R2) then continue
     let s1 := kK.prep R1
     let s2 := kK.prep R2
@@ -2155,8 +2155,10 @@ def runSets (modes : List (String × (ByteArray → ByteArray → PairOut))) (ok
   for st in sets do
     let [name, rest] := st.splitOn "=" | throw (IO.userError "WG_READS: name=r1:r2:limit;...")
     let [p1, p2, lim] := rest.splitOn ":" | throw (IO.userError "WG_READS: name=r1:r2:limit;...")
+    let tM0 ← IO.monoNanosNow
     let m1 ← readMates p1
     let m2 ← readMates p2
+    say s!"mates read (FASTQ: and trimmed; one thread): {secs tM0 (← IO.monoNanosNow)} s"
     if m1.size != m2.size then throw (IO.userError s!"{p1}: {m1.size} records, {p2}: {m2.size}")
     -- WG_TRIMOUT=prefix: write the trimmed mates once (prefix_R1.txt / _R2.txt) for later runs
     if let some pre ← IO.getEnv "WG_TRIMOUT" then
@@ -2591,7 +2593,7 @@ def main (args : List String) : IO UInt32 := do
         match x.splitOn ":" with
         | [a, b] => (a.toNat!, b.toNat!)
         | _ => (0, 0)
-      let cap1F : Nat → Nat := fun n =>
+      let cap1F : ByteArray → Nat := fun R => let n := R.size
         if !c1s.isEmpty then (match c1s.find? (fun x => x.1 ≤ n) with | some x => x.2 | none => 12) else
         if 150 ≤ n then 16 else if 100 ≤ n then 12 else if short75 && 75 ≤ n then 11 else if short then 7 else 12
       let t2s := ((← IO.getEnv "WG_T2").getD "150:20").splitOn "," |>.filter (· ≠ "") |>.map fun x =>
@@ -2706,7 +2708,7 @@ def main (args : List String) : IO UInt32 := do
       let fHB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUp N a b then none else fH a b
       -- RTB<N>: the same gate (caps of pass 1, `cap1F`) in front of mode RT, the default
       let gaveUpR (N : Nat) (a b : ByteArray) : Bool :=
-        N < costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) || N < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)
+        N < costP pk (cap1F a) (prepMate pk a : PrepM MzP) || N < costP pk (cap1F b) (prepMate pk b : PrepM MzP)
       let fRTB (N : Nat) : ByteArray → ByteArray → PairOut := fun a b => if gaveUpR N a b then none else fRT a b
       -- RTL (bench only, exactness by `mapSpecBoth_mono` as in `mateH`): mode RT with each whole-genome
       -- mate search run as a cap ladder WG_LADDER (default 0,4,8,12): the first rung with any hit
@@ -2723,7 +2725,7 @@ def main (args : List String) : IO UInt32 := do
       let kL : PassKer := { kK with mate := ladM }
       let ordL : ByteArray → ByteArray → Option Bool := fun a b =>
         if lord == "hi" then
-          some (decide (costP pk (cap1F a.size) (prepMate pk a : PrepM MzP) < costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)))
+          some (decide (costP pk (cap1F a) (prepMate pk a : PrepM MzP) < costP pk (cap1F b) (prepMate pk b : PrepM MzP)))
         else none
       let routeL (a b : ByteArray) : Routed := routeG { rcfg with ord1 := ordL } kL kL lo hi (some a) (some b)
       let fRTL : ByteArray → ByteArray → PairOut := fun a b => (routeL a b).out.toOpt
@@ -2772,7 +2774,8 @@ def main (args : List String) : IO UInt32 := do
       -- WG_XHCHK=0: no `chkAln` inside the heuristic (the router re-checks its picks)
       let xhC ← envN "WG_XHC" 1000000
       let xhChk := (← IO.getEnv "WG_XHCHK").getD "1" == "1"
-      let hcfg : HCfg := { w := xhW, r := xhR, ck := xhCK, np := xhP, dl := xhD, seeds := xhS, near := xhN, band := xhB, sv := xhV, seedAll := xhA, bl := xhL, ge := xhG, kx := xhK, vf := xhVF, nk := xhNK, cmax := xhC, chk := xhChk }
+      let xhWfa := (← IO.getEnv "WG_XHWFA").getD "0" == "1"   -- the banded step by wavefronts (bandWfa)
+      let hcfg : HCfg := { wfa := xhWfa, w := xhW, r := xhR, ck := xhCK, np := xhP, dl := xhD, seeds := xhS, near := xhN, band := xhB, sv := xhV, seedAll := xhA, bl := xhL, ge := xhG, kx := xhK, vf := xhVF, nk := xhNK, cmax := xhC, chk := xhChk }
       -- the mate the guarantee enumerates when both are on the fast path at G0: the smaller rarest-seed buckets
       let gPref := fun (G0 : Nat) (a b : ByteArray) (s1 s2 : PrepM MzP) =>
         let k := sbound G0 + 2
@@ -2849,14 +2852,14 @@ def main (args : List String) : IO UInt32 := do
         if dStop == 3 then
           let t := tierPair tcfg pk offs pgs (some a) (some b)
           { t with sfx := if dFlag a b then "d" else t.sfx } else
-        if dStop == 2 && !tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (rcfg.cap1 a.size) (prepMate pk a : PrepM MzP))
-            (costP pk (rcfg.cap1 b.size) (prepMate pk b : PrepM MzP)) then
+        if dStop == 2 && !tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (rcfg.cap1 a) (prepMate pk a : PrepM MzP))
+            (costP pk (rcfg.cap1 b) (prepMate pk b : PrepM MzP)) then
           let r := tierRT tcfg pk offs pgs a b
           match r.out with
           | .mapped (x, y) =>
             { tag := .t1, why := none, c1 := r.c1, c2 := r.c2,
-              m1 := { st := "U", cap := rcfg.cap1 a.size, cd := rcfg.cap1 a.size, pen := (-x.2).toNat, pl := some x },
-              m2 := { st := "U", cap := rcfg.cap1 b.size, cd := rcfg.cap1 b.size, pen := (-y.2).toNat, pl := some y } }
+              m1 := { st := "U", cap := rcfg.cap1 a, cd := rcfg.cap1 a, pen := (-x.2).toNat, pl := some x },
+              m2 := { st := "U", cap := rcfg.cap1 b, cd := rcfg.cap1 b, pen := (-y.2).toNat, pl := some y } }
           | .unmapped rs k =>
             if dFlag a b then { tag := .t3, why := some rs } else
             tierUp tcfg pk offs pgs a b (tierRest tcfg pk offs pgs a b (some (rs, k)) r.c1 r.c2)
@@ -2913,6 +2916,15 @@ def main (args : List String) : IO UInt32 := do
             let d1 := dangerCnt pk dmask a (prepMate pk a)
             let d2 := dangerCnt pk dmask b (prepMate pk b)
             s!"{d1.1}\t{d1.2}\t{d2.1}\t{d2.2}")]
+      -- WG_SEEDCNT=1 (prototype, repeat hint): per pair, per mate and strand (fwd, rev): min and median bucket size over its seeds
+      let scM (R : ByteArray) : String :=
+        let s := prepMate pk R
+        let st := fun (pp : Array MzP) =>
+          let sz := (pp.toList.map (LookG.size pk)).mergeSort (· ≤ ·)
+          s!"{sz.headD 0}\t{sz.getD (sz.length / 2) 0}"
+        s!"{st s.ps}\t{st s.pr}"
+      let xdump0 := xdump0 ++
+        if (← IO.getEnv "WG_SEEDCNT").getD "0" == "1" then [("seedcnt", fun a b => s!"{scM a}\t{scM b}")] else []
       let xdump : List (String × (ByteArray → ByteArray → String)) := xdump0 ++
         if (← IO.getEnv "WG_TIEROUT").getD "0" == "1" then
           [("tiers", fun a b => let t := tierP a b
@@ -2995,8 +3007,8 @@ def main (args : List String) : IO UInt32 := do
           for k in [0:min rpN r1.size] do
             let R1 := r1[k]!
             let R2 := r2[k]!
-            let P1 := rcfg.cap1 R1.size
-            let P2 := rcfg.cap1 R2.size
+            let P1 := rcfg.cap1 R1
+            let P2 := rcfg.cap1 R2
             if !fastT P1 R1 || !fastT P2 R2 then continue
             let t0 ← IO.monoNanosNow
             let s1 ← (← IO.mkRef (kK.prep R1)).get
@@ -3063,8 +3075,8 @@ def main (args : List String) : IO UInt32 := do
           for k in [0:min mpN r1.size] do
             let R1 := r1[k]!
             let R2 := r2[k]!
-            let P1 := rcfg.cap1 R1.size
-            let P2 := rcfg.cap1 R2.size
+            let P1 := rcfg.cap1 R1
+            let P2 := rcfg.cap1 R2
             if !fastT P1 R1 || !fastT P2 R2 then continue
             let r0 ← IO.monoNanosNow
             let o ← (← IO.mkRef (route R1 R2)).get
@@ -3135,8 +3147,8 @@ def main (args : List String) : IO UInt32 := do
             all := #[all[0]! + 1, all[1]! + (t1 - t0), all[2]! + (t2 - t1), all[3]!]
             if t1 - t0 ≤ slUs * 1000 then continue
             all := all.set! 3 (all[3]! + 1)
-            let P1 := rcfg.cap1 R1.size
-            let P2 := rcfg.cap1 R2.size
+            let P1 := rcfg.cap1 R1
+            let P2 := rcfg.cap1 R2
             let mut ex : Array Nat := #[0, 0, 0, 0, 0, 0]
             let key ← if !fastT P1 R1 || !fastT P2 R2 then pure s!"short | {showR o}" else do
               let s1 : PrepM MzP := prepMate pk R1
@@ -3266,8 +3278,8 @@ def main (args : List String) : IO UInt32 := do
           let a := r1[k]!
           let b := r2[k]!
           let u0 ← IO.monoNanosNow
-          let o ← (← IO.mkRef (if tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cap1F a.size) (prepMate pk a : PrepM MzP))
-            (costP pk (cap1F b.size) (prepMate pk b : PrepM MzP)) then none else some (tierRT tcfg pk offs pgs a b))).get
+          let o ← (← IO.mkRef (if tcfg.gate a b (prepMate pk a) (prepMate pk b) (costP pk (cap1F a) (prepMate pk a : PrepM MzP))
+            (costP pk (cap1F b) (prepMate pk b : PrepM MzP)) then none else some (tierRT tcfg pk offs pgs a b))).get
           let u1 ← IO.monoNanosNow
           let t ← (← IO.mkRef (tierP a b)).get
           let u2 ← IO.monoNanosNow

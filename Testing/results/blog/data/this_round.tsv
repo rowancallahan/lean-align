@@ -1,0 +1,4 @@
+# This round: lean-align cc26db2 against f465a57. Wall and CPU come from data/reps.tsv (gz5m = cc26db2, gz5m_prev_build = f465a57, same session). Instructions: percent change in MapFast.job instructions, callgrind, first 50k pairs, 1 thread (given to me by the lead, absolute counts not given).
+metric	data	prev_build	new_build	change_pct	source
+instructions	novaseq_2x151	f465a57	cc26db2	-12.0	callgrind, 50k pairs, 1 thread (lead)
+instructions	hiseq_2x250	f465a57	cc26db2	-7.4	callgrind, 50k pairs, 1 thread (lead; hg002 = the HiSeq set)

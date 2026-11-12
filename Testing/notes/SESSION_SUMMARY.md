@@ -1220,3 +1220,388 @@ See the branch tips' commit messages for what is finished on each.
 ### Pause 2026-10-30 — see Testing/notes/PAUSE_2026-10-30.md (what worked, rollback points, hg38 profile, next steps)
 - 2026-10-27 (speed/loop-shape, cloud prep for the loop-shape campaign): @[csimp] USize versions of hamW, fwdW, bwdW (MapperK250), seedLE (MzWord), revCompLoop (FastGenK250), Mz.miniGo (MzIndex), each = USize loop + wrapper with a once-per-call bound test + verbatim slow copy, proved equal for all inputs (standard axioms; statements unchanged; check.sh passes). Synthetic 8 Mb genome, 2×150 pairs, dumps identical: tierPair Ir −7.4% with the spec's tierCfg settings (AB_PROD=1) / −4.9% in bench RTX; 20k pairs wall −10.6% / −5.9%. Harness: scripts/sim_genome.py, bench_data.sh, ab_kernel.sh, ab_pair.sh, ab_ir.sh (callgrind inside tierPair), cscan.py. Notes: notes/LOOP_SHAPE_PLAN.md (ranked candidates; bench RTX ≠ production settings; loadIndex per-chunk copies first for hg38), notes/GENERATED_C_SCAN_2026-10-27.txt. Pitfall: Nat literals ≥ 2^32 are parsed by GMP on every evaluation (pscanD still has one). Not measured: chr21/hg38, -march/LTO.
 - 2026-10-28 (speed/n28-loop-shape): speed/loop-shape ported onto 6a5ab23 and extended on chr21 with @[csimp] machine-word loops for PGen.raw, fwdMis/bwdMis/hamming (generic GRead), lanesAny, svAny, flagsOk, plus @[inline] wrappers. callgrind per 1000 chr21 mason pairs 391.6 M → 344.0 M Ir (−12.2%; the port alone −6.6%); SAM byte-identical on the four chr21 sets; CI_check passes. Details and what did not help: Testing/notes/LOOP_SHAPE_PLAN.md §6.
+
+### Branches deleted 2026-11 — what the 9 undocumented ones held (read through before deletion)
+Code on main was checked by identifier (`git grep` on main); only the ideas below were not already on main.
+- **archive/full-history, speed/guarq-b, speed/guarq-c, speed/guarq-wip** — the pre-reorganisation history
+  (450+ commits up to 2026-10-06). All their Lean code is on main under the new layout (pairGQ / pairGQC_sound /
+  PairGuarQB rejW_ker, pscanQ_eq / PairGuarQC goP_spec / pairGF_sound / pairGK / MateFloor / hitsAtQ); missing are
+  only the deleted PNG plots, the old FROZEN_SPEC.sha256 and wip/PairGuarQStubs.lean (open-lemma stubs, since
+  proved). The last commits there: candsC tried and reverted (no speed gain; also noted under archive/150-stage),
+  and the "freeze timing" table (already in this file): mapping-only bench RTX vs minibwa on 2026-10-06, HiSeq
+  3.57×, NovaSeq 1.98×, mason 1.66× (index load excluded; different box).
+- **speed/band-kernel** — proved capped banded score-only kernel `bandEnd`/`bandEnd2` (one pass per window end,
+  in-place Int rows, early exit when a row is dead), `bandScore_faithful`, `mapWith_eq_mapSpec_of_faithful` (any
+  scorer faithful at threshold T gives a mapper equal to mapSpec), `band_bench` vs wfaAlignU3. All on main.
+- **speed/bounds-v2** — sharper seed/window bounds: 4 seeds and 19 candidate windows per seed hit instead of 169
+  (`exists_clean_seed2`, MapperWalk2, SeedMapper2 = mapSpec). All on main.
+- **archive/bounds** (design only, empty commit): the reasoning behind bounds-v2 — charge each mismatch, each
+  gapX run and each gapY column once; e = max((−T)/min(−mismatch, −(gapOpen+gapExtend)), (−T+gapOpen)/min(−mismatch,
+  −gapExtend)) spoiled seeds (default scoring, T=−12: e=3, so 4 seeds); total gap columns ≤ d = (−T+gapOpen)/−gapExtend
+  (default 3), ≤ d2 = (−T+2·gapOpen)/−gapExtend (default 0) when both kinds occur; start/end shifts |s|+|t| ≤ d with
+  the same sign unless ≤ d2 → 19 windows. Useful again if deeper caps (5–7 errors) are attempted.
+- **archive/arrays** (WIP, never compiled, NOT on main): seed mapper over `Array Char` chromosomes with a hashed
+  index — UInt64 polynomial hash of each l0-letter word (h·0x9E3779B97F4A7C15 + c), filled in one pass; hash
+  collisions only add windows to score, so the proof needs just `LookupComplete` (every true occurrence reported).
+  Superseded by the packed genome + minimizer index, but the "collisions are harmless, completeness is all you
+  prove" argument applies to any faster index (e.g. a bucket-lookup rewrite for hg38).
+- **archive/dedup-parallel** (WIP, did not build, partly on main): `mapWithDedup` — drop windows that don't fit
+  the chromosome (by length) and remove repeated windows with a HashSet before scoring, with `mapWithDedup_eq_mapSpec`;
+  and `mapReadsPar` (chunks, one Task each, `mapReadsPar_eq_map`) — the parallel part is on main (ParMap), the
+  dedup is not. Idea worth keeping: dedup candidate windows before the expensive kernels.
+
+### Next experiments — see Testing/notes/EXPERIMENTS_NEXT.md (index lookup, dedup, deeper error caps)
+
+## 2026-11-02 — n31 boxes: results, merges, spec decisions (Rowan)
+
+### Reporting rule (Rowan)
+Speed is reported as "minibwa X s / ours Y s = Z.ZZx" (x = minibwa/ours, two decimals, >1 = we are faster), same box only.
+Headline = index load subtracted (ours: interleaved empty-FASTQ run; minibwa: its "index loaded" time), FASTQ read +
+SAM write included; also CPU and end-to-end. Bench-only (no I/O) numbers are not the headline.
+
+### Merged into claude/festive-fermi-mf9mo6 (CI_check passed, SAM byte-identical on chr21 mason/low)
+- O2 `speed/n31-lookup-sort`: diags merge (`diags_eqM`) and nextK key skip (`scanAWK_eqC`). nextK: −0.4% Ir but −30% CPU
+  (it removed most of the shared-index refcount traffic). hg38, load subtracted, minibwa default / ours: HiSeq 23.4/8.0 s
+  = 2.93x, NovaSeq 11.9/8.7 = 1.37x, mason 13.3/13.5 = 0.99x, low 8.8/8.7 = 1.01x.
+- O3 `speed/n31-deep-caps`: `deepCaps := false` in Proofs/Aligner.lean (gated pass 2 at caps 20/28). mason +7,075 pairs at
+  truth for ~1% CPU; HiSeq +29–83% CPU. Shim costs much more than the bench with it on: cause not found (DEEP_CAPS.md §3a).
+- O4 b3131b2 only (window starts in Nat, no GMP bignums on hg38): −10…−20% Ir, CPU change within noise. Dedup 323d4e8
+  NOT merged (NovaSeq 3.9% duplicates; save for large read sets).
+- S3 `speed/n31-sam-example`: 28-pair SAM comparison example, IO_PAIRED_UNPAIRED_TRIM.md, BAM stored-block prototype.
+  BAM is 16–19% fewer bytes but slower to write (~+0.7 s wall / 2.3 s CPU per 200k); samtools quickcheck/flagstat/round
+  trip all OK. BAM shelved; SAM stays the output.
+- S1 `speed/n31-wfa`: bandWfa behind WG_XHWFA (default off). bandDP is <1% of hg38 Ir at 150–250 bp. Kept usable for
+  long reads later.
+- O1 `speed/n31-threads`: slotW/rdSlot `@[noinline]` + borrowed `@& ByteArray`, per-task setup (`ParMap.parMapS`, proved
+  = map). Cause of the ~40% thread overhead: atomic inc/dec of the shared 5.3 GB index ByteArray per bucket slot. After:
+  4-core CPU = 1-core CPU. Locked ops / 2k pairs: 1.65M → 1.00M (with nextK) → 0.75M (combined).
+- Not worth it on hg38: danger regions (S2: flag catches 7% of ties, ≤0.1% CPU; hg38 ties are in diverged repeats).
+
+### M2: placements (O3, branch m2/placements, merges last)
+- Stage 1–2: CIGAR by certificate (unproved bandDP, re-checked by proved `chkCand` → `alignment_of_cigar`), pair
+  reported for T1/T1g/T1u/T2b/T2 (proper). Stage 3: T1/T1g/T1u carry `.unique` (proved `IsUniqueBestProper`).
+  sam_compare: all 19 mapped pairs at minibwa's exact position. Stage 4 (ties) skipped: Rowan tosses multimappers.
+- Answers that fail the check, and T2 with a non-proper pair, must be labelled boundsOnly.
+
+### Spec decisions in progress (Rowan writes Spec/; we only explain)
+- Why M1 printed everything unmapped: `PairAnswer.Correct` only constrains `found = some`; `found = none` + `.unknown`
+  + a correct bound satisfies it. The tier carries no claim.
+- Direction (Rowan): decide in terms of `answer.uniqueness`, not tiers:
+  `.unique` → found, unique best (unchanged) · `.multimapper` → a proved tie (two best proper pairs at different
+  placements), nothing reported · `.unknown` → `found = none → bestPossibleScore < T` (no pair only if junk).
+  Later: per-tier claims, one at a time.
+- T: likely free at −(cap+1) per read length (junk pairs come out at XB −17 for ≥150 bp); budget-stopped repeat answers
+  (e.g. s24, XB 0) are the cost. Measure on hg38 before fixing T.
+
+### Decision (Rowan, later 2026-11-02): report the pair in hand
+- `.unknown` with no pair only for junk: `found = none → bestPossibleScore < T` (Rowan adds to Spec/). Everything
+  else reports a pair. Repeats/ties where the router stops early: depth-first fallback (one candidate, aligned,
+  chkCand-checked), reported `.unknown` with the bound left wide — like minibwa's MAPQ 0. M2 stage 5 (O3).
+- A pair-agnostic "two pairs close to each other" claim is vacuous (any read has many terrible pairs with near-equal
+  scores); a near-tie claim must be anchored to the bound: both pairs ≥ bestPossibleScore − x.
+
+### Spec change on main (Rowan, f57e195 = 37c21a7 + FROZEN.sha256) — the spec to prove against now; tiers later
+`InsertSettings.junkScore : Int := -17`; `.unknown` branch: `answer.found = none → answer.bestPossibleScore <
+insertSettings.junkScore`. With a pair, clause 1 makes it real; without, it is proved junk. A junk pair (bound <
+junkScore) may still be reported or tossed.
+
+### Decision (Rowan, 2026-11-02 night): junkScore default −16
+Junk = no proper pair scoring ≥ −16 (what the −16 cap proves for free; bound −17 qualifies). Approved one-line change
+to Spec/Aligner.lean default (+ FROZEN.sha256), applied at the M2 merge. Bound-0 lookup-gate leftovers (3–6k/set) and
+378 dovetail T1 pairs (HiSeq) violate the clause for any junkScore: O3 fixing. deepCaps / relative caps research: O2.
+
+### Read-quality facts (O4, minibwa NM on hg38, 200k each)
+Mates within our −16 cap: NovaSeq 94.8%, HiSeq 88.6% (≤2 mismatches: 91.2% / 81.1%). Soft-clipped mates: HiSeq 13.2%,
+NovaSeq 4.3% (our alignment is end-to-end and the shim doesn't trim). This matches our ~82% kept vs minibwa ~98%: the
+gap is the cap and read ends, not the router. At junkScore −17, ~1 in 6 HiSeq pairs minibwa maps would be "junk".
+
+### Later in the night (2026-11-02, merged into claude/festive-fermi-mf9mo6 95908f0, CI green)
+- M2 final (O3): mate rescue, chkCand byte compare (−6% Ir HiSeq); −16 counts (shim, 200k): mapped mason 97.4% /
+  low 99.8% / NovaSeq 93.8% / HiSeq 85.5%; degenerate 0.63/0.16/0.97/0.56%; both at truth mason 93.8%, low 96.6%.
+- Index builder fully proved (O5/O6/O4): `buildIndex_eq_saveIndex (g) (hf : Fits g)` — the real index is written for any
+  genome up to ~4.07e9 letters; the LENS lengths record can never be mistaken for a saved index (magic's last byte ≠ 0;
+  keep it that way). Runtime check kept.
+- O4 machine code: boxed Nat ≈ 25–30% of hg38 instructions; lanesAnyV, stageKSPN, loadGU proved rewrites: −8.3% Ir mason,
+  −2.9% HiSeq, SAM identical; -march=native within noise. Next ideas in ASM_COMPARE_2026-11.md.
+- BAM (S1): writer sped up; for mapped output BAM ≤ SAM in format time and CPU, ~20% smaller; samtools checks pass.
+- Output vs minibwa (S3): unique pairs same position+CIGAR 98.2–99.7%; differences mostly minibwa soft-clips; main gap =
+  unmapped pairs with bound < 0 (mates past the cap). Repeat-mask check needs ngi-igenomes.s3.amazonaws.com allowed.
+- Trimming (S2): HiSeq +23k pairs (141k→164k), NovaSeq +1k, for ~5 s/3.5 s single-thread CPU per 200k.
+- Variable seeds (S1): median minimal unique length 18–19; 95–98% of mates have a unique ≤32-mer; up to ~4% pinned to a
+  wrong repeat copy; use only as a hint. Repeat hint (S2): no good threshold. Near-tie coverage (S2): small gaps cover
+  little; biggest leftover class = both mates hit but no proper pair (39–62%).
+- Opus boxes archived after finishing: O3, O4, O5, O6 (Rowan's 3–4 Opus limit).
+
+### HEADLINE (O1, 2026-11-02 12:10 UTC): final proven head 8b99433 vs minibwa (default), hg38, 4 threads, median of 3
+Load subtracted, FASTQ read + SAM write included; minibwa X s / ours Y s:
+- HiSeq 200k 32.4 / 10.4 = 3.12x (CPU 4.47x) · HiSeq 1M 149.8 / 36.4 = 4.12x (CPU 4.35x)
+- NovaSeq 15.5 / 11.8 = 1.31x (CPU 1.71x) · mason 17.8 / 11.2 = 1.59x (CPU 1.47x) · low 11.5 / 9.0 = 1.28x (CPU 1.57x)
+Mapping (ours real both-mapped / degenerate / unmapped / unique; minibwa both-mapped / MAPQ≥30): HiSeq 84.97/0.56/14.47/70.53
+vs 99.57/92.50 · NovaSeq 92.87/0.97/6.16/81.97 vs 99.08/91.23 · mason 96.81/0.63/2.56/88.22 vs 100/96.14 · low
+99.64/0.16/0.19/94.61 vs 100/96.29. Our index load varies 1.6–17 s on the 15 GB box; CPU is the steadier column.
+Gap to minibwa's mapping rate: untrimmed reads (shim doesn't trim; +22.7k HiSeq with trimming) and pairs the mapper
+gives up on (O2's low-repeat short-seed second pass recovers about half of them).
+
+### Short-seed second pass (O2, measured on ALL pairs the shim leaves unmapped, per 200k; C prototype, unproved)
+k=21 w=4 index (5.8 GB, 512 s build), cap 32, seeds with >20 hits skipped: mason +14,968 at truth (+7.5%), low +3,246
+(+1.6%), HiSeq trimmed +9,776 unique (+4.9%), NovaSeq trimmed +11,164 (+5.6%). k=18 adds nothing at 2x cost. 1/4–2/3 of
+the recovered pairs have both mates within −16: the proved mapper gives up on them (gate/repeats), not the cap.
+Blocker: 5.8 GB + the main index held twice (file + heap) doesn't fit 15 GB → build-time low-repeat filter or mmap of the
+main index (Main.lean). O2's order: (1) trimming in Spec/Shim, (2) low-repeat k=21 find-only extra index, (3) deepCaps.
+All Opus boxes archived after the night (O1–O6).
+
+### Decisions open for Rowan (morning report 2026-11-02)
+1 trimming in Spec/Shim chunkPairs (ReadTrim.trimRead; diff in DEEP_CAPS_2.md) · 2 merge festive-fermi into main ·
+3 Main.lean I/O overlap (small first chunk, SAM formatting in the background write) · 4 low-repeat k=21 extra index
+(find-only, .unknown) · 5 mmap index load · 6 deepCaps on after trimming · 7 junkScore (−16 / InsertSettings / relative)
+· 8 leftover no-pair answers (cheap no-good-pair proof vs "gave up") · 9 mate rescue on all −17 pairs · 10 gateBudget
+default · 11 graded MAPQ + NM/MD in Spec/Sam · 12 BAM default · 13 parTasks ≥ cores for 32-thread servers · 14 allow
+ngi-igenomes.s3.amazonaws.com · 15 dedup / heuristic (off).
+Goal now (Rowan): speed on the shorter reads (NovaSeq 2×151, mason 2×150).
+**Before writing (Rowan):** close check of the Lean code; samtools checks that our SAM/BAM output is close to
+minibwa's (fuzzing, since FASTQ/SAM/BAM aren't proved yet: S3); a constructed "unique genome" where every 150-window is
+far (edit distance) from every other, with a Lean theorem (k-mer uniqueness ⇒ distance) + proved checker, reads simulated
+sliding across it, and ours must match minibwa exactly (POS/CIGAR/flags, all unique, no clipping): S-C. Later: read the
+minibwa paper and add long reads.
+**Stopping point (Rowan):** NovaSeq at 2x vs minibwa (same box, load subtracted, FASTQ+SAM included). Then Rowan moves to
+formalizing FASTQ and SAM (Spec) and writing the blog post.
+
+#### Decision questions in detail (Rowan is thinking these over)
+1. **Trimming in the shim?** → DONE (38fa84a, Rowan approved): Spec/Fastq trimRecord (proved ReadTrim.trimRead) on
+   every mate as read; Spec/Shim chunkPairs: no letters → none; Spec/Sam: empty mate prints *. Rowan will write the full
+   FASTQ spec later. RULE (Rowan): Spec/Fastq and Spec/Sam are loose; ANY Spec/Shim (and Main.lean) edit must be checked
+   with Rowan first.
+   Rowan: also ADAPTER trimming (linear; the proved trimmer today is quality-window only — no adapter code exists yet).
+   Also later maybe: switch to LOCAL alignment (clip step with a fixed clip penalty at read ends, like BWA/minibwa):
+   uniqueness/bound definitions carry over (different score); needs clipped-end kernels + certificates, pigeonhole bound
+   with clipped bases, CIGAR S ops — about M2-sized proof work. Global + trimming for now. Spec/Shim chunkPairs → ReadTrim.trimRead per mate (qualities are in the FASTQ record);
+   fully trimmed mate → none. +22.7k HiSeq pairs, NovaSeq CPU ~34 → ~28 s, deepCaps HiSeq cost +135% → ~+40%. minibwa
+   doesn't trim (it soft-clips); our scoring is end to end, so trimming plays that role. Trim time counts in our runs.
+2. **Merge claude/festive-fermi-mf9mo6 into main?** CI green; includes Rowan's spec (junkScore −16), M2, speed work,
+   proved index builder.
+3. **Main.lean I/O overlap?** → DECIDED (Rowan): yes, he will make the change (Spec/Shim + Main mirror). 200k sets = 2 chunks of 100k: first-chunk read and last-chunk format/write don't overlap
+   mapping → mason/low don't scale 2→4 threads. Proposal: small first chunk (~10k), samChunk inside the background write.
+4. **Low-repeat k=21 extra index?** Find-only second pass (checked pair, proper, .unknown): mason +7.5%, low +1.6%,
+   HiSeq +4.9%, NovaSeq +5.6%. Needs a build-time filter (positions whose k-mer occurs ≤ N times) or mmap to fit 15 GB.
+   Later: proof per covered region → "unique" provable; one generic index builder.
+5. **mmap the index in Main.lean?** Cold load 5–30 s; index held twice in memory today (file + heap).
+6. **deepCaps on?** After trimming (cost then ~+40% HiSeq, ~+12% NovaSeq; gains mason +3.5%, HiSeq +1.1%).
+7. **junkScore:** keep −16 (= what the cap proves free), move into InsertSettings (done as a field), make it relative
+   to read length (ties to relative caps / long reads)?
+8. **Leftover no-pair answers (0.16–0.97% degenerate "150I" pairs):** add a cheap proof that no good proper pair exists
+   (mates' hits never form a proper pair → honest junk), near-tie label (small gaps cover little), or a "gave up" label;
+   then a score floor for reported .unknown pairs.
+9. **Mate rescue scope:** today only when a mate has a placement in hand; on all bound −17 pairs: +21k HiSeq, +8.6k
+   NovaSeq, +6.2k mason.
+10. **gateBudget default** (60000): 15000 = mason −30% / NovaSeq −24% CPU, unique 176k → 172k (mason).
+11. **SAM output:** graded MAPQ (today 0/60), NM/MD tags, AS sign, supplementary lines, half-mapped flags (Spec/Sam).
+12. **BAM as default output?** Now ≤ SAM in format time/CPU for mapped output, ~20% smaller; samtools checks pass.
+13. **parTasks for 32-thread servers:** ≥ core count (compile-time setting in Proofs/Aligner.lean).
+14. **Soft-masked hg38 (ngi-igenomes.s3.amazonaws.com):** APPROVED by Rowan for repeat tricks; needs the host added
+    under Allowed domains in the environment's Network access settings.
+15. **Dedup** (large read sets) and the **heuristic** (M2 settings): both still off.
+
+### Later (Rowan)
+- **Report more pairs in hand (maybe):** a junk-bound answer may still be tossed even with a decent pair in hand;
+  maybe force reporting it whenever one exists.
+- **Junk score as a setting:** define it at the top of Spec/Aligner.lean; likely a field of `InsertSettings` (a run
+  setting that flows through alignPairs_correct), maybe per read length (the free value follows the router's cap,
+  −(cap+1): −17 at ≥150 bp). Alternatively route it through the tiers, so a smaller set of options leads to "junk".
+- **Extra short-seed index (Rowan):** an extra index of short seeds in low-repeat regions to place more reads; later
+  made complete within the regions it covers (proof per region) so "unique" is provable when all candidates fall in
+  covered regions. Requirement: ONE generic index-building function (seed length, window, covered-region filter);
+  the main 25-mer index is its k=25 / "everything" instance; one checker and one completeness lemma, instantiated.
+  Variable-length (minimal unique) seeds: S1 research note VARIABLE_SEEDS.md.
+- **Uniqueness picture (Rowan, 2026-11-02 night):** `.unique` (proved one best) · `.multimapper` (proved exact tie) ·
+  `.nearTie` (to add: "maps pretty good with a buddy": reported pair ≥ junkScore and ≥ bestPossibleScore − gap, and a
+  buddy proper pair at a different placement ≥ bestPossibleScore − gap; `nearTieGap` setting, e.g. 8; anchored to the
+  bound so two mediocre pairs can't qualify; multimapper = gap 0) · `.unknown` with a pair (real pair, no claim) ·
+  `.unknown` without (proved junk, bound < junkScore) · "gave up" (maybe; see next).
+- **Near-tie instead of "gave up"? (think about):** near-tie covers repeat give-ups with two good pairs in hand; it can't
+  cover "no proper partner" pairs (mates on different chromosomes, chimeras) — a cheap proof that no good proper pair
+  exists (all hits far apart) could push those below junkScore (honest junk). If both cover the leftover, "gave up" may
+  be unnecessary; otherwise the degenerate last-resort pairs stay (0.2–1% with junkScore −16). Measure coverage first.
+- **Score floor for reported `.unknown` pairs (eventually):** e.g. pair score ≥ junkScore, so no degenerate "150I"
+  pairs; needs "gave up" (or full near-tie coverage) at the same time.
+- **Skip super-common seeds (think about):** like BWA-MEM/minimap2 (~500 occurrences); treat skipped seeds as possibly
+  spoiled in the pigeonhole bound (bound stays correct, weaker for that read).
+- **M2 status (O3):** CI passes with main's .unknown clause; failed index build now writes a chromosome-lengths record
+  (proved round trip), so no hBuilt hypothesis is needed; leftover pairs get the degenerate last-resort pair
+  (Proofs/LastResort.lean). Index builder proof (O5/O6) is a bonus now, not a blocker.
+- **Near-tie labels for MAPQ:** a proved near-tie (two placements within x of bestPossibleScore) so every reported pair
+  gets a real MAPQ; ties are the x = 0 case.
+- **Error caps for longer reads:** make caps relative to read length (not fixed −12/−16 by length band), seeds and
+  bounds to match, so long-read matching works. Long reads are mostly single-end, so the spec may change for them too
+  (single-end / unpaired answers next to the paired ones; see IO_PAIRED_UNPAIRED_TRIM.md). WFA (bandWfa) is there for
+  long reads.
+- Pipelining with one extra core needs a ≥5-core box (and a 4-task cap on alignPairs' parMap).
+- Index read is 5–30 s when the page cache is cold: mmap needs a Main.lean change (Rowan's file).
+- BAM later if faster; compression via Rowan's lean-zip.
+
+### reportFloor decision (Rowan, 2026-11-02 evening)
+- Rowan will add a score floor to the Spec (closes audit HIGH 1 and 2, `SPEC_AUDIT_2026-11-02.md`): every reported pair, under any label (`.unique`, `.multimapper`, `.unknown`), has pair score (mate 1 + mate 2) >= `reportFloor`, about -50 for 2x150. `junkScore` stays -16 (`none` needs a proved bound < -16; the free bound is -17).
+- Must hold: `reportFloor <= junkScore`, else some reads have no valid answer.
+- Zones: bound >= -16 → must map; -50..-16 → either (we map); < -50 → must be unmapped.
+- chr21 share of mapped non-degenerate pairs below the floor: mason <-16 28.5%, <-32 1.94%, <-50 0.98%, <-100 0.77%; low <-50 0.61%. NovaSeq/HiSeq numbers requested from S-B.
+- **Open: "gave up" reads.** When the search stops early (`stoppedEarly`, fallback, mate rescue, ties), the best pair found can be below -50 while the bound is NOT proved below -16. Under the floor they can't be reported and `none` is not provable either, so they have no valid answer. Need something for them: more search, or a "gave up" answer in the Spec (unmapped, no bound claim). Count them when the proofs are updated to the floor.
+- Still open after the floor: the gap clause `bestPossibleScore <= pair score + slack` (audit MED 3).
+
+### Report floor status (2026-11-02 night) — DON'T FORGET: the "gave up" decision (Rowan)
+- Rowan's Spec: junkScore (floor) -100; requiredMapBound scaled by the shorter mate (cap 4 errors, 25-letter seeds: 0 / -4 / -8 / -12 / -16 at 25 / 50 / 75 / 100 / 125+ bp). Needs junkScore <= requiredMapBound.
+- Proof branch speed/report-floor-proofs (cd00d2c): correct (S3 check: audits 0, no placeholders, no unique pair changed) but 20-60x slower: the complete search runs on repeat pairs. hNoLeftover is still needed for short mates (fixed by the scaled bound) and for pairs on real hg38 (NovaSeq 2.1%, HiSeq 1.3% of pairs end unmapped with XB >= -16).
+- To keep today's speed, Rowan must decide a "gave up" answer. Proposal: `.gaveUp` only with a repeat witness: a 25-letter piece of a mate occurs >= N times in the genome (N ~ 1000), so a non-repetitive pair is always decided at bounded cost. S-B is measuring witness coverage at N = 200/500/1000/5000.
+
+### Finish line (Rowan, 2026-11-03 ~01:40 UTC)
+- Done = report floor + gave-up fully proved (no extra hypothesis beyond settings) AND speed within 5-10% of today's code (festive-fermi 0e48158: NovaSeq ~2.5-2.7x, HiSeq ~3.5x vs minibwa, same box, headline.sh method).
+- Rowan's Spec: repeat witness (K grid seeds, N occurrences) being written now; the "many places" witness (cap the complete search at M good placements) can be added later as one more disjunct if timing needs it.
+
+### Rowan's later-work list (2026-11-03, via the Spec guide; NOT current tasks)
+- Naming: rename the `Uniqueness` type (it now holds unique / multimapper / unknown / gaveUp). Update Spec/Sam + Proofs/Sam, Proofs/Answer, Aligner, Bridge; regenerate FROZEN; keep the `XU:Z:` label unless Rowan says otherwise.
+- Options with flexible proofs: make `seedLength` (25), `gaveUpRepeats` (Rowan choosing 200) and `gaveUpSeeds` (K = 2) options. The indexer hardcodes 25 (`MzIndex.lean:48 def q : Nat := 25`, WgPacked, MapperFastIndex, benches, and the `/25` in requiredMapBound), so this needs a proof generic in the seed length; until then everything stays 25 together. Use `seedLength` in requiredMapBound.
+- Spec clauses:
+  - requiredMapBound as a top-level def, with the comment fix (25-49 bp: `none` only when no perfect proper pair);
+  - `.unknown` with `max junkScore requiredMapBound`;
+  - the gap clause;
+  - a shorter-seed index for short mates.
+- Measurements wanted: K=2 at N=200 (gave-up count, speed, pairs lost at truth); the speed of K=3.
+- Proof side: the .gaveUp proof against Rowan's exact Spec wording (S-D's prototype is the basis; forward strand = lower bound on Genome.occurrences). Check the `.unknown` mirror in Proofs/Answer on main.
+
+### Spec edit rights (Rowan, 2026-11-03 ~02:25 UTC)
+- Claude MAY edit Spec/Sam.lean and Spec/Fastq.lean (plus their Proofs/ mirrors).
+- Claude may NOT edit Spec/Aligner.lean, Spec/Alignment.lean, Spec/Mapping.lean or Spec/Shim.lean (Main.lean mirrors the Shim); Rowan works on those.
+- Rowan will merge claude/festive-fermi-mf9mo6 with main.
+- Index RAM budget (Rowan, 2026-11-03): the loaded index may be up to just under 8 GB (today ~5.3 GB), e.g. for the heavy-25-mer table plus a combined longer/shorter-seed index.
+- Spec guide session ended (Rowan). Its README notes are on branch claude/spec-guide-notes (Proofs/README.md, commits 5067108, 29bf14c; main-based). Merge them when festive-fermi and main are merged. Open items for Rowan: Sam label (spec/sam-fix b8c773c), the requiredMapBound comment wording, the shim speed patch, the audit fail-fast patch.
+
+### Night of 2026-11-03 (log)
+- ~02:43 UTC: merged speed/floor-real-spec → festive 565d1e8. Rowan's exact Spec is proved (SettingsOk: junkScore <= -16); CI + FUZZ green; fuzz enforces no-aligned-base.
+- ~03:00: same-session headline, festive HEAD 565d1e8 + shim patch vs baseline 0e48158 + patch.
+  - NovaSeq: minibwa 12.9 s; baseline 4.6 s; HEAD 9.3 s (2.02x the baseline).
+  - HiSeq: minibwa 24.9 s; baseline 5.4 s; HEAD 9.9 s (1.83x).
+  - HEAD output: mapped 93.80 / 93.62%; unique unchanged; repetitiveUnknown 0.72 / 0.60%; degenerate 0.
+- Cause, from S-D's profile: the final lookAt runs mate 1 genome-wide even when it is the repeat-rich mate (713k candidate diagonals on 302 NovaSeq pairs). The fix in progress (S-D, speed/diag-count option 3): run genome-wide on the cheaper mate. Candidates -87% NovaSeq / -98% HiSeq; expected about -8 of the +13 s user gap.
+- The pigeonhole diagonal-count filter already exists and is proved (kfilt: suppA + unlook + fineOk); not a lever.
+- Notes merged:
+  - PROOF_MAP.md;
+  - INDEX_TRICKS.md: weighted minimizers / closed syncmers proved complete; LSH and strobemers are candidates only;
+  - SEMI_REPETITIVE_EXAMPLES.md: 2.6% / 1.4% of pairs; half are semi-repetitive, half short or error-rich. Where we answer none, minibwa maps 2,821 / 1,386 of them with MAPQ >= 30, mostly via soft clipping. S4 is measuring the clipping gap.
+- ~03:05: merged speed/second-look (S-F: the cheaper mate goes genome-wide; proved; SAM identical) → festive 3d63f4b. Native user CPU, 200k: NovaSeq 34.7 → 26.1 s (baseline 16.6); HiSeq 36.0 → 26.2 s (baseline 20.4).
+- S-F: rare-seed completion adds nothing beyond the swap. The few remaining expensive pairs have two ~4.5k-hit seeds among the 5 needed on both mates, so they need a finer pigeonhole (more, shorter or overlapping seeds), i.e. Rowan's short-seed index idea.
+- S-D's stage profile at 565d1e8 (pre-swap): complete search ~55% of the gap, join + gave-up check ~12%; router+walk vs the baseline router is not yet split.
+- ~03:10: CLIPPING_GAP.md (S4). Pairs where we answer none but minibwa has MAPQ >= 30 on both mates: 6,898 NovaSeq / 7,637 HiSeq (3.4 / 3.8%).
+  - Causes, NovaSeq / HiSeq:
+    - not a proper pair under our rules: 26 / 15%;
+    - minibwa clip >= 10 bases: 20 / 42%;
+    - our trimmer removed >= 10 bases: 16 / 28%;
+    - indel-heavy: 10 / 7%;
+    - error-rich: 17 / 6%.
+  - A dovetail slack of 1-2 bases would admit ~220 per set.
+  - With local alignment, the clipped part's pair score passes -100 for 94 / 74%, but beats the -16 bound for only 34 / 16%.
+  - For Rowan's later local-alignment / dovetailSlack decisions.
+- ~03:09: S-D's callgrind, NovaSeq 2k, whole run: baseline 0e48158+patch 859M vs 3d63f4b+patch 1,503M (+644M).
+  - The router itself is identical (263M); SAM writing is identical.
+  - The extra:
+    - complete search +405M (63%);
+    - join +62M;
+    - repeat check +49M;
+    - walk with the junk filter +64M;
+    - reqOf decode / finalize / alloc +64M.
+  - Stage CPU (200k, 1 thread): NovaSeq complete search 3.9 s (was 7.5); HiSeq 1.4 s (was 5.4).
+- ~03:14: merged proof/trimrecord (S5) → 5b6228c: trimRecord composition proved (window, ACGT, empty or >= 25, cut before the adapter; quality as bytes). S5 next: Fastq/Sam fail-fast checks (allowed files) and discharging the UTF-8 hypothesis.
+- ~03:17: TRIM_OVERCUT.md (S4): the quality trimmer (ReadTrim.defQ = 25) over-cuts good bases (MAPQ >= 30 in minibwa, <= 5% mismatches) in 0.33% of NovaSeq pairs but 11.0% of HiSeq pairs; the cut bases have mean Q 20-24. Q = 20 keeps 30% (HiSeq) / 71% (NovaSeq) of them, Q = 15 keeps 79% / 91%. A gentler defQ run is pending (local measurement only).
+- ~03:18: same-session headline, festive 3d63f4b + patch vs baseline 0e48158 + patch: NovaSeq minibwa 12.8 / ours 6.6 s = 1.94x faster than minibwa (baseline 4.7 s; HEAD is 1.40x the baseline wall, 1.50x user). HiSeq minibwa 24.8 / ours 6.8 s = 3.65x (baseline 5.6 s; 1.21x wall, 1.25x user). Output: unique unchanged, degenerate 0.
+- ~03:23: merged proof/fastq-failfast (S5): Spec/Fastq.lean now throws on bad FASTQ input (non-ACGTN letters, non-ASCII quality, missing '@' or '+', a record cut mid-way, a bad QNAME); parseRecord_trim_quality proved (UTF-8 hypothesis discharged); SAM identical.
+- ~03:24: merged speed/walk-fast (S-D): the walk skips partner alignment when the anchored mate is below the floor, and caps the DP limit at the floor; SAM identical; fallback 220 → 135M Ir; whole run -6% on NovaSeq 2k.
+- ~03:26: merged speed/repeat-check (S-F: no lookups when fewer than K=2 big buckets; SAM identical). TRIM_OVERCUT update: a gentler defQ (20/15) is WORSE (fewer mapped and unique, more below -50; no CPU gain) because end-to-end alignment can't absorb the mismatches. The 11% HiSeq over-cut needs clipping / local alignment, not a lower Q.
+- ~03:31: walk router-hit reuse is not possible exactly (TierOut keeps only the best placements); walk-stop not merged (changes output for -0.6%). NOTE: Testing/notes/shim_speed.patch no longer applies after fastq-failfast; S5 is rebasing it (docs/shim-patches). S-D: SECOND_INDEX_PLAN (short/syncmer seeds for a finer pigeonhole). S-F: fineE.
+- ~03:36: merged speed/allbytes (fast-forward e1c55ea): the FASTQ check runs as one byte loop (csimp, proved); NovaSeq 2k -5.6% Ir; SAM identical.
+- ~03:43: merged speed/fine-filter (S-F: fineE/lanesAny exact rewrites, -1.3% NovaSeq Ir; SAM identical).
+- ~03:46: S4 same-session headline, no patch, 1034f63 (before allbytes and fine-filter) vs 0e48158: NovaSeq HEAD 1.40x the baseline wall (9.8 vs 7.0 s; minibwa 17.4 s, so 1.78x vs 2.47x); HiSeq 1.21x (10.4 vs 8.6; 3.06x vs 3.69x). The HEAD cost includes adapter trimming and the fastq checks.
+- ~03:47: SECOND_INDEX_PLAN (S-D): do NOT build a finer-pigeonhole second index. It settles only ~17-20% of the bound-only pairs, worth ~1-2% of the headline; a full k=16-20 index is 12-15 GB. Remaining lookAt time: 'too heavy' repeat seeds (~55%; the K rule's job, so K=1 vs K=2 is a Spec choice for Rowan) and 'open' pairs needing cheaper verification (~30%). Timing K=1 vs K=2 vs baseline on HEAD for Rowan's decision.
+- ~03:51: docs/shim-patches (S5) merged: shim_speed.patch rebased (quality as bytes, parseRecord-aware) + shim_fasta_failfast.patch; both apply on HEAD in either order; CI + FUZZ green and SAM identical with either or both. For Rowan to apply.
+- ~03:58: S-F: reusing the join's lookups in the second look was built and proved but measured slightly worse; dropped. No exact lever above ~10M left outside the lookAt verification and the frozen FASTQ shim (~190M on HiSeq: Rowan's shim_speed.patch). S-F next: early exit in the lookAt verification for the 'open' pairs.
+- ~03:59: S-F: the open-pair levers (score-bound exit, q-gram prefilter) already exist; nothing exact above ~3% left. S-F archived. Remaining levers: Rowan's K choice, shim_speed.patch, and (later) a new filter algorithm with its own proof.
+- ~04:03: DECISION TIMING (S-D, HEAD 2149f19, no patch; baseline 0e48158 NovaSeq 4.7 s / HiSeq 5.9 s): K=2 N=200: 6.8 s (1.45x) / 7.4 s (1.25x); K=1 N=200: 5.7 s (1.21x) / 7.0 s (1.19x). K=1 loses 60/51 mapped pairs, +861/+547 repetitiveUnknown, unique unchanged. Next: the N=100/50 sweep.
+
+### Rowan's plan (2026-11-03 ~04:05 UTC)
+- Stop point: K=2 (preferred), NovaSeq at or above ~2.0x faster than minibwa, same box. HiSeq is OK as is (~3.3x).
+- Rowan applies shim_speed.patch (rebased on festive; Testing/notes/shim_speed.patch).
+- S-H: a new proved candidate filter for the second look.
+- Fuzz + type-check guide for Rowan: Testing/fuzz/ROWAN_CHECKLIST.md.
+- Next for Rowan: FASTQ spec (a definition of a FASTQ file plus ~1 theorem), FASTA spec, SAM spec. Later idea: the mapper outputs SAM lines directly, so the kernels include SAM formatting (speed + one proof chain).
+- Rowan will run his own fuzzing comparisons before blogging.
+- ~04:11: MILESTONE (S4, same session): festive a5bcc94 (K=2, N=200, proved) + the rebased shim_speed.patch: NovaSeq minibwa 16.4 / ours 8.1 s = 2.02x (CPU 2.29x); HiSeq 30.4 / 8.7 s = 3.50x (CPU 3.96x). Baseline 0e48158 + its patch: 2.77x / 4.12x. Rowan's stop condition (K=2, NovaSeq >= ~2.0x) is met; the 5-10%-of-baseline line is not (1.37x / 1.18x).
+- ~04:13: S-D same-session NovaSeq + patch: K=2 N=200: 12.8/6.6 = 1.94x; K=2 N=100: 12.8/6.4 = 2.00x (repetitiveUnknown 0.83%, -11 mapped pairs); baseline + patch 2.91x. With S4's 2.02x: K=2 N=200 sits at ~1.94-2.02x, right at the line.
+- ~04:18: HiSeq + patch (S-D): K=2 N=200 24.5/6.6 = 3.71x; K=2 N=100 3.77x; baseline + patch 4.30x.
+- RULE (Rowan, 2026-11-03 ~04:25): Shim changes are pushed by Rowan only; eventually ALL of Spec/ is Rowan's. Claude prepares patches (Testing/notes/*.patch) and does not apply them. shim_speed.patch is NOT applied by Claude.
+
+- 04:5x UTC: merged S-H speed/new-filter (proved fineE=fineEC rolling scan, suppA countP). Callgrind 2k: NovaSeq -3.4%, HiSeq -0.6%. SAM identical on 200k both sets; FUZZ=1 CI green.
+- 05:0x UTC: merged S-G speed/index-counts (proved heavy 25-mer table, both strands). Ir 2k: NovaSeq -14.8%, HiSeq -1.9%. Mapped records identical; 3 unmapped pairs now repetitiveUnknown (within Spec). Index +12 MB, build +6 min, build peak RSS 10.76 GB (was 9.85). INDEX FORMAT CHANGED: rebuild shim.idx. FUZZ=1 CI green (453 theorems, standard axioms).
+- 05:2x UTC: merged S-H speed/next (hitsCKT supports once via suppCntC, sweepAF; proved). Ir 2k: NovaSeq -1.6%, HiSeq -0.5%. SAM identical 200k; FUZZ=1 CI green.
+
+### Rowan's to-think list (added 2026-11-03 night)
+- INDEX IDENTITY: new binary on an old shim.idx silently maps nothing (exit 0, all unmapped). Options:
+  1. header in buildIndex output: magic + format version + hash of the index-building code (e.g. FROZEN hash of Spec/Index + builder files, baked into the binary at compile time) + hash of the genome FASTA (shim_fasta_failfast.patch already writes a genome-hash sidecar). `map` reads ~64 bytes and fails fast on any mismatch.
+  2. optional whole-file checksum (fast hash over 5.3 GB, ~1-5 s) checked at load or only by a `verify` command.
+  3. full check (rebuild/recompare, the expensive one) only as `verify`, run once after build, never per map.
+  The trusted hypothesis then narrows to: "a file whose header says (code H, genome G) was produced by buildIndex of code H on genome G".
+- FASTQ/SAM SPECS as a dual object: spec on readable Strings, fast code on ByteArray, connected by encode/decode round-trip lemmas (ASCII-only invariant makes bytes = chars) and `fast = encode ∘ spec` (@[csimp] style). Lean's own String is UTF-8 bytes with toUTF8/fromUTF8, so there is precedent.
+- 05:3x UTC: merged S-G speed/lookat (hitsSK_eqV: visit only chromosomes holding anchors; proved). Ir 2k: NovaSeq -1.4%, HiSeq -0.9%. SAM identical 200k; FUZZ=1 CI green (454 theorems). Sorted-bucket index layout scoped and DROPPED (<=2% bound).
+- 05:4x UTC: merged S-G speed/join (noPairJS_eqA: sorted-array merge + near test, empty-strand skip; proved). Ir 2k: NovaSeq -1.35%, HiSeq -0.24%. SAM identical 200k; FUZZ=1 CI green.
+- 05:30 UTC S-D WALL (festive 050ef82 + shim_speed.patch local, K=2 N=200, 4 threads, median of 3): NovaSeq ours 5.9 s vs minibwa 12.9 s = 2.19x (min/min 2.29x); baseline+patch 4.3 s (ours 1.37x baseline). HiSeq ours 6.3 s vs minibwa 24.7 s = 3.92x; baseline+patch 5.4 s (1.17x). repetitiveUnknown NovaSeq 1,684 (0.84%, was 1,447), HiSeq 1,342 (0.67%, was 1,196). Index build 1,910 s, peak RSS 13.86 GB.
+- 05:5x UTC (Rowan approved): trim in parallel. Spec/Fastq: readChunk returns untrimmed pairs; trimChunk (parts tasks of trimRecord) and chunkPairs (moved from the shim). Shim/Main: reading task = readChunk then trimChunk 16; main is the only function; proved-part box lists IN/OUT/TRUSTED. Proofs/TrimRecord: trimChunk_eq (= map trimRecord, standard axioms; in CI's required list). FROZEN Shim hash regenerated. FUZZ=1 CI green.
+- GOAL (Rowan): trusted boundary = FASTQ bytes in (assuming byte reading is correct) and SAM bytes out. Prove everything between: parsing (readLine/readChunk), trimming (done), chunk/task ordering, alignment (done), SAM formatting. Shim to be reorganised later (the part from `let out` to the end of map).
+- 05:50 UTC S-D: parallel trim d0d2a79 SAM identical (200k both, with/without patch). Wall +patch: NovaSeq 5.7 s = 2.23x minibwa; HiSeq 6.2 s = 4.23x. Index load in-run: ours 2.3-5.6 s of the 5.7 s (5.34 GB readBinFile, page-cache dependent); minibwa log "index loaded" 7.6-14.5 s. => at 200k pairs both tools are dominated by index load; need 1M+ pairs. minibwa paper (tex in clone): 2x Xeon Gold 6130, 32 threads, SAM to /dev/null, whole HG002 NovaSeq 30x, Gbp/hr; minibwa 135.8 Gbp/hr, 8.28 GB peak.
+- 06:0x UTC: merged S-H speed/answer (fallbackOfKP reuses router prep; proved). Ir 2k: NovaSeq -0.7%, HiSeq -0.6%. SAM identical 200k; FUZZ=1 CI green. S-G timing: parallel trim gives NO reliable wall gain on 4 cores (tasks compete with alignment); kept (exact, helps many-core).
+- 06:07 UTC S-D 1M NovaSeq (200k x5), d0d2a79+patch, 4 threads: MAP ONLY ours ~27.5 s vs minibwa ~58 s = 2.1x (ours 39.6 Gbp/hr, minibwa 18.7 Gbp/hr; user 91 s vs 215 s). Load: ours 1.9-2.4 s warm, minibwa 14.5-19.1 s. Totals 29.5 vs 74.6 s (2.5x). S-G SEARCH_IDEAS #1 prototype (pair budget split): NovaSeq -3.6% Ir, HiSeq -0.1%, SAM identical 2k; proving.
+- 06:1x UTC: merged S-H speed/banddp (bandDPg traceback tail-recursive; HEURISTIC code, re-checked downstream, not proved equal: old while loop is opaque). Ir 2k: NovaSeq -0.5%, HiSeq -1.0%. SAM identical 200k; FUZZ=1 CI green.
+- 06:2x UTC: merged S-G speed/split-budget (pairsAtS: per-pair error budget split; splitEmpty_none + pairsAtS_mem proved). Ir 2k: NovaSeq -3.8%, HiSeq ~0. SAM identical 200k; FUZZ=1 CI green. Usage: paused S-H and S4; S-D (decision run) + S-G continue.
+- 06:5x UTC: merged S-H speed/svany (svAnyR rolling window + unlooked-seed words once per call; proved). Ir 2k: NovaSeq -0.5%, HiSeq -1.6%. SAM identical 200k; FUZZ=1 CI green. S4 corrected IO numbers (real index): NovaSeq 2k Ir align 62%, read 14%, sam 13%, trim ~8%; per 20k chunk @4 cores read 265 ms vs align 676 ms; serial reader caps ~75k pairs/s (~82 Gbp/hr NovaSeq) above ~10 threads -> parallel parse REQUIRED before any 32-thread comparison (minibwa paper 135.8 Gbp/hr). Byte SAM writer patch: research/io2 sam_bytes.patch (-2.4%).
+
+### DECISION RUN (S-D, 07:41 UTC): festive f33be45 + shim_speed.patch vs minibwa c07de5c, 4 threads, SAM to /dev/null, zcat->FIFO input, index load separate, median of 3, 5,000,000 real pairs each
+| set | tool | load | map | Gbp/hr (map) | user+sys | Gbp/core-hr | cores busy |
+|---|---|---|---|---|---|---|---|
+| NovaSeq HG002 (paper's data) 1.51 Gbp | ours | 10.6 s | 176.5 s | 30.8 | 531 s | 10.23 | ~3.0 |
+| | minibwa | 26.5 s | 308.1 s | 17.6 | 1213 s | 4.48 | ~3.9 |
+| | ratio | | **1.75x** | | | **2.28x** | |
+| HiSeq HG002 2x250 2.5 Gbp | ours | 4.6 s | 246.3 s | 36.5 | 602 s | 14.95 | ~2.4 |
+| | minibwa | 33.7 s | 585.3 s | 15.4 | 2296 s | 3.92 | ~3.9 |
+| | ratio | | **2.38x** | | | **3.81x** | |
+minibwa paper: 135.8 Gbp/hr @32 threads = 4.24 Gbp/thread-hr (matches minibwa here). OURS LEAVES CORES IDLE (3.0 / 2.4 of 4): per-chunk barrier + serial reader. Fixing core use is the lever for wall time (shim orchestration: overlap chunks, smaller tasks, parallel parse).
+- Decision-run mapped % (5M, first-mate primary): NovaSeq ours 93.91% (all proper; MAPQ60 = proved unique 82.48%), minibwa mapped 99.69% / proper 97.65% / MAPQ60 87.51%. HiSeq ours 94.11% (all proper; 85.23%), minibwa 99.76% / 98.01% / 89.31%. Proper-pair gap ~3.7-3.9% = the known clipping gap (CLIPPING_GAP.md). MAPQ not like for like (ours proved, minibwa heuristic).
+
+### LATER (Rowan, not now): quality-aware soft clipping / scoring
+- Soft clipping by quality: after adapter cutting, define match/mismatch cost from the base's quality score, so low-quality ends cost little and get clipped by the score itself (would close part of the clipping gap).
+- Cost: quality attached to every base in the search; memory/speed risk. Mitigation: bin qualities (a few levels), or one binned quality per seed.
+- Trimming could then shrink or move inside the alignment loop instead of being a separate pass.
+
+### Utilization investigation (overnight, Rowan's goal)
+- Overlap patch (2 chunks in flight): NO gain. S-D NovaSeq 5M medians 182.3 s / 73.0% without vs 180.4 s / 73.2% with; S-G nova1M + hg002_1M 88-90% either way; SAM identical. Not proposed.
+- S-G, ours only (minibwa build blocked on that box), 4 threads, map-only, 2 reps:
+  | set | plain files | zcat -> FIFO | map wall plain -> FIFO | zcat CPU |
+  |---|---|---|---|---|
+  | NovaSeq 1M (200k x5) | 0.89 / 0.88 | 0.83 / 0.84 | ~34 -> ~36 s | 4.8 s |
+  | HiSeq hg002_1M | 0.88 / 0.88 | 0.75 / 0.75 | 37 -> 44 s | 9.8 s |
+  Our own CPU is the same either way: the FIFO only adds idle time. Suspect: the single serial reader alternating two pipes (<= 64 KB per read, blocks on zcat) becomes the critical path. S-D's 5M runs (73% / 60%) used zcat FIFO input; minibwa held 98% on the same input.
+- Next: per-chunk instrumentation (S-G, local build), S-D plain vs FIFO for ours AND minibwa on its box.
+- S-D, its box, real NovaSeq first 1M, plain festive: ours 85.8/85.2% plain, 83.0/82.7% FIFO; minibwa 97.1/97.5% plain, 93.8/94.5% FIFO. Map-only minibwa/ours ~1.9-2.0x. (5M runs with shim_speed build read 73%: run-length or build effect, to check.)
+- CAUSE FOUND (S-G, hg002_1M, per-chunk timestamps, 50 chunks of 20k): the single reader task (readChunk + trimChunk) is the critical path. Per chunk medians plain: read 552 ms, trim 116, align 515, sam 139, main waits 33; FIFO: read 758, main waits 165. readChunk (serial parse + validation + name checks + String conversions) ~27 us/pair ~= align time on the other cores, so the stages are balanced and every hiccup is idle (~89%); FIFO makes reads pipe-sized (<= 64 KB, sys CPU x2) and the reader falls behind (75%). Overlap patch does not touch this. Fix: cheaper readChunk (shim_speed items 2-4), then parallel parsing (reader = raw blocks + record cuts only; workers parse+validate+trim+align+format), big-block reads that loop until full.
+- PIPELINE PROTOTYPE (S-G, Testing/notes/pipeline_proto.patch, Main.lean only, not applied): 2 per-file readers (8 MB blocks, record cuts only), 4 dedicated workers (parse+checks+trim+alignPairs+samChunk per 4000-pair job), ordered writer. 1M: util 0.89 -> 0.96 plain, 0.76-0.83 -> 0.90-0.92 FIFO, wall -8..-18%, SAM identical, CI+FUZZ green except the expected Shim FROZEN line. Variant B (per-worker setup, needs Spec prepared-index interface): ~10% faster again.
+- S-D 5M rerun with pipeline_proto + shim_speed (zcat FIFO, median of 3):
+  | set | map s | Gbp/hr | Gbp/core-hr | util | minibwa map s | map ratio | core-hr ratio |
+  |---|---|---|---|---|---|---|---|
+  | NovaSeq 5M | 172.1 (was 176.5) | 31.6 | 9.31 (was 10.23) | 84.3% (was 73%) | 308.1 | 1.79x | 2.08x |
+  | HiSeq 5M | 207.2 (was 246.3) | 43.4 | 14.01 (was 14.95) | 77.2% (was 60%) | 585.3 | 2.82x | 3.58x |
+  Utilization up, but CPU per pair up ~7-10% (per-job alignPairs setup on 4000-pair jobs). S-G testing bigger jobs (8k/16k/20k) to recover it without a Spec change.
+- PIPELINE v2 (16000-pair jobs, depth 2), S-D 5M rerun (festive 24a250c + pipeline_proto v2 + shim_speed, zcat FIFO, median of 3):
+  | set | map s | Gbp/hr | Gbp/core-hr | util | minibwa map s | map ratio | core-hr ratio |
+  |---|---|---|---|---|---|---|---|
+  | NovaSeq 5M | 160.9 (154.0-166.9) | 33.8 | 9.70 | 85.9% | 308.1 | 1.92x | 2.16x |
+  | HiSeq 5M | 201.2 (198.0-202.8) | 44.7 | 14.37 | 77.4% | 585.3 | 2.91x | 3.67x |
+  vs no pipeline: NovaSeq 176.5 -> 160.9 s (-8.8%), HiSeq 246.3 -> 201.2 s (-18%). v1 full-5M SAM md5 identical to plain festive; v2 SAM identical on 1M (S-G). Remaining gap to minibwa's 94% FIFO util: zcat CPU on 4 cores + S-D box page-cache pressure; plain files on S-G's box reach 0.95-0.97.
+- 18:5x UTC: merged S-H speed/trim (wlU2 UInt8 quality arithmetic, saLoopV bit-parallel adapter loop, TruSeq constants; exact csimp, trimmer proofs untouched). Ir 2k: NovaSeq -1.0%, HiSeq -1.4%. SAM identical 200k; FUZZ=1 CI green (frozen trimmer contract + audit OK). S-G byte pipeline nova1M plain: pipeline v2 30.3 s / 115 s CPU / 0.95 -> byte names + byte SAM 27.7 / 106.5 / 0.96 -> + variant B 24.0 / 91.1 / 0.95 (CPU and wall -21%), SAM md5 identical.
+
+### LATER: gzip input (Rowan)
+- kim-em/lean-zip (from search snippets only; repo not read): pure-Lean DEFLATE encoder + native inflate (`Zip.Native.InflateBuf.inflate`), gzip RFC 1952 path, round-trip theorem (inflate inverts deflate) over a spec-level Inflate, reportedly ~1,100 theorems / no sorry; tracks Lean 4.35. Unconfirmed: multi-member gzip (needed for most .fastq.gz), FFI/trusted primitives, license. Speed: a fork reports 3.5-11x slower than libdeflate. bgzip parallel-block decoding would be ours to build on per-member inflate. For now benchmarks use plain files.
+- 19:5x UTC: merged S-H speed/trim2 (wlR window fold specialised to the full-read call; saLoopTS TruSeq loop on literals; exact csimp, all trimmer theorems untouched). trimRecord -21%; whole run 2k: festive NovaSeq -1.4% / HiSeq -1.6%; with byte_pipeline -1.65% / -1.8%. SAM identical 200k; FUZZ=1 CI green. Trimming is ~9% of byte-pipeline HiSeq Ir (not 10.7%).
+- 19:51 UTC S-D core scaling (real NovaSeq 1M plain, map-only, best of 2): pipeline v2 c1/c2/c4 103.0/48.5/25.7 s (speedup 4.00, util 97/97.5/96.5%); festive 102.2/51.1/30.2 s (3.39, util 96.6/93.7/85.8%); minibwa 271.8/123.8/59.5 s (4.57, superlinear: CPU 263->232 s). minibwa/pipeline v2: 2.64/2.55/2.32x.

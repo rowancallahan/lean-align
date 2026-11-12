@@ -1,0 +1,7 @@
+tool	threads	set	wall_s	cpu_s	peak_GB	Gbp	Gbp/hr	Gbp/core-hr
+ours	4	reads	85.0	309.7	5.71	1.510	63.97	17.55
+ours	4	reads	77.7	301.4	5.71	1.510	69.99	18.03
+ours	4	reads	83.6	312.0	5.67	1.510	65.02	17.42
+minibwa	4	reads	259.0	1001.5	8.82	1.510	20.99	5.43
+minibwa	4	reads	266.5	1012.5	8.79	1.510	20.39	5.37
+minibwa	4	reads	264.7	1010.7	8.80	1.510	20.53	5.38

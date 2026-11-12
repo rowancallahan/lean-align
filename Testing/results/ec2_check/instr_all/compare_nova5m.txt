@@ -1,0 +1,28 @@
+   1,000,000  100.00%  pairs
+     937,133   93.71%  ours mapped
+     991,317   99.13%  minibwa mapped
+     819,296   81.93%  ours unique
+     849,743   84.97%  minibwa MAPQ 60
+     936,297   93.63%  both mapped
+     888,923   88.89%  both mapped, match
+     575,490   57.55%  both mapped, identical
+     819,291   81.93%  ours unique, minibwa mapped
+     819,216   81.92%  ours unique, minibwa mapped, match
+     781,588   78.16%  ours unique and minibwa MAPQ 60
+     781,588   78.16%  ours unique and minibwa MAPQ 60, match
+agreement rates (% of the row they are divided by):
+   94.94%  both mapped, match / both mapped
+   61.46%  both mapped, identical / both mapped
+   99.99%  ours unique, minibwa mapped, match / ours unique, minibwa mapped
+  100.00%  ours unique and minibwa MAPQ 60, match / ours unique and minibwa MAPQ 60
+ours unique but a different place than minibwa (name, ours, minibwa, minibwa MAPQ):
+   ('A00744:46:HV3C3DSXX:2:1101:16577:2519', ('chr3', True, 195984876, '151M'), ('chr3', True, 197622469, '151M'), 5)
+   ('A00744:46:HV3C3DSXX:2:1101:25798:3208', ('chr17', False, 26603782, '151M'), ('chr17', False, 23264983, '143M8S'), 0)
+   ('A00744:46:HV3C3DSXX:2:1101:16224:4445', ('chr17', True, 26619646, '151M'), ('chr17', True, 23731784, '151M'), 0)
+   ('A00744:46:HV3C3DSXX:2:1101:31331:6339', ('chr17', True, 26603831, '151M'), ('chr17', True, 26146990, '144M7S'), 0)
+   ('A00744:46:HV3C3DSXX:2:1101:31864:7388', ('chr17', True, 26603831, '151M'), ('chr17', True, 26241843, '144M7S'), 0)
+   ('A00744:46:HV3C3DSXX:2:1101:20763:8829', ('chr16', True, 21999, '151M'), ('chrX', False, 156017596, '151M'), 0)
+   ('A00744:46:HV3C3DSXX:2:1101:8241:11882', ('chr9', False, 138185546, '151M'), ('chr3', True, 4027185, '151M'), 0)
+   ('A00744:46:HV3C3DSXX:2:1101:2157:11960', ('chr2', True, 113593323, '151M'), ('chr1', False, 190475, '151M'), 0)
+   ('A00744:46:HV3C3DSXX:2:1101:20265:12007', ('chr17', True, 24421433, '151M'), ('chr17', True, 26128051, '17M1I133M'), 1)
+   ('A00744:46:HV3C3DSXX:2:1101:19687:12727', ('chr12', True, 8205633, '151M'), ('chr8', True, 12399289, '151M'), 0)
