@@ -35,6 +35,14 @@ Not tested on macOS: there is no core pinning there, so tiny timings on a Mac on
 Knobs: `PAIRS=100000000 bash ... setup.sh` for more reads (the whole 30x file is about 360M pairs; use a
 300 GB disk). `THREADS="8 16 32" REPS=1 bash ... run.sh`.
 
+## Unattended run that powers the machine off
+    nohup bash Testing/ec2/all.sh full ~/bench > ~/all.out 2>&1 &
+Runs setup, timing and agreement, packs `~/bench/results.tgz` (all.log, timing.tsv, compare.txt) and then runs
+`sudo shutdown -h now`, also when a step fails. `VERIFY=1` adds `Testing/verify.sh`. `NO_SHUTDOWN=1` keeps it on.
+- In the EC2 launch settings choose shutdown behaviour **Stop** (not Terminate): the disk and results.tgz are kept.
+  A stopped instance costs only its disk. Start it again later, `scp` results.tgz off, then terminate it.
+- `nohup ... &` keeps it running after you log out. Watch progress with `tail -f ~/bench/all.log`.
+
 ## What the numbers mean
 
 - Reads: the minibwa paper's WGS set (HG002 NovaSeq 30x, 2x151), its first PAIRS pairs, re-gzipped.
