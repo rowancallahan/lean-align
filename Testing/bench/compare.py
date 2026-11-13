@@ -19,6 +19,10 @@ assert len(sys.argv) == 3, __doc__
 
 def check_our_record(record, sam):
     name = record.query_name
+    if record.query_sequence is None:               # a mate that was trimmed away completely has SEQ * and QUAL *
+        assert record.is_unmapped, name + ": SEQ is * on a mapped record"
+        assert record.get_tag("XT").startswith("trimmedAway"), name + ": SEQ is * on a record that is not trimmed away"
+        return
     assert record.query_qualities is not None, name + ": no QUAL"
     assert len(record.query_sequence) == len(record.query_qualities), name + ": SEQ and QUAL differ in length"
     if record.is_unmapped:
