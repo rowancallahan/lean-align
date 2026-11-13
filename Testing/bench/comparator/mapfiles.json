@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Spec.MapFiles",
+  "solution_module": "Proofs.MapFiles",
+  "theorem_names": ["Spec.Total.process_correct"],
+  "definition_names": ["Spec.Total.MapState", "Spec.Total.mapInit", "Spec.Total.mapStep"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}
