@@ -3,17 +3,22 @@
 #   bash Testing/bench/bench.sh tiny DIR     laptop: generated 4 Mb genome, no download, about a minute after the build
 #   nohup bash Testing/bench/bench.sh full DIR > ~/bench.out 2>&1 &     server: hg38 + NovaSeq reads, powers off at the end
 # Settings (environment variables, all optional):
-#   PAIRS      read pairs to time                    (default 40000000)
-#   WHOLE      1: save the whole reads files to disk first (52 GB), then cut PAIRS from disk; PAIRS=all times every pair   (default 0)
+#   SETS       read sets to time and compare: nova, hiseq, mason, e.g. "nova hiseq mason"   (default nova)
+#   PAIRS      read pairs to time, of nova and of hiseq   (default 40000000; "all" = every pair: for nova it needs WHOLE=1,
+#              for hiseq it takes all 17 files of lane 1, about 200M pairs)
+#   MASON_PAIRS  read pairs that mason simulates for the set mason   (default 1000000)
+#   WHOLE      1: save the whole nova reads files to disk first (52 GB), then cut PAIRS from disk; PAIRS=all times every pair   (default 0)
 #   NATIVE     1: also time minibwa built with -march=native (same index, a third row per run)   (default 0)
 #   THREADS    thread counts to time, e.g. "8 16"    (default: a quarter, half and all of the cores)
 #   REPS       runs per tool and thread count        (default 3)
 #   POWER_OFF  0 keeps a `full` machine on           (default 1)
 #   MAX_MIN    a `full` machine powers off after this many minutes whatever happens (default 720)
 #   VERIFY     1 runs `PARANOID=1 verify.sh` at the end (adds an hour or more)    (default 0)
-# Stops at the first failing step. Result: DIR/results.tgz = all.log, timing.tsv, compare.txt, threads.log, verify.log.
+# Stops at the first failing step. Result: DIR/results.tgz = all.log, timing.tsv, compare.txt (nova; compare_hiseq.txt, compare_mason.txt),
+# mason_accuracy.txt, threads.log, verify.log.
 # Files already in DIR (genome, reads, indexes, minibwa, venv) are used as they are, not fetched or built again.
-# The two read sets: `reads` (PAIRS pairs, timed) and `sample` (the first 1M pairs of reads, compared with minibwa).
+# Per set two read sets: the timed one (nova: reads, hiseq: hiseq, mason: mason) and its sample (nova: sample, others: hiseq_sample,
+# mason_sample) = the first 1M pairs, compared with minibwa. The set name is the third column of timing.tsv (reads = nova).
 set -euo pipefail
 
 if [ $# != 2 ]; then
@@ -34,6 +39,8 @@ CORES=$(getconf _NPROCESSORS_ONLN)
 # ---- settings: the environment variable if it is set, otherwise the default ----
 if [ -z "${PAIRS:-}" ]; then PAIRS=40000000; fi
 if [ -z "${MAX_MIN:-}" ]; then MAX_MIN=720; fi
+if [ -z "${SETS:-}" ]; then SETS=nova; fi
+if [ -z "${MASON_PAIRS:-}" ]; then MASON_PAIRS=1000000; fi
 if [ -z "${NATIVE:-}" ]; then NATIVE=0; fi        # 1: also time minibwa built with -march=native
 TOOLS="ours minibwa"
 if [ "$NATIVE" = 1 ]; then TOOLS="ours minibwa minibwa_native"; fi
@@ -45,11 +52,21 @@ if [ "$MODE" = tiny ]; then
   if [ -z "${THREADS:-}" ]; then THREADS=2; fi
   if [ -z "${REPS:-}" ]; then REPS=1; fi
   POWER_OFF=0                                     # a tiny run never powers the machine off
+  SETS=nova                                       # (and has only the small genome's reads)
 else
   if [ -z "${THREADS:-}" ]; then THREADS="$((CORES / 4)) $((CORES / 2)) $CORES"; fi
   if [ -z "${REPS:-}" ]; then REPS=3; fi
   if [ -z "${POWER_OFF:-}" ]; then POWER_OFF=1; fi
 fi
+# the file names of a set. nova keeps the names reads, sample, ours.sam, minibwa.sam, compare.txt
+use_set() {
+  S=$1
+  if [ "$S" = nova ]; then
+    READS=reads; SAMPLE=sample; OURS_SAM=ours.sam; MB_SAM=minibwa.sam; CMP=compare.txt
+  else
+    READS=$S; SAMPLE=${S}_sample; OURS_SAM=ours_$S.sam; MB_SAM=minibwa_$S.sam; CMP=compare_$S.txt
+  fi
+}
 MAX_THREADS=0                                     # the largest number in THREADS
 for t in $THREADS; do                             # (unquoted on purpose: one word per thread count)
   if [ "$t" -gt "$MAX_THREADS" ]; then MAX_THREADS=$t; fi
@@ -74,8 +91,8 @@ finish() {
   date
   kill "$SAMPLER"
   cd "$W"
-  touch timing.tsv compare.txt verify.log         # so that tar finds all five files, also after an early failure
-  tar czf results.tgz all.log threads.log timing.tsv compare.txt verify.log
+  touch timing.tsv compare.txt mason_accuracy.txt verify.log   # so that tar finds these files, also after an early failure
+  tar czf results.tgz all.log threads.log timing.tsv compare*.txt mason_accuracy.txt verify.log
   if [ "$POWER_OFF" = 1 ]; then sudo shutdown -h now; fi
 }
 trap finish EXIT
@@ -102,7 +119,7 @@ fi
 if [ "$MODE" = full ]; then
   sudo apt-get update
   # DEBIAN_FRONTEND and NEEDRESTART_MODE make apt install without asking questions
-  sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv bubblewrap
+  sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv bubblewrap seqan-apps
   # `lake check --paranoid` (in verify.sh) runs in a bubblewrap sandbox, which needs unprivileged user namespaces
   # (the setting exists on Ubuntu 24.04 only; on a kernel without it sysctl would fail and stop the run)
   if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
@@ -136,7 +153,7 @@ PY=$W/venv/bin/python
 "$PY" -c "import pysam; print('pysam', pysam.__version__)"
 git -C "$W/minibwa" rev-parse HEAD
 
-# ---- 2. data: genome.fa, reads_R{1,2}.fq.gz (timed), sample_R{1,2}.fq.gz (compared, at most 1M pairs) ----
+# ---- 2. data: genome.fa and, per set, the timed reads and the sample (at most 1M pairs) ----
 if [ "$MODE" = tiny ]; then
   python3 $B/tiny_data.py make "$W"
 else
@@ -149,48 +166,82 @@ else
     echo "genome.fa: $GENOME_BASES letters"
     if [ "$GENOME_BASES" -lt 3000000000 ]; then echo "FAIL: genome.fa has fewer than 3 billion letters"; exit 1; fi
   fi
-  # the minibwa paper's reads (two files, 25.7 GB and 26.6 GB).
-  NOVA=https://storage.googleapis.com/brain-genomics-public/research/sequencing/fastq/novaseq/wgs_pcr_free/30x/HG002.novaseq.pcr-free.30x
-  for r in 1 2; do
-    if [ "$WHOLE" = 1 ] && [ ! -s "$W/whole_R$r.fq.gz" ]; then
-      # the whole file to disk first. -C - continues a partial download, so after a dropped connection run again.
-      curl -sSfL -C - -o "$W/whole_R$r.fq.gz.part" "$NOVA.R$r.fastq.gz"
-      mv "$W/whole_R$r.fq.gz.part" "$W/whole_R$r.fq.gz"
-    fi
-    if [ -s "$W/reads_R$r.fq.gz" ]; then continue; fi
-    if [ "$PAIRS" = all ]; then
-      ln -s "whole_R$r.fq.gz" "$W/reads_R$r.fq.gz"
-      continue
-    fi
-    # the first PAIRS pairs. head closes the pipe early, which makes the pipeline report an error even when it
-    # worked, so the exit code is ignored here; section 3 counts the lines instead.
-    if [ "$WHOLE" = 1 ]; then
-      gzip -dc "$W/whole_R$r.fq.gz" | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
+  for S in $SETS; do
+    use_set $S
+    if [ "$S" = nova ]; then
+      # the minibwa paper's NovaSeq reads (two files, 25.7 GB and 26.6 GB).
+      NOVA=https://storage.googleapis.com/brain-genomics-public/research/sequencing/fastq/novaseq/wgs_pcr_free/30x/HG002.novaseq.pcr-free.30x
+      for r in 1 2; do
+        if [ "$WHOLE" = 1 ] && [ ! -s "$W/whole_R$r.fq.gz" ]; then
+          # the whole file to disk first. -C - continues a partial download, so after a dropped connection run again.
+          curl -sSfL -C - -o "$W/whole_R$r.fq.gz.part" "$NOVA.R$r.fastq.gz"
+          mv "$W/whole_R$r.fq.gz.part" "$W/whole_R$r.fq.gz"
+        fi
+        if [ -s "$W/reads_R$r.fq.gz" ]; then continue; fi
+        if [ "$PAIRS" = all ]; then
+          ln -s "whole_R$r.fq.gz" "$W/reads_R$r.fq.gz"
+          continue
+        fi
+        # the first PAIRS pairs. head closes the pipe early, which makes the pipeline report an error even when it
+        # worked, so the exit code is ignored here; section 3 counts the lines instead.
+        if [ "$WHOLE" = 1 ]; then
+          gzip -dc "$W/whole_R$r.fq.gz" | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
+        else
+          curl -sSfL "$NOVA.R$r.fastq.gz" | gzip -dc | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
+        fi
+      done
+    elif [ "$S" = hiseq ]; then
+      # GIAB HG002 HiSeq 2x250, lane 1: the 17 files of each mate in this order, the first PAIRS pairs (all, if PAIRS=all)
+      GIAB=https://giab.s3.amazonaws.com/data/AshkenazimTrio/HG002_NA24385_son/NIST_Illumina_2x250bps/reads
+      HISEQ_LINES=4000000000
+      if [ "$PAIRS" != all ]; then HISEQ_LINES=$((4 * PAIRS)); fi
+      for r in 1 2; do
+        if [ -s "$W/hiseq_R$r.fq.gz" ]; then continue; fi
+        # one file after the other into one pipe; `|| break` ends the loop when head has closed the pipe (exit code ignored, as above)
+        for n in 001 002 003 004 005 006 007 008 009 010 011 012 013 014 015 016 017; do
+          curl -sSfL "$GIAB/D1_S1_L001_R${r}_$n.fastq.gz" || break
+        done | gzip -dc | head -n "$HISEQ_LINES" | pigz -c > "$W/hiseq_R$r.fq.gz" || true
+      done
+    elif [ "$S" = mason ]; then
+      # mason2 (package seqan-apps) simulates MASON_PAIRS pairs of 2x150 from hg38; mason_truth.sam holds the true places
+      if [ ! -s "$W/mason_R1.fq.gz" ]; then
+        /usr/lib/seqan/bin/mason_simulator -ir "$W/genome.fa" -n "$MASON_PAIRS" -o "$W/mason_R1.fq" -or "$W/mason_R2.fq" \
+          -oa "$W/mason_truth.sam" --seed 1 --illumina-read-length 150 --illumina-prob-mismatch-scale 2.5
+        pigz "$W/mason_R1.fq" "$W/mason_R2.fq"
+      fi
     else
-      curl -sSfL "$NOVA.R$r.fastq.gz" | gzip -dc | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
+      echo "FAIL: unknown set $S (nova, hiseq or mason)"; exit 1
     fi
   done
 fi
-for r in 1 2; do
-  gzip -dc "$W/reads_R$r.fq.gz" | head -n 4000000 | gzip -c > "$W/sample_R$r.fq.gz" || true      # same reason for `|| true`
+for S in $SETS; do
+  use_set $S
+  for r in 1 2; do
+    gzip -dc "$W/${READS}_R$r.fq.gz" | head -n 4000000 | gzip -c > "$W/${SAMPLE}_R$r.fq.gz" || true      # same reason for `|| true`
+  done
 done
 
 # ---- 3. line counts (the pipelines above ignored their exit codes); count the letters (the Gbp in Gbp/hr) ----
-for s in reads sample; do
-  n1=$(gzip -dc "$W/${s}_R1.fq.gz" | wc -l)
-  n2=$(gzip -dc "$W/${s}_R2.fq.gz" | wc -l)
-  echo "$s: $((n1 / 4)) and $((n2 / 4)) pairs"
-  if [ "$n1" != "$n2" ]; then echo "FAIL: the two mates have different numbers of lines"; exit 1; fi
-  if [ "$n1" = 0 ]; then echo "FAIL: no reads"; exit 1; fi
-  if [ "$s" = reads ]; then
-    READS_LINES=$n1
-    if [ "$MODE" = full ] && [ "$PAIRS" != all ] && [ "$n1" != $((4 * PAIRS)) ]; then echo "FAIL: expected $PAIRS pairs"; exit 1; fi
-  else
-    EXPECTED=$READS_LINES                          # sample = the first 1M pairs of reads, or all of reads if that is less
-    if [ "$EXPECTED" -gt 4000000 ]; then EXPECTED=4000000; fi
-    if [ "$n1" != "$EXPECTED" ]; then echo "FAIL: sample should have $EXPECTED lines"; exit 1; fi
-  fi
-  gzip -dc "$W/${s}_R1.fq.gz" "$W/${s}_R2.fq.gz" | awk 'NR%4==2{n+=length($0)} END{print n}' > "$W/$s.bases"
+for S in $SETS; do
+  use_set $S
+  WANT=$PAIRS                                      # how many pairs the timed reads of this set must have
+  if [ "$S" = mason ]; then WANT=$MASON_PAIRS; fi
+  for s in $READS $SAMPLE; do
+    n1=$(gzip -dc "$W/${s}_R1.fq.gz" | wc -l)
+    n2=$(gzip -dc "$W/${s}_R2.fq.gz" | wc -l)
+    echo "$s: $((n1 / 4)) and $((n2 / 4)) pairs"
+    if [ "$n1" != "$n2" ]; then echo "FAIL: the two mates have different numbers of lines"; exit 1; fi
+    if [ "$n1" = 0 ]; then echo "FAIL: no reads"; exit 1; fi
+    if [ "$s" = "$READS" ]; then
+      READS_LINES=$n1
+      if [ "$MODE" = full ] && [ "$WANT" != all ] && [ "$n1" != $((4 * WANT)) ]; then echo "FAIL: expected $WANT pairs"; exit 1; fi
+    else
+      EXPECTED=$READS_LINES                        # sample = the first 1M pairs of the timed reads, or all of them if that is less
+      if [ "$EXPECTED" -gt 4000000 ]; then EXPECTED=4000000; fi
+      if [ "$n1" != "$EXPECTED" ]; then echo "FAIL: sample should have $EXPECTED lines"; exit 1; fi
+    fi
+    gzip -dc "$W/${s}_R1.fq.gz" "$W/${s}_R2.fq.gz" | awk 'NR%4==2{n+=length($0)} END{print n}' > "$W/$s.bases"
+  done
 done
 
 # ---- 4. indexes ----
@@ -208,20 +259,31 @@ fi
 
 # ---- 5. timing: one tool at a time, output thrown away, one line per run ----
 printf "tool\tthreads\tset\twall_s\tcpu_s\tpeak_GB\tGbp\tGbp/hr\tGbp/core-hr\n" > "$W/timing.tsv"
-for t in $THREADS; do
-  for i in $(seq "$REPS"); do
-    for tool in $TOOLS; do
-      $PY $B/time_one.py $tool "$t" "$W" reads >> "$W/timing.tsv"
+for S in $SETS; do
+  use_set $S
+  for t in $THREADS; do
+    for i in $(seq "$REPS"); do
+      for tool in $TOOLS; do
+        $PY $B/time_one.py $tool "$t" "$W" $READS >> "$W/timing.tsv"
+      done
     done
   done
 done
 cat "$W/timing.tsv"
 
-# ---- 6. agreement on the sample: both SAM files kept, then compared ----
-$PY $B/time_one.py ours    "$MAX_THREADS" "$W" sample "$W/ours.sam"
-$PY $B/time_one.py minibwa "$MAX_THREADS" "$W" sample "$W/minibwa.sam"
-$PY $B/compare.py "$W/ours.sam" "$W/minibwa.sam" > "$W/compare.txt"
-cat "$W/compare.txt"
+# ---- 6. agreement on the sample of each set: both SAM files kept, then compared ----
+for S in $SETS; do
+  use_set $S
+  $PY $B/time_one.py ours    "$MAX_THREADS" "$W" $SAMPLE "$W/$OURS_SAM"
+  $PY $B/time_one.py minibwa "$MAX_THREADS" "$W" $SAMPLE "$W/$MB_SAM"
+  $PY $B/compare.py "$W/$OURS_SAM" "$W/$MB_SAM" > "$W/$CMP"
+  cat "$W/$CMP"
+  if [ "$S" = mason ]; then
+    # the true places are known: how many pairs does each tool put there
+    $PY $B/mason_score.py "$W/mason_truth.sam" "$W/$OURS_SAM" "$W/$MB_SAM" > "$W/mason_accuracy.txt"
+    cat "$W/mason_accuracy.txt"
+  fi
+done
 if [ "$MODE" = tiny ]; then
   # the read names hold the true position: every mate must be where it was cut from
   $PY $B/tiny_data.py check "$W/ours.sam"

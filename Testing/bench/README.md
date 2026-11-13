@@ -6,6 +6,7 @@
 | `verify.sh` | is this checkout proved and does it give the right output; `PARANOID=1` for the slow, thorough checks |
 | `time_one.py` | times one run of one tool (called by both scripts) |
 | `compare.py` | on real reads: where we say unique and minibwa gives MAPQ 60, are the pairs in the same place and at the same positions letter for letter; also basic sanity of every record of our SAM |
+| `mason_score.py` | on the mason set: how many pairs does each tool put at the true place (the minibwa paper's overlap rule) |
 | `tiny_data.py` | makes a small genome and read pairs with a known answer, and checks that our SAM puts every mate there |
 | `comparator_*.json` | six settings files for `lake comparator`, one per Spec file with holes: Spec file = the challenge, Proofs file = the solution |
 
@@ -34,5 +35,13 @@ NovaSeq reads; compares them on 1M pairs; with `VERIFY=1` runs `PARANOID=1 verif
 and compared, same output at 1 and all threads, `lake comparator` on the six files, `lake check --paranoid`); packs
 `~/bench/results.tgz`; powers the machine off, also when a step fails, and after 12 hours at the latest.
 Next day: start the instance, copy `results.tgz` off, terminate it.
+
+All three read sets of the minibwa paper's comparison (NovaSeq, HiSeq 2x250, mason2 2x150 simulated reads):
+
+    SETS="nova hiseq mason" VERIFY=1 nohup bash Testing/bench/bench.sh full ~/bench > ~/bench.out 2>&1 &
+
+`PAIRS` (40M) applies to nova and to hiseq (`hiseq`: GIAB HG002 HiSeq 2x250 lane 1, files 001 to 017 in order);
+`MASON_PAIRS` (1M) is the size of the mason set. Each set has its rows in `timing.tsv`, its `compare_<set>.txt`
+(nova: `compare.txt`), and the mason set also `mason_accuracy.txt`. The hiseq set adds about 25 GB, the mason set 2 GB to the disk.
 
 The previous test scripts (`Testing/ec2/`, `Testing/verify.sh`, `CI_check.sh`, ...) are on branch `archive/testing-old`.
