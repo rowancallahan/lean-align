@@ -125,7 +125,7 @@ git -C "$W/minibwa" rev-parse HEAD
 
 # ---- 2. data: genome.fa, reads_R{1,2}.fq.gz (timed), sample_R{1,2}.fq.gz (compared, at most 1M pairs) ----
 if [ "$MODE" = tiny ]; then
-  python3 $B/tiny_data.py "$W"
+  python3 $B/tiny_data.py make "$W"
 else
   # hg38 in upper case for both tools (lower case marks repeats; the spec compares letters exactly)
   if [ ! -s "$W/genome.fa" ]; then
