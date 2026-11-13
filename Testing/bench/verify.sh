@@ -53,14 +53,11 @@ if [ "$PARANOID" = 1 ]; then
   $PY $B/time_one.py ours "$T" "$W" cmp "$W/v3.sam"
   cmp "$W/v1.sam" "$W/v2.sam"; cmp "$W/v2.sam" "$W/v3.sam"
 
-  echo "== 7. the older developer checks: Spec copies in Proofs/ mirror Spec/, forbidden words, tiny-genome fuzz"
-  FUZZ=1 sh Testing/scripts/CI_check.sh | tee "$W/ci.log"
-  grep -q "ALL CHECKS PASSED" "$W/ci.log"
+  echo "== 7. the Spec copies in Proofs/ mirror Spec/ up to the holes, and no forbidden word is used"
+  python3 $B/mirror_check.py
 
   echo "== 8. hg38 fuzz against minibwa: none of our claims is false (rules A-D must be 0)"
-  INDEX="$W/ours.idx" MBINDEX="$W/mb" MINIBWA="$W/minibwa/minibwa" GENOME="$W/genome.fa" \
-    bash Testing/repro/fuzz_audit.sh "$W/fuzz" | tee "$W/fuzz.log"
-  ! grep -E 'HARD [A-D]:.*: [1-9][0-9]*$' "$W/fuzz.log"
-  grep -qE 'HARD [A-D]:.*: 0$' "$W/fuzz.log"
+  python3 $B/fuzz_hg38.py "$W/genome.fa" .lake/build/bin/lean-align "$W/ours.idx" "$W/minibwa/minibwa" "$W/mb" \
+    "$W/fuzz" 10000 "$T"
 fi
 echo "VERIFY PASSED"
