@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Time one aligner run.   time_one.py ours|minibwa THREADS WORKDIR SET [OUT.sam]
+"""Time one aligner run.   time_one.py ours|minibwa|minibwa_native THREADS WORKDIR SET [OUT.sam]
 SET = reads | sample (files WORKDIR/SET_R1.fq.gz, SET_R2.fq.gz). Without OUT.sam the output is thrown away.
 
 What is measured, the same way for both tools:
@@ -27,7 +27,7 @@ if len(sys.argv) == 6:
     sam = sys.argv[5]
 else:
     sam = None
-assert tool in ("ours", "minibwa"), __doc__
+assert tool in ("ours", "minibwa", "minibwa_native"), __doc__
 
 on_linux = sys.platform == "linux"
 if on_linux:
@@ -35,7 +35,7 @@ if on_linux:
 
 # our binary: two folders above this script's folder is the repository
 ours_binary = os.path.abspath(os.path.dirname(__file__) + "/../../.lake/build/bin/lean-align")
-minibwa_binary = workdir + "/minibwa/minibwa"
+minibwa_binary = workdir + "/" + tool + "/minibwa"       # minibwa_native: the same source built with -march=native
 
 if tool == "ours":
     index_files = [workdir + "/ours.idx"]

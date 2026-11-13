@@ -5,6 +5,7 @@
 # Settings (environment variables, all optional):
 #   PAIRS      read pairs to time                    (default 40000000)
 #   WHOLE      1: save the whole reads files to disk first (52 GB), then cut PAIRS from disk; PAIRS=all times every pair   (default 0)
+#   NATIVE     1: also time minibwa built with -march=native (same index, a third row per run)   (default 0)
 #   THREADS    thread counts to time, e.g. "8 16"    (default: a quarter, half and all of the cores)
 #   REPS       runs per tool and thread count        (default 3)
 #   POWER_OFF  0 keeps a `full` machine on           (default 1)
@@ -33,6 +34,9 @@ CORES=$(getconf _NPROCESSORS_ONLN)
 # ---- settings: the environment variable if it is set, otherwise the default ----
 if [ -z "${PAIRS:-}" ]; then PAIRS=40000000; fi
 if [ -z "${MAX_MIN:-}" ]; then MAX_MIN=720; fi
+if [ -z "${NATIVE:-}" ]; then NATIVE=0; fi        # 1: also time minibwa built with -march=native
+TOOLS="ours minibwa"
+if [ "$NATIVE" = 1 ]; then TOOLS="ours minibwa minibwa_native"; fi
 if [ -z "${WHOLE:-}" ]; then WHOLE=0; fi          # 1: download the whole reads files to disk (52 GB), then cut PAIRS from disk
 if [ "$PAIRS" = all ] && [ "$WHOLE" != 1 ]; then echo "PAIRS=all needs WHOLE=1"; exit 1; fi
 if [ -z "${VERIFY:-}" ]; then VERIFY=0; fi
@@ -117,6 +121,12 @@ if [ ! -x "$W/minibwa/minibwa" ]; then
   git -C "$W/minibwa" checkout c07de5c
   make -C "$W/minibwa"
 fi
+if [ "$NATIVE" = 1 ] && [ ! -x "$W/minibwa_native/minibwa" ]; then
+  # the same source built for this machine's processor; its Makefile still adds -msse4.2 -mpopcnt and OpenMP itself
+  git clone "$W/minibwa" "$W/minibwa_native"
+  git -C "$W/minibwa_native" checkout c07de5c
+  make -C "$W/minibwa_native" CFLAGS="-std=c99 -g -Wall -O3 -march=native"
+fi
 if [ ! -x "$W/venv/bin/python" ]; then
   python3 -m venv "$W/venv"
   "$W/venv/bin/pip" install pysam==0.24.1
@@ -191,7 +201,7 @@ if [ ! -s "$W/mb.mbw" ];   then "$W/minibwa/minibwa" index -t "$CORES" "$W/genom
 printf "tool\tthreads\tset\twall_s\tcpu_s\tpeak_GB\tGbp\tGbp/hr\tGbp/core-hr\n" > "$W/timing.tsv"
 for t in $THREADS; do
   for i in $(seq "$REPS"); do
-    for tool in ours minibwa; do
+    for tool in $TOOLS; do
       $PY $B/time_one.py $tool "$t" "$W" reads >> "$W/timing.tsv"
     done
   done
