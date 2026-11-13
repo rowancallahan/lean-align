@@ -39,6 +39,9 @@ lake env lean "$W/axioms.lean" | tee "$W/axioms.txt"
 [ "$(grep -c . "$W/axioms.txt")" = 7 ]
 
 echo "== 4. small genome with a known answer: our output equals minibwa's in columns 1-11"
+mkdir -p "$W/tiny"
+if [ -d "$W/minibwa" ]; then ln -sfn "$W/minibwa" "$W/tiny/minibwa"; fi      # reuse minibwa and pysam from DIR if they are there
+if [ -d "$W/venv" ];    then ln -sfn "$W/venv"    "$W/tiny/venv"; fi
 bash $B/bench.sh tiny "$W/tiny"
 grep "IDENTICAL: columns 1-11 of every record" "$W/tiny/all.log"
 

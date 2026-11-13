@@ -3,8 +3,10 @@
 #   bash Testing/bench/bench.sh tiny DIR     laptop: generated 4 Mb genome, no download, about a minute after the build
 #   nohup bash Testing/bench/bench.sh full DIR > ~/bench.out 2>&1 &     server: hg38 + NovaSeq reads, powers off at the end
 # Settings (environment): PAIRS (40000000) read pairs to time; THREADS (half and all cores); REPS (3);
-#   POWER_OFF=0 keeps a `full` machine on; MAX_MIN (720) powers it off after that many minutes whatever happens.
-# Stops at the first failing step. Result: DIR/results.tgz = all.log, timing.tsv, compare.txt, threads.log.
+#   POWER_OFF=0 keeps a `full` machine on; MAX_MIN (720) powers it off after that many minutes whatever happens;
+#   VERIFY=1 runs `PARANOID=1 verify.sh` at the end (adds an hour or more).
+# Stops at the first failing step. Result: DIR/results.tgz = all.log, timing.tsv, compare.txt, threads.log, verify.log.
+# Files already in DIR (genome, reads, indexes, minibwa, venv) are used as they are, not fetched or built again.
 set -euo pipefail
 MODE=$1; mkdir -p "$2"; W=$(cd "$2" && pwd); cd "$(dirname "$0")/../.."; B=Testing/bench
 CORES=$(getconf _NPROCESSORS_ONLN)
@@ -29,8 +31,8 @@ SAMPLER=$!
 finish() {
   echo "EXIT CODE $?"; date; kill $SAMPLER
   cd "$W"
-  touch timing.tsv compare.txt
-  tar czf results.tgz all.log threads.log timing.tsv compare.txt
+  touch timing.tsv compare.txt verify.log
+  tar czf results.tgz all.log threads.log timing.tsv compare.txt verify.log
   if [ "$POWER_OFF" = 1 ]; then sudo shutdown -h now; fi
 }
 trap finish EXIT
@@ -47,7 +49,9 @@ fi
 # ---- 1. tools: system packages, Lean and our aligner, minibwa at the paper's commit, pysam ----
 if [ "$MODE" = full ]; then
   sudo apt-get update
-  sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv
+  sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv bubblewrap
+  # `lake check --paranoid` (in verify.sh) runs in a bubblewrap sandbox, which needs unprivileged user namespaces
+  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
   lscpu; free -g
 fi
 [ -x "$HOME/.elan/bin/lake" ] || curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
@@ -62,13 +66,17 @@ if [ "$MODE" = tiny ]; then
   python3 $B/tiny_data.py "$W"
 else
   # hg38 in upper case for both tools (lower case marks repeats; the spec compares letters exactly)
-  curl -sSfL https://ngi-igenomes.s3.amazonaws.com/igenomes/Homo_sapiens/UCSC/hg38/Sequence/WholeGenomeFasta/genome.fa \
-    | awk '/^>/{print; next}{print toupper($0)}' > "$W/genome.fa"
+  if [ ! -s "$W/genome.fa" ]; then
+    curl -sSfL https://ngi-igenomes.s3.amazonaws.com/igenomes/Homo_sapiens/UCSC/hg38/Sequence/WholeGenomeFasta/genome.fa \
+      | awk '/^>/{print; next}{print toupper($0)}' > "$W/genome.fa"
+  fi
   # the first PAIRS pairs of the minibwa paper's reads. head closes the pipe early, so the pipeline's exit code is ignored;
   # the line counts are checked in section 3.
   NOVA=https://storage.googleapis.com/brain-genomics-public/research/sequencing/fastq/novaseq/wgs_pcr_free/30x/HG002.novaseq.pcr-free.30x
   for r in 1 2; do
-    curl -sSfL "$NOVA.R$r.fastq.gz" | gzip -dc | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
+    if [ ! -s "$W/reads_R$r.fq.gz" ]; then
+      curl -sSfL "$NOVA.R$r.fastq.gz" | gzip -dc | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
+    fi
   done
 fi
 for r in 1 2; do
@@ -85,8 +93,8 @@ for s in reads cmp; do
 done
 
 # ---- 4. indexes ----
-.lake/build/bin/lean-align build "$W/genome.fa" "$W/ours.idx"
-"$W/minibwa/minibwa" index -t "$CORES" "$W/genome.fa" "$W/mb"
+[ -s "$W/ours.idx" ] || .lake/build/bin/lean-align build "$W/genome.fa" "$W/ours.idx"
+[ -s "$W/mb.mbw" ]   || "$W/minibwa/minibwa" index -t "$CORES" "$W/genome.fa" "$W/mb"
 
 # ---- 5. timing: one tool at a time, output thrown away, one line per run ----
 printf "tool\tthreads\tset\twall_s\tcpu_s\tpeak_GB\tGbp\tGbp/hr\tGbp/core-hr\n" > "$W/timing.tsv"
@@ -108,3 +116,9 @@ if [ "$MODE" = tiny ]; then    # on the unique genome the two files must be the 
   echo "IDENTICAL: columns 1-11 of every record"
 fi
 echo "BENCH DONE"
+
+# ---- 7. optional: the full verification in the same run (VERIFY=1); its output is DIR/verify.log ----
+if [ "${VERIFY:-0}" = 1 ]; then
+  PARANOID=1 bash $B/verify.sh "$W" > "$W/verify.log" 2>&1
+  tail -5 "$W/verify.log"
+fi

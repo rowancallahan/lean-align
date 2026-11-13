@@ -16,20 +16,22 @@ command that checks it, and what is not done. Numbers are from 4-core cloud boxe
     gap-free re-check as a byte compare, sizes sorted once per strand, layout check without a list, no tuple in
     the proper-pair check, traceback that allocates only on a step change, reverse-strand SAM write in place,
     no copy for a read kept whole, trim and adapter loops without run-time checks, number formatting on words.
-- Test and benchmark material: `Testing/verify.sh`, `Testing/ec2/`, `Testing/results/blog/` (figures, tables, zip),
+- Test and benchmark material: `Testing/bench/` (all testing), `Testing/results/blog/` (figures, tables, zip),
   `Testing/results/stream/` (streamed runs), `Testing/results/ec2_check/` (raw timing.tsv, compare.txt, verify logs;
   `instr_all/` is the integrated build).
 
 ## 2. Checks you can rerun
-| claim | command | expected | last run |
-|---|---|---|---|
-| builds, all proofs, axioms, Spec mirrors, frozen hashes, tiny-genome fuzz | `FUZZ=1 sh Testing/scripts/CI_check.sh` | `ALL CHECKS PASSED`, `472 theorems, standard axioms only`, `VIOLATIONS: none` | Opus box and timing box, cc26db2 |
-| all five verify steps | `bash Testing/verify.sh OUT` (see its header for the env vars) | `ALL REQUESTED STEPS PASSED` | timing box, cc26db2: all 5 pass |
-| step 3: no false claim vs minibwa on hg38 | inside verify | HARD A-D = 0 in 9 cells | pass |
-| step 4: unique genome, columns 1-11 identical to minibwa | inside verify | identical, flagstat equal | pass (adapter-like pairs left out, see section 5) |
-| output unchanged by the speed work | full-run SAM md5, 5M gz, both sets, cc26db2 vs f465a57 | equal | timing box: equal on both |
-| laptop check | `bash Testing/ec2/setup.sh tiny DIR && bash Testing/ec2/run.sh tiny DIR` | `IDENTICAL: columns 1-11 of every record` | lead box (Linux), festive 3cf96fb (code cc26db2): passes, 199,710 pairs identical |
-| timing and agreement vs minibwa | `bash Testing/ec2/run.sh full DIR` | `timing.tsv`, `compare.txt` | timing box, 4 threads, 5M pairs, both sets, cc26db2 |
+All testing is in `Testing/bench/` (7 files, see its README). The older scripts are on branch `archive/testing-old`.
+| claim | command | expected |
+|---|---|---|
+| Spec frozen, everything builds, main theorems on standard axioms, small genome identical to minibwa | `bash Testing/bench/verify.sh DIR` | `VERIFY PASSED` |
+| the same after deleting the build, plus index rebuilt and compared, same SAM at 1 / all threads / twice, Spec copies mirror the Spec, hg38 fuzz, `lake check --paranoid` | `PARANOID=1 bash Testing/bench/verify.sh DIR` (DIR of a finished `bench.sh full`) | `VERIFY PASSED` |
+| timing and agreement vs minibwa | `bash Testing/bench/bench.sh full DIR` | `timing.tsv`, `compare.txt` in `results.tgz` |
+
+State on 2026-11-13: the normal verify and tiny bench pass (lead box). The new `bench.sh full` and `PARANOID=1`
+are being run on hg38 by the timing box; `lake check --paranoid` has not run anywhere yet (needs bubblewrap).
+The results in section 3 were measured with the older scripts (same timing logic: `time_one.py` is the old
+`bench.py`), on the same build cc26db2; all five steps of the old verify passed on it.
 
 Not run by me: CI on GitHub for the head commit; anything on macOS; anything above 4 cores.
 
@@ -71,7 +73,7 @@ This round, cc26db2 vs f465a57 (same session each):
 ## 5. Things that behave differently from what you might expect
 - Adapter cutting is in the Spec, so our output differs from minibwa on reads that contain adapter-like text by
   chance (about 1 pair in 1,200 on random reads). The unique-genome checks leave those pairs out
-  (`Testing/ec2/drop_adapter_pairs.py`).
+  (`Testing/bench/tiny_data.py`).
 - The `XT` tier tag is gone from the SAM (per the locked `Spec/Sam.lean`); `XT:Z:trimmedAwayN` remains.
 - Never pass `/dev/null` as OUT: Main renames OUT.tmp over it.
 - If one read file ends early or the two files have very different record sizes, memory grows without limit
@@ -93,7 +95,7 @@ has not changed since, so that figure was probably measured differently. Not inv
 
 ## 6. Open items (yours)
 1. `Main.lean`: refuse a non-regular OUT and OUT equal to an input; cap on how far one file may run past the other.
-2. EC2 run at 16 and 32 threads (`Testing/ec2/README.md`). Expect gunzip and the reader loop to cap near 400-450
+2. EC2 run at 16 and 32 threads (`Testing/bench/README.md`). Expect gunzip and the reader loop to cap near 400-450
    Gbp/hr (estimate). Then try `rapidgzip`, bigger pipes, and branch `fix/cut-tasks` (proved, SAM identical, unmerged).
 3. Mapped-`unknown` accuracy: branch `exp/unknown-walkbest` recovers about 35-40% of the gap for 5-8% CPU. Parked.
 4. Trim: threshold stays 25 (softer loses mapped pairs: `exp/trim-threshold`, `Testing/notes/TRIM_THRESHOLD.md`).

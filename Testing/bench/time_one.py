@@ -57,7 +57,13 @@ finally:                                                                   # als
     if tool == "ours" and not sam and os.path.exists(out + ".tmp"): os.remove(out + ".tmp")
     if tool == "ours" and not sam and os.path.exists(out): os.remove(out)
 
-gbp = int(open(f"{W}/{name}.bases").read()) / 1e9
-peak = use.ru_maxrss / (1e6 if linux else 1e9)                           # Linux reports kB, macOS bytes
-print(tool, threads, name, f"{wall:.1f}", f"{cpu:.1f}", f"{peak:.2f}", f"{gbp:.3f}",
-      f"{gbp / (wall / 3600):.2f}", f"{gbp / (cpu / 3600):.2f}", sep="\t")
+bases = int(open(W + "/" + name + ".bases").read())
+gbp = bases / 1e9
+if linux:
+    peak_gb = use.ru_maxrss / 1e6          # Linux reports kilobytes
+else:
+    peak_gb = use.ru_maxrss / 1e9          # macOS reports bytes
+gbp_per_hour = gbp / (wall / 3600)
+gbp_per_core_hour = gbp / (cpu / 3600)
+print(tool, threads, name, round(wall, 1), round(cpu, 1), round(peak_gb, 2), round(gbp, 3),
+      round(gbp_per_hour, 2), round(gbp_per_core_hour, 2), sep="\t")
