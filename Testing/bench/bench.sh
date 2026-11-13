@@ -2,19 +2,50 @@
 # The whole benchmark, top to bottom: tools, data, indexes, timing, agreement, results.
 #   bash Testing/bench/bench.sh tiny DIR     laptop: generated 4 Mb genome, no download, about a minute after the build
 #   nohup bash Testing/bench/bench.sh full DIR > ~/bench.out 2>&1 &     server: hg38 + NovaSeq reads, powers off at the end
-# Settings (environment): PAIRS (40000000) read pairs to time; THREADS (half and all cores); REPS (3);
-#   POWER_OFF=0 keeps a `full` machine on; MAX_MIN (720) powers it off after that many minutes whatever happens;
-#   VERIFY=1 runs `PARANOID=1 verify.sh` at the end (adds an hour or more).
+# Settings (environment variables, all optional):
+#   PAIRS      read pairs to time                    (default 40000000)
+#   THREADS    thread counts to time, e.g. "8 16"    (default: half and all cores)
+#   REPS       runs per tool and thread count        (default 3)
+#   POWER_OFF  0 keeps a `full` machine on           (default 1)
+#   MAX_MIN    a `full` machine powers off after this many minutes whatever happens (default 720)
+#   VERIFY     1 runs `PARANOID=1 verify.sh` at the end (adds an hour or more)    (default 0)
 # Stops at the first failing step. Result: DIR/results.tgz = all.log, timing.tsv, compare.txt, threads.log, verify.log.
 # Files already in DIR (genome, reads, indexes, minibwa, venv) are used as they are, not fetched or built again.
+# The two read sets: `reads` (PAIRS pairs, timed) and `sample` (the first 1M pairs of reads, compared with minibwa).
 set -euo pipefail
-MODE=$1; mkdir -p "$2"; W=$(cd "$2" && pwd); cd "$(dirname "$0")/../.."; B=Testing/bench
+
+if [ $# != 2 ]; then
+  echo "usage: bash Testing/bench/bench.sh tiny|full DIR"
+  exit 1
+fi
+MODE=$1
+if [ "$MODE" != tiny ] && [ "$MODE" != full ]; then
+  echo "usage: bash Testing/bench/bench.sh tiny|full DIR"
+  exit 1
+fi
+mkdir -p "$2"
+W=$(cd "$2" && pwd)
+cd "$(dirname "$0")/../.."
+B=Testing/bench
 CORES=$(getconf _NPROCESSORS_ONLN)
-case $MODE in
-tiny) THREADS=${THREADS:-2};                       REPS=${REPS:-1}; POWER_OFF=0 ;;
-full) THREADS=${THREADS:-"$((CORES / 2)) $CORES"}; REPS=${REPS:-3}; POWER_OFF=${POWER_OFF:-1} ;;
-esac
-PAIRS=${PAIRS:-40000000}
+
+# ---- settings: the environment variable if it is set, otherwise the default ----
+if [ -z "${PAIRS:-}" ]; then PAIRS=40000000; fi
+if [ -z "${MAX_MIN:-}" ]; then MAX_MIN=720; fi
+if [ -z "${VERIFY:-}" ]; then VERIFY=0; fi
+if [ "$MODE" = tiny ]; then
+  if [ -z "${THREADS:-}" ]; then THREADS=2; fi
+  if [ -z "${REPS:-}" ]; then REPS=1; fi
+  POWER_OFF=0                                     # a tiny run never powers the machine off
+else
+  if [ -z "${THREADS:-}" ]; then THREADS="$((CORES / 2)) $CORES"; fi
+  if [ -z "${REPS:-}" ]; then REPS=3; fi
+  if [ -z "${POWER_OFF:-}" ]; then POWER_OFF=1; fi
+fi
+MAX_THREADS=0                                     # the largest number in THREADS
+for t in $THREADS; do                             # (unquoted on purpose: one word per thread count)
+  if [ "$t" -gt "$MAX_THREADS" ]; then MAX_THREADS=$t; fi
+done
 
 # ---- 0. logging, and what happens when the script ends (also when a step fails) ----
 exec > "$W/all.log" 2>&1                          # everything below goes to all.log; watch it with: tail -f DIR/all.log
@@ -29,49 +60,80 @@ sample_threads() {
 sample_threads > "$W/threads.log" &
 SAMPLER=$!
 finish() {
-  echo "EXIT CODE $?"; date; kill $SAMPLER
+  EXIT_CODE=$?                                    # how the script ended; must be the first line here
+  set +e                                          # from here on nothing may stop the packing and the power off
+  echo "EXIT CODE $EXIT_CODE"
+  date
+  kill "$SAMPLER"
   cd "$W"
-  touch timing.tsv compare.txt verify.log
+  touch timing.tsv compare.txt verify.log         # so that tar finds all five files, also after an early failure
   tar czf results.tgz all.log threads.log timing.tsv compare.txt verify.log
   if [ "$POWER_OFF" = 1 ]; then sudo shutdown -h now; fi
 }
 trap finish EXIT
-if [ "$POWER_OFF" = 1 ]; then sudo shutdown -h +"${MAX_MIN:-720}"; fi
-date; git rev-parse HEAD; echo "cores $CORES, threads $THREADS, reps $REPS"
+if [ "$POWER_OFF" = 1 ]; then
+  sudo -n true                                    # fails at once if sudo would ask for a password
+  sudo shutdown -h +"$MAX_MIN"                    # the 12-hour backstop; the normal power off is in finish
+fi
+date
+git rev-parse HEAD
+git status --short                                # lists files changed since that commit (nothing is the normal case)
+uname -m
+echo "cores $CORES, threads $THREADS, reps $REPS"
 
-# ---- a `full` run needs about 60 GB in DIR (genome, two indexes, reads, build); stop now if the disk is too small ----
+# ---- a `full` run needs about 60 GB in DIR (genome, two indexes, reads, build); stop now if less than 80 GB are free ----
 if [ "$MODE" = full ]; then
-  FREE_GB=$(df --output=avail -BG "$W" | tail -1 | tr -dc '0-9')
-  echo "free disk in $W: $FREE_GB GB"
-  [ "$FREE_GB" -ge 80 ]
+  if [ "$CORES" -lt 4 ]; then echo "FAIL: need at least 4 cores"; exit 1; fi
+  if [ "$(uname -m)" != x86_64 ]; then echo "FAIL: minibwa is built here with SSE4.2, needs an x86_64 machine"; exit 1; fi
+  FREE_KB=$(df --output=avail -k "$W" | tail -1 | tr -d ' ')
+  echo "free disk in $W: $((FREE_KB / 1000000)) GB"
+  if [ "$FREE_KB" -lt 80000000 ]; then echo "FAIL: less than 80 GB free"; exit 1; fi
 fi
 
 # ---- 1. tools: system packages, Lean and our aligner, minibwa at the paper's commit, pysam ----
 if [ "$MODE" = full ]; then
   sudo apt-get update
+  # DEBIAN_FRONTEND and NEEDRESTART_MODE make apt install without asking questions
   sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv bubblewrap
   # `lake check --paranoid` (in verify.sh) runs in a bubblewrap sandbox, which needs unprivileged user namespaces
   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-  lscpu; free -g
+  lscpu
+  free -g
 fi
-[ -x "$HOME/.elan/bin/lake" ] || curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+if [ ! -x "$HOME/.elan/bin/lake" ]; then
+  curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+fi
 export PATH=$HOME/.elan/bin:$PATH
 lake build lean-align
-[ -x "$W/minibwa/minibwa" ] || { git clone https://github.com/lh3/minibwa "$W/minibwa"; (cd "$W/minibwa" && git checkout c07de5c && make); }
-[ -x "$W/venv/bin/python" ] || { python3 -m venv "$W/venv"; "$W/venv/bin/pip" install pysam; }
+if [ ! -x "$W/minibwa/minibwa" ]; then
+  git clone https://github.com/lh3/minibwa "$W/minibwa"
+  git -C "$W/minibwa" checkout c07de5c
+  make -C "$W/minibwa"
+fi
+if [ ! -x "$W/venv/bin/python" ]; then
+  python3 -m venv "$W/venv"
+  "$W/venv/bin/pip" install pysam==0.24.1
+fi
 PY=$W/venv/bin/python
+"$PY" --version
+"$PY" -c "import pysam; print('pysam', pysam.__version__)"
+git -C "$W/minibwa" rev-parse HEAD
 
-# ---- 2. data: genome.fa, reads_R{1,2}.fq.gz (timed), cmp_R{1,2}.fq.gz (compared, at most 1M pairs) ----
+# ---- 2. data: genome.fa, reads_R{1,2}.fq.gz (timed), sample_R{1,2}.fq.gz (compared, at most 1M pairs) ----
 if [ "$MODE" = tiny ]; then
   python3 $B/tiny_data.py "$W"
 else
   # hg38 in upper case for both tools (lower case marks repeats; the spec compares letters exactly)
   if [ ! -s "$W/genome.fa" ]; then
     curl -sSfL https://ngi-igenomes.s3.amazonaws.com/igenomes/Homo_sapiens/UCSC/hg38/Sequence/WholeGenomeFasta/genome.fa \
-      | awk '/^>/{print; next}{print toupper($0)}' > "$W/genome.fa"
+      | awk '/^>/{print; next}{print toupper($0)}' > "$W/genome.fa.tmp"
+    mv "$W/genome.fa.tmp" "$W/genome.fa"
+    GENOME_BASES=$(grep -v '^>' "$W/genome.fa" | tr -d '\n' | wc -c)
+    echo "genome.fa: $GENOME_BASES letters"
+    if [ "$GENOME_BASES" -lt 3000000000 ]; then echo "FAIL: genome.fa has fewer than 3 billion letters"; exit 1; fi
   fi
-  # the first PAIRS pairs of the minibwa paper's reads. head closes the pipe early, so the pipeline's exit code is ignored;
-  # the line counts are checked in section 3.
+  # the first PAIRS pairs of the minibwa paper's reads. head closes the pipe early, which makes the pipeline
+  # report an error even when it worked, so the exit code is ignored here; section 3 counts the lines instead.
   NOVA=https://storage.googleapis.com/brain-genomics-public/research/sequencing/fastq/novaseq/wgs_pcr_free/30x/HG002.novaseq.pcr-free.30x
   for r in 1 2; do
     if [ ! -s "$W/reads_R$r.fq.gz" ]; then
@@ -80,36 +142,54 @@ else
   done
 fi
 for r in 1 2; do
-  gzip -dc "$W/reads_R$r.fq.gz" | head -n 4000000 | gzip -c > "$W/cmp_R$r.fq.gz" || true
+  gzip -dc "$W/reads_R$r.fq.gz" | head -n 4000000 | gzip -c > "$W/sample_R$r.fq.gz" || true      # same reason for `|| true`
 done
 
-# ---- 3. both mates must have the same number of reads; count the letters (the Gbp in Gbp/hr) ----
-for s in reads cmp; do
-  n1=$(gzip -dc "$W/${s}_R1.fq.gz" | wc -l); n2=$(gzip -dc "$W/${s}_R2.fq.gz" | wc -l)
+# ---- 3. line counts (the pipelines above ignored their exit codes); count the letters (the Gbp in Gbp/hr) ----
+for s in reads sample; do
+  n1=$(gzip -dc "$W/${s}_R1.fq.gz" | wc -l)
+  n2=$(gzip -dc "$W/${s}_R2.fq.gz" | wc -l)
   echo "$s: $((n1 / 4)) and $((n2 / 4)) pairs"
-  [ "$n1" = "$n2" ]
-  [ "$MODE" = tiny ] || [ "$s" = cmp ] || [ "$n1" = $((4 * PAIRS)) ]
+  if [ "$n1" != "$n2" ]; then echo "FAIL: the two mates have different numbers of lines"; exit 1; fi
+  if [ "$n1" = 0 ]; then echo "FAIL: no reads"; exit 1; fi
+  if [ "$s" = reads ]; then
+    READS_LINES=$n1
+    if [ "$MODE" = full ] && [ "$n1" != $((4 * PAIRS)) ]; then echo "FAIL: expected $PAIRS pairs"; exit 1; fi
+  else
+    EXPECTED=$READS_LINES                          # sample = the first 1M pairs of reads, or all of reads if that is less
+    if [ "$EXPECTED" -gt 4000000 ]; then EXPECTED=4000000; fi
+    if [ "$n1" != "$EXPECTED" ]; then echo "FAIL: sample should have $EXPECTED lines"; exit 1; fi
+  fi
   gzip -dc "$W/${s}_R1.fq.gz" "$W/${s}_R2.fq.gz" | awk 'NR%4==2{n+=length($0)} END{print n}' > "$W/$s.bases"
 done
 
 # ---- 4. indexes ----
-[ -s "$W/ours.idx" ] || .lake/build/bin/lean-align build "$W/genome.fa" "$W/ours.idx"
-[ -s "$W/mb.mbw" ]   || "$W/minibwa/minibwa" index -t "$CORES" "$W/genome.fa" "$W/mb"
+if [ ! -s "$W/ours.idx" ]; then .lake/build/bin/lean-align build "$W/genome.fa" "$W/ours.idx"; fi
+if [ ! -s "$W/mb.mbw" ];   then "$W/minibwa/minibwa" index -t "$CORES" "$W/genome.fa" "$W/mb"; fi
 
 # ---- 5. timing: one tool at a time, output thrown away, one line per run ----
 printf "tool\tthreads\tset\twall_s\tcpu_s\tpeak_GB\tGbp\tGbp/hr\tGbp/core-hr\n" > "$W/timing.tsv"
-for t in $THREADS; do for i in $(seq "$REPS"); do for tool in ours minibwa; do
-  $PY $B/time_one.py $tool "$t" "$W" reads >> "$W/timing.tsv"
-done; done; done
+for t in $THREADS; do
+  for i in $(seq "$REPS"); do
+    for tool in ours minibwa; do
+      $PY $B/time_one.py $tool "$t" "$W" reads >> "$W/timing.tsv"
+    done
+  done
+done
 cat "$W/timing.tsv"
 
-# ---- 6. agreement on the cmp set: both SAM files kept, then compared ----
-for t in $THREADS; do LAST=$t; done                  # the largest thread count
-$PY $B/time_one.py ours    "$LAST" "$W" cmp "$W/ours.sam"
-$PY $B/time_one.py minibwa "$LAST" "$W" cmp "$W/minibwa.sam"
+# ---- 6. agreement on the sample: both SAM files kept, then compared ----
+$PY $B/time_one.py ours    "$MAX_THREADS" "$W" sample "$W/ours.sam"
+$PY $B/time_one.py minibwa "$MAX_THREADS" "$W" sample "$W/minibwa.sam"
 $PY $B/compare.py "$W/ours.sam" "$W/minibwa.sam" > "$W/compare.txt"
 cat "$W/compare.txt"
-if [ "$MODE" = tiny ]; then    # on the unique genome the two files must be the same in columns 1-11 (name ... quality)
+if [ "$MODE" = tiny ]; then
+  # first line of compare.txt is "N of M = P % pairs we map (both mates)": at least 99 % of the pairs must be mapped
+  read -r MAPPED WORD_OF TOTAL REST < "$W/compare.txt"
+  if [ $((MAPPED * 100)) -lt $((TOTAL * 99)) ]; then echo "FAIL: we map only $MAPPED of $TOTAL pairs"; exit 1; fi
+  # the read names hold the true position: every mate must be where it was cut from
+  $PY $B/tiny_truth.py "$W/ours.sam"
+  # on the unique genome the two files must be the same in columns 1-11 (name ... quality)
   grep -v '^@' "$W/ours.sam"    | cut -f1-11 > "$W/ours.cols"
   grep -v '^@' "$W/minibwa.sam" | cut -f1-11 > "$W/minibwa.cols"
   cmp "$W/ours.cols" "$W/minibwa.cols"
@@ -118,7 +198,7 @@ fi
 echo "BENCH DONE"
 
 # ---- 7. optional: the full verification in the same run (VERIFY=1); its output is DIR/verify.log ----
-if [ "${VERIFY:-0}" = 1 ]; then
+if [ "$VERIFY" = 1 ]; then
   PARANOID=1 bash $B/verify.sh "$W" > "$W/verify.log" 2>&1
   tail -5 "$W/verify.log"
 fi

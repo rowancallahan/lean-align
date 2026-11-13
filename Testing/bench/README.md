@@ -7,6 +7,7 @@
 | `time_one.py` | times one run of one tool (called by both scripts) |
 | `compare.py` | counts read pairs on which our SAM and minibwa's agree |
 | `tiny_data.py` | makes a small genome and read pairs with a known answer |
+| `tiny_truth.py` | checks that every mate of the small data is at the position its name says |
 | `mirror_check.py` | the copies of the Spec in `Proofs/` say the same as `Spec/`; no forbidden words |
 | `fuzz_hg38.py` | simulated hg38 pairs through both tools; none of our claims may be false |
 
@@ -17,7 +18,7 @@ The scripts call each other, `lake`, the two aligners and standard tools. Nothin
     bash Testing/bench/verify.sh ~/la-verify
 
 Last line `VERIFY PASSED`: frozen Spec hashes, full `lake build`, the seven main theorems on the three standard
-axioms, and the small genome mapped identically to minibwa in columns 1-11.
+axioms, and the small genome mapped at the true positions and identically to minibwa in columns 1-11.
 
 ## Server (Ubuntu 24.04, 150 GB disk, shutdown behaviour Stop)
 

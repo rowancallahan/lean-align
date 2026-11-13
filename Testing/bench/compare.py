@@ -8,6 +8,9 @@ Starts can differ without a real disagreement: we trim low-quality ends, minibwa
 import sys
 import pysam
 
+assert sys.version_info >= (3, 10), "needs Python 3.10 or newer (zip with strict=True)"
+assert len(sys.argv) == 3, __doc__
+
 
 def read_pairs(path):
     """Gives (mate1, mate2) for each read pair, in file order."""
@@ -62,29 +65,38 @@ for (o1, o2), (m1, m2) in zip(read_pairs(sys.argv[1]), read_pairs(sys.argv[2]), 
     they_mapped = mapped(m1, m2)
     we_unique = we_mapped and o1.get_tag("XU") == "unique" and o2.get_tag("XU") == "unique"
     they_mapq60 = they_mapped and m1.mapping_quality >= 60 and m2.mapping_quality >= 60
-    ours_mapped += we_mapped
-    minibwa_mapped += they_mapped
-    ours_unique += we_unique
-    minibwa_mapq60 += they_mapq60
+    if we_mapped:
+        ours_mapped += 1
+    if they_mapped:
+        minibwa_mapped += 1
+    if we_unique:
+        ours_unique += 1
+    if they_mapq60:
+        minibwa_mapq60 += 1
     if not (we_mapped and they_mapped):
         continue
     both_mapped += 1
     pair_matches = match(o1, m1) and match(o2, m2)
-    both_mapped_match += pair_matches
-    both_mapped_identical += identical(o1, m1) and identical(o2, m2)
+    if pair_matches:
+        both_mapped_match += 1
+    if identical(o1, m1) and identical(o2, m2):
+        both_mapped_identical += 1
     if we_unique:
         unique_and_minibwa_mapped += 1
-        unique_and_minibwa_mapped_match += pair_matches
+        if pair_matches:
+            unique_and_minibwa_mapped_match += 1
         if not pair_matches and len(examples) < 10:
             examples.append((o1.query_name, o1.reference_name, o1.reference_start,
                              m1.reference_name, m1.reference_start, m1.mapping_quality))
     if we_unique and they_mapq60:
         unique_and_mapq60 += 1
-        unique_and_mapq60_match += pair_matches
+        if pair_matches:
+            unique_and_mapq60_match += 1
 
 
 def show(label, count, out_of):
-    percent = round(100 * count / max(out_of, 1), 2)
+    assert out_of > 0, label
+    percent = round(100 * count / out_of, 2)
     print(count, "of", out_of, "=", percent, "%", label)
 
 
