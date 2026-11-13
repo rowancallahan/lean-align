@@ -12,6 +12,7 @@ PARANOID=${PARANOID:-0}
 
 echo "== 1. the specification files are the frozen ones"
 sha256sum -c Spec/FROZEN.sha256
+(cd Aligner/trimmer && sha256sum -c FROZEN_CONTRACT.sha256)
 
 echo "== 2. everything builds: every proof is checked by Lean"
 if [ "$PARANOID" = 1 ]; then rm -rf .lake/build; fi          # paranoid: no cached result is trusted
@@ -63,9 +64,39 @@ if [ "$PARANOID" = 1 ]; then
   echo "== 8. hg38 fuzz against minibwa: none of our claims is false (rules A-D must be 0)"
   python3 $B/fuzz_hg38.py "$W/genome.fa" .lake/build/bin/lean-align "$W/ours.idx" "$W/minibwa/minibwa" "$W/mb" \
     "$W/fuzz" 10000 "$T"
-  echo "== 9. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
-  echo "      and the other bundled checkers (leanchecker-paranoid, lean4lean, nanoda, con-leche, con-ron);"
-  echo "      it fails on any axiom other than the three standard ones. Needs bubblewrap; nanoda needs a lot of memory."
+
+  echo "== 9. the kernel, core and trimmer certificates use the three standard axioms only"
+  # Lean may break an axiom list over several lines, so the output is joined into one line first.
+  # Every axiom named in every "depends on axioms: [...]" list must be propext, Classical.choice or Quot.sound.
+  for c in \
+    Aligner/kernels/band/Certificate.lean \
+    Aligner/kernels/gotoh/Certificate.lean \
+    Aligner/kernels/wfa/Certificate.lean \
+    Aligner/kernels/wfa_fast/Certificate.lean \
+    Aligner/kernels/wfa_offsets/Certificate.lean \
+    Aligner/kernels/wfa_runs/Certificate.lean \
+    Aligner/kernels/wfa_small_errors/Certificate.lean \
+    Aligner/kernels/wfa_u32/Certificate.lean \
+    Proofs/core/Certificate.lean \
+    Aligner/trimmer/Certificate.lean \
+    Proofs/core/Cli.lean \
+    Proofs/core/Run.lean \
+    Aligner/trimmer/ReadWindowProofAudit.lean
+  do
+    echo "$c"
+    lake env lean "$c" > "$W/cert.txt"
+    tr -s ' \n' ' ' < "$W/cert.txt" | grep -o 'depends on axioms: \[[^]]*\]' > "$W/cert_lists.txt"
+    [ "$(grep -c . "$W/cert_lists.txt")" -gt 0 ]
+    sed 's/.*\[//; s/\]//; s/, /\n/g' "$W/cert_lists.txt" > "$W/cert_names.txt"
+    [ -z "$(grep -vx -e propext -e Classical.choice -e Quot.sound "$W/cert_names.txt" || true)" ]
+  done
+
+  echo "== 10. the certified-kernel check file elaborates"
+  lake env lean Testing/checks/CheckCertified.lean
+
+  echo "== 11. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
+  echo "       and the other bundled checkers (leanchecker-paranoid, lean4lean, nanoda, con-leche, con-ron);"
+  echo "       it fails on any axiom other than the three standard ones. Needs bubblewrap; nanoda needs a lot of memory."
   lake check --paranoid
 fi
 echo "VERIFY PASSED"

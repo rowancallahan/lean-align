@@ -145,13 +145,13 @@ class Simulator:
         self.q_match_sd = []
         self.q_error = []
         self.q_error_sd = []
-        for p in range(RL + 10):
-            x = min(p, RL - 1) / (RL - 1)
-            self.sub_rate.append(interpolate(x, [0, 0.66, 1], [s0, sm, s1]) if p < RL else s1)
-            self.q_match.append(interpolate(x, [0, 1], [40, 39.5]) if p < RL else 39.5)
-            self.q_match_sd.append(interpolate(x, [0, 1], [0.05, 10]) if p < RL else 10)
-            self.q_error.append(interpolate(x, [0, 1], [40, 30]) if p < RL else 30)
-            self.q_error_sd.append(interpolate(x, [0, 1], [3, 15]) if p < RL else 15)
+        for p in range(RL):                                   # read() uses positions 0 .. RL - 1 only
+            x = p / (RL - 1)
+            self.sub_rate.append(interpolate(x, [0, 0.66, 1], [s0, sm, s1]))
+            self.q_match.append(interpolate(x, [0, 1], [40, 39.5]))
+            self.q_match_sd.append(interpolate(x, [0, 1], [0.05, 10]))
+            self.q_error.append(interpolate(x, [0, 1], [40, 30]))
+            self.q_error_sd.append(interpolate(x, [0, 1], [3, 15]))
         total = 0
         for c in CHROMS:
             total = total + c[2]
@@ -217,7 +217,7 @@ class Simulator:
                 good = int(clip(round(self.q_match[i] + rng.gauss(0, 1) * self.q_match_sd[i]), 2, 40))
                 bad = int(clip(round(self.q_error[i] + rng.gauss(0, 1) * self.q_error_sd[i]), 2, 40))
             else:
-                x = min(i, RL - 1) / (RL - 1)
+                x = i / (RL - 1)
                 good = int(clip(round(37 - 7 * x * x + rng.gauss(0, 1.5)), 26, 41))
                 bad = rng.randint(2, 15)
             if rng.random() < self.d:                             # an indel in the read
@@ -248,9 +248,8 @@ class Simulator:
 
 
 def reference_position(segments, hi):
-    """The reference offset of haplotype offset hi."""
-    if hi < 0:
-        return 0
+    """The reference offset of haplotype offset hi (hi >= 0)."""
+    assert hi >= 0
     best = None
     for h, r in segments:
         if h <= hi:
@@ -308,7 +307,7 @@ def load_sam(path):
         for t in f[11:]:
             tags[t[:2]] = t[5:]
         mate = 1 if flag & 64 else 2
-        records[(f[0], mate)] = {"chr": f[2], "pos": int(f[3]) - 1, "mapq": int(f[4]), "cigar": f[5], "seq": f[9],
+        records[(f[0], mate)] = {"chr": f[2], "pos": int(f[3]) - 1, "cigar": f[5], "seq": f[9],
                                  "tags": tags, "mapped": not (flag & 4), "rev": bool(flag & 16)}
     return records
 
@@ -422,14 +421,6 @@ def minibwa_window(o, m):
     return sub, m["seq"]
 
 
-def reference_length(cigar):
-    n = 0
-    for count, op in cigar_ops(cigar):
-        if op in "MD":
-            n = n + count
-    return n
-
-
 def check_rules(ours_sam, mb_sam, counts_by_seed):
     ours = load_sam(ours_sam)
     mb = load_sam(mb_sam)
@@ -478,7 +469,8 @@ def check_rules(ours_sam, mb_sam, counts_by_seed):
         if O[1]["tags"].get("XU") == "unique" and O[1]["mapped"] and O[2]["mapped"]:
             ours_pair = []
             for k in (1, 2):
-                ours_pair.append((O[k]["chr"], O[k]["pos"], O[k]["pos"] + reference_length(O[k]["cigar"]), O[k]["rev"]))
+                sp = span_of(columns_of(O[k]["cigar"], O[k]["pos"]))
+                ours_pair.append((O[k]["chr"], sp[0], sp[1], O[k]["rev"]))
             ours_score = int(O[1]["tags"]["AS"]) + int(O[2]["tags"]["AS"])
             if (mb_pair == ours_pair and total > ours_score) or (mb_pair != ours_pair and total >= ours_score):
                 counts[RULES[3]] = counts[RULES[3]] + 1
