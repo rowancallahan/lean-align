@@ -1,0 +1,19 @@
+-- all pairs: 10000 pairs
+   lean-align: both mates mapped 98.15%  pair-correct (overlap>=10%) 94.98%  pair-correct (start within 10 bp) 87.16%
+   minibwa: both mates mapped 100.00%  pair-correct (overlap>=10%) 97.89%  pair-correct (start within 10 bp) 97.88%
+-- pairs with no N in either mate: 8019 pairs
+   lean-align: both mates mapped 98.28%  pair-correct (overlap>=10%) 95.19%  pair-correct (start within 10 bp) 95.19%
+   minibwa: both mates mapped 100.00%  pair-correct (overlap>=10%) 97.87%  pair-correct (start within 10 bp) 97.86%
+-- pairs with an N in either mate: 1981 pairs
+   lean-align: both mates mapped 97.63%  pair-correct (overlap>=10%) 94.14%  pair-correct (start within 10 bp) 54.67%
+   minibwa: both mates mapped 100.00%  pair-correct (overlap>=10%) 97.98%  pair-correct (start within 10 bp) 97.98%
+
+-- reads wrong (overlap rule) at ours MAPQ 60 (proper pair):
+2 reads in pairs ['simulated.4253']
+pair simulated.4253: ours proper=True
+  mate 1: truth chr4:122652778 150M | ours chrX:82491320 149M len(seq)=149 MAPQ 60 AS 0 XB 0 XU unique | minibwa chr4:122652778 150M MAPQ 39 | spec score of our window: at true place 0, at ours 0
+  mate 2: truth chr4:122652607 150M | ours chrX:82491215 83M len(seq)=83 MAPQ 60 AS 0 XB 0 XU unique | minibwa chr4:122652607 150M MAPQ 49 | spec score of our window: at true place -4, at ours 0
+  pair total of our windows: at true place -4, at ours 0
+
+N letters in reads (truth orientation): 2234; at a reference N at the true position: 1; not: 2233
+reference letters in the FASTA given to mason (first 5 Mb of chr1 sample): [('T', 13921), ('A', 12586), ('G', 11929), ('C', 11564)]
