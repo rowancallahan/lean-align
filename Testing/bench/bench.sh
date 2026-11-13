@@ -37,6 +37,13 @@ trap finish EXIT
 if [ "$POWER_OFF" = 1 ]; then sudo shutdown -h +"${MAX_MIN:-720}"; fi
 date; git rev-parse HEAD; echo "cores $CORES, threads $THREADS, reps $REPS"
 
+# ---- a `full` run needs about 60 GB in DIR (genome, two indexes, reads, build); stop now if the disk is too small ----
+if [ "$MODE" = full ]; then
+  FREE_GB=$(df --output=avail -BG "$W" | tail -1 | tr -dc '0-9')
+  echo "free disk in $W: $FREE_GB GB"
+  [ "$FREE_GB" -ge 80 ]
+fi
+
 # ---- 1. tools: system packages, Lean and our aligner, minibwa at the paper's commit, pysam ----
 if [ "$MODE" = full ]; then
   sudo apt-get update
