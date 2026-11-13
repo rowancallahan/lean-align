@@ -4,6 +4,7 @@
 #   nohup bash Testing/bench/bench.sh full DIR > ~/bench.out 2>&1 &     server: hg38 + NovaSeq reads, powers off at the end
 # Settings (environment variables, all optional):
 #   PAIRS      read pairs to time                    (default 40000000)
+#   WHOLE      1: save the whole reads files to disk first (52 GB), then cut PAIRS from disk; PAIRS=all times every pair   (default 0)
 #   THREADS    thread counts to time, e.g. "8 16"    (default: a quarter, half and all of the cores)
 #   REPS       runs per tool and thread count        (default 3)
 #   POWER_OFF  0 keeps a `full` machine on           (default 1)
@@ -32,6 +33,8 @@ CORES=$(getconf _NPROCESSORS_ONLN)
 # ---- settings: the environment variable if it is set, otherwise the default ----
 if [ -z "${PAIRS:-}" ]; then PAIRS=40000000; fi
 if [ -z "${MAX_MIN:-}" ]; then MAX_MIN=720; fi
+if [ -z "${WHOLE:-}" ]; then WHOLE=0; fi          # 1: download the whole reads files to disk (52 GB), then cut PAIRS from disk
+if [ "$PAIRS" = all ] && [ "$WHOLE" != 1 ]; then echo "PAIRS=all needs WHOLE=1"; exit 1; fi
 if [ -z "${VERIFY:-}" ]; then VERIFY=0; fi
 if [ -z "${MIN_GB:-}" ]; then MIN_GB=80; fi       # lower it for a re-run in a folder that already holds the big files
 if [ "$MODE" = tiny ]; then
@@ -136,11 +139,24 @@ else
     echo "genome.fa: $GENOME_BASES letters"
     if [ "$GENOME_BASES" -lt 3000000000 ]; then echo "FAIL: genome.fa has fewer than 3 billion letters"; exit 1; fi
   fi
-  # the first PAIRS pairs of the minibwa paper's reads. head closes the pipe early, which makes the pipeline
-  # report an error even when it worked, so the exit code is ignored here; section 3 counts the lines instead.
+  # the minibwa paper's reads (two files, 25.7 GB and 26.6 GB).
   NOVA=https://storage.googleapis.com/brain-genomics-public/research/sequencing/fastq/novaseq/wgs_pcr_free/30x/HG002.novaseq.pcr-free.30x
   for r in 1 2; do
-    if [ ! -s "$W/reads_R$r.fq.gz" ]; then
+    if [ "$WHOLE" = 1 ] && [ ! -s "$W/whole_R$r.fq.gz" ]; then
+      # the whole file to disk first. -C - continues a partial download, so after a dropped connection run again.
+      curl -sSfL -C - -o "$W/whole_R$r.fq.gz.part" "$NOVA.R$r.fastq.gz"
+      mv "$W/whole_R$r.fq.gz.part" "$W/whole_R$r.fq.gz"
+    fi
+    if [ -s "$W/reads_R$r.fq.gz" ]; then continue; fi
+    if [ "$PAIRS" = all ]; then
+      ln -s "whole_R$r.fq.gz" "$W/reads_R$r.fq.gz"
+      continue
+    fi
+    # the first PAIRS pairs. head closes the pipe early, which makes the pipeline report an error even when it
+    # worked, so the exit code is ignored here; section 3 counts the lines instead.
+    if [ "$WHOLE" = 1 ]; then
+      gzip -dc "$W/whole_R$r.fq.gz" | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
+    else
       curl -sSfL "$NOVA.R$r.fastq.gz" | gzip -dc | head -n $((4 * PAIRS)) | pigz -c > "$W/reads_R$r.fq.gz" || true
     fi
   done
@@ -158,7 +174,7 @@ for s in reads sample; do
   if [ "$n1" = 0 ]; then echo "FAIL: no reads"; exit 1; fi
   if [ "$s" = reads ]; then
     READS_LINES=$n1
-    if [ "$MODE" = full ] && [ "$n1" != $((4 * PAIRS)) ]; then echo "FAIL: expected $PAIRS pairs"; exit 1; fi
+    if [ "$MODE" = full ] && [ "$PAIRS" != all ] && [ "$n1" != $((4 * PAIRS)) ]; then echo "FAIL: expected $PAIRS pairs"; exit 1; fi
   else
     EXPECTED=$READS_LINES                          # sample = the first 1M pairs of reads, or all of reads if that is less
     if [ "$EXPECTED" -gt 4000000 ]; then EXPECTED=4000000; fi
