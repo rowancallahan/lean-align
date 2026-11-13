@@ -36,7 +36,13 @@ echo "== 2. everything builds: every proof is checked by Lean"
 if [ "$PARANOID" = 1 ]; then
   rm -rf .lake/build                              # paranoid: no cached result is trusted
 fi
-lake build
+lake build 2>&1 | tee "$W/build.log"
+# `lake build` succeeds when a proof ends in `sorry` (it only warns). The Spec/ files have `sorry` by design (the holes);
+# a `sorry` anywhere else would not show in step 3 if no main theorem uses it, so any other one fails here.
+if grep 'declaration uses `sorry`' "$W/build.log" | grep -v '^warning: Spec/'; then
+  echo "FAIL: a declaration outside Spec/ uses sorry (listed above)"
+  exit 1
+fi
 
 echo "== 3. the main theorems depend on the three standard axioms only (a 'sorry' anywhere below them would show as sorryAx)"
 cat > "$W/axioms.lean" <<'LEAN'
