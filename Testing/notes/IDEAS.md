@@ -519,3 +519,17 @@ Not started. A question for the to-do list.
   `process_correct`. The mapping proofs are untouched (they see the same trimmed letters).
 - Speed: not a gain. Alignment still runs on the kept part; the output gets longer (whole reads), so slightly more
   bytes to write.
+
+## 10. For 32+ cores: read both FASTQ files at once (Rowan, 2026-11-13; not done, may go with section 9 and local alignment)
+
+`nextChunks` in `Main.lean` reads 8 MB from file 1, then 8 MB from file 2. While it waits on one file the other
+gunzip is blocked on a full pipe, so the two gunzips take turns. Steps, cheapest first; check the 16-thread
+numbers before any of them:
+
+1. `nextChunks` reads the two chunks at the same time (one as a task). About 3 lines in `Main.lean` (Rowan's file).
+   Same pair of chunks, so `process_correct` applies unchanged.
+2. A faster gunzip in the benchmark for both tools (igzip or a libdeflate gunzip: 2-3x on one core; rapidgzip: many cores).
+3. Split the FASTQ parse inside `Total.process` (per file, or in the workers). No `Main` change, needs a proof of
+   equality with the current parse. Only if the reader is still the limit after 1 and 2.
+
+Estimates only: linear scaling at 32 threads needs about 540 Gbp/hr; the reader tops out around 365-450.
