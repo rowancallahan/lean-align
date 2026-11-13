@@ -195,7 +195,16 @@ done
 
 # ---- 4. indexes ----
 if [ ! -s "$W/ours.idx" ]; then .lake/build/bin/lean-align build "$W/genome.fa" "$W/ours.idx"; fi
-if [ ! -s "$W/mb.mbw" ];   then "$W/minibwa/minibwa" index -t "$CORES" "$W/genome.fa" "$W/mb"; fi
+if [ ! -s "$W/mb.mbw" ]; then
+  # minibwa's default index build needs about 60 GB for hg38 and is killed on a smaller machine. -l is its
+  # low-memory method: one thread, slower, the same index bytes (compared on the small genome).
+  RAM_GB=$(awk '/MemTotal/ {print int($2 / 1000000)}' /proc/meminfo)
+  if [ "$RAM_GB" -ge 96 ]; then
+    "$W/minibwa/minibwa" index -t "$CORES" "$W/genome.fa" "$W/mb"
+  else
+    "$W/minibwa/minibwa" index -l "$W/genome.fa" "$W/mb"
+  fi
+fi
 
 # ---- 5. timing: one tool at a time, output thrown away, one line per run ----
 printf "tool\tthreads\tset\twall_s\tcpu_s\tpeak_GB\tGbp\tGbp/hr\tGbp/core-hr\n" > "$W/timing.tsv"
