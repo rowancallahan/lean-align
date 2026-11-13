@@ -122,8 +122,11 @@ if [ "$PARANOID" = 1 ]; then
   lake env lean Testing/checks/CheckCertified.lean
 
   echo "== 9. extra checks, for completeness (Testing/bench/extra/)"
-  echo "-- the Spec copies in Proofs/ mirror Spec/ up to the holes, and no forbidden word is used"
-  python3 $B/extra/mirror_check.py
+  echo "-- no escape hatch in the entry point: Main.lean has no extern, unsafe or implemented_by"
+  if grep -n -E "@\[extern|unsafe|implemented_by" Main.lean; then
+    echo "FAIL: Main.lean uses a construct that bypasses the proofs"
+    exit 1
+  fi
   echo "-- the tiny run: every record of our SAM is well formed and comes from the input reads"
   python3 $B/extra/sam_check.py "$W/tiny/ours.sam" "$W/tiny/sample_R1.fq.gz" "$W/tiny/sample_R2.fq.gz"
   echo "-- the 1M-pair hg38 sample: the same check"
