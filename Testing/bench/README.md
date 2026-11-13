@@ -5,7 +5,7 @@
 | `bench.sh` | the benchmark, top to bottom: tools, data, indexes, timing, agreement with minibwa, results, power off |
 | `verify.sh` | is this checkout proved and does it give the right output; `PARANOID=1` for the slow, thorough checks |
 | `time_one.py` | times one run of one tool (called by both scripts) |
-| `compare.py` | counts read pairs on which our SAM and minibwa's agree, and checks every record of our SAM for basic sanity |
+| `compare.py` | on real reads: where we say unique and minibwa gives MAPQ 60, are the pairs in the same place and at the same positions letter for letter; also basic sanity of every record of our SAM |
 | `tiny_data.py` | makes a small genome and read pairs with a known answer, and checks that our SAM puts every mate there |
 | `comparator_*.json` | six settings files for `lake comparator`, one per Spec file with holes: Spec file = the challenge, Proofs file = the solution |
 
