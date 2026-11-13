@@ -43,7 +43,7 @@ date; git rev-parse HEAD; echo "cores $CORES, threads $THREADS, reps $REPS"
 if [ "$MODE" = full ]; then
   FREE_GB=$(df --output=avail -BG "$W" | tail -1 | tr -dc '0-9')
   echo "free disk in $W: $FREE_GB GB"
-  [ "$FREE_GB" -ge 80 ]
+  [ "$FREE_GB" -ge "${MIN_GB:-80}" ]            # MIN_GB lowers the limit, e.g. for a re-run in a folder that already holds the big files
 fi
 
 # ---- 1. tools: system packages, Lean and our aligner, minibwa at the paper's commit, pysam ----
@@ -51,7 +51,8 @@ if [ "$MODE" = full ]; then
   sudo apt-get update
   sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y build-essential git curl zlib1g-dev pigz python3-venv bubblewrap
   # `lake check --paranoid` (in verify.sh) runs in a bubblewrap sandbox, which needs unprivileged user namespaces
-  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+  # (the setting exists on Ubuntu 24.04 only; on a kernel without it sysctl fails and `set -e` would stop the run here)
+  [ ! -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] || sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
   lscpu; free -g
 fi
 [ -x "$HOME/.elan/bin/lake" ] || curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
