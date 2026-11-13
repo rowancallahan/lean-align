@@ -1,7 +1,8 @@
 #!/bin/bash
 # Is this checkout proved, and does it give the right output?
 #   bash Testing/bench/verify.sh DIR                 normal: minutes (uses the existing build)
-#   PARANOID=1 bash Testing/bench/verify.sh DIR      deletes the build and rebuilds everything first, then more checks
+#   PARANOID=1 bash Testing/bench/verify.sh DIR      deletes the build and rebuilds everything first, then more checks,
+#                                                    ending with `lake check --paranoid` (needs: sudo apt-get install bubblewrap)
 # DIR is a work folder. For the hg38 checks (PARANOID only) it must be the DIR of a finished `bench.sh full` run.
 # Stops at the first failure. The last line is VERIFY PASSED.
 set -euo pipefail
@@ -59,5 +60,9 @@ if [ "$PARANOID" = 1 ]; then
   echo "== 8. hg38 fuzz against minibwa: none of our claims is false (rules A-D must be 0)"
   python3 $B/fuzz_hg38.py "$W/genome.fa" .lake/build/bin/lean-align "$W/ours.idx" "$W/minibwa/minibwa" "$W/mb" \
     "$W/fuzz" 10000 "$T"
+  echo "== 9. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
+  echo "      and the other bundled checkers (leanchecker-paranoid, lean4lean, nanoda, con-leche, con-ron);"
+  echo "      it fails on any axiom other than the three standard ones. Needs bubblewrap; nanoda needs a lot of memory."
+  lake check --paranoid
 fi
 echo "VERIFY PASSED"
