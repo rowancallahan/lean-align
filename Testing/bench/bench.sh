@@ -52,6 +52,7 @@ if [ "$MODE" = tiny ]; then
   if [ -z "${THREADS:-}" ]; then THREADS=2; fi
   if [ -z "${REPS:-}" ]; then REPS=1; fi
   POWER_OFF=0                                     # a tiny run never powers the machine off
+  VERIFY=0                                        # and never starts verify.sh (verify.sh runs this mode itself)
   SETS=nova                                       # (and has only the small genome's reads)
 else
   if [ -z "${THREADS:-}" ]; then THREADS="$((CORES / 4)) $((CORES / 2)) $CORES"; fi
