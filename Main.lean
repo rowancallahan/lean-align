@@ -14,8 +14,9 @@ def fuel : Nat := 2 ^ 64
 
 -- the next chunk of each FASTQ file; none when both files have ended
 def nextChunks (fastq1 fastq2 : IO.FS.Handle) : IO (Option (ByteArray × ByteArray)) := do
+  let task2 ← IO.asTask (fastq2.read chunkSize) Task.Priority.dedicated   -- file 2 is read while file 1 is
   let chunk1 ← fastq1.read chunkSize
-  let chunk2 ← fastq2.read chunkSize
+  let chunk2 ← IO.ofExcept task2.get                                      -- a read error of file 2 fails the run here
   match chunk1.isEmpty && chunk2.isEmpty with
   | true  => return none
   | false => return some (chunk1, chunk2)
