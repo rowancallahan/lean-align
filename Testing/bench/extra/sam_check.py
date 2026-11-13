@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Is every record of our SAM file well formed, and does it come from the input reads?
 
-    python3 Testing/bench/sam_check.py OURS.sam R1.fq.gz R2.fq.gz
+    python3 Testing/bench/extra/sam_check.py OURS.sam R1.fq.gz R2.fq.gz
 
 The chromosome lengths are read from the @SQ lines of the SAM header. The SAM must have two records per input pair,
 mate 1 then mate 2, in the order of the FASTQ files. Prints the number of records that break each rule, with an

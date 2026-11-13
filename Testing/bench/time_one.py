@@ -1,68 +1,127 @@
 #!/usr/bin/env python3
 """Time one aligner run.   time_one.py ours|minibwa THREADS WORKDIR SET [OUT.sam]
-SET = reads | cmp (files WORKDIR/SET_R1.fq.gz, SET_R2.fq.gz). Without OUT.sam the output is thrown away.
+SET = reads | sample (files WORKDIR/SET_R1.fq.gz, SET_R2.fq.gz). Without OUT.sam the output is thrown away.
 
 What is measured, the same way for both tools:
-  - Everything is pinned to cores 0..THREADS-1 (Linux): the aligner and the two `gzip -dc` that feed it.
-  - wall    = from start to exit of the aligner. Index load is included.
+  - On Linux everything is pinned to cores 0..THREADS-1: the aligner and the two `gzip -dc` that feed it.
+    (Cores here are what Linux lists as CPUs, i.e. hyperthreads on most servers. Not pinned on macOS.)
+  - Before the start the index files are read once, so the index comes from the page cache, not from the disk.
+  - wall    = from start to exit of the aligner. Index load into memory is included.
   - output  = without OUT.sam, written to a pipe drained by `cat` for both tools (cat's CPU is not counted).
   - cpu     = user + system time of the aligner plus both gzips (from the kernel, via wait4).
   - peak    = largest resident memory of the aligner (from the kernel, via wait4).
   - Gbp     = letters in both read files (WORKDIR/SET.bases, counted by bench.sh).
   - Gbp/hr  = Gbp / wall hours.     Gbp/core-hr = Gbp / cpu hours.
 Prints one tab-separated row: tool threads set wall_s cpu_s peak_GB Gbp Gbp/hr Gbp/core-hr"""
-import os, subprocess, sys, time
-tool, threads, W, name = sys.argv[1], int(sys.argv[2]), os.path.abspath(sys.argv[3]), sys.argv[4]
-sam = sys.argv[5] if len(sys.argv) > 5 else None
-linux = sys.platform == "linux"
-if linux: os.sched_setaffinity(0, range(threads))                      # inherited by every child
-index = [W + "/ours.idx"] if tool == "ours" else [W + "/" + f for f in os.listdir(W) if f.startswith("mb.")]
-for f in index: subprocess.run(["cat", f], stdout=subprocess.DEVNULL, check=True)   # index in the page cache
+import os
+import subprocess
+import sys
+import time
+
+assert len(sys.argv) in (5, 6), __doc__
+tool = sys.argv[1]
+threads = int(sys.argv[2])
+workdir = os.path.abspath(sys.argv[3])
+name = sys.argv[4]
+if len(sys.argv) == 6:
+    sam = sys.argv[5]
+else:
+    sam = None
+assert tool in ("ours", "minibwa"), __doc__
+
+on_linux = sys.platform == "linux"
+if on_linux:
+    os.sched_setaffinity(0, range(threads))      # every process started below inherits this
+
+# our binary: two folders above this script's folder is the repository
+ours_binary = os.path.abspath(os.path.dirname(__file__) + "/../../.lake/build/bin/lean-align")
+minibwa_binary = workdir + "/minibwa/minibwa"
+
+if tool == "ours":
+    index_files = [workdir + "/ours.idx"]
+else:
+    index_files = []
+    for f in sorted(os.listdir(workdir)):
+        if f.startswith("mb."):                  # mb.mbw, mb.l2b: minibwa's index files
+            index_files.append(workdir + "/" + f)
+assert index_files != []
+for f in index_files:
+    subprocess.run(["cat", f], stdout=subprocess.DEVNULL, check=True)
 
 start = time.perf_counter()
-gz = [subprocess.Popen(["gzip", "-dc", f"{W}/{name}_R{r}.fq.gz"], stdout=subprocess.PIPE) for r in (1, 2)]
-fds = [g.stdout.fileno() for g in gz]
-r1, r2 = (f"/dev/fd/{fd}" for fd in fds)
-# Without OUT.sam the output goes through a pipe drained by `cat` (pinned like everything else), the same for both tools.
-# Our tool writes OUT.tmp and renames it to OUT, so for it the pipe is OUT.tmp; minibwa writes to stdout.
-sink, out = None, sam
-if not sam:
-    out = W + "/discard.sam"
+
+# the two decompressors; the aligner reads their pipes as files named /dev/fd/N
+gz1 = subprocess.Popen(["gzip", "-dc", workdir + "/" + name + "_R1.fq.gz"], stdout=subprocess.PIPE)
+gz2 = subprocess.Popen(["gzip", "-dc", workdir + "/" + name + "_R2.fq.gz"], stdout=subprocess.PIPE)
+gz = [gz1, gz2]
+fd1 = gz1.stdout.fileno()
+fd2 = gz2.stdout.fileno()
+reads1 = "/dev/fd/" + str(fd1)
+reads2 = "/dev/fd/" + str(fd2)
+
+# Without OUT.sam the output goes through a pipe drained by `cat` (pinned like everything else), for both tools.
+# Our tool writes OUT.tmp and renames it to OUT when it is done, so for it the pipe is the file OUT.tmp (a FIFO).
+# minibwa writes to its standard output, so for it the pipe is the standard input of `cat`.
+sink = None
+if sam is None:
+    discard = workdir + "/discard.sam"
     if tool == "ours":
-        if os.path.exists(out + ".tmp"): os.remove(out + ".tmp")
-        os.mkfifo(out + ".tmp")
-        sink = subprocess.Popen(["cat", out + ".tmp"], stdout=subprocess.DEVNULL)
+        if os.path.exists(discard + ".tmp"):
+            os.remove(discard + ".tmp")
+        os.mkfifo(discard + ".tmp")
+        sink = subprocess.Popen(["cat", discard + ".tmp"], stdout=subprocess.DEVNULL)
     else:
         sink = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
+
 if tool == "ours":
+    if sam is None:
+        out = discard
+    else:
+        out = sam
     env = dict(os.environ, LEAN_NUM_THREADS=str(threads))
-    run = subprocess.Popen(["./.lake/build/bin/lean-align", "map", index[0], r1, r2, out, "100", "1000"], pass_fds=fds, env=env)
+    # arguments: index, mate 1, mate 2, output, smallest fragment length, largest fragment length
+    run = subprocess.Popen([ours_binary, "map", index_files[0], reads1, reads2, out, "100", "1000"],
+                           pass_fds=[fd1, fd2], env=env)
 else:
-    run = subprocess.Popen([W + "/minibwa/minibwa", "map", "-t", str(threads), W + "/mb", r1, r2], pass_fds=fds,
-                           stdout=sink.stdin if sink else open(sam, "w"), stderr=open(W + "/minibwa.log", "w"))
-    if sink: sink.stdin.close()                                          # the child holds the only write end now
+    if sam is None:
+        minibwa_stdout = sink.stdin
+    else:
+        minibwa_stdout = open(sam, "w")
+    minibwa_log = open(workdir + "/minibwa.log", "w")
+    run = subprocess.Popen([minibwa_binary, "map", "-t", str(threads), workdir + "/mb", reads1, reads2],
+                           pass_fds=[fd1, fd2], stdout=minibwa_stdout, stderr=minibwa_log)
+    if sink is not None:
+        sink.stdin.close()                       # the aligner holds the only write end now, so cat sees the end of the output
+
 try:
     _, status, use = os.wait4(run.pid, 0)
     wall = time.perf_counter() - start
-    assert status == 0, f"{tool} failed with status {status}" + (f" (see {W}/minibwa.log)" if tool == "minibwa" else "")
+    assert status == 0, tool + " failed with status " + str(status) + " (minibwa's messages: " + workdir + "/minibwa.log)"
     cpu = use.ru_utime + use.ru_stime
     for g in gz:
-        _, status, u = os.wait4(g.pid, 0)
-        assert status == 0, f"gzip failed with status {status}"
-        cpu += u.ru_utime + u.ru_stime
-    if sink: assert sink.wait() == 0, "output sink failed"
-finally:                                                                   # also on failure: no stray gzip / cat / FIFO
-    for p in gz + ([sink] if sink else []):
-        if p.poll() is None: p.kill()
-    if tool == "ours" and not sam and os.path.exists(out + ".tmp"): os.remove(out + ".tmp")
-    if tool == "ours" and not sam and os.path.exists(out): os.remove(out)
+        _, gz_status, gz_use = os.wait4(g.pid, 0)
+        assert gz_status == 0, "gzip failed with status " + str(gz_status)
+        cpu += gz_use.ru_utime + gz_use.ru_stime
+    if sink is not None:
+        assert sink.wait() == 0, "output sink failed"
+finally:
+    # also after a failure: no gzip or cat left running, no FIFO left behind
+    # (a process that wait4 already collected counts as finished for poll())
+    for p in gz + ([sink] if sink is not None else []):
+        if p.poll() is None:
+            p.kill()
+    if tool == "ours" and sam is None:
+        if os.path.exists(discard + ".tmp"):
+            os.remove(discard + ".tmp")
+        if os.path.exists(discard):
+            os.remove(discard)
 
-bases = int(open(W + "/" + name + ".bases").read())
+bases = int(open(workdir + "/" + name + ".bases").read())
 gbp = bases / 1e9
-if linux:
-    peak_gb = use.ru_maxrss / 1e6          # Linux reports kilobytes
+if on_linux:
+    peak_gb = use.ru_maxrss / 1e6                # Linux reports kilobytes
 else:
-    peak_gb = use.ru_maxrss / 1e9          # macOS reports bytes
+    peak_gb = use.ru_maxrss / 1e9                # macOS reports bytes
 gbp_per_hour = gbp / (wall / 3600)
 gbp_per_core_hour = gbp / (cpu / 3600)
 print(tool, threads, name, round(wall, 1), round(cpu, 1), round(peak_gb, 2), round(gbp, 3),

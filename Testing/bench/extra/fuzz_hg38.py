@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fuzz on hg38 against minibwa: is any claim in our SAM false?
 
-    python3 Testing/bench/fuzz_hg38.py GENOME.fa OURS OURS.idx MINIBWA MB_INDEX DIR [PAIRS] [THREADS]
+    python3 Testing/bench/extra/fuzz_hg38.py GENOME.fa OURS OURS.idx MINIBWA MB_INDEX DIR [PAIRS] [THREADS]
 
 GENOME.fa  the genome both indexes were built from          OURS, OURS.idx    lean-align and its index
 MINIBWA    the minibwa binary (commit c07de5c)              MB_INDEX          minibwa's index prefix
