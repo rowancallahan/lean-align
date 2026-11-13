@@ -8,6 +8,11 @@
 # step fails, so a broken run does not keep costing money; all.log ends with the exit code of each step.
 set -uo pipefail
 MODE=$1; mkdir -p "$2"; W=$(cd "$2" && pwd); cd "$(dirname "$0")/../.."
+# a `full` run needs about 60 GB in WORKDIR; refuse to start (and do not power off) if the disk is too small
+if [ "$MODE" = full ]; then
+  FREE_GB=$(df --output=avail -BG "$W" | tail -1 | tr -dc '0-9')
+  [ "$FREE_GB" -ge 80 ] || { echo "only $FREE_GB GB free in $W; a full run needs 80. Enlarge the disk first."; exit 1; }
+fi
 # safety net: power off after MAX_MIN minutes (default 12 h) even if something hangs
 [ "${NO_SHUTDOWN:-0}" = 1 ] || sudo shutdown -h +"${MAX_MIN:-720}"
 # for diagnosis: every 10 s, the 40 threads with the most CPU time so far (cumulative, so two samples give the rate)
