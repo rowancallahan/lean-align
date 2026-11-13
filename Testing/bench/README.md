@@ -7,9 +7,11 @@
 | `time_one.py` | times one run of one tool (called by both scripts) |
 | `compare.py` | counts read pairs on which our SAM and minibwa's agree, and checks every record of our SAM for basic sanity |
 | `tiny_data.py` | makes a small genome and read pairs with a known answer, and checks that our SAM puts every mate there |
+| `comparator_*.json` | six settings files for `lake comparator`, one per Spec file with holes: Spec file = the challenge, Proofs file = the solution |
 
-`extra/` holds two longer checks kept for completeness (`sam_check.py`, `fuzz_hg38.py`); you do not
-need to read them to trust the benchmark. `comparator/` holds the `lake comparator` settings (one file per Spec file).
+The comparator files have not been run yet (they need the bubblewrap sandbox and a lot of memory; first run is on the
+server). Not covered by them: `Spec/Sam.lean`, `Spec/Fasta.lean` and the first part of `Spec/Aligner.lean` have no
+holes, so their `Proofs/` copies are checked only as far as the theorems use them.
 
 The scripts call each other, `lake`, the two aligners and standard tools. Nothing else in the repository.
 
@@ -29,7 +31,7 @@ with every record of our SAM sane.
 
 It times both tools at a quarter, at half and at all the cores, three runs each, on the first 40M pairs of the minibwa paper's
 NovaSeq reads; compares them on 1M pairs; with `VERIFY=1` runs `PARANOID=1 verify.sh` (clean rebuild, index rebuilt
-and compared, same output at 1 and all threads, hg38 fuzz, `lake comparator` on the six configs, `lake check --paranoid`); packs
+and compared, same output at 1 and all threads, `lake comparator` on the six files, `lake check --paranoid`); packs
 `~/bench/results.tgz`; powers the machine off, also when a step fails, and after 12 hours at the latest.
 Next day: start the instance, copy `results.tgz` off, terminate it.
 

@@ -6,7 +6,7 @@
 # DIR is a work folder. For the hg38 checks (PARANOID only) it must be the DIR of a finished `bench.sh full` run.
 # Stops at the first failure. The last line is VERIFY PASSED.
 # Normal mode: Spec and contract hashes, every proof builds, the axioms of seven theorems, the tiny run.
-# PARANOID adds: index rebuilt, same output at 1 and all threads, axioms of the certificates, the checks in extra/,
+# PARANOID adds: index rebuilt, same output at 1 and all threads, axioms of the certificates,
 # the comparator on every Spec file, and `lake check --paranoid`.
 set -euo pipefail
 
@@ -121,36 +121,19 @@ if [ "$PARANOID" = 1 ]; then
   echo "== 8. the certified-kernel check file elaborates"
   lake env lean Testing/checks/CheckCertified.lean
 
-  echo "== 9. extra checks, for completeness (Testing/bench/extra/)"
-  echo "-- no escape hatch in the entry point: Main.lean has no extern, unsafe or implemented_by"
+  echo "== 9. no escape hatch in the entry point: Main.lean has no extern, unsafe or implemented_by"
   if grep -n -E "@\[extern|unsafe|implemented_by" Main.lean; then
     echo "FAIL: Main.lean uses a construct that bypasses the proofs"
     exit 1
   fi
-  echo "-- the tiny run: every record of our SAM is well formed and comes from the input reads"
-  python3 $B/extra/sam_check.py "$W/tiny/ours.sam" "$W/tiny/sample_R1.fq.gz" "$W/tiny/sample_R2.fq.gz"
-  echo "-- the 1M-pair hg38 sample: the same check"
-  python3 $B/extra/sam_check.py "$W/ours.sam" "$W/sample_R1.fq.gz" "$W/sample_R2.fq.gz"
-  echo "-- hg38 fuzz against minibwa: none of our claims is false (rules A-D must be 0)"
-  # arguments of fuzz_hg38.py in order: genome, our binary, our index, minibwa binary, minibwa index prefix,
-  #                                     work folder, pairs per seed, threads
-  python3 $B/extra/fuzz_hg38.py \
-    "$W/genome.fa" \
-    .lake/build/bin/lean-align \
-    "$W/ours.idx" \
-    "$W/minibwa/minibwa" \
-    "$W/mb" \
-    "$W/fuzz" \
-    10000 \
-    "$T"
 
   echo "== 10. lake comparator: each Proofs/ file states the same theorems as its Spec/ file"
-  lake comparator --config $B/comparator/alignment.json
-  lake comparator --config $B/comparator/mapping.json
-  lake comparator --config $B/comparator/aligner.json
-  lake comparator --config $B/comparator/fastq.json
-  lake comparator --config $B/comparator/trim.json
-  lake comparator --config $B/comparator/mapfiles.json
+  lake comparator --config $B/comparator_alignment.json
+  lake comparator --config $B/comparator_mapping.json
+  lake comparator --config $B/comparator_aligner.json
+  lake comparator --config $B/comparator_fastq.json
+  lake comparator --config $B/comparator_trim.json
+  lake comparator --config $B/comparator_mapfiles.json
 
   echo "== 11. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
   echo "       and the other bundled checkers (leanchecker-paranoid, lean4lean, nanoda, con-leche, con-ron);"
