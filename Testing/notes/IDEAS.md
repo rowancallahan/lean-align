@@ -502,3 +502,20 @@ Per the lead: the threshold stays at 25.
 - Whether proofs of internals with no theorem of their own (banded alignment) may be replaced by tests: currently no.
 - Trim: threshold stays 25; tie rule (longest, then leftmost) and best-window-among->=25 still open.
 
+## 9. Later Spec change: report the whole read, with the trimmed ends soft-clipped (Rowan, 2026-11-13)
+
+Not started. A question for the to-do list.
+- Today a SAM record holds only the part of the read kept after adapter cut and trimming (SEQ, QUAL and CIGAR cover
+  that part). The idea: SEQ and QUAL hold the whole read as it came in, and the CIGAR is `aS` + the alignment + `bS`,
+  where a and b are the letters removed at each end. POS stays the first aligned letter. On the reverse strand the two
+  clips swap sides.
+- Why: the original reads can be recovered from the SAM; tools that expect whole reads work; comparing with other
+  aligners needs no lining-up of a trimmed window against the whole read.
+- Spec changes: `Spec/Trim.lean` has to give the window (start, stop) and keep the read (today it returns the cut
+  read, so the offsets are lost); `Spec/MapFiles.lean` `prepPairs` carries the read and the window; `Spec/Sam.lean`
+  `cigar`, `seq`, `qual` use them. To decide: a read trimmed away (today `*` with `XT:Z:trimmedAwayN`) could keep
+  its letters as an unmapped record; the adapter part could be `S` or `H`.
+- Proofs to redo: the SAM writer equalities (SamFast, SamFused), the read preparation and job equality in MapFast,
+  `process_correct`. The mapping proofs are untouched (they see the same trimmed letters).
+- Speed: not a gain. Alignment still runs on the kept part; the output gets longer (whole reads), so slightly more
+  bytes to write.
