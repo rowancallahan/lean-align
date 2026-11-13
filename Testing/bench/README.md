@@ -42,6 +42,6 @@ All three read sets of the minibwa paper's comparison (NovaSeq, HiSeq 2x250, mas
 
 `PAIRS` (40M) applies to nova and to hiseq (`hiseq`: GIAB HG002 HiSeq 2x250 lane 1, files 001 to 017 in order);
 `MASON_PAIRS` (1M) is the size of the mason set. Each set has its rows in `timing.tsv`, its `compare_<set>.txt`
-(nova: `compare.txt`), and the mason set also `mason_accuracy.txt`. The hiseq set adds about 25 GB, the mason set 2 GB to the disk.
+(nova: `compare.txt`), and the mason set also `mason_accuracy.txt`. The hiseq set adds about 15 GB (40M pairs), the mason set 1.5 GB (1M pairs) to the disk.
 
 The previous test scripts (`Testing/ec2/`, `Testing/verify.sh`, `CI_check.sh`, ...) are on branch `archive/testing-old`.
