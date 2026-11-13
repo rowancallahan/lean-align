@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><title>lean-align wasm</title>
+<script src="lean-align.js"></script>
+<script src="worker.js"></script>
+<script>
+// run(job): in a Web Worker (the real setup); runJob(job): on the page thread (test only)
+function run(job) {
+  return new Promise((ok, bad) => {
+    const w = new Worker('worker.js');
+    w.onmessage = (e) => { ok(e.data); w.terminate(); };
+    w.onerror = (e) => { bad(new Error(e.message)); w.terminate(); };
+    w.postMessage(job);
+  });
+}
+</script>
