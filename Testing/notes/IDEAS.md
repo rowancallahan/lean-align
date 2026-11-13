@@ -539,3 +539,25 @@ Estimates only: linear scaling at 32 threads needs about 540 Gbp/hr; the reader 
 `bench.sh` reuses whatever `ours.idx` and `mb.*` are in the folder. An index of another genome that still maps a few
 pairs lets a full run finish with wrong numbers. Only `PARANOID=1 verify.sh` (step 5: rebuild the index, compare bytes)
 catches it, and only for our index. For published numbers: start from an empty folder, or run with `VERIFY=1`.
+
+## 12. Later Spec question: short fragments, trimming and the no-dovetail rule (Rowan, 2026-11-13; no change now)
+
+Found while checking the 75 NovaSeq pairs (first 1M pairs) that we call unique and minibwa maps elsewhere.
+With the Spec's full pair rule (`PairAlignment.IsProper`, dovetail slack 0) minibwa's place is strictly worse in 57,
+and no proper pair exists there in 18; none tied or better. Scored by a script outside the proofs, within 100 bases
+of minibwa's positions.
+
+The case to remember: pair `A00744:46:HV3C3DSXX:2:1102:20157:5306`. The fragment is about 101 bases, both reads ran
+into adapter. Our trimmed mates are 104 and 102 long, a little longer than the fragment. On `chrUn_GL000224v1` each
+mate alone fits well (mate 1 at 18156-18260 score -4, mate 2 at 18159-18261 score 0; 0-based, stop exclusive), but
+mate 1 starts 3 before mate 2 and mate 2 stops 1 after mate 1, so both no-dovetail clauses fail. The best proper pair
+there scores -20. We report chr22 as unique at -8 (best other -8). minibwa puts both mates on the contig with soft
+clips and MAPQ 0.
+
+So the proof holds, but the place the pair most likely came from is excluded by slack 0 because trimming left a few
+bases too many. To look at together with section 9 (whole read with soft clips): a dovetail slack of a few bases, or
+trimming both mates of a short fragment to the fragment length.
+
+Related, same check on mason reads: unique means strictly best by any margin. All wrong reads at our MAPQ 60
+(9 of 2M) had the true place one mismatch worse than ours. A MAPQ graded by the gap between our score and the proved
+bound on the best other placement (the XB tag) would mark those as doubtful, as minibwa does.
