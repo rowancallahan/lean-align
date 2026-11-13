@@ -1,0 +1,5 @@
+UNTESTED (no bubblewrap on the machines these were written on). Run each with: lake comparator --config Testing/bench/comparator/NAME.json
+Each file judges one Spec/ module against its Proofs/ copy: every `sorry` theorem has the same statement, every `:= sorry` def is a hole (definition_names), only the three standard axioms.
+alignment, mapping: the 4 + 1 theorems. aligner: the holes buildIndex, alignPairs and the 2 theorems. fastq, trim: the hole parse / trim and its theorem. mapfiles: the holes MapState, mapInit, mapStep and process_correct. Together: all 17 `sorry`s in Spec/.
+Spec/Sam.lean, Spec/Fasta.lean and the first part of Spec/Aligner.lean have no holes; comparator checks them only as far as the statements above use them.
+mirror_check.py still has to check: those three files are exact copies, Proofs/MapDefs.lean = Proofs/MapFiles.lean, Main imports Proofs.MapFiles, and the forbidden words.

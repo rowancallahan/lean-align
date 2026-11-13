@@ -6,17 +6,18 @@
 Exit 0 only if every check passes; otherwise it prints FAIL lines and exits 1.
 
 Checked:
- 1. Proofs/Fastq.lean is Spec/Fastq.lean up to its two holes: after its import lines, every line before `def parse`
-    is the same; `def parse` keeps the spec's signature (the spec has `:= sorry`, the copy any body); the statement of
-    `parse_correct` appears word for word (its proof may differ); the copy ends the namespace `Spec.FQ`.
- 2. Proofs/Trim.lean is Spec/Trim.lean the same way (import lines ignored), with `def trim` and `theorem trim_correct`.
+ 1. Proofs/Fastq.lean is Spec/Fastq.lean up to its two holes: with import lines and leading blank lines removed from
+    both, every line before `def parse` is the same; `def parse` keeps the spec's signature (the spec has `:= sorry`,
+    the copy any body); the statement of `parse_correct` appears word for word (its proof may differ); the copy has
+    the spec's last line (`end Spec.FQ`).
+ 2. Proofs/Trim.lean is Spec/Trim.lean the same way, with `def trim` and `theorem trim_correct`.
  3. Proofs/Sam.lean is Spec/Sam.lean exactly, once its imports of Proofs.Answer / Proofs.Fasta / Proofs.Fastq are read
     as Spec.Aligner / Spec.Fasta / Spec.Fastq.
  4. Proofs/MapFiles.lean is Spec/MapFiles.lean line for line (`import Spec.X` read as `import Proofs.X`, extra imports
     allowed), except: a spec line ending in `:= sorry` may be filled with any body (same text up to `:=`); a `sorry`
     proof after `:= by` may be any indented proof; extra declarations may stand just before a `theorem` line.
     `#print axioms` lines in the copy are ignored.
- 5. Proofs/Fasta.lean is Spec/Fasta.lean exactly, once `import Proofs.X` is read as `import Spec.X`.
+ 5. Proofs/Fasta.lean is Spec/Fasta.lean exactly, once its `import Proofs.Aligner` is read as `import Spec.Aligner`.
  6. Proofs/Answer.lean, without its first and last line and with `import Proofs.Mapping` read as
     `import Spec.Mapping`, is exactly the part of Spec/Aligner.lean before `/-! ## The index and the aligner`.
  7. Proofs/MapDefs.lean has the same definitions as Proofs/MapFiles.lean: the block from the line
@@ -79,9 +80,22 @@ def contains_block(lines, block):
     return False
 
 
-def def_and_theorem_mirror(spec, body, dname, tname, end_line):
-    """Checks 1 and 2: `body` (the copy, imports already removed) mirrors `spec` up to the hole of `def dname` and
-    the proof of `theorem tname`. Returns a list of problems (empty: ok)."""
+def check_def_mirror(spec_path, copy_path, dname, tname):
+    """Checks 1 and 2. Import lines are removed from both files, then leading blank lines. The copy must have every
+    spec line before `def dname`, the spec's signature of `def dname` (the spec has `:= sorry`), the statement of
+    `theorem tname` word for word, and the spec's last line `end ...`."""
+    spec = []
+    for l in lines_of(spec_path):
+        if not l.startswith("import "):
+            spec.append(l)
+    body = []
+    for l in lines_of(copy_path):
+        if not l.startswith("import "):
+            body.append(l)
+    while spec and spec[0] == "":
+        spec.pop(0)
+    while body and body[0] == "":
+        body.pop(0)
     problems = []
     d = first_index(spec, 0, lambda l: l.startswith("def " + dname + " "))
     assert d is not None, "the spec has no def " + dname
@@ -90,80 +104,38 @@ def def_and_theorem_mirror(spec, body, dname, tname, end_line):
     sig = spec[d]
     if not sig.endswith(":= sorry"):
         problems.append("the spec's `def " + dname + "` is not a hole")
-    head = sig[:-len("sorry")].rstrip()
-    found = False
-    for l in body[d:]:
-        if l == head:
-            found = True
-    if not found:
+    if sig[:-len("sorry")].rstrip() not in body[d:]:
         problems.append("`def " + dname + "` with the spec's signature is missing")
     t = first_index(spec, 0, lambda l: l.startswith("theorem " + tname + " ") or l == "theorem " + tname)
     assert t is not None, "the spec has no theorem " + tname
     e = first_index(spec, t, lambda l: l.endswith(":= by"))
     assert e is not None, "the spec's theorem " + tname + " has no ':= by'"
-    statement = spec[t:e + 1]
     rest = []
     for l in spec[e + 1:]:
         if l.strip() != "":
             rest.append(l.strip())
     if len(rest) != 2 or rest[0] != "sorry" or not rest[1].startswith("end "):
         problems.append("in the spec, more than a `sorry` follows the statement of " + tname)
-    if not contains_block(body, statement):
+    if not contains_block(body, spec[t:e + 1]):
         problems.append("the statement of `" + tname + "` differs")
-    if end_line is not None:
-        stripped = []
-        for l in body:
-            stripped.append(l.strip())
-        if end_line not in stripped:
-            problems.append("the copy does not have `" + end_line + "`")
-    return problems
-
-
-def check_fastq():
-    spec = lines_of("Spec/Fastq.lean")
-    proofs = lines_of("Proofs/Fastq.lean")
-    for l in spec:
-        assert not l.startswith("import"), "Spec/Fastq.lean was expected to have no imports"
-    start = first_index(proofs, 0, lambda l: not (l.startswith("import") or l == ""))
-    assert start is not None
-    body = proofs[start:]
-    problems = def_and_theorem_mirror(spec, body, "parse", "parse_correct", "end Spec.FQ")
+    stripped = []
+    for l in body:
+        stripped.append(l.strip())
+    if rest[-1] not in stripped:
+        problems.append("the copy does not have `" + rest[-1] + "`")
     for p in problems:
         print("     " + p)
-    report(problems == [], "Proofs/Fastq.lean mirrors Spec/Fastq.lean (up to the holes)")
+    report(problems == [], copy_path + " mirrors " + spec_path + " (up to the holes)")
 
 
-def check_trim():
-    spec = []
-    for l in lines_of("Spec/Trim.lean"):
-        if not l.startswith("import "):
-            spec.append(l)
-    body = []
-    for l in lines_of("Proofs/Trim.lean"):
-        if not l.startswith("import "):
-            body.append(l)
-    rest = []
-    for l in spec:
-        if l.strip() != "":
-            rest.append(l.strip())
-    end_line = rest[-1] if rest and rest[-1].startswith("end ") else None
-    problems = def_and_theorem_mirror(spec, body, "trim", "trim_correct", end_line)
-    for p in problems:
-        print("     " + p)
-    report(problems == [], "Proofs/Trim.lean mirrors Spec/Trim.lean (up to the holes)")
-
-
-def check_sam():
+def check_same_with_imports(copy_path, spec_path, renames):
+    """Checks 3 and 5: the copy, with each import line in `renames` replaced, is the spec exactly."""
     copy = []
-    for l in lines_of("Proofs/Sam.lean"):
-        if l == "import Proofs.Answer":
-            l = "import Spec.Aligner"
-        elif l == "import Proofs.Fasta":
-            l = "import Spec.Fasta"
-        elif l == "import Proofs.Fastq":
-            l = "import Spec.Fastq"
+    for l in lines_of(copy_path):
+        if l in renames:
+            l = renames[l]
         copy.append(l)
-    report(copy == lines_of("Spec/Sam.lean"), "Proofs/Sam.lean is Spec/Sam.lean (imports read as Spec.)")
+    report(copy == lines_of(spec_path), copy_path + " is " + spec_path + " (imports read as Spec.)")
 
 
 def check_mapfiles():
@@ -235,15 +207,6 @@ def check_mapfiles():
     if problem is not None:
         print("     " + problem)
     report(problem is None, "Proofs/MapFiles.lean mirrors Spec/MapFiles.lean (up to the holes)")
-
-
-def check_fasta():
-    copy = []
-    for l in lines_of("Proofs/Fasta.lean"):
-        if l.startswith("import Proofs."):
-            l = "import Spec." + l[len("import Proofs."):]
-        copy.append(l)
-    report(copy == lines_of("Spec/Fasta.lean"), "Proofs/Fasta.lean is Spec/Fasta.lean (imports read as Spec.)")
 
 
 def check_answer():
@@ -320,11 +283,13 @@ def check_forbidden():
     report(hits3 == [], "no sorry / native_decide / @[extern / unsafe / implemented_by in Main.lean and the shim files")
 
 
-check_fastq()
-check_trim()
-check_sam()
+check_def_mirror("Spec/Fastq.lean", "Proofs/Fastq.lean", "parse", "parse_correct")
+check_def_mirror("Spec/Trim.lean", "Proofs/Trim.lean", "trim", "trim_correct")
+check_same_with_imports("Proofs/Sam.lean", "Spec/Sam.lean", {"import Proofs.Answer": "import Spec.Aligner",
+                                                             "import Proofs.Fasta": "import Spec.Fasta",
+                                                             "import Proofs.Fastq": "import Spec.Fastq"})
 check_mapfiles()
-check_fasta()
+check_same_with_imports("Proofs/Fasta.lean", "Spec/Fasta.lean", {"import Proofs.Aligner": "import Spec.Aligner"})
 check_answer()
 check_mapdefs()
 check_main_import()

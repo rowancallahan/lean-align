@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Spec.Mapping",
+  "solution_module": "Proofs.Mapping",
+  "theorem_names": ["Spec.exists_best"],
+  "definition_names": [],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

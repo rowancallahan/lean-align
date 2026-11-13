@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Spec.Alignment",
+  "solution_module": "Proofs.Alignment",
+  "theorem_names": ["Spec.cigar_decodes", "Spec.allPaths_ne_nil", "Spec.allPaths_complete", "Spec.alignSpec_optimal"],
+  "definition_names": [],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}
