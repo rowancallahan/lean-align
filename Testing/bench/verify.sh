@@ -46,26 +46,32 @@ if [ -d "$W/venv" ];    then ln -sfn "$W/venv"    "$W/tiny/venv"; fi
 bash $B/bench.sh tiny "$W/tiny"
 grep "IDENTICAL: columns 1-11 of every record" "$W/tiny/all.log"
 
+echo "== 5. small genome: every record of our SAM is well formed and comes from the input reads"
+python3 $B/sam_check.py "$W/tiny/ours.sam" "$W/tiny/cmp_R1.fq.gz" "$W/tiny/cmp_R2.fq.gz"
+
 if [ "$PARANOID" = 1 ]; then
   PY=$W/venv/bin/python; T=$(getconf _NPROCESSORS_ONLN)
-  echo "== 5. the index in use is what this code builds"
+  echo "== 6. the index in use is what this code builds"
   .lake/build/bin/lean-align build "$W/genome.fa" "$W/ours_again.idx"
   cmp "$W/ours.idx" "$W/ours_again.idx"
 
-  echo "== 6. same output with 1 thread, with all threads, and when run twice"
+  echo "== 7. same output with 1 thread, with all threads, and when run twice"
   $PY $B/time_one.py ours 1    "$W" cmp "$W/v1.sam"
   $PY $B/time_one.py ours "$T" "$W" cmp "$W/v2.sam"
   $PY $B/time_one.py ours "$T" "$W" cmp "$W/v3.sam"
   cmp "$W/v1.sam" "$W/v2.sam"; cmp "$W/v2.sam" "$W/v3.sam"
 
-  echo "== 7. the Spec copies in Proofs/ mirror Spec/ up to the holes, and no forbidden word is used"
+  echo "== 8. the Spec copies in Proofs/ mirror Spec/ up to the holes, and no forbidden word is used"
   python3 $B/mirror_check.py
 
-  echo "== 8. hg38 fuzz against minibwa: none of our claims is false (rules A-D must be 0)"
+  echo "== 9. the 1M-pair hg38 comparison set: every record of our SAM is well formed and comes from the input reads"
+  python3 $B/sam_check.py "$W/ours.sam" "$W/cmp_R1.fq.gz" "$W/cmp_R2.fq.gz"
+
+  echo "== 10. hg38 fuzz against minibwa: none of our claims is false (rules A-D must be 0)"
   python3 $B/fuzz_hg38.py "$W/genome.fa" .lake/build/bin/lean-align "$W/ours.idx" "$W/minibwa/minibwa" "$W/mb" \
     "$W/fuzz" 10000 "$T"
 
-  echo "== 9. the kernel, core and trimmer certificates use the three standard axioms only"
+  echo "== 11. the kernel, core and trimmer certificates use the three standard axioms only"
   # Lean may break an axiom list over several lines, so the output is joined into one line first.
   # Every axiom named in every "depends on axioms: [...]" list must be propext, Classical.choice or Quot.sound.
   for c in \
@@ -91,10 +97,10 @@ if [ "$PARANOID" = 1 ]; then
     [ -z "$(grep -vx -e propext -e Classical.choice -e Quot.sound "$W/cert_names.txt" || true)" ]
   done
 
-  echo "== 10. the certified-kernel check file elaborates"
+  echo "== 12. the certified-kernel check file elaborates"
   lake env lean Testing/checks/CheckCertified.lean
 
-  echo "== 11. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
+  echo "== 13. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
   echo "       and the other bundled checkers (leanchecker-paranoid, lean4lean, nanoda, con-leche, con-ron);"
   echo "       it fails on any axiom other than the three standard ones. Needs bubblewrap; nanoda needs a lot of memory."
   lake check --paranoid
