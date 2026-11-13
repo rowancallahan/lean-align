@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Are the Proofs/ copies of the Spec/ files faithful, and are the forbidden words absent?
 
-    python3 Testing/bench/mirror_check.py          (run from anywhere; prints one line per check)
+    python3 Testing/bench/extra/mirror_check.py          (run from anywhere; prints one line per check)
 
 Exit 0 only if every check passes; otherwise it prints FAIL lines and exits 1.
 
@@ -34,7 +34,7 @@ import glob
 import os
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
 
 SHIM_FILES = [
     "Main.lean", "Spec/Fasta.lean", "Proofs/Fasta.lean", "Proofs/Fastq.lean", "Aligner/io/FastqIO.lean",
