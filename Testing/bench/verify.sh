@@ -28,11 +28,11 @@ if [ "$PARANOID" = 1 ]; then
   ls -l "$W/genome.fa" "$W/ours.idx" "$W/minibwa/minibwa" "$W/venv/bin/python" "$W/sample_R1.fq.gz" "$W/ours.sam"
 fi
 
-echo "== 1. the specification files are the frozen ones"
+echo "== $(date +%T) 1. the specification files are the frozen ones"
 sha256sum -c Spec/FROZEN.sha256
 (cd Aligner/trimmer && sha256sum -c FROZEN_CONTRACT.sha256)
 
-echo "== 2. everything builds: every proof is checked by Lean"
+echo "== $(date +%T) 2. everything builds: every proof is checked by Lean"
 if [ "$PARANOID" = 1 ]; then
   rm -rf .lake/build                              # paranoid: no cached result is trusted
 fi
@@ -44,7 +44,7 @@ if grep 'declaration uses `sorry`' "$W/build.log" | grep -v '^warning: Spec/'; t
   exit 1
 fi
 
-echo "== 3. the main theorems depend on the three standard axioms only (a 'sorry' anywhere below them would show as sorryAx)"
+echo "== $(date +%T) 3. the main theorems depend on the three standard axioms only (a 'sorry' anywhere below them would show as sorryAx)"
 cat > "$W/axioms.lean" <<'LEAN'
 import Proofs.MapFiles
 import Proofs.MapJobEq
@@ -70,7 +70,7 @@ if [ "$STANDARD" != 7 ] || [ "$LINES" != 7 ]; then
   exit 1
 fi
 
-echo "== 4. small genome with a known answer: our output equals minibwa's in columns 1-11, and is at the true positions"
+echo "== $(date +%T) 4. small genome with a known answer: our output equals minibwa's in columns 1-11, and is at the true positions"
 mkdir -p "$W/tiny"
 # reuse minibwa and pysam from DIR if they are there (otherwise bench.sh builds them inside DIR/tiny)
 if [ -d "$W/minibwa" ]; then ln -sfn "$W/minibwa" "$W/tiny/minibwa"; fi
@@ -81,18 +81,18 @@ grep "IDENTICAL: columns 1-11 of every record" "$W/tiny/all.log"
 if [ "$PARANOID" = 1 ]; then
   PY=$W/venv/bin/python
   T=$(getconf _NPROCESSORS_ONLN)
-  echo "== 5. the index in use is what this code builds"
+  echo "== $(date +%T) 5. the index in use is what this code builds"
   .lake/build/bin/lean-align build "$W/genome.fa" "$W/ours_again.idx"
   cmp "$W/ours.idx" "$W/ours_again.idx"
 
-  echo "== 6. same output with 1 thread, with all threads, and when run twice"
+  echo "== $(date +%T) 6. same output with 1 thread, with all threads, and when run twice"
   $PY $B/time_one.py ours 1    "$W" sample "$W/v1.sam"
   $PY $B/time_one.py ours "$T" "$W" sample "$W/v2.sam"
   $PY $B/time_one.py ours "$T" "$W" sample "$W/v3.sam"
   cmp "$W/v1.sam" "$W/v2.sam"
   cmp "$W/v2.sam" "$W/v3.sam"
 
-  echo "== 7. the kernel, core and trimmer certificates use the three standard axioms only"
+  echo "== $(date +%T) 7. the kernel, core and trimmer certificates use the three standard axioms only"
   # Lean may break an axiom list over several lines, so the output is joined into one line first.
   for c in \
     Aligner/kernels/band/Certificate.lean \
@@ -124,16 +124,16 @@ if [ "$PARANOID" = 1 ]; then
     fi
   done
 
-  echo "== 8. the certified-kernel check file elaborates"
+  echo "== $(date +%T) 8. the certified-kernel check file elaborates"
   lake env lean Testing/checks/CheckCertified.lean
 
-  echo "== 9. no escape hatch in the entry point: Main.lean has no extern, unsafe or implemented_by"
+  echo "== $(date +%T) 9. no escape hatch in the entry point: Main.lean has no extern, unsafe or implemented_by"
   if grep -n -E "@\[extern|unsafe|implemented_by" Main.lean; then
     echo "FAIL: Main.lean uses a construct that bypasses the proofs"
     exit 1
   fi
 
-  echo "== 10. lake comparator: each Proofs/ file states the same theorems as its Spec/ file"
+  echo "== $(date +%T) 10. lake comparator: each Proofs/ file states the same theorems as its Spec/ file"
   lake comparator --config $B/comparator_alignment.json
   lake comparator --config $B/comparator_mapping.json
   lake comparator --config $B/comparator_aligner.json
@@ -141,7 +141,7 @@ if [ "$PARANOID" = 1 ]; then
   lake comparator --config $B/comparator_trim.json
   lake comparator --config $B/comparator_mapfiles.json
 
-  echo "== 11. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
+  echo "== $(date +%T) 11. lake check --paranoid: rebuild in a sandbox, export, and replay every proof through Lean's kernel"
   echo "       and the other bundled checkers (leanchecker-paranoid, lean4lean, nanoda, con-leche, con-ron);"
   echo "       it fails on any axiom other than the three standard ones. Needs bubblewrap; nanoda needs a lot of memory."
   lake check --paranoid

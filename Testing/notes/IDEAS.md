@@ -533,3 +533,9 @@ numbers before any of them:
    equality with the current parse. Only if the reader is still the limit after 1 and 2.
 
 Estimates only: linear scaling at 32 threads needs about 540 Gbp/hr; the reader tops out around 365-450.
+
+## 11. Known weak spot: a wrong index is not caught by `bench.sh` alone (Rowan, 2026-11-13)
+
+`bench.sh` reuses whatever `ours.idx` and `mb.*` are in the folder. An index of another genome that still maps a few
+pairs lets a full run finish with wrong numbers. Only `PARANOID=1 verify.sh` (step 5: rebuild the index, compare bytes)
+catches it, and only for our index. For published numbers: start from an empty folder, or run with `VERIFY=1`.
