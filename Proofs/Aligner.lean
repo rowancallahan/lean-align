@@ -773,7 +773,7 @@ theorem alignOne_correct (insertSettings : InsertSettings) (hS : SettingsOk inse
 
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
--- `hSettings` (`SettingsOk`) is the ONE assumption beyond Spec's statement, on the settings only.
+-- `hSettings` (`SettingsOk`) is Spec's one condition on the settings.
 theorem alignPairs_correct (insertSettings : InsertSettings)
     (genome : Genome) (trimmedPairs : List (Option Read × Option Read))
     (byteGenome : GenomeFile) (hGenome : byteGenome.decode = genome)

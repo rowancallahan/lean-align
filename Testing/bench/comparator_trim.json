@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Spec.Trim",
+  "solution_module": "Proofs.Trim",
+  "theorem_names": ["Spec.Trim.trim_correct"],
+  "definition_names": ["Spec.Trim.trim"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

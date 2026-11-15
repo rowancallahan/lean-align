@@ -1,0 +1,40 @@
+=== hiseq5m-cmp-1M-cc26db2: 1,000,000 pairs
+
+1. our class (rows) x minibwa class (columns); counts; % of all pairs in the last column
+
+  mapped unique: 848,640 ( 84.86%)
+    single mate=2  MAPQ0 proper=73  MAPQ0 not proper=13  MAPQ1-9 proper=200  MAPQ1-9 not proper=13  MAPQ10-29 proper=2,355  MAPQ10-29 not proper=26  MAPQ30-59 proper=27,620  MAPQ30-59 not proper=16  MAPQ60 proper=818,159  MAPQ60 not proper=163
+
+  mapped unknown, XB >=-16: 84,511 (  8.45%)
+    single mate=189  MAPQ0 proper=27,195  MAPQ0 not proper=1,394  MAPQ1-9 proper=4,467  MAPQ1-9 not proper=1,273  MAPQ10-29 proper=6,588  MAPQ10-29 not proper=266  MAPQ30-59 proper=12,596  MAPQ30-59 not proper=68  MAPQ60 proper=30,402  MAPQ60 not proper=73
+
+  unmapped: XU unknown, XB -17..-40: 40,395 (  4.04%)
+    unmapped=1,117  single mate=892  MAPQ0 proper=4,169  MAPQ0 not proper=1,969  MAPQ1-9 proper=3,452  MAPQ1-9 not proper=4,488  MAPQ10-29 proper=3,179  MAPQ10-29 not proper=697  MAPQ30-59 proper=6,221  MAPQ30-59 not proper=187  MAPQ60 proper=12,865  MAPQ60 not proper=1,159
+
+  unmapped: XT trimmedAway, XB none: 9,486 (  0.95%)
+    unmapped=89  single mate=2,951  MAPQ0 proper=135  MAPQ0 not proper=191  MAPQ1-9 proper=58  MAPQ1-9 not proper=248  MAPQ10-29 proper=74  MAPQ10-29 not proper=111  MAPQ30-59 proper=895  MAPQ30-59 not proper=22  MAPQ60 proper=4,666  MAPQ60 not proper=46
+
+  unmapped: XU repetitiveUnknown, XB >=-16: 6,419 (  0.64%)
+    MAPQ0 proper=1,807  MAPQ0 not proper=401  MAPQ1-9 proper=631  MAPQ1-9 not proper=629  MAPQ10-29 proper=460  MAPQ10-29 not proper=77  MAPQ30-59 proper=803  MAPQ30-59 not proper=48  MAPQ60 proper=1,354  MAPQ60 not proper=209
+
+  mapped unknown, XB -17..-40: 6,326 (  0.63%)
+    MAPQ0 proper=488  MAPQ0 not proper=95  MAPQ1-9 proper=332  MAPQ1-9 not proper=85  MAPQ10-29 proper=456  MAPQ10-29 not proper=16  MAPQ30-59 proper=1,046  MAPQ30-59 not proper=11  MAPQ60 proper=3,791  MAPQ60 not proper=6
+
+  unmapped: XU unknown, XB >=-16: 4,223 (  0.42%)
+    unmapped=365  single mate=117  MAPQ0 proper=197  MAPQ0 not proper=174  MAPQ1-9 proper=261  MAPQ1-9 not proper=356  MAPQ10-29 proper=161  MAPQ10-29 not proper=62  MAPQ30-59 proper=611  MAPQ30-59 not proper=33  MAPQ60 proper=1,727  MAPQ60 not proper=159
+
+2. pairs we leave unmapped (both mates not mapped) that minibwa maps (both mates): 54,992 (  5.50%)
+   min MAPQ MAPQ0: 9,043 (16.4% of these)
+   min MAPQ MAPQ1-9: 10,123 (18.4% of these)
+   min MAPQ MAPQ10-29: 4,821 (8.8% of these)
+   min MAPQ MAPQ30-59: 8,820 (16.0% of these)
+   min MAPQ MAPQ60: 22,185 (40.3% of these)
+   proper pair: 79.5%   supplementary alignment present: 19.3%   different chromosomes: 14.5%   same chrom but |TLEN|>1000: 5.5%   wrong orientation (same strand or outward): 14.5%
+   soft-clipped bases per mate: median 0.0; pairs with >=10 clipped on either mate: 56.7%
+   NM per mate: median 8.0
+
+3. headline (% of all pairs):
+   mb MAPQ>=30 & proper: 922,756 ( 92.28%): ours unique 845,779 ( 84.58%), mapped unknown 47,835 (  4.78%), unmapped 29,142 (  2.91%)
+   mb MAPQ==60 & proper: 872,964 ( 87.30%): ours unique 818,159 ( 81.82%), mapped unknown 34,193 (  3.42%), unmapped 20,612 (  2.06%)
+   mb NOT (MAPQ>=30 & proper): 77,244 (  7.72%): ours unique 2,861 (  0.29%), mapped unknown 43,002 (  4.30%), unmapped 31,381 (  3.14%)
+   reverse: of the 77,244 pairs where minibwa has MAPQ<30, not proper or is unmapped, we map 45,863 (59.4%), of which unique 2,861

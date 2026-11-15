@@ -27,8 +27,7 @@ Order matters: make it right, check it, then understand it.
 - `lean-align build genome.fa shim.idx` (~30 min, ~14 GB RAM): the index format changed (heavy table).
 
 ## 5. Check (everything must pass)
-- `FUZZ=1 sh Testing/scripts/CI_check.sh` -> `ALL CHECKS PASSED`.
-- `MINIBWA=... SAMTOOLS=... bash Testing/verify.sh OUT` -> steps 1-5 (step 4 needs samtools).
+- `PARANOID=1 bash Testing/bench/verify.sh DIR` -> `VERIFY PASSED` (all testing is in Testing/bench/).
 - SAM md5 identical to plain festive on the 5M NovaSeq and HiSeq sets.
 - Speed headline: ours vs minibwa on the same box, plain files, index load separate, median of 3.
 

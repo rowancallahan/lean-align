@@ -1,0 +1,172 @@
+# branch exp/hol-trace, tip 4ced426, diff against 64ae73f
+diff --git a/Proofs/Aligner.lean b/Proofs/Aligner.lean
+index 89a634e..acd61d2 100644
+--- a/Proofs/Aligner.lean
++++ b/Proofs/Aligner.lean
+@@ -323,18 +323,31 @@ theorem orElse_ok {P : PairAnswer → Prop} (req : Int) (o : Option PairAnswer)
+     · exact hn
+     · rename_i hl; exact (ho a rfl).resolve_right hl
+ 
++-- LOCAL TRACE (exp/hol-trace, never merge): a stage over 5 ms is logged as `S tid tag ms`
++unsafe def timeItImpl {α : Type} (tag : String) (f : Unit → α) : α := unsafeBaseIO do
++  let t0 ← IO.monoNanosNow
++  let r ← match ← (IO.lazyPure f).toBaseIO with
++    | .ok r => pure r
++    | .error _ => pure (f ())
++  let t1 ← IO.monoNanosNow
++  if t1 - t0 > 5000000 then
++    let tid ← IO.getTID
++    (IO.eprintln s!"S {tid} {tag} {(t1 - t0) / 1000000}").catchExceptions (fun _ => pure ())
++  pure r
++@[implemented_by timeItImpl, reducible] def timeIt {α : Type} (_tag : String) (f : Unit → α) : α := f ()
++
+ -- stages (3)-(6) of the pipeline, after the router and the walk
+ def afterRouter (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg) (pk : MapSpec.Fast.PkMz)
+     (pgs : Array MapSpec.Fast.PGen) (offs ns : Array Nat) (hv : ByteArray × ByteArray) (req : Int) (read1 read2 : ByteArray)
+     (a1 : PairAnswer) (_ : Unit) :
+     PairAnswer :=
+   let c := lookCap req
+-  orElse req ((joinAt cfg pk pgs c read1 read2).map (answerWith insertSettings req none pk pgs offs ns read1 read2))
++  orElse req (timeIt "join" fun _ => (joinAt cfg pk pgs c read1 read2).map (answerWith insertSettings req none pk pgs offs ns read1 read2))
+     fun _ =>
+-  orElse req (if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
++  orElse req (timeIt "short" fun _ => if shortOk pk c read1 read2 then some (lookAt insertSettings req pk offs ns read1 read2) else none)
+     fun _ =>
+   -- the gave-up answer is taken as it is (it has no pair and no bound below `requiredMapBound`: a leftover)
+-  (gaveUp req hv read1 read2 a1).getD (lookAt insertSettings req pk offs ns read1 read2)
++  (timeIt "gaveup" fun _ => gaveUp req hv read1 read2 a1).getD (timeIt "look" fun _ => lookAt insertSettings req pk offs ns read1 read2)
+ 
+ -- the pipeline: (1) the router with the per-pair settings, its pair re-checked; (2) the walk; (3) the
+ -- rarest-seed join; (4) short mates: the second look; (5) the gave-up hook; (6) the second look (`lookAt`).
+@@ -355,8 +368,8 @@ def answerOfReads (insertSettings : InsertSettings) (cfg : MapSpec.Fast.TierCfg)
+     PairAnswer :=
+   if witnessHit hv read1 read2 then witnessAnswer else
+   let req := reqOf insertSettings read1 read2
+-  let t := MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
+-  let a1 := answerWith insertSettings req (fallbackFrom req) pk pgs offs ns read1 read2 t
++  let t := timeIt "router" fun _ => MapSpec.Fast.tierPair (pairCfg cfg pk read1 read2) pk #[0] pgs (some read1) (some read2)
++  let a1 := timeIt "walk" fun _ => answerWith insertSettings req (fallbackFrom req) pk pgs offs ns read1 read2 t
+   orElse req (some a1) (afterRouter insertSettings cfg pk pgs offs ns hv req read1 read2 a1)
+ 
+ def alignOne (insertSettings : InsertSettings) (chroms : List (List Nat)) (loaded : Option LoadedIndex)
+@@ -547,15 +560,29 @@ def AlignSetup : Type := List (List Nat) × Option SetupP
+ def chunkSetup (insertSettings : InsertSettings) (index : ByteArray) : AlignSetup :=
+   ((readIndex index).1.getD [], (loadedSetup insertSettings (readIndex index).2).map withMono)
+ 
++-- LOCAL TRACE (exp/hol-trace, never merge): a pair slower than 20 ms is logged as
++-- `P tid ms index-in-job seq1 seq2` (the trimmed mates' letters)
++unsafe def timedPairImpl (insertSettings : InsertSettings) (setup : AlignSetup) (i : Nat)
++    (bytes1 bytes2 : Option ByteArray) : PairResult := unsafeBaseIO do
++  let t0 ← IO.monoNanosNow
++  let r ← (IO.lazyPure fun _ => alignOneP insertSettings setup.1 setup.2 bytes1 bytes2).catchExceptions
++    (fun _ => pure (.trimmedAway .one))
++  let t1 ← IO.monoNanosNow
++  if t1 - t0 > 20000000 then
++    let tid ← IO.getTID
++    let txt := fun (b : Option ByteArray) => (b.bind String.fromUTF8?).getD "-"
++    (IO.eprintln s!"P {tid} {(t1 - t0) / 1000000} {i} {txt bytes1} {txt bytes2}").catchExceptions (fun _ => pure ())
++  pure r
++@[implemented_by timedPairImpl] def timedPair (insertSettings : InsertSettings) (setup : AlignSetup) (_i : Nat)
++    (bytes1 bytes2 : Option ByteArray) : PairResult := alignOneP insertSettings setup.1 setup.2 bytes1 bytes2
++
+ def alignPairsP (insertSettings : InsertSettings) (setup : AlignSetup)
+     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
+-  pairs.map fun (bytes1, bytes2) => alignOneP insertSettings setup.1 setup.2 bytes1 bytes2
++  (pairs.zipIdx.map fun ((bytes1, bytes2), i) => timedPair insertSettings setup i bytes1 bytes2)
+ 
+ theorem alignPairsP_eq (insertSettings : InsertSettings) (index : ByteArray) :
+     alignPairsP insertSettings (chunkSetup insertSettings index) = alignPairs insertSettings index := by
+-  funext pairs
+-  rw [alignPairs_eq_map]
+-  simp only [alignPairsP, chunkSetup, alignOneP_eq, alignOneC_eq]
++  sorry -- LOCAL TRACE: alignPairsP logs slow pairs (implemented_by)
+ 
+ -- what the index holds, when it was built from `byteGenome`: the genome's chromosomes, or something checked
+ theorem readIndex_buildIndex (byteGenome : GenomeFile) :
+diff --git a/Proofs/MapFast.lean b/Proofs/MapFast.lean
+index fca5723..0ba1442 100644
+--- a/Proofs/MapFast.lean
++++ b/Proofs/MapFast.lean
+@@ -88,6 +88,28 @@ structure State where
+   queue2  : Array ByteArray
+   pending : Array (Task (Option ByteArray))
+ 
++-- LOCAL INSTRUMENTATION (not for commit)
++@[noinline] unsafe def stampImpl (k : Nat) : Nat := unsafeBaseIO (do if k == 999999999999 then pure 0 else IO.monoNanosNow)
++@[implemented_by stampImpl] def stamp (k : Nat) : Nat := k
++unsafe def runLoggedImpl (job : ByteArray → ByteArray → Option ByteArray) (a b : ByteArray) (ts : Nat) : Option ByteArray :=
++  unsafeBaseIO do
++    let t0 ← IO.monoNanosNow
++    let tid ← IO.getTID
++    let r ← (IO.lazyPure fun _ => job a b).catchExceptions (fun _ => pure none)
++    let t1 ← IO.monoNanosNow
++    (IO.eprintln s!"J {ts} {t0} {t1} {tid} {a.size}").catchExceptions (fun _ => pure ())
++    pure r
++@[implemented_by runLoggedImpl] def runLogged (job : ByteArray → ByteArray → Option ByteArray) (a b : ByteArray) (_ts : Nat) :
++    Option ByteArray := job a b
++unsafe def getLoggedImpl (t : Task (Option ByteArray)) (_i : Nat) : Option ByteArray := unsafeBaseIO do
++  let f ← IO.hasFinished t
++  let t0 ← IO.monoNanosNow
++  let v ← IO.wait t
++  let t1 ← IO.monoNanosNow
++  (IO.eprintln s!"C {t0} {t1} {f}").catchExceptions (fun _ => pure ())
++  pure v
++@[implemented_by getLoggedImpl] def getLogged (t : Task (Option ByteArray)) (_i : Nat) : Option ByteArray := t.get
++
+ -- the lines of the oldest pending jobs while more than `keep` are pending, appended to `out`
+ def collect (keep : Nat) (pending : Array (Task (Option ByteArray))) (out : ByteArray) :
+     Option (Array (Task (Option ByteArray)) × ByteArray) :=
+@@ -96,7 +118,7 @@ def collect (keep : Nat) (pending : Array (Task (Option ByteArray))) (out : Byte
+     | 0 => some (i, out)
+     | fuel + 1 =>
+       if keep < pending.size - i then
+-        match (pending[i]!).get with
++        match getLogged (pending[i]!) i with
+         | some piece => go fuel (i + 1) (out ++ piece)
+         | none => none
+       else some (i, out)
+@@ -108,7 +130,8 @@ def spawnPaired (job : ByteArray → ByteArray → Option ByteArray) (queue1 que
+   (List.range (min queue1.size queue2.size)).foldl (fun pending k =>
+     let a := queue1[k]!
+     let b := queue2[k]!
+-    pending.push (Task.spawn fun _ => job a b)) pending
++    let ts := stamp k
++    pending.push (Task.spawn fun _ => runLogged job a b ts)) pending
+ 
+ def init (job : ByteArray → ByteArray → Option ByteArray) : State :=
+   ⟨job, ⟨ByteArray.empty, 0, 0⟩, ⟨ByteArray.empty, 0, 0⟩, #[], #[], #[]⟩
+@@ -132,7 +155,7 @@ def step (st : State) : Option (ByteArray × ByteArray) → Option (State × Byt
+     -- what is left over: the unpaired slices and the carries, as one last job
+     let rest1 := (queue1.extract n queue1.size).foldl (· ++ ·) ByteArray.empty ++ file1.carry
+     let rest2 := (queue2.extract n queue2.size).foldl (· ++ ·) ByteArray.empty ++ file2.carry
+-    let all := if rest1.isEmpty && rest2.isEmpty then paired else paired.push (Task.spawn fun _ => job rest1 rest2)
++    let all := if rest1.isEmpty && rest2.isEmpty then paired else paired.push (Task.spawn fun _ => runLogged job rest1 rest2 (stamp rest1.size))
+     (collect 0 all ByteArray.empty).map fun (_, out) => (init job, out)
+ 
+ end Spec.MapFast
+diff --git a/Proofs/MapFiles.lean b/Proofs/MapFiles.lean
+index 4e9c1d7..5eab91e 100644
+--- a/Proofs/MapFiles.lean
++++ b/Proofs/MapFiles.lean
+@@ -2,7 +2,6 @@
+ import Proofs.Trim
+ import Proofs.Sam
+ import Proofs.MapFast
+-import Proofs.MapCorrect
+ import Proofs.MapJobEq
+ 
+ namespace Spec.Total
+@@ -94,12 +93,7 @@ theorem process_correct (settings : InsertSettings) (index : ByteArray) (chrs :
+      | some () => some written
+      | none    => none)
+       = mapReads settings index chrs fastq1 fastq2 := by
+-  -- `job_eq` (S-G): one job of the stream is `mapReads` of its two slices
+-  have job_eq : ∀ s1 s2, (MapFast.job settings index chrs s1 s2).map bytes =
+-      mapReads settings index chrs (bytes s1) (bytes s2) := fun s1 s2 =>
+-    Spec.MapCopy.job_eq settings index chrs s1 s2
+-  exact Spec.MapCopy.process_correct' (fun fuel st => process nextChunksList writeList fuel st) (fun f st => rfl)
+-    settings index chrs job_eq chunks fuel enough
++  sorry
+ 
+ end Spec.Total
+ #print axioms Spec.Total.process_correct

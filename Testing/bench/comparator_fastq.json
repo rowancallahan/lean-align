@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Spec.Fastq",
+  "solution_module": "Proofs.Fastq",
+  "theorem_names": ["Spec.FQ.parse_correct"],
+  "definition_names": ["Spec.FQ.parse"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

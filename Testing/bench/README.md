@@ -1,0 +1,47 @@
+# Testing: everything a person has to read is in this folder
+
+| file | what it does |
+|---|---|
+| `bench.sh` | the benchmark, top to bottom: tools, data, indexes, timing, agreement with minibwa, results, power off |
+| `verify.sh` | is this checkout proved and does it give the right output; `PARANOID=1` for the slow, thorough checks |
+| `time_one.py` | times one run of one tool (called by both scripts) |
+| `compare.py` | on real reads: where we say unique and minibwa gives MAPQ 60, are the pairs in the same place and at the same positions letter for letter; also basic sanity of every record of our SAM |
+| `mason_score.py` | on the mason set: how many pairs does each tool put at the true place (the minibwa paper's overlap rule) |
+| `tiny_data.py` | makes a small genome and read pairs with a known answer, and checks that our SAM puts every mate there |
+| `comparator_*.json` | six settings files for `lake comparator`, one per Spec file with holes: Spec file = the challenge, Proofs file = the solution |
+
+The comparator files have not been run yet (they need the bubblewrap sandbox and a lot of memory; first run is on the
+server). Not covered by them: `Spec/Sam.lean`, `Spec/Fasta.lean` and the first part of `Spec/Aligner.lean` have no
+holes, so their `Proofs/` copies are checked only as far as the theorems use them.
+
+The scripts call each other, `lake`, the two aligners and standard tools. Nothing else in the repository.
+
+## Laptop (minutes after the first build)
+
+    bash Testing/bench/verify.sh ~/la-verify
+
+Last line `VERIFY PASSED`: frozen Spec hashes, full `lake build`, the seven main theorems on the three standard
+axioms, the trimmer contract hash, and the small genome mapped at the true positions and identically to minibwa in columns 1-11
+with every record of our SAM sane.
+
+## Server (Ubuntu 24.04, 150 GB disk, shutdown behaviour Stop)
+
+    git clone https://github.com/rowancallahan/lean-align && cd lean-align
+    VERIFY=1 nohup bash Testing/bench/bench.sh full ~/bench > ~/bench.out 2>&1 &
+    tail -f ~/bench/all.log
+
+It times both tools at a quarter, at half and at all the cores, three runs each, on the first 40M pairs of the minibwa paper's
+NovaSeq reads; compares them on 1M pairs; with `VERIFY=1` runs `PARANOID=1 verify.sh` (clean rebuild, index rebuilt
+and compared, same output at 1 and all threads, `lake comparator` on the six files, `lake check --paranoid`); packs
+`~/bench/results.tgz`; powers the machine off, also when a step fails, and after 12 hours at the latest.
+Next day: start the instance, copy `results.tgz` off, terminate it.
+
+All three read sets of the minibwa paper's comparison (NovaSeq, HiSeq 2x250, mason2 2x150 simulated reads):
+
+    SETS="nova hiseq mason" VERIFY=1 nohup bash Testing/bench/bench.sh full ~/bench > ~/bench.out 2>&1 &
+
+`PAIRS` (40M) applies to nova and to hiseq (`hiseq`: GIAB HG002 HiSeq 2x250 lane 1, files 001 to 017 in order);
+`MASON_PAIRS` (1M) is the size of the mason set. Each set has its rows in `timing.tsv`, its `compare_<set>.txt`
+(nova: `compare.txt`), and the mason set also `mason_accuracy.txt`. The hiseq set adds about 15 GB (40M pairs), the mason set 1.5 GB (1M pairs) to the disk.
+
+The previous test scripts (`Testing/ec2/`, `Testing/verify.sh`, `CI_check.sh`, ...) are on branch `archive/testing-old`.

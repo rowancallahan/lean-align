@@ -17,14 +17,12 @@ it gives is correct against a small, readable specification.
 ## Build and check
 
 ```
-lake build                       # everything (Lean 4.35)
-sh Testing/scripts/CI_check.sh     # developer check: cached build, axioms, certificates (~1 min if cached)
-sh Testing/scripts/check.sh        # final check: clean rebuild + CI_check + external kernels
-sh Testing/data/fetch.sh small     # chr21 + 1M HG002 pairs into Testing/data/downloads/ (not in git)
+lake build                                   # everything (Lean 4.35)
+bash Testing/bench/verify.sh ~/la-verify     # proofs, axioms, and a small genome mapped identically to minibwa
 ```
 
-A proof counts as finished when `#print axioms` shows only `propext`, `Classical.choice` and
-`Quot.sound`; `CI_check.sh` enforces this for every module.
+All testing lives in `Testing/bench/` (see its README): `verify.sh` (add `PARANOID=1` for the thorough run, which
+ends with `lake check --paranoid`) and `bench.sh` (the benchmark against minibwa).
 
 ## For agents
 

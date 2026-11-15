@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Spec.Aligner",
+  "solution_module": "Proofs.Aligner",
+  "theorem_names": ["Spec.alignPairs_correct", "Spec.alignPairs_end_to_end"],
+  "definition_names": ["Spec.buildIndex", "Spec.alignPairs"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

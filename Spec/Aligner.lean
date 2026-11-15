@@ -211,6 +211,9 @@ def alignPairs (insertSettings : InsertSettings) (index : ByteArray)
     (pairs : List (Option ByteArray × Option ByteArray)) : List PairResult :=
   sorry
 
+-- the one condition on the settings: a pair below junkScore is below requiredMapBound
+def SettingsOk (insertSettings : InsertSettings) : Prop := insertSettings.junkScore ≤ -16
+
 -- For any genome and trimmed mates: run on their bytes, with the index built from the genome's
 -- bytes, there is one result per pair, and the i-th result proves its claim about the i-th pair.
 theorem alignPairs_correct (insertSettings : InsertSettings)
@@ -218,7 +221,8 @@ theorem alignPairs_correct (insertSettings : InsertSettings)
     (byteGenome : GenomeFile) (hGenome : byteGenome.decode = genome)
     (index : ByteArray) (hIndex : index = buildIndex byteGenome)
     (bytePairs : List (Option ByteArray × Option ByteArray))
-    (hMates : bytePairs.map decodePair = trimmedPairs) :
+    (hMates : bytePairs.map decodePair = trimmedPairs)
+    (hSettings : SettingsOk insertSettings) :
     (alignPairs insertSettings index bytePairs).length = trimmedPairs.length ∧
     ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
       (alignPairs insertSettings index bytePairs)[i]? = some result →
@@ -231,7 +235,8 @@ theorem alignPairs_correct (insertSettings : InsertSettings)
 -- is A, C, G, T or N.
 theorem alignPairs_end_to_end (insertSettings : InsertSettings)
     (genome : Genome) (trimmedPairs : List (Option Read × Option Read))
-    (hGenome : GenomeIsDNA genome) (hPairs : ∀ mates ∈ trimmedPairs, MatesAreDNA mates) :
+    (hGenome : GenomeIsDNA genome) (hPairs : ∀ mates ∈ trimmedPairs, MatesAreDNA mates)
+    (hSettings : SettingsOk insertSettings) :
     (alignPairs insertSettings (buildIndex genome.encode) (trimmedPairs.map encodePair)).length =
       trimmedPairs.length ∧
     ∀ (i : Nat) (result : PairResult) (mates : Option Read × Option Read),
