@@ -98,6 +98,10 @@ try:
     wall = time.perf_counter() - start
     assert status == 0, tool + " failed with status " + str(status) + " (minibwa's messages: " + workdir + "/minibwa.log)"
     cpu = use.ru_utime + use.ru_stime
+    if os.environ.get("DETAIL") == "1":            # the aligner alone (no gzip): where its CPU time goes
+        print("DETAIL", tool, threads, "wall", round(wall, 1), "user", round(use.ru_utime, 1), "sys", round(use.ru_stime, 1),
+              "minor_faults", use.ru_minflt, "major_faults", use.ru_majflt,
+              "waits", use.ru_nvcsw, "preempted", use.ru_nivcsw, file=sys.stderr)
     for g in gz:
         _, gz_status, gz_use = os.wait4(g.pid, 0)
         assert gz_status == 0, "gzip failed with status " + str(gz_status)
